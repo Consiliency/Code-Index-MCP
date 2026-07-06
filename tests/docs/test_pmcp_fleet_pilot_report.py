@@ -54,7 +54,7 @@ def test_report_references_metadata_evidence_and_required_tool_checks():
         "lexical `search_code`",
         "`symbol_lookup`",
         "semantic `search_code`",
-        "readiness fallback",
+        "Readiness fallback",
         "`reindex`",
         '`safe_fallback: "native_search"`',
     ):
@@ -82,8 +82,8 @@ def test_report_records_blocking_startup_findings_without_secret_values():
         "system PMCP service",
         "command mode",
         "remote URL",
-        "CPython 3.13",
-        "tree-sitter-languages",
+        "repositories: []",
+        "unregistered_repository",
         "PMCP issue #89",
     ):
         assert expected in text
@@ -110,7 +110,7 @@ def test_json_evidence_artifacts_exist_and_include_required_fields():
     query_text = _read(QUERY_JSON)
 
     for expected in (
-        '"selected_startup_path": "fixed_manifest"',
+        '"selected_startup_path": "local_override"',
         '"index-it-mcp"',
         '"configured_env_names"',
         '"metadata_only"',
@@ -122,6 +122,7 @@ def test_json_evidence_artifacts_exist_and_include_required_fields():
         "pmcp",
         "pmcp-code-mode-mcp",
         "agent-harness",
+        '"server_registry_state": "empty"',
         '"safe_fallback": "native_search"',
     ):
         assert expected in readiness_text
@@ -132,6 +133,8 @@ def test_json_evidence_artifacts_exist_and_include_required_fields():
         '"tool_name": "search_code"',
         '"tool_name": "symbol_lookup"',
         '"tool_name": "reindex"',
-        '"verdict": "blocked"',
+        '"code": "index_unavailable"',
+        '"code": "unregistered_repository"',
+        '"verdict": "pass"',
     ):
         assert expected in query_text

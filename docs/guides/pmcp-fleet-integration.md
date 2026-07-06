@@ -171,6 +171,13 @@ Interpret readiness before treating indexed results as authoritative:
 Remediation commands such as `reindex` or `repository sync` come after
 non-ready evidence. They are not part of the no-surprise PMCPBOOT preflight.
 
+Current pilot caveat: local `mcp-index repository register` evidence does not
+yet guarantee that the PMCP-managed `index-it-mcp` runtime sees the same
+repository registry. If PMCP-mediated query tools return
+`unregistered_repository`, keep using native search and check
+`docs/status/PMCP_FLEET_PILOT.md` before treating indexed results as
+available.
+
 ## Non-Goals
 
 - No PMCP code changes in this repository.

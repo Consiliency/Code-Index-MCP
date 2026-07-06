@@ -1,6 +1,11 @@
 {
-  "timestamp": "2026-07-06T10:01:48Z",
+  "timestamp": "2026-07-06T10:44:59Z",
   "phase": "PMCPPILOT",
+  "pmcp_query_runtime": {
+    "server_name": "index-it-mcp",
+    "server_registry_state": "empty",
+    "summary": "PMCP-mediated get_status reported repositories: [] even after the bounded local bootstrap registered all four pilot repos."
+  },
   "pilot_repositories": [
     {
       "name": "Code-Index-MCP",
@@ -8,11 +13,11 @@
       "repo_id": "74f50742925c9613",
       "git_common_directory_identity": "74f50742925c9613",
       "default_branch": "main",
-      "current_commit": "6ba54a4e5a0174b83b7e4d21bdc925989d0656f6",
+      "current_commit": "2d8c241a5f88fc185b33152681b31f482b0f525f",
       "repository_list_readiness": "wrong_branch",
       "workspace_status_readiness": "wrong_branch",
       "semantic_readiness": "enrichment_unavailable",
-      "recommended_remediation": "Switch to the tracked branch 'main' or register the intended repository path, then run a full reindex or hydrate a known-good artifact.",
+      "recommended_remediation": "Switch to the tracked branch 'main' or register the intended repository path, then run a full reindex or hydrate a known-good artifact before trusting indexed results.",
       "safe_fallback": "native_search"
     },
     {
@@ -21,8 +26,8 @@
       "repo_id": "8527ff168248e14d",
       "git_common_directory_identity": "8527ff168248e14d",
       "default_branch": "main",
-      "current_commit": "f49cc83831a962e4b2fc7892275c80190483d995",
-      "repository_list_readiness": "missing_index",
+      "current_commit": "cc57dc4820171d323dd1e665accb0efdfc35c7b3",
+      "repository_list_readiness": "index_empty",
       "workspace_status_readiness": "index_empty",
       "semantic_readiness": "enrichment_unavailable",
       "recommended_remediation": "Run reindex to populate the repository index or pull the latest artifact before trusting indexed results.",
@@ -35,7 +40,7 @@
       "git_common_directory_identity": "7bfc868dae936345",
       "default_branch": "main",
       "current_commit": "fe70dee6eb7c944fee55050a15918da6769c3e4a",
-      "repository_list_readiness": "missing_index",
+      "repository_list_readiness": "index_empty",
       "workspace_status_readiness": "index_empty",
       "semantic_readiness": "enrichment_unavailable",
       "recommended_remediation": "Run reindex to populate the repository index or pull the latest artifact before trusting indexed results.",
@@ -48,7 +53,7 @@
       "git_common_directory_identity": "f5764f0ead6159e7",
       "default_branch": "main",
       "current_commit": "23784fba108d0715361d0b9e551a6e60a5ce9b36",
-      "repository_list_readiness": "missing_index",
+      "repository_list_readiness": "index_empty",
       "workspace_status_readiness": "index_empty",
       "semantic_readiness": "enrichment_unavailable",
       "recommended_remediation": "Run reindex to populate the repository index or pull the latest artifact before trusting indexed results.",

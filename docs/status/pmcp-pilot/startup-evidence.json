@@ -1,20 +1,31 @@
 {
-  "timestamp": "2026-07-06T10:01:48Z",
+  "timestamp": "2026-07-06T10:44:59Z",
   "phase": "PMCPPILOT",
-  "observed_commit": "1fe9529eac6f94b85d05cdd156ad75689c0c6be4",
+  "observed_commit": "2d8c241a5f88fc185b33152681b31f482b0f525f",
   "pmcp_health": {
     "gateway_transport": "http",
     "system_service_active": true,
-    "project_config_status": "code-index-mcp: lazy (project)"
+    "project_config_status": "code-index-mcp: lazy (project)",
+    "user_config_status": "index-it-mcp: lazy (user)"
   },
   "candidate": {
     "name": "index-it-mcp",
-    "source": "manifest",
+    "source": "user",
     "transport": "local",
     "provisionable": true,
-    "running": false,
-    "selected_startup_path": "fixed_manifest",
+    "running": true,
+    "selected_startup_path": "local_override",
     "package_version": "1.2.0",
+    "tool_names": [
+      "get_status",
+      "handshake",
+      "list_plugins",
+      "reindex",
+      "search_code",
+      "summarize_sample",
+      "symbol_lookup",
+      "write_summaries"
+    ],
     "configured_env_names": [
       "MCP_ALLOWED_ROOTS",
       "MCP_INDEX_STORAGE_PATH",
@@ -31,26 +42,26 @@
     {
       "step": "gateway_catalog_search",
       "status": "success",
-      "summary": "PMCP catalog exposes index-it-mcp as a provisionable local manifest server."
+      "summary": "PMCP catalog exposes index-it-mcp and reports the Code-Index-MCP query tool surface online."
     },
     {
-      "step": "gateway_connect_server",
-      "status": "failed",
-      "summary": "PMCP could not connect to index-it-mcp because the server disconnected during startup."
+      "step": "pmcp_status_probe",
+      "status": "success",
+      "summary": "pmcp status --json --server index-it-mcp --probe reports index-it-mcp online with 8 tools from user-scoped PMCP configuration."
+    },
+    {
+      "step": "get_status",
+      "status": "success",
+      "summary": "PMCP-mediated get_status reached index-it-mcp 1.2.0 and reported an empty repository list with status unknown."
     },
     {
       "step": "pmcp_doctor",
       "status": "failed",
       "summary": "PMCP doctor reports that the repo-local command-mode code-index-mcp config conflicts with the active system PMCP service and should use the remote gateway URL instead."
-    },
-    {
-      "step": "gateway_provision",
-      "status": "failed",
-      "summary": "Manifest provisioning failed on CPython 3.13 because tree-sitter-languages does not publish cp313 wheels for the resolved package set."
     }
   ],
-  "blocked_reason": {
-    "code": "pmcp_startup_unavailable",
-    "summary": "No PMCP-managed stdio server was reachable for pilot tool invocations."
+  "startup_constraints": {
+    "code": "pmcp_runtime_registry_gap",
+    "summary": "PMCP can start index-it-mcp, but the PMCP-managed runtime currently reports no registered repositories for downstream query work."
   }
 }

@@ -1,113 +1,101 @@
 {
-  "timestamp": "2026-07-06T10:01:48Z",
+  "timestamp": "2026-07-06T10:44:59Z",
   "phase": "PMCPPILOT",
   "startup_attempts": [
     {
-      "tool_name": "gateway_catalog_search",
+      "tool_name": "pmcp_status",
       "repository": null,
       "request_shape": {
-        "query": "code-index-mcp index-it-mcp search_code symbol_lookup get_status",
-        "include_offline": true
+        "server": "index-it-mcp",
+        "probe": true,
+        "format": "json"
       },
-      "response_summary": "Manifest candidate index-it-mcp is provisionable but not installed or running.",
-      "readiness_state": "startup_unavailable",
-      "fallback": "fixed_manifest_pending",
+      "response_summary": "pmcp status reports index-it-mcp online with 8 tools.",
+      "readiness_state": "server_online",
+      "fallback": "none",
       "verdict": "pass"
     },
     {
-      "tool_name": "gateway_connect_server",
+      "tool_name": "get_status",
       "repository": null,
-      "request_shape": {
-        "server_name": "index-it-mcp"
-      },
-      "response_summary": "Server index-it-mcp disconnected during startup.",
-      "readiness_state": "startup_unavailable",
+      "request_shape": {},
+      "response_summary": "PMCP-mediated get_status reached index-it-mcp 1.2.0 and reported status unknown with repositories: [].",
+      "readiness_state": "server_online",
       "fallback": "none",
-      "verdict": "blocked"
-    },
-    {
-      "tool_name": "gateway_provision",
-      "repository": null,
-      "request_shape": {
-        "server_name": "index-it-mcp"
-      },
-      "response_summary": "Provisioning failed on CPython 3.13 because tree-sitter-languages lacks cp313 wheels.",
-      "readiness_state": "startup_unavailable",
-      "fallback": "none",
-      "verdict": "blocked"
+      "verdict": "pass"
     }
   ],
   "required_tool_checks": [
     {
       "tool_name": "get_status",
-      "repository": "Code-Index-MCP",
-      "request_shape": {
-        "repository": "Code-Index-MCP"
-      },
-      "response_summary": "Not invoked because PMCP could not start a working index-it-mcp stdio server.",
-      "readiness_state": "startup_unavailable",
-      "fallback": "native_search",
-      "verdict": "blocked"
+      "repository": null,
+      "request_shape": {},
+      "response_summary": "Returned version 1.2.0, tool runtime health, and repositories: [].",
+      "readiness_state": "server_online",
+      "fallback": "none",
+      "verdict": "pass"
     },
     {
       "tool_name": "list_plugins",
-      "repository": "Code-Index-MCP",
-      "request_shape": {
-        "repository": "Code-Index-MCP"
-      },
-      "response_summary": "Not invoked because PMCP could not start a working index-it-mcp stdio server.",
-      "readiness_state": "startup_unavailable",
-      "fallback": "native_search",
-      "verdict": "blocked"
+      "repository": null,
+      "request_shape": {},
+      "response_summary": "Returned supported-language coverage with availability counts unsupported=32, enabled=15, missing_extra=1.",
+      "readiness_state": "server_online",
+      "fallback": "none",
+      "verdict": "pass"
     },
     {
       "tool_name": "search_code",
-      "repository": "Code-Index-MCP",
+      "repository": "/home/viperjuice/code/Code-Index-MCP",
       "request_shape": {
-        "query": "class RepoContext",
-        "repository": "Code-Index-MCP",
+        "query": "RepoContext",
+        "repository": "/home/viperjuice/code/Code-Index-MCP",
         "semantic": false
       },
-      "response_summary": "Lexical query not invoked because PMCP startup failed before downstream tool use.",
-      "readiness_state": "startup_unavailable",
+      "response_summary": "Lexical search returned code index_unavailable with readiness code unregistered_repository and safe_fallback native_search.",
+      "readiness_state": "unregistered_repository",
       "fallback": "native_search",
-      "verdict": "blocked"
+      "code": "index_unavailable",
+      "verdict": "pass"
     },
     {
       "tool_name": "symbol_lookup",
-      "repository": "Code-Index-MCP",
+      "repository": "/home/viperjuice/code/Code-Index-MCP",
       "request_shape": {
         "symbol": "RepoContext",
-        "repository": "Code-Index-MCP"
+        "repository": "/home/viperjuice/code/Code-Index-MCP"
       },
-      "response_summary": "Symbol lookup not invoked because PMCP startup failed before downstream tool use.",
-      "readiness_state": "startup_unavailable",
+      "response_summary": "Symbol lookup returned code index_unavailable with readiness code unregistered_repository and safe_fallback native_search.",
+      "readiness_state": "unregistered_repository",
       "fallback": "native_search",
-      "verdict": "blocked"
+      "code": "index_unavailable",
+      "verdict": "pass"
     },
     {
       "tool_name": "search_code",
-      "repository": "Code-Index-MCP",
+      "repository": "/home/viperjuice/code/Code-Index-MCP",
       "request_shape": {
         "query": "readiness fallback behavior",
-        "repository": "Code-Index-MCP",
+        "repository": "/home/viperjuice/code/Code-Index-MCP",
         "semantic": true
       },
-      "response_summary": "Semantic query not invoked because PMCP startup failed before downstream tool use.",
-      "readiness_state": "startup_unavailable",
+      "response_summary": "Semantic search returned code index_unavailable with readiness code unregistered_repository and safe_fallback native_search.",
+      "readiness_state": "unregistered_repository",
       "fallback": "native_search",
-      "verdict": "blocked"
+      "code": "index_unavailable",
+      "verdict": "pass"
     },
     {
       "tool_name": "reindex",
-      "repository": "pmcp",
+      "repository": "/home/viperjuice/code/pmcp",
       "request_shape": {
-        "repository": "pmcp"
+        "repository": "/home/viperjuice/code/pmcp"
       },
-      "response_summary": "Bounded reindex remediation was not attempted because PMCP could not start a working server and every pilot repository remained non-ready.",
-      "readiness_state": "startup_unavailable",
+      "response_summary": "Bounded reindex returned code unregistered_repository, left mutation_performed false, and preserved native_search fallback.",
+      "readiness_state": "unregistered_repository",
       "fallback": "native_search",
-      "verdict": "blocked"
+      "code": "unregistered_repository",
+      "verdict": "pass"
     }
   ]
 }

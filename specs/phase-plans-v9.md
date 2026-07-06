@@ -308,7 +308,8 @@ whether adoption is ready, PMCP-blocked, or limited to lexical-only use.
 - [ ] Troubleshooting covers wrong transport, wrong package version, missing
       allowed roots, missing Qdrant, missing embedding endpoint, wrong branch,
       stale commit, missing index, path-outside-allowed-roots, active system
-      PMCP service versus repo-local command-mode conflicts, and host Python
+      PMCP service versus repo-local command-mode conflicts, PMCP-managed
+      server registry isolation after local CLI bootstrap, and host Python
       packaging incompatibilities that prevent `index-it-mcp` provisioning.
 - [ ] Final rollout verdict records remaining PMCP issue #89 dependencies or
       states that the PMCP dependency is cleared.
@@ -321,7 +322,10 @@ asks to proceed. It should decompose into 2 lanes: rollout policy docs and
 pilot-evidence verdict/troubleshooting docs. If PMCPPILOT stays blocked on a
 system PMCP service conflict or on host `CPython 3.13` provisioning
 incompatibility, this phase must reduce those findings into the rollout verdict
-instead of assuming the older pilot override remains sufficient.
+instead of assuming the older pilot override remains sufficient. If PMCPPILOT
+finds that repo-local `mcp-index repository register` evidence does not
+populate the PMCP-managed server registry, this phase must treat that as a
+gateway/runtime bootstrap gap and document the operator-visible fallback.
 
 **Non-goals**
 
@@ -373,6 +377,11 @@ PMCPENTRY -> PMCPBOOT -> PMCPPILOT -> PMCPROLL
   entry is not sufficient pilot proof; rollout guidance must either use the
   remote gateway URL or document how the operator disables the conflicting
   service.
+- If PMCP-managed query calls return `unregistered_repository` after the pilot
+  repos were registered locally, treat that as registry-scope mismatch between
+  CLI bootstrap and the PMCP-managed runtime. Rollout guidance must document
+  how the operator aligns the server runtime with the intended repository
+  registry or keeps using native search.
 - Host `CPython 3.13` packaging compatibility for `index-it-mcp` is now a
   rollout input because manifest provisioning currently fails when the required
   wheel set is unavailable.
