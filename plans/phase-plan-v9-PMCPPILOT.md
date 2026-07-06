@@ -2,7 +2,7 @@
 phase_loop_plan_version: 1
 phase: PMCPPILOT
 roadmap: specs/phase-plans-v9.md
-roadmap_sha256: 9616972b5b753251691b1c95955072d37dfd9cbc90294dd1416a74b204026b3d
+roadmap_sha256: 6cc406d8438ce14615b5553c3d618fb9ede848b9c3e479e87b88041c95f64b94
 ---
 # PMCPPILOT: PMCP-Mediated Pilot
 
@@ -15,14 +15,14 @@ broader fleet rollout.
 Planning state gathered for this artifact:
 
 - The roadmap hash was checked locally and matches
-  `9616972b5b753251691b1c95955072d37dfd9cbc90294dd1416a74b204026b3d`.
-- Canonical `.phase-loop/state.json` and `.phase-loop/tui-handoff.md` still
-  name `PMCPBOOT` as current/planned, but the newer canonical
-  `.phase-loop/events.jsonl` records `PMCPBOOT` complete with closeout commit
-  `1fe9529eac6f94b85d05cdd156ad75689c0c6be4`. Live git topology is clean at
-  that commit, so this plan reconciles current phase state from the newer
-  ledger plus `git status --short`/HEAD and does not use legacy
-  `.codex/phase-loop/` state.
+  `6cc406d8438ce14615b5553c3d618fb9ede848b9c3e479e87b88041c95f64b94`.
+- Canonical `.phase-loop/state.json`, `.phase-loop/tui-handoff.md`, and the
+  newer `.phase-loop/events.jsonl` agree that `PMCPENTRY` and `PMCPBOOT` are
+  complete and `PMCPPILOT` is currently `unplanned` after manual recovery of a
+  blocked prior pilot attempt. Live git topology is clean at HEAD
+  `7d4bdc9a81f1b4cd4b14ab1bc69fda2f54d5a185`, so this plan treats
+  `.phase-loop/` as authoritative and does not use legacy `.codex/phase-loop/`
+  state.
 - PMCP gateway catalog discovery currently shows `index-it-mcp` as a
   provisionable local manifest server, but it is not running through PMCP in
   this planning session. PMCPPILOT may therefore use either the fixed PMCP
@@ -110,11 +110,13 @@ SL-1 ----/
     and `reindex`.
   - test: Assert the PMCP guide links to `docs/status/PMCP_FLEET_PILOT.md`
     without duplicating raw PMCP payloads or secret values.
-  - impl: Use PMCP gateway discovery first, including
-    `mcp__pmcp.gateway_catalog_search(query="index-it-mcp", include_offline=true)`
-    and `mcp__pmcp.gateway_config_status()` when available, to record whether
-    the fixed PMCP manifest can start `index-it-mcp` or whether the pinned
-    local override was used.
+  - impl: Use PMCP gateway discovery first when available. Prefer live PMCP
+    gateway tools for catalog/config/connect/provision checks; if the active
+    MCP bridge exposes only task/refresh helpers, use metadata-only PMCP CLI
+    probes such as `pmcp config status`, `pmcp doctor`, and the PMCP service
+    URL described by local configuration. Record whether the fixed PMCP
+    manifest can start `index-it-mcp` or whether the pinned local override was
+    used.
   - impl: Record `docs/status/pmcp-pilot/startup-evidence.json` with only
     non-secret fields: capture timestamp, PMCP candidate name, source,
     transport, provisionable/running booleans, selected startup path

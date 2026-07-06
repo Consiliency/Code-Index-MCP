@@ -61,9 +61,9 @@
     },
     {
       "acceptance_criteria_count": null,
-      "created_at": "2026-07-06T09:51:27Z",
+      "created_at": "2026-07-06T10:15:01Z",
       "file": "plans/phase-plan-v9-PMCPPILOT.md",
-      "handoff_ref": ".dev-skills/handoffs/codex-plan-phase/20260706T095127Z-pmcppilot-plan.md",
+      "handoff_ref": ".dev-skills/handoffs/codex-plan-phase/20260706T101501Z-pmcppilot-plan.md",
       "if_gates_produced": [
         "IF-0-PMCPPILOT-1"
       ],
@@ -75,7 +75,7 @@
       "lifecycle": [],
       "owner_skill": "codex-plan-phase",
       "phase_alias": "PMCPPILOT",
-      "reflection_ref": "/home/viperjuice/.codex/skills/codex-plan-phase/reflections/5ba8e7805715d1cf/main/20260706T095127Z-pmcppilot-plan.md",
+      "reflection_ref": "/home/viperjuice/.codex/skills/codex-plan-phase/reflections/5ba8e7805715d1cf/main/20260706T101501Z-pmcppilot-plan.md",
       "roadmap_ref": {
         "file": "specs/phase-plans-v9.md",
         "slug": "phase-plans-v9",
@@ -86,7 +86,7 @@
       "status": "committed",
       "task_summary": null,
       "type": "phase",
-      "updated_at": "2026-07-06T09:51:27Z"
+      "updated_at": "2026-07-06T10:15:01Z"
     }
   ],
   "schema_version": 1
