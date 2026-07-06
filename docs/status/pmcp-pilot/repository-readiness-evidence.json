@@ -1,0 +1,58 @@
+{
+  "timestamp": "2026-07-06T10:01:48Z",
+  "phase": "PMCPPILOT",
+  "pilot_repositories": [
+    {
+      "name": "Code-Index-MCP",
+      "path": "/home/viperjuice/code/Code-Index-MCP",
+      "repo_id": "74f50742925c9613",
+      "git_common_directory_identity": "74f50742925c9613",
+      "default_branch": "main",
+      "current_commit": "6ba54a4e5a0174b83b7e4d21bdc925989d0656f6",
+      "repository_list_readiness": "wrong_branch",
+      "workspace_status_readiness": "wrong_branch",
+      "semantic_readiness": "enrichment_unavailable",
+      "recommended_remediation": "Switch to the tracked branch 'main' or register the intended repository path, then run a full reindex or hydrate a known-good artifact.",
+      "safe_fallback": "native_search"
+    },
+    {
+      "name": "pmcp",
+      "path": "/home/viperjuice/code/pmcp",
+      "repo_id": "8527ff168248e14d",
+      "git_common_directory_identity": "8527ff168248e14d",
+      "default_branch": "main",
+      "current_commit": "f49cc83831a962e4b2fc7892275c80190483d995",
+      "repository_list_readiness": "missing_index",
+      "workspace_status_readiness": "index_empty",
+      "semantic_readiness": "enrichment_unavailable",
+      "recommended_remediation": "Run reindex to populate the repository index or pull the latest artifact before trusting indexed results.",
+      "safe_fallback": "native_search"
+    },
+    {
+      "name": "pmcp-code-mode-mcp",
+      "path": "/home/viperjuice/code/pmcp-code-mode-mcp",
+      "repo_id": "7bfc868dae936345",
+      "git_common_directory_identity": "7bfc868dae936345",
+      "default_branch": "main",
+      "current_commit": "fe70dee6eb7c944fee55050a15918da6769c3e4a",
+      "repository_list_readiness": "missing_index",
+      "workspace_status_readiness": "index_empty",
+      "semantic_readiness": "enrichment_unavailable",
+      "recommended_remediation": "Run reindex to populate the repository index or pull the latest artifact before trusting indexed results.",
+      "safe_fallback": "native_search"
+    },
+    {
+      "name": "agent-harness",
+      "path": "/home/viperjuice/code/agent-harness",
+      "repo_id": "f5764f0ead6159e7",
+      "git_common_directory_identity": "f5764f0ead6159e7",
+      "default_branch": "main",
+      "current_commit": "23784fba108d0715361d0b9e551a6e60a5ce9b36",
+      "repository_list_readiness": "missing_index",
+      "workspace_status_readiness": "index_empty",
+      "semantic_readiness": "enrichment_unavailable",
+      "recommended_remediation": "Run reindex to populate the repository index or pull the latest artifact before trusting indexed results.",
+      "safe_fallback": "native_search"
+    }
+  ]
+}

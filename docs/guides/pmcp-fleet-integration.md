@@ -6,6 +6,9 @@ PMCP owns the shipped gateway manifest and provisioning fix tracked in
 upstream work lands, use a repo-local PMCP `.mcp.json` override for internal
 dogfooding.
 
+Pilot status report: `docs/status/PMCP_FLEET_PILOT.md`
+([PMCP Fleet Pilot](../status/PMCP_FLEET_PILOT.md)).
+
 ## Ownership Boundary
 
 - PMCP owns gateway discovery, provisioning, manifest defaults, and the

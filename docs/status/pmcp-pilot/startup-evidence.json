@@ -1,0 +1,56 @@
+{
+  "timestamp": "2026-07-06T10:01:48Z",
+  "phase": "PMCPPILOT",
+  "observed_commit": "1fe9529eac6f94b85d05cdd156ad75689c0c6be4",
+  "pmcp_health": {
+    "gateway_transport": "http",
+    "system_service_active": true,
+    "project_config_status": "code-index-mcp: lazy (project)"
+  },
+  "candidate": {
+    "name": "index-it-mcp",
+    "source": "manifest",
+    "transport": "local",
+    "provisionable": true,
+    "running": false,
+    "selected_startup_path": "fixed_manifest",
+    "package_version": "1.2.0",
+    "configured_env_names": [
+      "MCP_ALLOWED_ROOTS",
+      "MCP_INDEX_STORAGE_PATH",
+      "SEMANTIC_SEARCH_ENABLED",
+      "SEMANTIC_DEFAULT_PROFILE",
+      "SEMANTIC_EMBEDDING_BASE_URL",
+      "QDRANT_URL",
+      "SEMANTIC_AUTOSTART_QDRANT",
+      "MCP_AUTO_INDEX"
+    ],
+    "redaction_status": "metadata_only"
+  },
+  "startup_observations": [
+    {
+      "step": "gateway_catalog_search",
+      "status": "success",
+      "summary": "PMCP catalog exposes index-it-mcp as a provisionable local manifest server."
+    },
+    {
+      "step": "gateway_connect_server",
+      "status": "failed",
+      "summary": "PMCP could not connect to index-it-mcp because the server disconnected during startup."
+    },
+    {
+      "step": "pmcp_doctor",
+      "status": "failed",
+      "summary": "PMCP doctor reports that the repo-local command-mode code-index-mcp config conflicts with the active system PMCP service and should use the remote gateway URL instead."
+    },
+    {
+      "step": "gateway_provision",
+      "status": "failed",
+      "summary": "Manifest provisioning failed on CPython 3.13 because tree-sitter-languages does not publish cp313 wheels for the resolved package set."
+    }
+  ],
+  "blocked_reason": {
+    "code": "pmcp_startup_unavailable",
+    "summary": "No PMCP-managed stdio server was reachable for pilot tool invocations."
+  }
+}

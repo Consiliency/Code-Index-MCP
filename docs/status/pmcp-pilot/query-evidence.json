@@ -1,0 +1,113 @@
+{
+  "timestamp": "2026-07-06T10:01:48Z",
+  "phase": "PMCPPILOT",
+  "startup_attempts": [
+    {
+      "tool_name": "gateway_catalog_search",
+      "repository": null,
+      "request_shape": {
+        "query": "code-index-mcp index-it-mcp search_code symbol_lookup get_status",
+        "include_offline": true
+      },
+      "response_summary": "Manifest candidate index-it-mcp is provisionable but not installed or running.",
+      "readiness_state": "startup_unavailable",
+      "fallback": "fixed_manifest_pending",
+      "verdict": "pass"
+    },
+    {
+      "tool_name": "gateway_connect_server",
+      "repository": null,
+      "request_shape": {
+        "server_name": "index-it-mcp"
+      },
+      "response_summary": "Server index-it-mcp disconnected during startup.",
+      "readiness_state": "startup_unavailable",
+      "fallback": "none",
+      "verdict": "blocked"
+    },
+    {
+      "tool_name": "gateway_provision",
+      "repository": null,
+      "request_shape": {
+        "server_name": "index-it-mcp"
+      },
+      "response_summary": "Provisioning failed on CPython 3.13 because tree-sitter-languages lacks cp313 wheels.",
+      "readiness_state": "startup_unavailable",
+      "fallback": "none",
+      "verdict": "blocked"
+    }
+  ],
+  "required_tool_checks": [
+    {
+      "tool_name": "get_status",
+      "repository": "Code-Index-MCP",
+      "request_shape": {
+        "repository": "Code-Index-MCP"
+      },
+      "response_summary": "Not invoked because PMCP could not start a working index-it-mcp stdio server.",
+      "readiness_state": "startup_unavailable",
+      "fallback": "native_search",
+      "verdict": "blocked"
+    },
+    {
+      "tool_name": "list_plugins",
+      "repository": "Code-Index-MCP",
+      "request_shape": {
+        "repository": "Code-Index-MCP"
+      },
+      "response_summary": "Not invoked because PMCP could not start a working index-it-mcp stdio server.",
+      "readiness_state": "startup_unavailable",
+      "fallback": "native_search",
+      "verdict": "blocked"
+    },
+    {
+      "tool_name": "search_code",
+      "repository": "Code-Index-MCP",
+      "request_shape": {
+        "query": "class RepoContext",
+        "repository": "Code-Index-MCP",
+        "semantic": false
+      },
+      "response_summary": "Lexical query not invoked because PMCP startup failed before downstream tool use.",
+      "readiness_state": "startup_unavailable",
+      "fallback": "native_search",
+      "verdict": "blocked"
+    },
+    {
+      "tool_name": "symbol_lookup",
+      "repository": "Code-Index-MCP",
+      "request_shape": {
+        "symbol": "RepoContext",
+        "repository": "Code-Index-MCP"
+      },
+      "response_summary": "Symbol lookup not invoked because PMCP startup failed before downstream tool use.",
+      "readiness_state": "startup_unavailable",
+      "fallback": "native_search",
+      "verdict": "blocked"
+    },
+    {
+      "tool_name": "search_code",
+      "repository": "Code-Index-MCP",
+      "request_shape": {
+        "query": "readiness fallback behavior",
+        "repository": "Code-Index-MCP",
+        "semantic": true
+      },
+      "response_summary": "Semantic query not invoked because PMCP startup failed before downstream tool use.",
+      "readiness_state": "startup_unavailable",
+      "fallback": "native_search",
+      "verdict": "blocked"
+    },
+    {
+      "tool_name": "reindex",
+      "repository": "pmcp",
+      "request_shape": {
+        "repository": "pmcp"
+      },
+      "response_summary": "Bounded reindex remediation was not attempted because PMCP could not start a working server and every pilot repository remained non-ready.",
+      "readiness_state": "startup_unavailable",
+      "fallback": "native_search",
+      "verdict": "blocked"
+    }
+  ]
+}

@@ -307,7 +307,9 @@ whether adoption is ready, PMCP-blocked, or limited to lexical-only use.
       is acceptable.
 - [ ] Troubleshooting covers wrong transport, wrong package version, missing
       allowed roots, missing Qdrant, missing embedding endpoint, wrong branch,
-      stale commit, missing index, and path-outside-allowed-roots.
+      stale commit, missing index, path-outside-allowed-roots, active system
+      PMCP service versus repo-local command-mode conflicts, and host Python
+      packaging incompatibilities that prevent `index-it-mcp` provisioning.
 - [ ] Final rollout verdict records remaining PMCP issue #89 dependencies or
       states that the PMCP dependency is cleared.
 
@@ -316,7 +318,10 @@ whether adoption is ready, PMCP-blocked, or limited to lexical-only use.
 This phase is the adoption reducer. It should not start full fleet indexing
 unless the pilot evidence already proves readiness and the operator explicitly
 asks to proceed. It should decompose into 2 lanes: rollout policy docs and
-pilot-evidence verdict/troubleshooting docs.
+pilot-evidence verdict/troubleshooting docs. If PMCPPILOT stays blocked on a
+system PMCP service conflict or on host `CPython 3.13` provisioning
+incompatibility, this phase must reduce those findings into the rollout verdict
+instead of assuming the older pilot override remains sufficient.
 
 **Non-goals**
 
@@ -364,6 +369,13 @@ PMCPENTRY -> PMCPBOOT -> PMCPPILOT -> PMCPROLL
   contract.
 - PMCPPILOT depends on either PMCP issue #89 being resolved or on accepting the
   temporary PMCP local override for pilot use.
+- When a shared PMCP system service is active, a repo-local command-mode PMCP
+  entry is not sufficient pilot proof; rollout guidance must either use the
+  remote gateway URL or document how the operator disables the conflicting
+  service.
+- Host `CPython 3.13` packaging compatibility for `index-it-mcp` is now a
+  rollout input because manifest provisioning currently fails when the required
+  wheel set is unavailable.
 - PMCPROLL should not be planned until PMCPPILOT records real PMCP-mediated
   evidence.
 - PMCP-owned implementation should happen in `/home/viperjuice/code/pmcp`
