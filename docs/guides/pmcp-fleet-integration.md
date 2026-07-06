@@ -34,7 +34,11 @@ Use a pinned local override instead of PMCP's current floating manifest entry:
         "MCP_ALLOWED_ROOTS": "/abs/path/to/repos",
         "MCP_INDEX_STORAGE_PATH": "/abs/path/to/.mcp/indexes",
         "SEMANTIC_SEARCH_ENABLED": "true",
-        "MCP_QDRANT_URL": "http://localhost:6333"
+        "SEMANTIC_DEFAULT_PROFILE": "oss_high",
+        "SEMANTIC_EMBEDDING_BASE_URL": "http://ai:8001/v1",
+        "QDRANT_URL": "http://localhost:6333",
+        "SEMANTIC_AUTOSTART_QDRANT": "false",
+        "MCP_AUTO_INDEX": "false"
       }
     }
   }
@@ -48,6 +52,10 @@ uvx --from index-it-mcp==1.2.0 index-it-mcp stdio
 ```
 
 This command starts the local child-process MCP transport PMCP expects.
+
+The PMCP local override must use canonical env names. Use `QDRANT_URL`, not
+`MCP_QDRANT_URL`. Keep `MCP_ALLOWED_ROOTS` as an absolute path list that
+matches the repo parents PMCP is allowed to expose.
 
 ## Why `stdio` And Not `serve`
 
@@ -81,6 +89,84 @@ requires a successful `handshake` call before tool use. That handshake flow is
 not part of this temporary PMCP local override, so the pinned pilot posture is
 to keep `MCP_CLIENT_SECRET` unset for local stdio until PMCP explicitly models
 the handshake path.
+
+## Semantic Preflight
+
+Before trusting PMCP-mediated indexed results, validate the local semantic
+stack with a dry run:
+
+```bash
+mcp-index setup semantic --dry-run \
+  --profile oss_high \
+  --qdrant-url http://localhost:6333 \
+  --openai-api-base http://ai:8001/v1 \
+  --no-autostart-qdrant
+```
+
+This preflight is read-only. It reports the selected profile, effective
+embedding endpoint, Qdrant endpoint, collection bootstrap state, blocker code,
+and whether the server can write semantic vectors for the active profile.
+
+The PMCPBOOT contract is no-surprise bootstrap:
+
+- `mcp-index setup semantic --dry-run` does not create collections.
+- `mcp-index setup semantic --dry-run` does not write semantic vectors.
+- `mcp-index setup semantic --dry-run` does not start long-running indexing.
+- `--no-autostart-qdrant` keeps local Qdrant startup out of the pilot
+  preflight path.
+- `MCP_AUTO_INDEX=false` keeps repository registration from triggering
+  surprise fleet indexing.
+
+Use the dry-run output to verify:
+
+- `SEMANTIC_DEFAULT_PROFILE=oss_high` selects the local 4096-dimension
+  semantic profile.
+- `SEMANTIC_EMBEDDING_BASE_URL=http://ai:8001/v1` points at the local
+  OpenAI-compatible embedding endpoint.
+- `QDRANT_URL=http://localhost:6333` points at the local vector store.
+- `SEMANTIC_AUTOSTART_QDRANT=false` and `MCP_AUTO_INDEX=false` preserve the
+  explicit operator-controlled bootstrap posture for this pilot.
+
+## Repository Bootstrap And Readiness
+
+Register only the checkout you want PMCP to trust. Public alpha multi-repo
+support allows one registered worktree per git common directory.
+
+```bash
+mcp-index repository register /abs/path/to/repo
+mcp-index repository list -v
+mcp-index repository status
+mcp-index artifact workspace-status
+```
+
+Treat those commands as the bootstrap and status set before PMCP-mediated
+queries:
+
+- `mcp-index repository register` records the tracked checkout.
+- `mcp-index repository list -v` shows rollout status, query surface, and the
+  registered worktree identity.
+- `mcp-index repository status` shows readiness plus semantic preflight and
+  remediation data for the current checkout.
+- `mcp-index artifact workspace-status` shows local-first artifact/runtime
+  readiness without forcing query traffic.
+
+Interpret readiness before treating indexed results as authoritative:
+
+- `ready`: indexed results may be trusted for that registered checkout.
+- `stale_commit`: reindex or sync before trusting indexed results from the
+  current commit.
+- `wrong_branch`: switch back to the registered/default branch or register the
+  intended checkout.
+- `missing_index`: create or download the expected index before indexed query
+  use.
+- `path_outside_allowed_roots`: the requested filesystem path is outside
+  `MCP_ALLOWED_ROOTS`; correct the allowlist or use a registered repo name.
+- `index_unavailable` with `safe_fallback: "native_search"`: query tools stay
+  fail-closed on non-ready repositories, so use native search and follow the
+  surfaced readiness remediation first.
+
+Remediation commands such as `reindex` or `repository sync` come after
+non-ready evidence. They are not part of the no-surprise PMCPBOOT preflight.
 
 ## Non-Goals
 

@@ -2,6 +2,36 @@
   "plans": [
     {
       "acceptance_criteria_count": null,
+      "created_at": "2026-07-06T09:38:38Z",
+      "file": "plans/phase-plan-v9-PMCPBOOT.md",
+      "handoff_ref": ".dev-skills/handoffs/codex-plan-phase/20260706T093838Z-pmcpboot-plan.md",
+      "if_gates_produced": [
+        "IF-0-PMCPBOOT-1",
+        "IF-0-PMCPBOOT-2"
+      ],
+      "lanes": [
+        "SL-0",
+        "SL-1",
+        "SL-2"
+      ],
+      "lifecycle": [],
+      "owner_skill": "codex-plan-phase",
+      "phase_alias": "PMCPBOOT",
+      "reflection_ref": "/home/viperjuice/.codex/skills/codex-plan-phase/reflections/5ba8e7805715d1cf/main/20260706T093838Z-pmcpboot-plan.md",
+      "roadmap_ref": {
+        "file": "specs/phase-plans-v9.md",
+        "slug": "phase-plans-v9",
+        "status": "committed",
+        "type": "phase"
+      },
+      "slug": "v9-PMCPBOOT",
+      "status": "committed",
+      "task_summary": null,
+      "type": "phase",
+      "updated_at": "2026-07-06T09:38:38Z"
+    },
+    {
+      "acceptance_criteria_count": null,
       "created_at": "2026-07-06T09:20:38Z",
       "file": "plans/phase-plan-v9-PMCPENTRY.md",
       "handoff_ref": ".dev-skills/handoffs/codex-plan-phase/20260706T092038Z-pmcpentry-plan.md",

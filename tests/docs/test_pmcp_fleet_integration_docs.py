@@ -67,6 +67,50 @@ def test_guide_freezes_pin_and_rejects_floating_examples():
         assert snippet not in text
 
 
+def test_guide_freezes_pmcp_bootstrap_env_and_preflight_commands():
+    text = _guide_text()
+    for expected in (
+        "MCP_ALLOWED_ROOTS",
+        "SEMANTIC_SEARCH_ENABLED",
+        "SEMANTIC_DEFAULT_PROFILE",
+        "SEMANTIC_EMBEDDING_BASE_URL",
+        "QDRANT_URL",
+        "SEMANTIC_AUTOSTART_QDRANT",
+        "MCP_AUTO_INDEX",
+        "mcp-index setup semantic --dry-run",
+        "--profile oss_high",
+        "--qdrant-url http://localhost:6333",
+        "--openai-api-base http://ai:8001/v1",
+        "does not create collections",
+        "does not write semantic vectors",
+        "does not start long-running indexing",
+    ):
+        assert expected in text
+
+    assert '"MCP_QDRANT_URL":' not in text
+
+
+def test_guide_freezes_repository_bootstrap_and_readiness_fallback_vocabulary():
+    text = _guide_text()
+    for expected in (
+        "one registered worktree per git common directory",
+        "mcp-index repository register",
+        "mcp-index repository list -v",
+        "mcp-index repository status",
+        "mcp-index artifact workspace-status",
+        "`ready`",
+        "`stale_commit`",
+        "`wrong_branch`",
+        "`missing_index`",
+        "`path_outside_allowed_roots`",
+        "`index_unavailable`",
+        '`safe_fallback: "native_search"`',
+        "`reindex`",
+        "`repository sync`",
+    ):
+        assert expected in text
+
+
 def test_readme_links_to_pmcp_guide_without_duplicating_pilot_command():
     readme_text = _readme_text()
     assert GUIDE_LINK in readme_text
