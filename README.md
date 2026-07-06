@@ -137,6 +137,8 @@ claim; row-level support tiers still live in the support matrix.
 
 This automatically detects your environment and creates the appropriate `.mcp.json` configuration.
 
+For the internal PMCP entry-point pilot, see [PMCP fleet integration](docs/guides/pmcp-fleet-integration.md) for the pinned local override, `stdio` transport requirement, and temporary PMCP ownership boundary. Keep the detailed PMCP override in that guide rather than duplicating it here.
+
 ### 🐳 Docker Setup by Environment
 
 #### Option 1: Basic Search (No API Keys) - 2 Minutes
