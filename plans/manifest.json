@@ -87,6 +87,35 @@
       "task_summary": null,
       "type": "phase",
       "updated_at": "2026-07-06T10:15:01Z"
+    },
+    {
+      "acceptance_criteria_count": null,
+      "created_at": "2026-07-06T11:01:18Z",
+      "file": "plans/phase-plan-v9-PMCPROLL.md",
+      "handoff_ref": ".dev-skills/handoffs/codex-plan-phase/20260706T110118Z-pmcproll-plan.md",
+      "if_gates_produced": [
+        "IF-0-PMCPROLL-1"
+      ],
+      "lanes": [
+        "SL-0",
+        "SL-1",
+        "SL-2"
+      ],
+      "lifecycle": [],
+      "owner_skill": "codex-plan-phase",
+      "phase_alias": "PMCPROLL",
+      "reflection_ref": "/home/viperjuice/.codex/skills/codex-plan-phase/reflections/5ba8e7805715d1cf/main/20260706T110118Z-pmcproll-plan.md",
+      "roadmap_ref": {
+        "file": "specs/phase-plans-v9.md",
+        "slug": "phase-plans-v9",
+        "status": "committed",
+        "type": "phase"
+      },
+      "slug": "v9-PMCPROLL",
+      "status": "committed",
+      "task_summary": null,
+      "type": "phase",
+      "updated_at": "2026-07-06T11:01:18Z"
     }
   ],
   "schema_version": 1
