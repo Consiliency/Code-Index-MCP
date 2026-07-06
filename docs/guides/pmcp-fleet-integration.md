@@ -178,6 +178,83 @@ repository registry. If PMCP-mediated query tools return
 `docs/status/PMCP_FLEET_PILOT.md` before treating indexed results as
 available.
 
+## Fleet Rollout Policy
+
+PMCP rollout stays staged and conservative until the managed runtime proves it
+can expose the same repository registry that the local CLI bootstrap sees.
+
+### Pilot repos
+
+- `Code-Index-MCP`, `pmcp`, `pmcp-code-mode-mcp`, and `agent-harness` remain
+  the only rollout gate for this policy checkpoint.
+- The current adoption verdict is PMCP-blocked for indexed fleet adoption, so
+  these repos must keep using native search for all pilot repos.
+
+### Core engineering repos
+
+- Expand to additional actively maintained engineering repos only after at
+  least one pilot repo reaches readiness `ready` through the PMCP-managed
+  runtime.
+- Keep PMCP lazy-started; fleet-wide auto-start is not allowed.
+- broad auto-registration is not allowed. Operators must register intended
+  repos explicitly and verify the PMCP-managed runtime sees them.
+
+### Long-tail repos
+
+- Long-tail repos stay out of rollout until pilot repos and core engineering
+  repos prove stable bootstrap, registration alignment, and truthful fallback.
+- Agents must use native search whenever PMCP-mediated Code-Index-MCP readiness is not `ready`.
+- If the query surface returns `index_unavailable` with
+  `safe_fallback: "native_search"`, keep using native search.
+
+### Opt-out repos
+
+- Repos with no need for PMCP-managed indexed search should stay on native
+  search and skip PMCP registration entirely.
+- Opt-out remains the default when operators cannot justify the bootstrap and
+  support cost.
+
+### Repos requiring manual constraints
+
+- Repos with stricter path allowlists, bespoke bootstrap requirements, or
+  shared-service conflicts need manual operator constraints before any PMCP
+  adoption step.
+- The same manual-constraint bucket applies when the host cannot provision the
+  required `index-it-mcp` environment cleanly.
+
+## Semantic Versus Lexical Policy
+
+Semantic indexing is enabled only when all of the following are proven for the
+target repo and managed runtime path:
+
+- Qdrant is reachable and correctly configured.
+- The local embedding endpoint is reachable.
+- The `oss_high` profile is selected and compatible with the current host.
+- PMCP env propagation is correct for the managed runtime.
+- PMCP runtime registry alignment is proven for the registered repo.
+- repository readiness is `ready`.
+
+Lexical-only PMCP use is acceptable only after lexical readiness is `ready`
+and semantic readiness is the remaining non-critical blocker. If lexical
+readiness is not `ready`, use native search instead of PMCP-mediated search.
+
+## Troubleshooting Matrix
+
+| Symptom | Meaning | Operator action |
+| --- | --- | --- |
+| wrong transport | PMCP is pointed at the wrong server mode. | Use `index-it-mcp stdio` for the child-process path, not `index-it-mcp serve`. |
+| wrong package version | The managed runtime drifted away from the validated pilot package. | Re-pin to `index-it-mcp==1.2.0` before comparing results. |
+| missing allowed roots | The target repo is outside `MCP_ALLOWED_ROOTS`. | Correct the absolute allowlist and restart the managed runtime. |
+| missing Qdrant | Semantic storage is unavailable. | Keep semantic indexing disabled and continue with native search or lexical-only PMCP only after lexical readiness is `ready`. |
+| missing embedding endpoint | The local embedding endpoint is unavailable. | Keep semantic indexing disabled and use native search or verified lexical-only PMCP. |
+| wrong branch | The checkout does not match the registered/default branch contract. | Switch back to the tracked branch or re-register the intended checkout. |
+| stale commit | The index no longer matches the working commit. | Reindex or sync before trusting indexed results. |
+| missing index | No usable index artifact exists yet. | Create or download the expected index before relying on PMCP queries. |
+| `path_outside_allowed_roots` | The request path violates the server sandbox. | Use a registered repo name or fix `MCP_ALLOWED_ROOTS`. |
+| active system PMCP service versus repo-local command mode | A system PMCP service conflicts with a repo-local command-mode entry. | Point PMCP at the remote URL path while the system service stays active, or disable the conflicting service before using command mode. |
+| PMCP-managed server registry isolation after local CLI bootstrap | The CLI bootstrap succeeded but the PMCP-managed runtime still shows `repositories: []` and returns `unregistered_repository`. | Treat PMCP as blocked for indexed rollout and keep native search until runtime registry alignment is fixed. |
+| host `CPython 3.13` provisioning incompatibilities | The host cannot provision the validated `index-it-mcp` wheel set cleanly. | Keep the repo in the manual-constraints bucket and use the validated local environment or a compatible host before rollout. |
+
 ## Non-Goals
 
 - No PMCP code changes in this repository.

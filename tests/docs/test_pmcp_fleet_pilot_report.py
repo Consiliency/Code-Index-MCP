@@ -34,6 +34,7 @@ def test_report_contains_required_summary_and_verification_fields():
         "Readiness table",
         "PMCP-mediated query matrix",
         "Reindex/fallback evidence",
+        "PMCPROLL rollout verdict",
         "Safe indexed-search verdict",
         "Native-search fallback verdict",
         "Failures and limitations",
@@ -69,6 +70,9 @@ def test_report_names_required_repos_and_truthful_verdicts():
         "pmcp",
         "pmcp-code-mode-mcp",
         "agent-harness",
+        "PMCP-blocked for indexed fleet adoption",
+        "no fleet-wide auto-start",
+        "no semantic rollout until PMCP issue #89 clears runtime registry alignment",
         "none are safe for indexed search through PMCP",
         "all four pilot repos must continue to use native search",
     ):
@@ -85,6 +89,7 @@ def test_report_records_blocking_startup_findings_without_secret_values():
         "repositories: []",
         "unregistered_repository",
         "PMCP issue #89",
+        "CPython 3.13",
     ):
         assert expected in text
 

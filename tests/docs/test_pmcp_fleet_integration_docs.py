@@ -111,8 +111,57 @@ def test_guide_freezes_repository_bootstrap_and_readiness_fallback_vocabulary():
         assert expected in text
 
 
+def test_guide_defines_fleet_rollout_policy_and_enablement_thresholds():
+    text = _guide_text()
+    for expected in (
+        "## Fleet Rollout Policy",
+        "Pilot repos",
+        "Core engineering repos",
+        "Long-tail repos",
+        "Opt-out repos",
+        "Repos requiring manual constraints",
+        "lazy-started",
+        "fleet-wide auto-start is not allowed",
+        "broad auto-registration is not allowed",
+        "must use native search whenever PMCP-mediated Code-Index-MCP readiness is not `ready`",
+        "Semantic indexing is enabled only when",
+        "Lexical-only PMCP use is acceptable only after lexical readiness is `ready`",
+        "Qdrant",
+        "local embedding endpoint",
+        "`oss_high` profile",
+        "PMCP runtime registry alignment",
+        "repository readiness",
+    ):
+        assert expected in text
+
+
+def test_guide_covers_rollout_troubleshooting_matrix():
+    text = _guide_text()
+    for expected in (
+        "## Troubleshooting Matrix",
+        "wrong transport",
+        "wrong package version",
+        "missing allowed roots",
+        "missing Qdrant",
+        "missing embedding endpoint",
+        "wrong branch",
+        "stale commit",
+        "missing index",
+        "`path_outside_allowed_roots`",
+        "system PMCP service",
+        "command mode",
+        "remote URL",
+        "repositories: []",
+        "unregistered_repository",
+        "CPython 3.13",
+    ):
+        assert expected in text
+
+
 def test_readme_links_to_pmcp_guide_without_duplicating_pilot_command():
     readme_text = _readme_text()
     assert GUIDE_LINK in readme_text
     assert "PMCP fleet integration" in readme_text
+    assert "docs/status/PMCP_FLEET_PILOT.md" in readme_text
+    assert "native search for all pilot repos" in readme_text
     assert PINNED_COMMAND not in readme_text

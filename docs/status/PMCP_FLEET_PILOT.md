@@ -90,6 +90,24 @@ bootstrap path:
 - Bounded `reindex` behavior was invoked against `pmcp` through PMCP and
   returned `mutation_performed: false` with `code: "unregistered_repository"`.
 
+## PMCPROLL rollout verdict
+
+PMCP-blocked for indexed fleet adoption at this checkpoint.
+
+- All four pilot repos must continue to use native search.
+- no fleet-wide auto-start is allowed.
+- no semantic rollout until PMCP issue #89 clears runtime registry alignment
+  and at least one pilot repo reaches readiness `ready` through the
+  PMCP-managed runtime.
+- The blocking runtime evidence remains `repositories: []` on the PMCP-managed
+  server and `unregistered_repository` on PMCP-mediated query calls.
+- The active system PMCP service versus repo-local command mode conflict
+  remains an operator-visible rollout hazard and must stay in the guide's
+  troubleshooting matrix.
+- Host `CPython 3.13` provisioning incompatibilities remain a fleet rollout
+  constraint to check during operator bootstrap, even though this reducer did
+  not need a new provisioning attempt to confirm the PMCP-blocked verdict.
+
 ## Safe indexed-search verdict
 
 At this checkpoint, none are safe for indexed search through PMCP.
