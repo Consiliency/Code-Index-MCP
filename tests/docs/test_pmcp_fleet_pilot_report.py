@@ -70,25 +70,26 @@ def test_report_names_required_repos_and_truthful_verdicts():
         "pmcp",
         "pmcp-code-mode-mcp",
         "agent-harness",
-        "PMCP-blocked for indexed fleet adoption",
+        "Controlled lexical PMCP pilot is allowed",
         "no fleet-wide auto-start",
-        "no semantic rollout until PMCP issue #89 clears runtime registry alignment",
-        "none are safe for indexed search through PMCP",
-        "all four pilot repos must continue to use native search",
+        "no semantic rollout is allowed while runtime semantic status is",
+        "lexical PMCP-mediated indexed search for `Code-Index-MCP` only",
+        "Native search remains mandatory for every non-ready pilot repo",
     ):
         assert expected in text
 
 
-def test_report_records_blocking_startup_findings_without_secret_values():
+def test_report_records_registry_alignment_findings_without_secret_values():
     text = _read(REPORT_MD)
 
     for expected in (
-        "system PMCP service",
-        "command mode",
-        "remote URL",
         "repositories: []",
-        "unregistered_repository",
+        "registry env",
+        "bootstrap mismatch",
         "PMCP issue #89",
+        "closed",
+        "PMCP `1.19.1`",
+        "MCP_REPO_REGISTRY",
         "CPython 3.13",
     ):
         assert expected in text
@@ -119,6 +120,7 @@ def test_json_evidence_artifacts_exist_and_include_required_fields():
         '"index-it-mcp"',
         '"configured_env_names"',
         '"metadata_only"',
+        '"MCP_REPO_REGISTRY"',
     ):
         assert expected in startup_text
 
@@ -127,7 +129,9 @@ def test_json_evidence_artifacts_exist_and_include_required_fields():
         "pmcp",
         "pmcp-code-mode-mcp",
         "agent-harness",
-        '"server_registry_state": "empty"',
+        '"server_registry_state": "registered"',
+        '"pmcp_readiness": "ready"',
+        '"pmcp_readiness": "index_empty"',
         '"safe_fallback": "native_search"',
     ):
         assert expected in readiness_text
@@ -139,7 +143,9 @@ def test_json_evidence_artifacts_exist_and_include_required_fields():
         '"tool_name": "symbol_lookup"',
         '"tool_name": "reindex"',
         '"code": "index_unavailable"',
-        '"code": "unregistered_repository"',
+        '"code": "ok"',
+        '"code": "ok_with_semantic_limitation"',
         '"verdict": "pass"',
+        '"verdict": "deferred_by_policy"',
     ):
         assert expected in query_text

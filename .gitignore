@@ -157,6 +157,8 @@ tests/fixtures/repos/
 # MCP Index (tracked for fast setup)
 .mcp-index/code_index.db
 .mcp-index/.index_metadata.json
+.mcp-index/current.db-*
+.mcp-index/semantic_qdrant/
 
 # Local index storage (DO NOT COMMIT)
 .indexes/

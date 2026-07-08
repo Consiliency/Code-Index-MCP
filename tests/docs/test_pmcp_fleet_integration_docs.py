@@ -71,6 +71,7 @@ def test_guide_freezes_pmcp_bootstrap_env_and_preflight_commands():
     text = _guide_text()
     for expected in (
         "MCP_ALLOWED_ROOTS",
+        "MCP_REPO_REGISTRY",
         "SEMANTIC_SEARCH_ENABLED",
         "SEMANTIC_DEFAULT_PROFILE",
         "SEMANTIC_EMBEDDING_BASE_URL",
@@ -95,6 +96,7 @@ def test_guide_freezes_repository_bootstrap_and_readiness_fallback_vocabulary():
     for expected in (
         "one registered worktree per git common directory",
         "mcp-index repository register",
+        "same `MCP_INDEX_STORAGE_PATH` and `MCP_REPO_REGISTRY`",
         "mcp-index repository list -v",
         "mcp-index repository status",
         "mcp-index artifact workspace-status",
@@ -129,7 +131,8 @@ def test_guide_defines_fleet_rollout_policy_and_enablement_thresholds():
         "Qdrant",
         "local embedding endpoint",
         "`oss_high` profile",
-        "PMCP runtime registry alignment",
+        "PMCP `1.19.1`",
+        "configured registry",
         "repository readiness",
     ):
         assert expected in text
@@ -153,6 +156,7 @@ def test_guide_covers_rollout_troubleshooting_matrix():
         "remote URL",
         "repositories: []",
         "unregistered_repository",
+        "MCP_REPO_REGISTRY",
         "CPython 3.13",
     ):
         assert expected in text
@@ -163,5 +167,6 @@ def test_readme_links_to_pmcp_guide_without_duplicating_pilot_command():
     assert GUIDE_LINK in readme_text
     assert "PMCP fleet integration" in readme_text
     assert "docs/status/PMCP_FLEET_PILOT.md" in readme_text
-    assert "native search for all pilot repos" in readme_text
+    assert "controlled lexical PMCP use only for PMCP-ready pilot repos" in readme_text
+    assert "no semantic or fleet-wide indexing rollout" in readme_text
     assert PINNED_COMMAND not in readme_text

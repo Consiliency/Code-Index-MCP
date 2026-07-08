@@ -1,10 +1,11 @@
 {
-  "timestamp": "2026-07-06T10:44:59Z",
+  "timestamp": "2026-07-08T05:24:29Z",
   "phase": "PMCPPILOT",
   "pmcp_query_runtime": {
     "server_name": "index-it-mcp",
-    "server_registry_state": "empty",
-    "summary": "PMCP-mediated get_status reported repositories: [] even after the bounded local bootstrap registered all four pilot repos."
+    "server_registry_state": "registered",
+    "repository_count": 4,
+    "summary": "PMCP-mediated get_status reported four registered pilot repositories. One is ready and three are index_empty."
   },
   "pilot_repositories": [
     {
@@ -13,12 +14,12 @@
       "repo_id": "74f50742925c9613",
       "git_common_directory_identity": "74f50742925c9613",
       "default_branch": "main",
-      "current_commit": "2d8c241a5f88fc185b33152681b31f482b0f525f",
-      "repository_list_readiness": "wrong_branch",
-      "workspace_status_readiness": "wrong_branch",
-      "semantic_readiness": "enrichment_unavailable",
-      "recommended_remediation": "Switch to the tracked branch 'main' or register the intended repository path, then run a full reindex or hydrate a known-good artifact before trusting indexed results.",
-      "safe_fallback": "native_search"
+      "last_indexed_commit": "3c2301f0f1763e8f64582da61648a06d1e7d816b",
+      "pmcp_readiness": "ready",
+      "query_surface": "lexical_indexed_search",
+      "semantic_readiness": "semantic_indexer_unavailable",
+      "recommended_remediation": "Continue controlled lexical PMCP use while readiness remains ready; do not claim semantic readiness.",
+      "safe_fallback": null
     },
     {
       "name": "pmcp",
@@ -26,11 +27,11 @@
       "repo_id": "8527ff168248e14d",
       "git_common_directory_identity": "8527ff168248e14d",
       "default_branch": "main",
-      "current_commit": "cc57dc4820171d323dd1e665accb0efdfc35c7b3",
-      "repository_list_readiness": "index_empty",
-      "workspace_status_readiness": "index_empty",
-      "semantic_readiness": "enrichment_unavailable",
-      "recommended_remediation": "Run reindex to populate the repository index or pull the latest artifact before trusting indexed results.",
+      "last_indexed_commit": "548596eb9176bd377ebc057045bc1c47cd0fe0cc",
+      "pmcp_readiness": "index_empty",
+      "query_surface": "index_unavailable",
+      "semantic_readiness": "semantic_indexer_unavailable",
+      "recommended_remediation": "Use native search until the operator explicitly reindexes or hydrates a known-good artifact and PMCP reports readiness ready.",
       "safe_fallback": "native_search"
     },
     {
@@ -39,11 +40,11 @@
       "repo_id": "7bfc868dae936345",
       "git_common_directory_identity": "7bfc868dae936345",
       "default_branch": "main",
-      "current_commit": "fe70dee6eb7c944fee55050a15918da6769c3e4a",
-      "repository_list_readiness": "index_empty",
-      "workspace_status_readiness": "index_empty",
-      "semantic_readiness": "enrichment_unavailable",
-      "recommended_remediation": "Run reindex to populate the repository index or pull the latest artifact before trusting indexed results.",
+      "last_indexed_commit": "fe70dee6eb7c944fee55050a15918da6769c3e4a",
+      "pmcp_readiness": "index_empty",
+      "query_surface": "index_unavailable",
+      "semantic_readiness": "semantic_indexer_unavailable",
+      "recommended_remediation": "Use native search until the operator explicitly reindexes or hydrates a known-good artifact and PMCP reports readiness ready.",
       "safe_fallback": "native_search"
     },
     {
@@ -52,12 +53,21 @@
       "repo_id": "f5764f0ead6159e7",
       "git_common_directory_identity": "f5764f0ead6159e7",
       "default_branch": "main",
-      "current_commit": "23784fba108d0715361d0b9e551a6e60a5ce9b36",
-      "repository_list_readiness": "index_empty",
-      "workspace_status_readiness": "index_empty",
-      "semantic_readiness": "enrichment_unavailable",
-      "recommended_remediation": "Run reindex to populate the repository index or pull the latest artifact before trusting indexed results.",
+      "last_indexed_commit": "a7b6a4ac880987f7a9532df517ab8eb087c95766",
+      "pmcp_readiness": "index_empty",
+      "query_surface": "index_unavailable",
+      "semantic_readiness": "semantic_indexer_unavailable",
+      "recommended_remediation": "Use native search until the operator explicitly reindexes or hydrates a known-good artifact and PMCP reports readiness ready.",
       "safe_fallback": "native_search"
     }
-  ]
+  ],
+  "registry_alignment_note": {
+    "default_cli_registry": "may_be_stale",
+    "pmcp_registry": "authoritative_for_this_pilot",
+    "required_env_names": [
+      "MCP_INDEX_STORAGE_PATH",
+      "MCP_REPO_REGISTRY"
+    ],
+    "summary": "Registration must run with the same storage env used by PMCP; otherwise local CLI status can diverge from PMCP-mediated readiness."
+  }
 }

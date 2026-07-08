@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-07-06T10:44:59Z",
+  "timestamp": "2026-07-08T05:24:29Z",
   "phase": "PMCPPILOT",
   "startup_attempts": [
     {
@@ -19,7 +19,7 @@
       "tool_name": "get_status",
       "repository": null,
       "request_shape": {},
-      "response_summary": "PMCP-mediated get_status reached index-it-mcp 1.2.0 and reported status unknown with repositories: [].",
+      "response_summary": "PMCP-mediated get_status reached index-it-mcp 1.2.0, reported healthy status, and returned four repositories with one ready and three index_empty.",
       "readiness_state": "server_online",
       "fallback": "none",
       "verdict": "pass"
@@ -30,7 +30,7 @@
       "tool_name": "get_status",
       "repository": null,
       "request_shape": {},
-      "response_summary": "Returned version 1.2.0, tool runtime health, and repositories: [].",
+      "response_summary": "Returned version 1.2.0, runtime health, four repositories, lexical available, semantic unavailable with reason semantic_indexer_unavailable, and graph unavailable.",
       "readiness_state": "server_online",
       "fallback": "none",
       "verdict": "pass"
@@ -48,27 +48,27 @@
       "tool_name": "search_code",
       "repository": "/home/viperjuice/code/Code-Index-MCP",
       "request_shape": {
-        "query": "RepoContext",
+        "query": "Fleet Rollout Policy",
         "repository": "/home/viperjuice/code/Code-Index-MCP",
         "semantic": false
       },
-      "response_summary": "Lexical search returned code index_unavailable with readiness code unregistered_repository and safe_fallback native_search.",
-      "readiness_state": "unregistered_repository",
-      "fallback": "native_search",
-      "code": "index_unavailable",
+      "response_summary": "Lexical search against ready Code-Index-MCP returned indexed results through PMCP.",
+      "readiness_state": "ready",
+      "fallback": "none",
+      "code": "ok",
       "verdict": "pass"
     },
     {
       "tool_name": "symbol_lookup",
       "repository": "/home/viperjuice/code/Code-Index-MCP",
       "request_shape": {
-        "symbol": "RepoContext",
+        "symbol": "RepositoryRegistry",
         "repository": "/home/viperjuice/code/Code-Index-MCP"
       },
-      "response_summary": "Symbol lookup returned code index_unavailable with readiness code unregistered_repository and safe_fallback native_search.",
-      "readiness_state": "unregistered_repository",
-      "fallback": "native_search",
-      "code": "index_unavailable",
+      "response_summary": "Symbol lookup against ready Code-Index-MCP returned an indexed symbol result through PMCP.",
+      "readiness_state": "ready",
+      "fallback": "none",
+      "code": "ok",
       "verdict": "pass"
     },
     {
@@ -79,23 +79,31 @@
         "repository": "/home/viperjuice/code/Code-Index-MCP",
         "semantic": true
       },
-      "response_summary": "Semantic search returned code index_unavailable with readiness code unregistered_repository and safe_fallback native_search.",
-      "readiness_state": "unregistered_repository",
+      "response_summary": "Semantic-flagged search returned results, but get_status still reports semantic status unavailable with reason semantic_indexer_unavailable; semantic rollout is not proven.",
+      "readiness_state": "ready_semantic_unavailable",
+      "fallback": "lexical_or_degraded_results",
+      "code": "ok_with_semantic_limitation",
+      "verdict": "pass_with_limitation"
+    },
+    {
+      "tool_name": "search_code",
+      "repository": "/home/viperjuice/code/pmcp",
+      "request_shape": {
+        "query": "pmcp",
+        "repository": "/home/viperjuice/code/pmcp",
+        "semantic": false
+      },
+      "response_summary": "Lexical search against non-ready pmcp returned code index_unavailable, readiness index_empty, and safe_fallback native_search.",
+      "readiness_state": "index_empty",
       "fallback": "native_search",
       "code": "index_unavailable",
       "verdict": "pass"
-    },
-    {
-      "tool_name": "reindex",
-      "repository": "/home/viperjuice/code/pmcp",
-      "request_shape": {
-        "repository": "/home/viperjuice/code/pmcp"
-      },
-      "response_summary": "Bounded reindex returned code unregistered_repository, left mutation_performed false, and preserved native_search fallback.",
-      "readiness_state": "unregistered_repository",
-      "fallback": "native_search",
-      "code": "unregistered_repository",
-      "verdict": "pass"
     }
-  ]
+  ],
+  "reindex_policy": {
+    "tool_name": "reindex",
+    "invoked_for_remaining_pilot_repos": false,
+    "reason": "Avoid token and compute cost before explicit operator approval for broad indexing.",
+    "verdict": "deferred_by_policy"
+  }
 }

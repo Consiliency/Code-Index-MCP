@@ -2,9 +2,10 @@
 
 This guide freezes the local PMCP pilot contract for `Code-Index-MCP`.
 PMCP owns the shipped gateway manifest and provisioning fix tracked in
-[PMCP issue #89](https://github.com/ViperJuice/pmcp/issues/89). Until that
-upstream work lands, use a repo-local PMCP `.mcp.json` override for internal
-dogfooding.
+[PMCP issue #89](https://github.com/ViperJuice/pmcp/issues/89), which was
+closed after PMCP `1.19.1` shipped the stdio manifest fix and the registry-env
+registration guidance. Keep the repo-local PMCP `.mcp.json` override below as
+the internal pilot contract until the fleet entry is promoted everywhere.
 
 Pilot status report: `docs/status/PMCP_FLEET_PILOT.md`
 ([PMCP Fleet Pilot](../status/PMCP_FLEET_PILOT.md)).
@@ -36,6 +37,7 @@ Use a pinned local override instead of PMCP's current floating manifest entry:
       "env": {
         "MCP_ALLOWED_ROOTS": "/abs/path/to/repos",
         "MCP_INDEX_STORAGE_PATH": "/abs/path/to/.mcp/indexes",
+        "MCP_REPO_REGISTRY": "/abs/path/to/.mcp/indexes/repository_registry.json",
         "SEMANTIC_SEARCH_ENABLED": "true",
         "SEMANTIC_DEFAULT_PROFILE": "oss_high",
         "SEMANTIC_EMBEDDING_BASE_URL": "http://ai:8001/v1",
@@ -58,7 +60,9 @@ This command starts the local child-process MCP transport PMCP expects.
 
 The PMCP local override must use canonical env names. Use `QDRANT_URL`, not
 `MCP_QDRANT_URL`. Keep `MCP_ALLOWED_ROOTS` as an absolute path list that
-matches the repo parents PMCP is allowed to expose.
+matches the repo parents PMCP is allowed to expose. When `MCP_REPO_REGISTRY`
+is set, it must point at the same registry file used by the PMCP-spawned
+server.
 
 ## Why `stdio` And Not `serve`
 
@@ -133,10 +137,15 @@ Use the dry-run output to verify:
 ## Repository Bootstrap And Readiness
 
 Register only the checkout you want PMCP to trust. Public alpha multi-repo
-support allows one registered worktree per git common directory.
+support allows one registered worktree per git common directory. Run
+registration with the same `MCP_INDEX_STORAGE_PATH` and `MCP_REPO_REGISTRY`
+that PMCP passes to the spawned `index-it-mcp` server; otherwise the CLI may
+write to the default registry while PMCP reads a different, empty registry.
 
 ```bash
-mcp-index repository register /abs/path/to/repo
+MCP_INDEX_STORAGE_PATH=/abs/path/to/.mcp/indexes \
+MCP_REPO_REGISTRY=/abs/path/to/.mcp/indexes/repository_registry.json \
+  mcp-index repository register /abs/path/to/repo
 mcp-index repository list -v
 mcp-index repository status
 mcp-index artifact workspace-status
@@ -171,30 +180,35 @@ Interpret readiness before treating indexed results as authoritative:
 Remediation commands such as `reindex` or `repository sync` come after
 non-ready evidence. They are not part of the no-surprise PMCPBOOT preflight.
 
-Current pilot caveat: local `mcp-index repository register` evidence does not
-yet guarantee that the PMCP-managed `index-it-mcp` runtime sees the same
-repository registry. If PMCP-mediated query tools return
-`unregistered_repository`, keep using native search and check
-`docs/status/PMCP_FLEET_PILOT.md` before treating indexed results as
+Current pilot caveat: local `mcp-index repository register` evidence only
+proves the PMCP path when registration uses the same storage env as the
+PMCP-managed runtime. If PMCP-mediated query tools return
+`unregistered_repository`, rerun registration with the configured
+`MCP_INDEX_STORAGE_PATH`/`MCP_REPO_REGISTRY`, keep using native search, and
+check `docs/status/PMCP_FLEET_PILOT.md` before treating indexed results as
 available.
 
 ## Fleet Rollout Policy
 
-PMCP rollout stays staged and conservative until the managed runtime proves it
-can expose the same repository registry that the local CLI bootstrap sees.
+PMCP rollout stays staged and conservative. PMCP `1.19.1` can expose the
+configured registry when registration uses the same storage env, and the live
+pilot has one PMCP-ready repo. Broad rollout still waits on explicit indexing,
+semantic backend proof, and repo-by-repo readiness.
 
 ### Pilot repos
 
 - `Code-Index-MCP`, `pmcp`, `pmcp-code-mode-mcp`, and `agent-harness` remain
   the only rollout gate for this policy checkpoint.
-- The current adoption verdict is PMCP-blocked for indexed fleet adoption, so
-  these repos must keep using native search for all pilot repos.
+- The current adoption verdict is controlled lexical PMCP pilot only:
+  `Code-Index-MCP` is ready through PMCP, while `pmcp`,
+  `pmcp-code-mode-mcp`, and `agent-harness` remain non-ready and must keep
+  using native search.
 
 ### Core engineering repos
 
-- Expand to additional actively maintained engineering repos only after at
-  least one pilot repo reaches readiness `ready` through the PMCP-managed
-  runtime.
+- Expand to additional actively maintained engineering repos only after the
+  operator intentionally registers and indexes each repo through the same
+  PMCP storage env, then verifies PMCP-mediated readiness `ready`.
 - Keep PMCP lazy-started; fleet-wide auto-start is not allowed.
 - broad auto-registration is not allowed. Operators must register intended
   repos explicitly and verify the PMCP-managed runtime sees them.
@@ -252,7 +266,7 @@ readiness is not `ready`, use native search instead of PMCP-mediated search.
 | missing index | No usable index artifact exists yet. | Create or download the expected index before relying on PMCP queries. |
 | `path_outside_allowed_roots` | The request path violates the server sandbox. | Use a registered repo name or fix `MCP_ALLOWED_ROOTS`. |
 | active system PMCP service versus repo-local command mode | A system PMCP service conflicts with a repo-local command-mode entry. | Point PMCP at the remote URL path while the system service stays active, or disable the conflicting service before using command mode. |
-| PMCP-managed server registry isolation after local CLI bootstrap | The CLI bootstrap succeeded but the PMCP-managed runtime still shows `repositories: []` and returns `unregistered_repository`. | Treat PMCP as blocked for indexed rollout and keep native search until runtime registry alignment is fixed. |
+| PMCP-managed server registry isolation after local CLI bootstrap | A plain CLI bootstrap used the default registry while the PMCP-managed runtime used the configured registry, causing `repositories: []` or `unregistered_repository`. | Register again with the same `MCP_INDEX_STORAGE_PATH`/`MCP_REPO_REGISTRY` used by PMCP, then re-check PMCP-mediated readiness; keep native search until ready. |
 | host `CPython 3.13` provisioning incompatibilities | The host cannot provision the validated `index-it-mcp` wheel set cleanly. | Keep the repo in the manual-constraints bucket and use the validated local environment or a compatible host before rollout. |
 
 ## Non-Goals

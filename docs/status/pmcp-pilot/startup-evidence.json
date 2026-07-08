@@ -1,17 +1,21 @@
 {
-  "timestamp": "2026-07-06T10:44:59Z",
+  "timestamp": "2026-07-08T05:24:29Z",
   "phase": "PMCPPILOT",
-  "observed_commit": "2d8c241a5f88fc185b33152681b31f482b0f525f",
+  "observed_commit": "3c2301f0f1763e8f64582da61648a06d1e7d816b",
   "pmcp_health": {
-    "gateway_transport": "http",
-    "system_service_active": true,
-    "project_config_status": "code-index-mcp: lazy (project)",
-    "user_config_status": "index-it-mcp: lazy (user)"
+    "pmcp_version": "1.19.1",
+    "gateway_transport": "gateway",
+    "server_name": "index-it-mcp",
+    "server_status": "online",
+    "tool_count": 8,
+    "startup_policy": "lazy",
+    "startup_source": "user",
+    "auth_state": "none"
   },
   "candidate": {
     "name": "index-it-mcp",
     "source": "user",
-    "transport": "local",
+    "transport": "stdio",
     "provisionable": true,
     "running": true,
     "selected_startup_path": "local_override",
@@ -29,6 +33,7 @@
     "configured_env_names": [
       "MCP_ALLOWED_ROOTS",
       "MCP_INDEX_STORAGE_PATH",
+      "MCP_REPO_REGISTRY",
       "SEMANTIC_SEARCH_ENABLED",
       "SEMANTIC_DEFAULT_PROFILE",
       "SEMANTIC_EMBEDDING_BASE_URL",
@@ -40,28 +45,23 @@
   },
   "startup_observations": [
     {
-      "step": "gateway_catalog_search",
-      "status": "success",
-      "summary": "PMCP catalog exposes index-it-mcp and reports the Code-Index-MCP query tool surface online."
-    },
-    {
       "step": "pmcp_status_probe",
       "status": "success",
-      "summary": "pmcp status --json --server index-it-mcp --probe reports index-it-mcp online with 8 tools from user-scoped PMCP configuration."
+      "summary": "pmcp status --probe --server index-it-mcp reports index-it-mcp online with 8 tools from user-scoped PMCP configuration."
     },
     {
       "step": "get_status",
       "status": "success",
-      "summary": "PMCP-mediated get_status reached index-it-mcp 1.2.0 and reported an empty repository list with status unknown."
+      "summary": "PMCP-mediated get_status reached index-it-mcp 1.2.0, returned status healthy, and reported four registered repositories."
     },
     {
-      "step": "pmcp_doctor",
-      "status": "failed",
-      "summary": "PMCP doctor reports that the repo-local command-mode code-index-mcp config conflicts with the active system PMCP service and should use the remote gateway URL instead."
+      "step": "pmcp_issue_89",
+      "status": "closed",
+      "summary": "PMCP issue #89 is closed after PMCP 1.19.1; the prior repositories-empty blocker was root-caused to registration without the same MCP_INDEX_STORAGE_PATH/MCP_REPO_REGISTRY used by PMCP."
     }
   ],
   "startup_constraints": {
-    "code": "pmcp_runtime_registry_gap",
-    "summary": "PMCP can start index-it-mcp, but the PMCP-managed runtime currently reports no registered repositories for downstream query work."
+    "code": "controlled_lexical_pilot_only",
+    "summary": "PMCP can start and query index-it-mcp, but semantic runtime status is unavailable and three pilot repos remain index_empty."
   }
 }
