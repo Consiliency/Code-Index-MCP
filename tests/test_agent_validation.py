@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
+
+import pytest
 
 from scripts import agent_validation
 
@@ -72,3 +75,38 @@ def test_dagger_offload_requires_explicit_command(monkeypatch) -> None:
         assert "AGENT_DAGGER_COMMAND" in str(exc)
     else:
         raise AssertionError("expected dagger offload to fail closed without a command")
+
+
+def test_changed_paths_includes_deleted_and_untracked_names(tmp_path, monkeypatch):
+    monkeypatch.setattr(agent_validation, "REPO", tmp_path)
+    subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
+    tracked = tmp_path / "deleted source.py"
+    tracked.write_text("pass\n")
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-m",
+            "fixture",
+        ],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+    tracked.unlink()
+    (tmp_path / "untracked source.py").write_text("pass\n")
+    assert agent_validation._changed_paths() == ["deleted source.py", "untracked source.py"]
+    assert agent_validation.classify_changed_paths(agent_validation._changed_paths()) == "gate"
+
+
+def test_changed_paths_fails_closed_outside_git(tmp_path, monkeypatch):
+    monkeypatch.setattr(agent_validation, "REPO", tmp_path)
+    with pytest.raises(RuntimeError, match="Cannot determine changed paths"):
+        agent_validation._changed_paths()

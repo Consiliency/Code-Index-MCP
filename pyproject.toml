@@ -49,7 +49,7 @@ dependencies = [
     "qdrant-client>=1.7.0",
     "numpy>=1.24.0",
     "psutil>=5.9.0",
-    "baml-py>=0.220.0",
+    "baml-py==0.221.0",
 ]
 
 [project.optional-dependencies]
@@ -165,7 +165,7 @@ include = ["mcp_server*"]
 exclude = ["tests*", "data*", "logs*", "config*", "backup*", "docker*", "ai_docs*", "test_results*", "architecture*", "nginx*", "k8s*"]
 
 [tool.setuptools.package-data]
-mcp_server = ["py.typed"]
+mcp_server = ["py.typed", "storage/migrations/*.sql"]
 
 [tool.black]
 line-length = 100

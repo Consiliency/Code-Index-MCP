@@ -1095,7 +1095,8 @@ class EnhancedDispatcher:
                     # First try symbols table for exact matches
                     cursor.execute(
                         """
-                        SELECT s.name, s.kind, s.line_start, s.signature, s.documentation, f.path
+                        SELECT s.name, s.kind, s.line_start, s.line_end,
+                               s.signature, s.documentation, f.path, f.language
                         FROM symbols s
                         JOIN files f ON s.file_id = f.id
                         WHERE s.name = ? OR s.name LIKE ?
@@ -1107,18 +1108,20 @@ class EnhancedDispatcher:
 
                     row = cursor.fetchone()
                     if row:
-                        name, kind, line, signature, doc, filepath = row
+                        name, kind, line, end_line, signature, doc, filepath, language = row
                         conn.close()
 
                         # Return proper SymbolDef dict
                         return {
                             "symbol": name,
                             "kind": kind,
-                            "language": "unknown",  # Not stored in symbols table
+                            "language": language or "unknown",
                             "signature": signature or f"{kind} {name}",
                             "doc": doc,
                             "defined_in": filepath,
                             "line": line or 1,
+                            "start_line": line or 1,
+                            "end_line": end_line or line or 1,
                             "span": (0, len(name)),
                         }
 
@@ -1166,6 +1169,8 @@ class EnhancedDispatcher:
                                     "doc": None,
                                     "defined_in": filepath,
                                     "line": 1,
+                                    "start_line": 1,
+                                    "end_line": 1,
                                     "span": (0, len(symbol)),
                                 }
                     except sqlite3.OperationalError:

@@ -1879,7 +1879,7 @@ requires-dist = [
     { name = "argon2-cffi", specifier = ">=23.1.0" },
     { name = "asyncpg", marker = "extra == 'production'", specifier = ">=0.29" },
     { name = "asynctest", marker = "extra == 'dev'", specifier = ">=0.13.0" },
-    { name = "baml-py", specifier = ">=0.220.0" },
+    { name = "baml-py", specifier = "==0.221.0" },
     { name = "bandit", marker = "extra == 'dev'", specifier = ">=1.7.5" },
     { name = "bcrypt", specifier = ">=4.0.0" },
     { name = "black", marker = "extra == 'dev'", specifier = ">=23.7.0" },

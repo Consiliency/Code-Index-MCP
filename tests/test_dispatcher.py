@@ -1031,6 +1031,21 @@ def _make_repo_ctx(sqlite_store=None) -> RepoContext:
 class TestEnhancedDispatcherProtocolConformance:
     """EnhancedDispatcher must conform to DispatcherProtocol (SL-1.1)."""
 
+    def test_direct_symbol_response_satisfies_http_contract(self, sqlite_store):
+        from pydantic import TypeAdapter
+        from mcp_server.plugin_base import SymbolDef
+
+        repo = sqlite_store.create_repository("/tmp/test-repo", "fixture")
+        file_id = sqlite_store.store_file(
+            repo, "/tmp/test-repo/source.py", "source.py", language="python"
+        )
+        sqlite_store.store_symbol(file_id, "fixture_symbol", "function", line_start=3, line_end=18)
+        result = Dispatcher([]).lookup(_make_repo_ctx(sqlite_store), "fixture_symbol")
+        value = TypeAdapter(SymbolDef).validate_python(result)
+        assert value["start_line"] == 3
+        assert value["end_line"] == 18
+        assert value["language"] == "python"
+
     def test_isinstance_dispatcher_protocol(self):
         """runtime_checkable isinstance check must pass."""
         d = Dispatcher([])

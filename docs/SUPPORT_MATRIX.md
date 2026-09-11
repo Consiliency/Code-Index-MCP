@@ -37,9 +37,9 @@ The client/transport compatibility reducer for the current MCP surface is
 
 ## Claim tiers
 
-- **Stable prep**: `v1.4.0` is the prepared, unpublished package and container
-  contract. It is the repo-owned surface that downstream `GADISP` dispatches
-  and verifies.
+- **Stable prep**: The historical `GADISP` preparation is complete and `v1.4.0`
+  was published on 2026-07-19. Publication is not fleet acceptance; v13 is the
+  active hardening effort, with progress in `docs/status/V13_EXECUTION.md`.
 - **Beta**: Multi-repo support, STDIO, and secondary tool readiness remain beta
   surfaces. Passing TOOLRDY evidence is readiness evidence, not a GA support
   claim or a support-matrix expansion.
@@ -139,6 +139,24 @@ topology, or install-surface support expansion.
 | Default sandboxed plugin execution | beta | Default security posture | `sandbox_supported`, `activation_mode`, sandbox docs | Coverage varies by language and is authoritative through `plugin_availability` |
 | Unsandboxed or sandbox-disabled plugin path | disabled-by-default | Explicit operator opt-in only | `activation_mode=disabled_by_default`, sandbox docs | Enabling unsandboxed fallback does not widen documented default support |
 | Same-repo sibling worktrees and non-default indexed routing | unsupported | Outside the indexed-routing contract | readiness classifier, v3 topology docs, failure-matrix tests | Use native search or readiness remediation instead of treating this as indexed support |
+
+## V13 Verification Boundary
+
+Published tiers above are unchanged. The `>=3.12` package requirement and
+OS-independent classifier are compatibility declarations, not proof of every
+Python release or operating system. Current remediation starts with Linux and
+Python 3.12; Python 3.13+, macOS and Windows need their own installed-runtime
+evidence before rollout on those combinations. No blanket 48-language result
+is implied by a Python fixture or a registry inventory.
+
+The installed wheel smoke now checks fresh and upgraded SQLite databases,
+registered Git indexing, real SDK queries/refusals and a second STDIO session.
+The container smoke exercises the configured non-root HTTP startup and mounted
+Git fixture, not only health. A failing node blocks distribution acceptance;
+actual results belong in `docs/validation/v13/DIST.json`, not this description.
+BAML generation and runtime are pinned together at 0.221.0; regeneration is
+offline and does not call the inference client declared in the source contract.
+PMCP/UI, live vectors, signing and contention remain separate downstream gates.
 
 ## Notes
 

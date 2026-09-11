@@ -623,6 +623,29 @@ def _build_tool_list() -> list[types.Tool]:
                     _object_schema(
                         {
                             "path": {"type": "string"},
+                            "mode": {"const": "staged_full"},
+                            "indexed_files": {"type": "integer"},
+                            "mutation_performed": {"const": True},
+                            "commit": {"type": ["string", "null"]},
+                            "recovery": {"type": ["object", "null"]},
+                            "semantic": {"type": ["object", "null"]},
+                        },
+                        required=("path", "mode", "indexed_files", "mutation_performed", "commit"),
+                        additional_properties=True,
+                    ),
+                    _object_schema(
+                        {
+                            "error": {"const": "Full repository rebuild required"},
+                            "code": {"const": "full_rebuild_required"},
+                            "readiness": {"type": "object"},
+                            "mutation_performed": {"const": False},
+                        },
+                        required=("error", "code", "readiness", "mutation_performed"),
+                        additional_properties=True,
+                    ),
+                    _object_schema(
+                        {
+                            "path": {"type": "string"},
                             "mode": {"const": "file"},
                             "indexed_files": {"const": 1},
                             "durable_files": {"type": ["integer", "null"]},
@@ -641,18 +664,15 @@ def _build_tool_list() -> list[types.Tool]:
                     _object_schema(
                         {
                             "error": {"const": "Reindex failed"},
-                            "code": {"const": "reindex_failed"},
+                            "code": {"type": "string"},
                             "path": {"type": "string"},
                             "message": {"type": "string"},
-                            "details": {"type": "string"},
+                            "details": {"type": ["string", "null"]},
                             "mutation_performed": {"const": False},
                         },
                         required=(
                             "error",
                             "code",
-                            "path",
-                            "message",
-                            "details",
                             "mutation_performed",
                         ),
                         additional_properties=True,

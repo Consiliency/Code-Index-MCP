@@ -8,7 +8,7 @@ Worktree: `/mnt/workspace/worktrees/Code-Index-MCP-v13-audit-remediation`.
 | Phase | Status | Evidence |
 | --- | --- | --- |
 | FREEZE | Accepted; owner decisions approved | `docs/validation/v13/FREEZE.json` |
-| DIST | Planning | No implementation acceptance claimed |
+| DIST | Implementation checkpoint; final acceptance rerun pending | Installed wheel/image checks passed; no phase gate emitted yet |
 | STATE | Not started | No implementation acceptance claimed |
 | SAFETY | Not started | No implementation acceptance claimed |
 | DATA | Not started | No implementation acceptance claimed |
@@ -50,10 +50,20 @@ The upstream startup warning remains tracked by [agent-harness#819](https://gith
 Normal closeout recovered and blocked synthetic invalid inputs in both tested
 import orders earlier; this is not a reason to bypass candidate-specific checks.
 
+## DIST Checkpoint
+
+- SQL migrations are packaged, loaded as installed resources, reconciled transactionally, and checked for fresh/partial-upgrade/reopen parity.
+- Preopened pooled connections refresh schema visibility; in-memory stores retain their database across connection boundaries.
+- Real isolated wheel STDIO and configured non-root container HTTP workflows cover registration, indexing, queries, no match, refusal and restart.
+- Corrected staged reindex output schemas and HTTP symbol line bounds exposed by those installed workflows.
+- BAML generator/runtime/client are pinned and reproducible; historical tests, workflow census, changed-path routing and support/coverage documentation are aligned.
+- The first stamped run recorded 2,975 broad-suite passes and 313 phase-suite passes, but rejected acceptance because the separately invoked Git integration command selected zero tests. Its evidence remains intact under `.phase-loop/runs/v13-DIST-20260911-final/`.
+- Explicit integration selection exposed a pooled-schema regression; the focused reproducer and all nine Git integration tests now pass (16 combined tests). A new full stamped run must accept the final candidate, including wheel/image hashes, before IF-0-DIST-1 is produced.
+
 ## Resume
 
 Read `docs/validation/v13/FREEZE.json` and
 `.dev-skills/handoffs/codex-execute-phase/latest.md` in this worktree.
 Next phase: DIST.
-Command: `codex-plan-phase specs/phase-plans-v13.md DIST`.
+Command: `codex-execute-phase plans/phase-plan-v13-DIST.md`.
 Do not restart v9 or infer v13 completion from old primary-checkout state.

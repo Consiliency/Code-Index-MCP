@@ -142,6 +142,45 @@
     },
     {
       "acceptance_criteria_count": 3,
+      "created_at": "2026-09-11T09:34:36.389431+00:00",
+      "file": "plans/phase-plan-v13-DIST.md",
+      "handoff_ref": ".dev-skills/handoffs/codex-plan-phase/latest.md",
+      "if_gates_produced": [],
+      "lanes": [
+        "SL-0",
+        "SL-1",
+        "SL-2"
+      ],
+      "lifecycle": [
+        {
+          "at": "2026-09-11T09:34:36Z",
+          "by": "codex-execute-phase",
+          "metadata": {
+            "base_commit": "e73f9cf",
+            "issue_inventory": [],
+            "mode": "manual"
+          },
+          "transition": "executing"
+        }
+      ],
+      "owner_skill": "codex-plan-phase",
+      "phase_alias": "DIST",
+      "reflection_ref": null,
+      "registration_note": "Manual DIST planning and execution began before ledger registration; actual prior progress retained in git diff and test evidence.",
+      "roadmap_ref": {
+        "file": "specs/phase-plans-v13.md",
+        "slug": "phase-plans-v13",
+        "status": "committed",
+        "type": "roadmap"
+      },
+      "slug": "phase-plan-v13-DIST",
+      "status": "executing",
+      "task_summary": "Repair installed distribution and verification fidelity",
+      "type": "phase",
+      "updated_at": "2026-09-11T09:34:36Z"
+    },
+    {
+      "acceptance_criteria_count": 3,
       "artifact_state": "staged",
       "created_at": "2026-09-11T05:33:57Z",
       "execution_mode": "manual",

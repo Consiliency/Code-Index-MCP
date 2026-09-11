@@ -10,8 +10,10 @@ import json
 import logging
 import re
 import sqlite3
+import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
+from importlib.resources import files
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
@@ -362,6 +364,14 @@ class SQLiteStore:
         self.db_path = db_path
         self.path_resolver = path_resolver or PathResolver()
         self._pool = pool
+        self._memory_uri = None
+        self._memory_anchor = None
+        if db_path == ":memory:" and pool is None:
+            # Keep the database alive while allowing the existing nested read connections.
+            self._memory_uri = f"file:index-it-{uuid.uuid4().hex}?mode=memory&cache=shared"
+            self._memory_anchor = sqlite3.connect(
+                self._memory_uri, uri=True, check_same_thread=False
+            )
         self._readonly = False
         self._readonly_diagnostics: Optional[Dict[str, Any]] = None
 
@@ -379,6 +389,9 @@ class SQLiteStore:
         """Close the store.  If a connection pool is attached, drain it."""
         if self._pool is not None:
             self._pool.close_all()
+        if self._memory_anchor is not None:
+            self._memory_anchor.close()
+            self._memory_anchor = None
 
     def get_readonly_diagnostics(self) -> Optional[Dict[str, Any]]:
         """Return the most recent storage-failure provenance that forced read-only mode."""
@@ -727,9 +740,19 @@ class SQLiteStore:
                 logger.debug("Skipping migrations for BM25-only database")
                 return
 
-        migrations_dir = Path(__file__).parent / "migrations"
-        if not migrations_dir.exists():
-            return
+        migrations_dir = files("mcp_server.storage").joinpath("migrations")
+        if not migrations_dir.is_dir():
+            raise RuntimeError(
+                "Installed SQLite migration resources are missing; reinstall index-it-mcp"
+            )
+        migration_files = sorted(
+            (item for item in migrations_dir.iterdir() if item.name.endswith(".sql")),
+            key=lambda item: item.name,
+        )
+        if not migration_files:
+            raise RuntimeError(
+                "Installed SQLite migration resources are empty; reinstall index-it-mcp"
+            )
 
         with self._get_connection() as conn:
             # Get current schema version
@@ -739,40 +762,63 @@ class SQLiteStore:
             except sqlite3.OperationalError:
                 current_version = 0
 
-            # Run migrations
-            for migration_file in sorted(migrations_dir.glob("*.sql")):
+            # Reconcile pre-v7 partial scripts once, including falsely advanced versions.
+            for migration_file in migration_files:
                 # Extract version from filename (e.g., "002_relative_paths.sql" -> 2)
                 try:
-                    version = int(migration_file.stem.split("_")[0])
+                    version = int(migration_file.name.split("_")[0])
                 except (ValueError, IndexError):
                     continue
 
-                if version > current_version:
+                if version > current_version or (current_version < 7 and 2 <= version <= 7):
                     logger.info(f"Running migration {migration_file.name}")
                     try:
-                        with open(migration_file, "r") as f:
-                            conn.executescript(f.read())
+                        conn.execute("BEGIN IMMEDIATE")
+                        statement = ""
+                        for line in migration_file.read_text(encoding="utf-8").splitlines(True):
+                            statement += line
+                            if not sqlite3.complete_statement(statement):
+                                continue
+                            try:
+                                conn.execute(statement)
+                            except sqlite3.OperationalError as exc:
+                                ddl = re.sub(
+                                    r"^\s*--[^\n]*", "", statement, flags=re.MULTILINE
+                                ).strip()
+                                addition = re.match(
+                                    r"ALTER\s+TABLE\s+(\w+)\s+ADD\s+COLUMN\s+(\w+)\b",
+                                    ddl,
+                                    re.IGNORECASE,
+                                )
+                                if not (
+                                    addition
+                                    and str(exc).lower().startswith("duplicate column name:")
+                                    and self._check_column_exists(conn, *addition.groups())
+                                ):
+                                    raise
+                            statement = ""
+                        if re.sub(r"--[^\n]*", "", statement).strip():
+                            raise sqlite3.OperationalError("Incomplete migration statement")
+                        conn.commit()
                         logger.info(f"Completed migration to version {version}")
-                    except sqlite3.OperationalError as e:
-                        # Handle duplicate column errors gracefully (for ALTER TABLE ADD COLUMN)
-                        if "duplicate column name" in str(e).lower():
-                            logger.info(
-                                f"Migration {migration_file.name} encountered duplicate column (likely already applied), continuing..."
-                            )
-                        else:
-                            raise
+                    except Exception:
+                        conn.rollback()
+                        raise
 
         self._add_repo_identity_columns()
 
     def _add_repo_identity_columns(self) -> None:
         """Additive migration: ensure repositories has tracked_branch and git_common_dir."""
         with self._get_connection() as conn:
+            if not conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='repositories'"
+            ).fetchone():
+                # Permit health_check to diagnose incomplete, version-stamped databases.
+                return
             for col in ("tracked_branch", "git_common_dir"):
-                try:
+                if not self._check_column_exists(conn, "repositories", col):
                     conn.execute(f"ALTER TABLE repositories ADD COLUMN {col} TEXT")
                     logger.debug(f"Added column repositories.{col}")
-                except sqlite3.OperationalError:
-                    pass  # column already exists
 
     @contextmanager
     def _get_connection(self):
@@ -787,6 +833,8 @@ class SQLiteStore:
                 conn.row_factory = sqlite3.Row
                 conn.execute("PRAGMA foreign_keys = ON")
                 try:
+                    # Preopened connections may cache the empty schema before migrations.
+                    conn.execute("SELECT name FROM sqlite_master LIMIT 1").fetchone()
                     yield conn
                     conn.commit()
                 except sqlite3.OperationalError as e:
@@ -798,7 +846,12 @@ class SQLiteStore:
                     conn.rollback()
                     raise
         else:
-            conn = sqlite3.connect(self.db_path)
+            if self._memory_uri is not None:
+                if self._memory_anchor is None:
+                    raise RuntimeError("In-memory SQLiteStore is closed")
+                conn = sqlite3.connect(self._memory_uri, uri=True)
+            else:
+                conn = sqlite3.connect(self.db_path)
             conn.row_factory = sqlite3.Row
             conn.execute("PRAGMA foreign_keys = ON")
             try:
