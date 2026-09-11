@@ -724,17 +724,11 @@ class RepositoryRegistry:
                 text=True,
                 check=True,
             )
-            return self._normalize_branch_name(result.stdout.strip())
+            return result.stdout.strip()
         except subprocess.CalledProcessError:
             return None
         except FileNotFoundError:
             return None
-
-    def _normalize_branch_name(self, branch: str) -> str:
-        """Normalize branch naming for compatibility with main-first workflows."""
-        if branch == "master":
-            return "main"
-        return branch
 
     def _get_git_remote(self, repo_path: Path) -> Optional[str]:
         """Return origin remote URL for a repository path."""

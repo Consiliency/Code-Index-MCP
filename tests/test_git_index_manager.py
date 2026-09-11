@@ -469,6 +469,7 @@ def test_staged_rebuild_interrupted_publication_remains_non_ready(tmp_path, fail
 def test_staged_rebuild_refuses_wrong_branch_without_mutation(tmp_path):
     repo = _make_git_repo(tmp_path)
     commit = _get_head_commit(repo)
+    subprocess.run(["git", "checkout", "-qb", "feature"], cwd=repo, check=True)
     repo_info = _make_repo_info(repo, commit)
     repo_info.current_branch = "feature"
     _seed_index(repo_info.index_path, repo, "old.py")

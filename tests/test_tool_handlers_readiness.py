@@ -650,6 +650,11 @@ def test_reindex_reports_additive_semantic_stage_metadata(tmp_path, monkeypatch)
     ctx.sqlite_store = MagicMock()
     ctx.sqlite_store.db_path = str(tmp_path / "index.db")
     ctx.sqlite_store.rebuild_fts_code.return_value = 1
+    ctx.staging = False
+    ctx.sqlite_store.path_resolver.normalize_path.return_value = "."
+    ctx.sqlite_store._get_connection.return_value.__enter__.return_value.execute.return_value.fetchone.return_value = (
+        1,
+    )
     resolver = FakeResolver(
         RepositoryReadiness(
             state=RepositoryReadinessState.READY,
@@ -669,7 +674,7 @@ def test_reindex_reports_additive_semantic_stage_metadata(tmp_path, monkeypatch)
     )
 
     data = _parsed(result)
-    assert data["summaries_written"] == 1
+    assert data.get("summaries_written") == 1, data
     assert data["summary_chunks_attempted"] == 2
     assert data["summary_missing_chunks"] == 1
     assert data["semantic_blocked"] == 1
@@ -689,6 +694,11 @@ def test_reindex_single_file_success_returns_object_payload(tmp_path, monkeypatc
     ctx = MagicMock()
     ctx.workspace_root = worktree
     ctx.sqlite_store = MagicMock()
+    ctx.staging = False
+    ctx.sqlite_store.path_resolver.normalize_path.return_value = "demo.py"
+    ctx.sqlite_store._get_connection.return_value.__enter__.return_value.execute.return_value.fetchone.return_value = (
+        1,
+    )
     resolver = FakeResolver(
         RepositoryReadiness(
             state=RepositoryReadinessState.READY,
@@ -708,7 +718,7 @@ def test_reindex_single_file_success_returns_object_payload(tmp_path, monkeypatc
     )
 
     data = _parsed(result)
-    assert data["path"] == str(source_file)
+    assert data.get("path") == str(source_file), data
     assert data["mode"] == "file"
     assert data["indexed_files"] == 1
     assert data["mutation_performed"] is True

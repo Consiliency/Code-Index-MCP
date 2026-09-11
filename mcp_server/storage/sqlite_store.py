@@ -2636,14 +2636,14 @@ class SQLiteStore:
         # A private, ephemeral FTS table ranks exact chunks without modifying the
         # admitted index or matching text from another chunk in the same file.
         with closing(sqlite3.connect(":memory:")) as ranking:
-            ranking.execute("CREATE VIRTUAL TABLE candidates USING fts5(content)")
+            ranking.execute("CREATE VIRTUAL TABLE fts_code USING fts5(content, file_id UNINDEXED)")
             ranking.executemany(
-                "INSERT INTO candidates(rowid, content) VALUES (?, ?)",
+                "INSERT INTO fts_code(rowid, content) VALUES (?, ?)",
                 [(index, row["snippet"]) for index, row in enumerate(results)],
             )
             matches = ranking.execute(
-                "SELECT rowid, bm25(candidates) FROM candidates WHERE candidates MATCH ? "
-                "ORDER BY bm25(candidates), rowid LIMIT ?",
+                "SELECT rowid, bm25(fts_code) FROM fts_code WHERE fts_code MATCH ? "
+                "ORDER BY bm25(fts_code), rowid LIMIT ?",
                 (" AND ".join('"' + term + '"' for term in terms), limit),
             ).fetchall()
         return [{**results[index], "score": -rank} for index, rank in matches]
@@ -3305,6 +3305,7 @@ class SQLiteStore:
         limit: int = 20,
         offset: int = 0,
         columns: Optional[List[str]] = None,
+        file_pattern: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """
         Perform BM25 search using FTS5.
@@ -3349,10 +3350,12 @@ class SQLiteStore:
                         OR CAST(fts.file_id AS TEXT) = f.path
                         OR CAST(fts.file_id AS TEXT) = f.relative_path
                     WHERE fts_code MATCH ?
+                        AND (? IS NULL OR COALESCE(f.path, CAST(fts.file_id AS TEXT)) GLOB ?
+                             OR f.relative_path GLOB ?)
                     ORDER BY bm25(fts_code)
                     LIMIT ? OFFSET ?
                     """,
-                    (query, limit, offset),
+                    (query, file_pattern, file_pattern, file_pattern, limit, offset),
                 )
             elif table == "bm25_content" and "filepath" in table_columns:
                 # Legacy BM25 schema with direct filepath column

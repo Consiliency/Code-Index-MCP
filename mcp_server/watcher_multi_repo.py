@@ -703,17 +703,14 @@ class MultiRepositoryWatcher:
             result = self.index_manager.sync_repository_index(repo_id)
 
             successful_mutation = result.action in {"full_index", "incremental_update"}
-            if successful_mutation and result.files_processed > 0:
+            if successful_mutation:
                 logger.info(
                     f"Repository {repo_id} synced: "
                     f"{result.files_processed} files in {result.duration_seconds:.2f}s"
                 )
 
-                # Create and upload artifact if enabled
                 repo_info = self.registry.get_repository(repo_id)
-                if repo_info and repo_info.artifact_enabled:
-                    synced_commit = getattr(result, "commit", None) or commit
-                    self._create_and_upload_artifact(repo_id, synced_commit)
+                synced_commit = getattr(result, "commit", None) or commit
 
                 if (
                     repo_info
@@ -766,54 +763,6 @@ class MultiRepositoryWatcher:
 
         except Exception as e:
             logger.error(f"Failed to sync repository {repo_id}: {type(e).__name__}")
-
-    def _create_and_upload_artifact(self, repo_id: str, commit: str):
-        """Create and upload artifact for commit.
-
-        Args:
-            repo_id: Repository ID
-            commit: Git commit SHA
-        """
-        try:
-            repo_info = self.registry.get_repository(repo_id)
-            if not repo_info:
-                return
-
-            index_path = Path(repo_info.index_location)
-
-            # Create artifact
-            artifact_path = self.artifact_manager.create_commit_artifact(
-                repo_id,
-                commit,
-                index_path,
-                tracked_branch=getattr(repo_info, "tracked_branch", None) or "main",
-            )
-
-            if artifact_path:
-                logger.info(f"Created artifact for {repo_id} commit {commit[:8]}")
-
-                # Artifact upload via watcher is not yet implemented.
-                # To upload indexes to GitHub Artifacts, use the CI workflow
-                # (.github/workflows/index-management.yml) which calls
-                # scripts/index-artifact-upload.py.
-                logger.warning(
-                    f"Artifact created locally for {repo_id} but not uploaded. "
-                    "Run the CI workflow to upload indexes to GitHub Artifacts."
-                )
-                if hasattr(self.registry, "update_artifact_state"):
-                    self.registry.update_artifact_state(
-                        repo_id,
-                        last_published_commit=commit,
-                        artifact_health="local_only",
-                    )
-
-                # Clean up old artifacts
-                removed = self.artifact_manager.cleanup_old_artifacts(repo_id, keep_last=5)
-                if removed > 0:
-                    logger.info(f"Removed {removed} old artifacts for {repo_id}")
-
-        except Exception as e:
-            logger.error(f"Failed to create artifact for {repo_id}: {type(e).__name__}")
 
     def sync_all_repositories(self):
         """Manually trigger sync for all repositories."""

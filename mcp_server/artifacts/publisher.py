@@ -60,7 +60,7 @@ class ArtifactPublisher:
         tracked_branch: str = "main",
         index_location: Path | str | None = None,
         index_path: Path | str | None = None,
-        repo_path: Path | str = ".",
+        repo_path: Path | str | None = None,
         semantic_indexer=None,
     ) -> ArtifactRef:
         """Idempotent publish: creates a SHA-keyed release and atomically moves index-latest.
@@ -77,12 +77,20 @@ class ArtifactPublisher:
         release_url = f"https://github.com/{repo}/releases/tag/{sha_tag}"
 
         try:
+            if repo_path is not None:
+                from .artifact_upload import IndexArtifactUploader
+
+                selected_repo = IndexArtifactUploader._detect_repository(self._uploader, repo_path)
+                if selected_repo.casefold() != repo.casefold():
+                    raise ArtifactError(
+                        "Publisher destination does not match the selected repository"
+                    )
             previous_artifact_id = self._get_latest_commit(repo)
             archive_path, checksum, size = self._uploader.compress_indexes(
                 Path(f"index-archive-{safe_repo}-{safe_branch}-{short_sha}-{uuid4().hex}.tar.gz"),
                 index_location=index_location,
                 index_path=index_path,
-                repo_path=repo_path,
+                repo_path=repo_path or ".",
                 semantic_indexer=semantic_indexer,
             )
             attestation = attest(archive_path, repo=repo, gh_cmd=self._gh_cmd)

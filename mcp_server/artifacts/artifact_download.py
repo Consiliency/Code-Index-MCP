@@ -54,8 +54,13 @@ class IndexArtifactDownloader:
         *,
         index_manager=None,
         registry=None,
+        repo_path: Path | str | None = None,
     ):
-        self.repo = repo or self._detect_repository()
+        self.repo = repo or (
+            self._detect_repository(repo_path)
+            if repo_path is not None
+            else self._detect_repository()
+        )
         self.token = token or os.environ.get("GITHUB_TOKEN", "")
         self.api_base = f"https://api.github.com/repos/{self.repo}"
         self._index_manager = index_manager
@@ -63,27 +68,10 @@ class IndexArtifactDownloader:
         if not self.token:
             print("⚠️  No GitHub token found. Using gh CLI for authentication.")
 
-    def _detect_repository(self) -> str:
-        try:
-            result = subprocess.run(
-                ["git", "remote", "get-url", "origin"],
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            url = result.stdout.strip()
-            if "github.com" not in url:
-                raise ValueError(f"Not a GitHub repository: {url}")
-            if url.startswith("git@"):
-                parts = url.split(":", 1)[1]
-            else:
-                parts = url.split("github.com/", 1)[1]
-            return parts.rstrip(".git")
-        except Exception as exc:
-            raise RuntimeError(
-                "Failed to detect repository. Pass --repo owner/name or run inside a "
-                f"git clone with origin configured: {exc}"
-            ) from exc
+    def _detect_repository(self, repo_path: Path | str | None = None) -> str:
+        from .artifact_upload import IndexArtifactUploader
+
+        return IndexArtifactUploader._detect_repository(self, repo_path)
 
     def list_artifacts(self, name_filter: Optional[str] = None) -> List[Dict[str, Any]]:
         print("🔍 Fetching available artifacts...")

@@ -11,7 +11,7 @@ Worktree: `/mnt/workspace/worktrees/Code-Index-MCP-v13-audit-remediation`.
 | DIST | Accepted | `docs/validation/v13/DIST.json`; IF-0-DIST-1 |
 | STATE | Accepted | `docs/validation/v13/STATE.json`; IF-0-STATE-1 |
 | SAFETY | Accepted | `docs/validation/v13/SAFETY.json`; IF-0-SAFETY-1 |
-| DATA | Not started | No implementation acceptance claimed |
+| DATA | Implemented; final verification pending | Candidate contract/runbook; no IF/EC acceptance yet |
 | PILOT | Not started | No inference or browser acceptance claimed |
 | PREP | Not started | No version bump or implementation code review claimed |
 | SHIP | Not started | No merge, publication or issue closure claimed |
@@ -70,10 +70,10 @@ environment refresh and the 314-test phase suite. Broad offline baseline:
 and restart. Artifact hashes and exclusions are in the DIST receipt. Earlier
 failed attempts remain preserved and are not accepted evidence.
 
-Read `docs/validation/v13/STATE.json` and
+Read `docs/validation/v13/SAFETY.json` and
 `.dev-skills/handoffs/codex-execute-phase/latest.md` in this worktree.
-Next phase: SAFETY, execute the validated two-lane plan manually.
-Command: `codex-execute-phase plans/phase-plan-v13-SAFETY.md`.
+Current phase: DATA, finish exact-candidate verification and its evidence reducer.
+Command: `codex-execute-phase plans/phase-plan-v13-DATA.md`.
 Do not restart v9 or infer v13 completion from old primary-checkout state.
 
 ## STATE Implementation History
@@ -189,3 +189,41 @@ signing and verification hashes and emits IF-0-SAFETY-1. The immutable roadmap
 is unchanged. DATA is next; PILOT still owes the frozen performance target,
 live inference, PMCP and browser proof. No version bump, final code panel,
 merge or publication has occurred.
+
+## DATA Candidate
+
+Generation-scoped semantic leases, acknowledged paginated Qdrant maintenance,
+per-batch/restart provenance, retained-row SQLite snapshots, committed-input
+reconciliation and verified staged artifact restore are implemented. Export
+streams mapped portable vectors; it does not copy live Qdrant files. Query
+surfaces recheck live Git and current generation, including SHA-256 repositories,
+sibling worktrees, no-match and mid-query replacement. Source filters match and
+rank before limiting. Legacy cross-repository semantic mode refuses unsupported
+requests; owned Python client resources close explicitly.
+
+Caller integration now uses registered origins and generations, records actual
+publication outcomes, preserves local-only indexing, and counts dispatcher-owned
+rows without importing unfiltered working-tree files. Async reindex recovery
+retains thread ownership without blocking signal handling. Actual `master`
+branch identity is preserved. Tests now isolate both the registry and index root.
+An earlier rejected gate exposed default host-registry metadata through a legacy
+fixture; no fleet indexing was requested, and that run is not isolation evidence.
+
+Development checks include 151 branch/HTTP/query controls, 67 storage/export
+controls and 156 repaired Git/reindex fixture controls. The third broad diagnostic
+run passed 3,129 tests with two incomplete SQL-count mocks, 150 skips and 31
+deselections. Its corresponding local gate found a fixture claiming a different
+branch without switching Git. All three fixture defects were corrected and the
+156-test group passed. These overlapping counts are not summed or accepted as a
+final gate. Earlier rejected diagnostic logs remain under the allowed DATA paths.
+
+The actual installed wheel and non-root image passed Python query, STDIO/HTTP
+restart and lifecycle probes. The in-flight fail-stop still takes about 15 seconds;
+PILOT must meet the frozen five-second threshold. The synthetic offline estimate
+is 79,360 input-token upper-bound units including reserved retries, with 20,640
+remaining under the owner's cap; no inference requests have been made.
+
+Next: seal a source candidate, rerun every original phase command through the
+verification helper, and produce DATA acceptance only if all gates pass. PMCP,
+browser, live inference, final four-seat review, version bump and SHIP remain
+pending. No extra OIDC job was dispatched and the roadmap bytes are unchanged.

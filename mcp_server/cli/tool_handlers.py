@@ -330,40 +330,21 @@ def _semantic_failure_response(
 
 
 def _record_reindexed_files(active_store: Any, workspace_root: Path, target_path: Path) -> int:
-    """Record durable file rows for handler-driven reindex responses."""
+    """Count dispatcher-persisted rows without importing unfiltered working-tree files."""
     if active_store is None:
         return 0
-
-    workspace_root = workspace_root.expanduser().resolve(strict=True)
-    repo_row = active_store.ensure_repository_row(workspace_root)
-    if target_path.is_file():
-        paths = [target_path]
-    else:
-        paths = [
-            p
-            for p in target_path.rglob("*")
-            if p.is_file() and ".git" not in p.parts and ".mcp-index" not in p.parts
-        ]
-
-    recorded = 0
-    for file_path in paths:
-        try:
-            resolved_file = file_path.expanduser().resolve(strict=True)
-            relative_path = resolved_file.relative_to(workspace_root).as_posix()
-        except (OSError, ValueError):
-            continue
-        try:
-            active_store.store_file(
-                repo_row,
-                path=resolved_file,
-                relative_path=relative_path,
-                language=file_path.suffix.lstrip(".") or None,
-                size=resolved_file.stat().st_size,
-            )
-            recorded += 1
-        except Exception as exc:
-            logger.debug("Could not record reindexed file %s: %s", file_path, type(exc).__name__)
-    return recorded
+    relative = active_store.path_resolver.normalize_path(target_path)
+    with active_store._get_connection() as connection:
+        if relative == ".":
+            return connection.execute(
+                "SELECT COUNT(*) FROM files WHERE COALESCE(is_deleted, 0) = 0"
+            ).fetchone()[0]
+        prefix = relative.rstrip("/") + "/"
+        return connection.execute(
+            "SELECT COUNT(*) FROM files WHERE COALESCE(is_deleted, 0) = 0 "
+            "AND (relative_path = ? OR substr(relative_path, 1, ?) = ?)",
+            (relative, len(prefix), prefix),
+        ).fetchone()[0]
 
 
 async def handle_symbol_lookup(
@@ -1105,7 +1086,11 @@ async def handle_reindex(
                     "hint": "Reindex the registered repository without a file or nested path scope.",
                 }
             )
-        sync_result = git_index_manager.rebuild_repository_index(readiness.repository_id)
+        sync_result = await anyio.to_thread.run_sync(
+            git_index_manager.rebuild_repository_index,
+            readiness.repository_id,
+            abandon_on_cancel=False,
+        )
         if sync_result.action != "full_index":
             return _json_text_response(
                 {

@@ -10,7 +10,9 @@ import os
 import selectors
 import signal
 import socket
+import sqlite3
 import subprocess
+import threading
 import time
 from pathlib import Path
 
@@ -57,6 +59,29 @@ def run(root: Path, entrypoint: str, env: dict[str, str]):
     fixture = root / "fixture"
     worker_source = fixture / "worker_synthetic.js"
     worker_source.write_text("export function PRIVATE_QUERY_SENTINEL_73051() { return 73051; }\n")
+
+    def commit_fixture(path=worker_source):
+        subprocess.run(["git", "add", path.name], cwd=fixture, env=env, check=True, timeout=10)
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.name=Smoke",
+                "-c",
+                "user.email=smoke@example.invalid",
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "-qm",
+                "Synthetic lifecycle input",
+            ],
+            cwd=fixture,
+            env=env,
+            check=True,
+            timeout=10,
+        )
+
+    commit_fixture()
     for mode in ("sigterm", "sigint", "eof", "repeated", "partial_input", "inflight"):
         log = root / f"safety-{mode}.log"
         with log.open("wb") as stderr:
@@ -89,21 +114,61 @@ def run(root: Path, entrypoint: str, env: dict[str, str]):
                     2,
                 )
                 assert not receive(proc, 2).get("isError")
-                # File-scoped JavaScript indexing exercises an actual plugin worker,
-                # unlike Python's bounded in-process lexical fast path.
+                # A committed JavaScript rebuild exercises an actual plugin worker.
                 worker_source.write_text(
                     f"export function PRIVATE_QUERY_SENTINEL_73051() {{ return {len(receipts)}; }}\n"
                 )
+                commit_fixture()
                 send(
                     proc,
                     "tools/call",
                     {
                         "name": "reindex",
-                        "arguments": {"repository": str(fixture), "path": str(worker_source)},
+                        "arguments": {"repository": str(fixture)},
                     },
                     20,
                 )
-                assert not receive(proc, 20).get("isError")
+                indexed = receive(proc, 20)
+                assert not indexed.get("isError"), indexed
+                # Fault-inject only the synthetic file hash to exercise worker-backed
+                # scoped recovery after a committed full rebuild has returned ready.
+                from mcp_server.storage.repository_registry import RepositoryRegistry
+
+                registered = RepositoryRegistry(root / "registry.json").list_all()[0]
+                with sqlite3.connect(registered.index_path) as connection:
+                    changed = connection.execute(
+                        "UPDATE files SET content_hash='synthetic-stale-hash' WHERE relative_path=?",
+                        (worker_source.name,),
+                    ).rowcount
+                    assert changed == 1
+                observed = {}
+                stop_observing = threading.Event()
+
+                def observe_workers():
+                    while not stop_observing.wait(0.01):
+                        try:
+                            for child in psutil.Process(proc.pid).children(recursive=True):
+                                observed[child.pid] = child
+                        except psutil.NoSuchProcess:
+                            return
+
+                observer = threading.Thread(target=observe_workers, daemon=True)
+                observer.start()
+                try:
+                    send(
+                        proc,
+                        "tools/call",
+                        {
+                            "name": "reindex",
+                            "arguments": {"repository": str(fixture), "path": str(worker_source)},
+                        },
+                        21,
+                    )
+                    indexed = receive(proc, 21)
+                    assert not indexed.get("isError"), indexed
+                finally:
+                    stop_observing.set()
+                    observer.join(timeout=2)
                 send(proc, "tools/call", "PRIVATE_QUERY_SENTINEL_73051", 999)
                 send(
                     proc,
@@ -123,7 +188,7 @@ def run(root: Path, entrypoint: str, env: dict[str, str]):
                     "".join(block["text"] for block in response["content"] if "text" in block)
                 )
                 assert found if isinstance(found, list) else found.get("results"), found
-                children = psutil.Process(proc.pid).children(recursive=True)
+                children = list(observed.values())
                 assert children, "no installed plugin child was exercised"
                 connections = psutil.Process(proc.pid).net_connections(kind="tcp")
                 ports = [
@@ -142,12 +207,13 @@ def run(root: Path, entrypoint: str, env: dict[str, str]):
                     slow.write_text(
                         "\n".join(f"def synthetic_{i}():\n    return {i}\n" for i in range(20000))
                     )
+                    commit_fixture(slow)
                     send(
                         proc,
                         "tools/call",
                         {
                             "name": "reindex",
-                            "arguments": {"repository": str(fixture), "path": str(slow)},
+                            "arguments": {"repository": str(fixture)},
                         },
                         4,
                     )

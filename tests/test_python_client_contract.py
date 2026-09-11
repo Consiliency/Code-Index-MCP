@@ -31,6 +31,41 @@ def test_public_client_exports_are_available_from_mcp_server():
     assert IndexUnavailable is not None
 
 
+def test_client_close_retires_only_services_it_bootstrapped(monkeypatch):
+    stores, resolver, dispatcher = MagicMock(), MagicMock(), MagicMock()
+    monkeypatch.setattr(
+        "mcp_server.client.initialize_stateless_services",
+        lambda **kwargs: (stores, resolver, dispatcher, MagicMock(), MagicMock()),
+    )
+    client = IndexItClient()
+    assert client.dispatcher is dispatcher
+    client.close()
+    client.close()
+    dispatcher.shutdown.assert_called_once()
+    stores.shutdown.assert_called_once()
+    borrowed = IndexItClient()
+    borrowed._dispatcher, borrowed._repo_resolver = dispatcher, resolver
+    borrowed.close()
+    dispatcher.shutdown.assert_called_once()
+
+
+def test_failed_client_close_retains_owner_for_retry(monkeypatch):
+    stores, resolver, dispatcher = MagicMock(), MagicMock(), MagicMock()
+    monkeypatch.setattr(
+        "mcp_server.client.initialize_stateless_services",
+        lambda **kwargs: (stores, resolver, dispatcher, MagicMock(), MagicMock()),
+    )
+    client = IndexItClient()
+    assert client.dispatcher is dispatcher
+    dispatcher.shutdown.side_effect = RuntimeError("borrower retirement failed")
+    with pytest.raises(RuntimeError):
+        client.close()
+    assert client._dispatcher is dispatcher
+    dispatcher.shutdown.side_effect = None
+    client.close()
+    assert client._dispatcher is None
+
+
 def test_client_search_options_freeze_source_filters():
     options = ClientSearchOptions(
         query="todo",

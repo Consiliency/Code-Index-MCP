@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+from contextlib import nullcontext
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -63,6 +64,7 @@ def _make_semantic_registry() -> tuple[MagicMock, MagicMock]:
     fake_indexer = MagicMock()
     fake_indexer.search.return_value = []
     registry.get.return_value = fake_indexer
+    registry.lease.side_effect = lambda *args, **kwargs: nullcontext(fake_indexer)
     return registry, registry
 
 
@@ -143,7 +145,7 @@ class TestSearchRoutesViaSemanticRegistry:
         )
         ctx_a = _make_ctx("repo-a")
         list(d.search(ctx_a, "some query", semantic=True))
-        mock_sem.get.assert_called_with("repo-a")
+        mock_sem.lease.assert_called_with("repo-a", ctx=ctx_a)
 
     def test_semantic_search_different_repos_use_distinct_registry_gets(self):
         reg, _ = _make_plugin_registry()
@@ -157,7 +159,7 @@ class TestSearchRoutesViaSemanticRegistry:
         list(d.search(ctx_a, "q", semantic=True))
         list(d.search(ctx_b, "q", semantic=True))
 
-        calls = [call.args[0] for call in mock_sem.get.call_args_list]
+        calls = [call.args[0] for call in mock_sem.lease.call_args_list]
         assert "repo-a" in calls
         assert "repo-b" in calls
 

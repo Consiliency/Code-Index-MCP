@@ -447,13 +447,10 @@ def test_environment(monkeypatch, tmp_path):
     # The dispatcher skips Qdrant init when QDRANT_PATH doesn't exist.
     monkeypatch.setenv("QDRANT_PATH", str(tmp_path / "qdrant-not-created"))
     monkeypatch.setenv("SEMANTIC_SEARCH_ENABLED", "false")
-    # Clear .env.native workspace-specific vars that cause /workspaces permission errors
-    for _var in (
-        "MCP_REPO_REGISTRY",
-        "MCP_INDEX_STORAGE_PATH",
-        "MCP_WORKSPACE_ROOT",
-    ):
-        monkeypatch.delenv(_var, raising=False)
+    # Every test owns its registry/storage, including callers that omit explicit paths.
+    monkeypatch.setenv("MCP_REPO_REGISTRY", str(tmp_path / "isolated-registry.json"))
+    monkeypatch.setenv("MCP_INDEX_STORAGE_PATH", str(tmp_path / "isolated-indexes"))
+    monkeypatch.delenv("MCP_WORKSPACE_ROOT", raising=False)
 
 
 @pytest.fixture(autouse=True)

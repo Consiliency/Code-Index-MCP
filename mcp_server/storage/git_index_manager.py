@@ -586,7 +586,12 @@ class GitAwareIndexManager:
             )
             from ..config.settings import get_settings
 
-            profile = get_settings().get_semantic_default_profile()
+            settings = get_settings()
+            profile = (
+                settings.get_semantic_default_profile()
+                if getattr(self.dispatcher, "_semantic_enabled", False) is True
+                else settings.semantic_default_profile
+            )
             if replace_derived or (changes is None and stage_operation is None):
                 stage_store.prepare_generation(hashes, profile)
             else:
@@ -885,6 +890,9 @@ class GitAwareIndexManager:
     def _snapshot_committed_inputs(
         repo_path: Path, commit: str, destination: Path
     ) -> Dict[str, str]:
+        from ..core.ignore_patterns import build_walker_filter
+        from ..plugins.generic_treesitter_plugin import GenericTreeSitterPlugin
+
         listing = subprocess.run(
             ["git", "ls-tree", "-r", "-l", "-z", commit],
             cwd=repo_path,
@@ -892,31 +900,62 @@ class GitAwareIndexManager:
             check=True,
             timeout=30,
         ).stdout
-        hashes = {}
+        entries = []
         for record in listing.split(b"\0"):
             if not record:
                 continue
             metadata, encoded_path = record.split(b"\t", 1)
             mode, kind, oid, size = metadata.split()
-            if kind != b"blob" or mode not in {b"100644", b"100755"}:
-                continue
-            if int(size) > get_max_file_size_bytes():
-                continue
             relative = Path(os.fsdecode(encoded_path))
             if relative.is_absolute() or ".." in relative.parts:
                 raise RuntimeError("Invalid committed source path")
+            policy = relative.name == ".gitignore" or relative == Path(".mcp-index-ignore")
+            if policy and mode not in {b"100644", b"100755"}:
+                raise ValueError("Committed ignore policy must be a regular file")
+            if kind != b"blob" or mode not in {b"100644", b"100755"}:
+                continue
+            bounded = GenericTreeSitterPlugin.uses_exact_bounded_json_path(
+                relative
+            ) or GenericTreeSitterPlugin.uses_exact_bounded_jsonl_path(relative)
+            if int(size) > get_max_file_size_bytes() and not bounded:
+                if policy:
+                    raise ValueError("Committed ignore policy exceeds the input limit")
+                continue
+            entries.append((relative, oid.decode("ascii"), policy))
+
+        hashes = {}
+        resolver = PathResolver(repo_path)
+
+        def copy_blob(entry):
+            relative, oid, _policy = entry
             target = destination / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             with target.open("xb") as output:
                 subprocess.run(
-                    ["git", "cat-file", "blob", oid.decode("ascii")],
+                    ["git", "cat-file", "blob", oid],
                     cwd=repo_path,
                     stdout=output,
                     stderr=subprocess.PIPE,
                     check=True,
                     timeout=30,
                 )
-            hashes[relative.as_posix()] = hashlib.sha256(target.read_bytes()).hexdigest()
+            hashes[relative.as_posix()] = resolver.compute_content_hash(target)
+
+        # Load committed policies from parents first, before reading ordinary blobs.
+        policies = sorted(
+            (entry for entry in entries if entry[2]), key=lambda entry: len(entry[0].parts)
+        )
+        for entry in policies:
+            if len(entry[0].parts) == 1 or not build_walker_filter(destination)(
+                destination / entry[0]
+            ):
+                copy_blob(entry)
+        excluded = build_walker_filter(destination)
+        for entry in entries:
+            relative = entry[0]
+            if relative.as_posix() in hashes or entry[2] or excluded(destination / relative):
+                continue
+            copy_blob(entry)
         return hashes
 
     @staticmethod

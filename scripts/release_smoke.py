@@ -112,7 +112,7 @@ def smoke_wheel() -> None:
             _run([str(binary), "--help"], cwd=runtime, env=env)
         for entrypoint in REMOVED_ENTRYPOINTS:
             assert not _venv_bin(venv_dir, entrypoint).exists(), entrypoint
-        for mode in ("schema", "prepare", "stdio"):
+        for mode in ("schema", "prepare", "python", "stdio"):
             _run(
                 [
                     str(python),
@@ -183,7 +183,7 @@ def smoke_container() -> None:
         mount = ["-v", f"{root}:/smoke"]
         probe = ["python", "-I", "/smoke/installed_runtime_smoke.py", "--root", "/smoke"]
         # The image's configured USER owns the fixture; no root override or fake services.
-        for mode in ("schema", "prepare"):
+        for mode in ("schema", "prepare", "python"):
             _run(["docker", "run", "--rm", *mount, image_id, *probe, "--mode", mode])
         port = _free_port()
         env = {

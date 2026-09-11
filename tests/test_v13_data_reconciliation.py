@@ -10,6 +10,80 @@ from mcp_server.watcher_multi_repo import MultiRepositoryWatcher
 from tests.test_v13_data_storage import runtime
 
 
+def test_pilot_estimate_is_offline_and_bounds_every_request_class():
+    from scripts.v13_pilot_estimate import estimate
+
+    result = estimate()
+    assert result["inference_requests_made"] == 0
+    assert result["repositories"] == 2
+    assert result["source_chunks"] == 2
+    assert result["input_token_upper_bound"] == 79360
+    assert result["within_approved_token_budget"] is True
+    assert result["measured_quality_or_performance"] is False
+
+
+def test_committed_snapshot_filters_before_reading_excluded_blobs(runtime, tmp_path, monkeypatch):
+    repo, _registry, _repo_id, _original, manager = runtime
+    (repo / ".gitignore").write_text("blocked/\n")
+    (repo / "blocked").mkdir()
+    (repo / "blocked" / "fixture.py").write_text("excluded_fixture = 1\n")
+    (repo / "nested").mkdir()
+    (repo / "nested" / ".gitignore").write_text("*.py\n!keep.py\n")
+    (repo / "nested" / "hidden.py").write_text("excluded_fixture = 2\n")
+    (repo / "nested" / "keep.py").write_text("admitted_fixture = 1\n")
+    (repo / "synthetic.env").write_text("EXCLUDED_FIXTURE=not-a-secret\n")
+    (repo / "link.py").symlink_to("hello.py")
+    subprocess.run(["git", "add", "-f", "."], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "Synthetic ignore policy"], cwd=repo, check=True)
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True
+    ).stdout.strip()
+    excluded = {
+        subprocess.run(
+            ["git", "rev-parse", f"HEAD:{name}"],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        for name in ("blocked/fixture.py", "nested/hidden.py", "synthetic.env")
+    }
+    original_run = subprocess.run
+    read_blobs = set()
+
+    def observe(command, **kwargs):
+        if command[:3] == ["git", "cat-file", "blob"]:
+            read_blobs.add(command[3])
+        return original_run(command, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", observe)
+    destination = tmp_path / "snapshot"
+    destination.mkdir()
+    hashes = manager._snapshot_committed_inputs(repo, head, destination)
+    assert not excluded.intersection(read_blobs)
+    assert "nested/keep.py" in hashes
+    assert not (destination / "link.py").exists()
+    assert not (destination / "blocked" / "fixture.py").exists()
+
+
+def test_snapshot_keeps_existing_bounded_json_exception(runtime, tmp_path, monkeypatch):
+    repo, _registry, _repo_id, _store, manager = runtime
+    (repo / ".devcontainer").mkdir()
+    (repo / ".devcontainer" / "devcontainer.json").write_text('{"name":"' + "fixture" * 20 + '"}')
+    (repo / "ordinary.json").write_text('{"name":"' + "fixture" * 20 + '"}')
+    subprocess.run(["git", "add", ".devcontainer", "ordinary.json"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "Synthetic bounded input"], cwd=repo, check=True)
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True
+    ).stdout.strip()
+    monkeypatch.setattr("mcp_server.storage.git_index_manager.get_max_file_size_bytes", lambda: 32)
+    destination = tmp_path / "bounded-snapshot"
+    destination.mkdir()
+    hashes = manager._snapshot_committed_inputs(repo, head, destination)
+    assert ".devcontainer/devcontainer.json" in hashes
+    assert "ordinary.json" not in hashes
+
+
 @pytest.mark.parametrize("operation", ["modify", "rename", "delete"])
 def test_incremental_committed_mutation_updates_content_and_keeps_move_identity(runtime, operation):
     repo, _registry, repo_id, _original, manager = runtime

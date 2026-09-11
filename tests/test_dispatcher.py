@@ -77,20 +77,17 @@ class TestDispatcherInitialization:
     @patch("mcp_server.dispatcher.dispatcher_enhanced.MultiRepositoryManager")
     @patch("mcp_server.dispatcher.dispatcher_enhanced.CrossRepositorySearchCoordinator")
     @patch("pathlib.Path.home")
-    def test_multi_repo_default_registry_path_uses_home_directory(
+    def test_multi_repo_default_registry_path_delegates_to_shared_manager_policy(
         self, mock_home, mock_cross_repo, mock_multi_repo
     ):
-        """Default multi-repo registry path should be user-writable under ~/.mcp."""
+        """The manager owns MCP_REPO_REGISTRY/default resolution for every entrypoint."""
         mock_home.return_value = Path("/tmp/test-home")
 
         with patch.dict("os.environ", {"MCP_ENABLE_MULTI_REPO": "true"}, clear=False):
             Dispatcher([])
 
         registry_path = mock_multi_repo.call_args.kwargs["central_index_path"]
-        assert (
-            registry_path
-            == Path("/tmp/test-home") / ".mcp" / "indexes" / "repository_registry.json"
-        )
+        assert registry_path is None
 
 
 class TestPluginMatching:

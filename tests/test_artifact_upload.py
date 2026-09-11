@@ -41,6 +41,34 @@ def test_prepared_upload_uses_exact_bytes_without_compression(tmp_path):
     assert archive.read_bytes() == b"already prepared"
 
 
+@pytest.mark.parametrize(
+    "remote", ["git@github.com:fixture/widget.git", "https://github.com/fixture/widget"]
+)
+def test_repository_detection_uses_selected_worktree_and_exact_repo_suffix(
+    tmp_path, monkeypatch, remote
+):
+    import subprocess
+
+    from tests.test_git_index_manager import _make_git_repo
+
+    repo = _make_git_repo(tmp_path)
+    subprocess.run(["git", "remote", "add", "origin", remote], cwd=repo, check=True)
+    monkeypatch.chdir(tmp_path)
+    assert IndexArtifactUploader(repo_path=repo).repo == "fixture/widget"
+
+
+def test_repository_detection_rejects_github_lookalike_without_disclosing_url(monkeypatch):
+    monkeypatch.setattr(
+        "mcp_server.artifacts.artifact_upload.subprocess.run",
+        lambda *args, **kwargs: MagicMock(
+            stdout="https://fixture-user:do-not-log@github.com.invalid/owner/repo.git"
+        ),
+    )
+    with pytest.raises(RuntimeError) as failure:
+        IndexArtifactUploader()
+    assert "do-not-log" not in str(failure.value)
+
+
 def test_prepared_upload_rejects_changed_bytes_before_side_effects(tmp_path):
     from mcp_server.artifacts.artifact_upload import build_parser, run_cli
 

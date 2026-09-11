@@ -523,6 +523,87 @@ def test_artifact_restore_preserves_local_imports_and_cleanup_debt(runtime, monk
     assert restored.search_code_fts("hello")
 
 
+@pytest.mark.parametrize("surface", ["symbol", "code"])
+@pytest.mark.parametrize("state", ["match", "no_match", "dirty", "pending", "removed"])
+def test_compatibility_coordinator_uses_real_admitted_generations(runtime, surface, state):
+    import asyncio
+
+    from mcp_server.dispatcher.cross_repo_coordinator import (
+        CrossRepositorySearchCoordinator,
+        SearchScope,
+    )
+    from mcp_server.storage.multi_repo_manager import MultiRepositoryManager
+
+    repo, registry, repo_id, _store, manager = runtime
+    (repo / "hello.py").write_text("def indexed_sentinel():\n    return 'indexed_sentinel'\n")
+    subprocess.run(["git", "add", "hello.py"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "Synthetic query fixture"], cwd=repo, check=True)
+    manager.dispatcher._use_factory = True
+    assert manager.rebuild_repository_index(repo_id).action == "full_index"
+    info = registry.get(repo_id)
+    owner = MultiRepositoryManager(central_index_path=registry.registry_path)
+    coordinator = CrossRepositorySearchCoordinator(owner)
+    query = "absent_sentinel" if state == "no_match" else "indexed_sentinel"
+    if state == "dirty":
+        (repo / "hello.py").write_text("dirty = 1\n")
+    elif state == "pending":
+        registry.update_staleness_reason(repo_id, "index_publication_pending")
+    elif state == "removed":
+        registry.unregister_repository(repo_id)
+    try:
+        scope = SearchScope(repositories=[repo_id])
+        method = (
+            coordinator._search_symbol_in_repository
+            if surface == "symbol"
+            else coordinator._search_code_in_repository
+        )
+        result = method(query, info, scope)
+        if state in {"match", "no_match"}:
+            assert result.error is None
+            assert bool(result.results) == (state == "match")
+        else:
+            assert result.results == []
+            assert result.code == "index_unavailable"
+            assert result.safe_fallback == "native_search"
+        public = asyncio.run(getattr(coordinator, f"search_{surface}")(query, scope=scope))
+        if state in {"match", "no_match"}:
+            assert bool(public.results) == (state == "match")
+        else:
+            assert public.results == []
+            assert public.code == "index_unavailable"
+            assert public.safe_fallback == "native_search"
+    finally:
+        owner.close()
+
+
+def test_internal_cross_repo_coordinator_does_not_confuse_result_shapes(runtime):
+    import asyncio
+
+    from mcp_server.core.errors import MCPError
+    from mcp_server.dispatcher.cross_repo_coordinator import (
+        CrossRepositoryCoordinator,
+        SearchContext,
+    )
+    from mcp_server.storage.multi_repo_manager import MultiRepositoryManager
+
+    _repo, registry, repo_id, _store, manager = runtime
+    assert manager.rebuild_repository_index(repo_id).action == "full_index"
+    owner = MultiRepositoryManager(central_index_path=registry.registry_path)
+    try:
+        coordinator = CrossRepositoryCoordinator(
+            owner, enable_semantic=False, enable_reranking=False
+        )
+        context = SearchContext("hello", "code", repositories=[repo_id], rerank=False)
+        results = asyncio.run(coordinator.search(context))
+        assert results and results[0].primary_repository == repo_id
+        registry.update_staleness_reason(repo_id, "index_publication_pending")
+        with pytest.raises(MCPError) as failure:
+            asyncio.run(coordinator.search(context))
+        assert failure.value.details["code"] == "index_unavailable"
+    finally:
+        owner.close()
+
+
 def test_export_snapshots_wal_and_filters_owned_rows_without_leaking_paths(runtime):
     from mcp_server.artifacts.secure_export import SecureIndexExporter
 
@@ -576,6 +657,51 @@ def test_export_explicit_missing_generation_never_falls_back_to_legacy(runtime):
         SecureIndexExporter(repo_path=repo, index_path=repo / "absent.db").create_secure_archive(
             str(repo.parent / "archive.tar.gz")
         )
+
+
+@pytest.mark.parametrize("escape", ["symlink", "parent"])
+def test_export_rejects_vector_backend_escaping_generation(runtime, monkeypatch, escape):
+    from mcp_server.artifacts.secure_export import SecureIndexExporter
+
+    repo, _registry, _repo_id, store, _manager = runtime
+    repository_id = store.ensure_repository_row(repo)
+    file_id = store.store_file(repository_id, repo / "hello.py", "hello.py")
+    store.store_chunk(
+        file_id=file_id,
+        content="hello",
+        content_start=0,
+        content_end=5,
+        line_start=1,
+        line_end=1,
+        chunk_id="hello",
+        node_id="hello",
+        treesitter_file_id="fixture",
+    )
+    store.upsert_semantic_point("fixture", "hello", 901, "fixture")
+    generation = Path(store.db_path).parent
+    outside = generation.parent / "unowned-vectors"
+    outside.mkdir()
+    backend = generation / "vectors"
+    if escape == "symlink":
+        backend.symlink_to(outside, target_is_directory=True)
+    else:
+        backend = generation / ".." / "unowned-vectors"
+    exporter = SecureIndexExporter(repo_path=repo, index_path=store.db_path)
+    monkeypatch.setattr(
+        exporter,
+        "read_generation_metadata",
+        lambda *args: {
+            "semantic_profile": "fixture",
+            "collection_name": "fixture",
+            "semantic_profiles": {"fixture": {"attested": True}},
+            "qdrant_path": str(backend),
+        },
+    )
+    connect = MagicMock(side_effect=AssertionError("Unowned backend opened"))
+    monkeypatch.setattr("qdrant_client.QdrantClient", connect)
+    with pytest.raises(RuntimeError, match="not owned by this generation"):
+        exporter._export_vectors(Path(store.db_path), repo.parent / "vectors.jsonl")
+    connect.assert_not_called()
 
 
 def test_hard_delete_records_vector_debt_and_clears_inbound_references(runtime):

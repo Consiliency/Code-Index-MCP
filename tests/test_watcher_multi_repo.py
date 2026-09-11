@@ -490,7 +490,7 @@ class TestArtifactPublishTriggers:
 
         watcher._sync_repository("repo-1", "callback123")
 
-        artifact_manager.create_commit_artifact.assert_called_once()
+        artifact_manager.create_commit_artifact.assert_not_called()
         watcher._artifact_publisher.publish_on_reindex.assert_called_once_with(
             "repo-1",
             "synced123",
@@ -521,7 +521,7 @@ class TestArtifactPublishTriggers:
 
         watcher._sync_repository("repo-1", "callback123")
 
-        artifact_manager.create_commit_artifact.assert_called_once()
+        artifact_manager.create_commit_artifact.assert_not_called()
         registry.update_artifact_state.assert_any_call("repo-1", artifact_health="publish_failed")
 
     def test_local_only_health_is_reserved_for_no_remote_publisher(self, tmp_path):
@@ -530,11 +530,14 @@ class TestArtifactPublishTriggers:
 
         watcher._sync_repository("repo-1", "callback123")
 
-        artifact_manager.create_commit_artifact.assert_called_once()
+        artifact_manager.create_commit_artifact.assert_not_called()
         registry.update_artifact_state.assert_any_call(
             "repo-1",
-            last_published_commit="synced123",
             artifact_health="local_only",
+        )
+        assert all(
+            "last_published_commit" not in call.kwargs
+            for call in registry.update_artifact_state.call_args_list
         )
 
     def test_add_repository_after_start_begins_watching(self, tmp_path):

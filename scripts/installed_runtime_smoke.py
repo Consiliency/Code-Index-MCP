@@ -207,6 +207,29 @@ async def stdio_probe(root: Path, entrypoint: str) -> None:
         print(json.dumps({"stdio_session": attempt + 1, "queries": "passed"}))
 
 
+def python_probe(root: Path) -> None:
+    from mcp_server import ClientSearchOptions, open_client
+    from mcp_server.cli.bootstrap import initialize_stateless_services
+
+    stores, resolver, dispatcher, registry, manager = initialize_stateless_services(
+        root / "registry.json"
+    )
+    try:
+        repo = registry.list_all()[0]
+        result = manager.rebuild_repository_index(repo.repository_id)
+        assert result.action == "full_index", result.error
+    finally:
+        dispatcher.shutdown()
+        stores.shutdown()
+    with open_client(
+        workspace_root=root / "fixture", registry_path=root / "registry.json"
+    ) as client:
+        assert client.search_code(ClientSearchOptions(query=TOKEN)).results
+        assert not client.search_code(ClientSearchOptions(query="absent_data_84963")).results
+        assert client.symbol_lookup(TOKEN).found
+    print(json.dumps({"python_client": "passed"}))
+
+
 def http_probe(root: Path, url: str, rebuild: bool) -> None:
     def request(path, *, query=None, data=None, token=None, forwarded=None):
         if query:
@@ -281,7 +304,9 @@ def http_probe(root: Path, url: str, rebuild: bool) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", type=Path, required=True)
-    parser.add_argument("--mode", choices=["prepare", "schema", "stdio", "http"], required=True)
+    parser.add_argument(
+        "--mode", choices=["prepare", "schema", "python", "stdio", "http"], required=True
+    )
     parser.add_argument("--entrypoint", default="index-it-mcp")
     parser.add_argument("--url", default="http://127.0.0.1:8000")
     parser.add_argument("--restart", action="store_true")
@@ -292,6 +317,8 @@ def main() -> None:
             prepare(args.root, args.entrypoint)
         elif args.mode == "schema":
             schema_probe(args.root)
+        elif args.mode == "python":
+            python_probe(args.root)
         elif args.mode == "stdio":
             asyncio.run(stdio_probe(args.root, args.entrypoint))
         else:

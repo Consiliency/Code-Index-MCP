@@ -245,18 +245,22 @@ class ReadinessClassifier:
         )
         cached_branch = getattr(repo_info, "current_branch", None)
         cached_commit = getattr(repo_info, "current_commit", None)
+        live_commit = _git_commit(registered_path)
         live_git_required = bool(
-            getattr(repo_info, "git_common_dir", None)
-            and isinstance(cached_commit, str)
-            and len(cached_commit) in {40, 64}
-            and all(char in "0123456789abcdef" for char in cached_commit.lower())
+            live_commit
+            or (
+                getattr(repo_info, "git_common_dir", None)
+                and isinstance(cached_commit, str)
+                and len(cached_commit) in {40, 64}
+                and all(char in "0123456789abcdef" for char in cached_commit.lower())
+            )
         )
         if live_git_required:
             current_branch = _git_branch(registered_path)
-            current_commit = _git_commit(registered_path)
+            current_commit = live_commit
         else:
             current_branch = cached_branch or _git_branch(registered_path)
-            current_commit = cached_commit or _git_commit(registered_path)
+            current_commit = cached_commit or live_commit
         tracked_branch = getattr(repo_info, "tracked_branch", None)
         last_indexed_commit = getattr(repo_info, "last_indexed_commit", None)
         staleness_reason = getattr(repo_info, "staleness_reason", None)

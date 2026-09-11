@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import sqlite3
 import subprocess
 import sys
@@ -14,6 +15,7 @@ import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, NamedTuple, Optional, Tuple
+from urllib.parse import urlsplit
 
 from mcp_server.artifacts.attestation import Attestation, attest, verify_attestation
 from mcp_server.artifacts.delta_policy import DeltaPolicy
@@ -36,8 +38,18 @@ from .semantic_profiles import (
 class IndexArtifactUploader:
     """Handle uploading index files to GitHub Actions Artifacts."""
 
-    def __init__(self, repo: Optional[str] = None, token: Optional[str] = None):
-        self.repo = repo or self._detect_repository()
+    def __init__(
+        self,
+        repo: Optional[str] = None,
+        token: Optional[str] = None,
+        *,
+        repo_path: Path | str | None = None,
+    ):
+        self.repo = repo or (
+            self._detect_repository(repo_path)
+            if repo_path is not None
+            else self._detect_repository()
+        )
         self.token = token or os.environ.get("GITHUB_TOKEN", "")
         self.index_files = [
             "current.db",
@@ -45,26 +57,37 @@ class IndexArtifactUploader:
             ".index_metadata.json",
         ]
 
-    def _detect_repository(self) -> str:
+    def _detect_repository(self, repo_path: Path | str | None = None) -> str:
         try:
             result = subprocess.run(
                 ["git", "remote", "get-url", "origin"],
                 capture_output=True,
                 text=True,
                 check=True,
+                cwd=repo_path,
+                timeout=10,
             )
             url = result.stdout.strip()
-            if "github.com" not in url:
-                raise ValueError(f"Not a GitHub repository: {url}")
             if url.startswith("git@"):
-                parts = url.split(":", 1)[1]
-            else:
-                parts = url.split("github.com/", 1)[1]
-            return parts.rstrip(".git")
+                url = "ssh://" + url.replace(":", "/", 1)
+            parsed = urlsplit(url)
+            parts = parsed.path.strip("/").removesuffix(".git").split("/")
+            if (
+                parsed.hostname != "github.com"
+                or parsed.query
+                or parsed.fragment
+                or len(parts) != 2
+                or any(
+                    part in {".", ".."} or not re.fullmatch(r"[A-Za-z0-9_.-]+", part)
+                    for part in parts
+                )
+            ):
+                raise ValueError("Origin is not a supported GitHub repository")
+            return "/".join(parts)
         except Exception as exc:
             raise RuntimeError(
                 "Failed to detect repository. Pass --repo owner/name or run inside a "
-                f"git clone with origin configured: {exc}"
+                f"git clone with origin configured ({type(exc).__name__})"
             ) from exc
 
     def compress_indexes(
@@ -236,6 +259,10 @@ class IndexArtifactUploader:
         )
         profile_id, primary_profile = get_primary_semantic_profile_metadata(index_metadata)
         semantic_profiles = extract_semantic_profile_metadata(index_metadata)
+        semantic_profiles = {
+            name: {key: value for key, value in profile.items() if key != "qdrant_path"}
+            for name, profile in semantic_profiles.items()
+        }
         settings = get_settings()
 
         primary_profile = primary_profile or {}
@@ -300,7 +327,7 @@ class IndexArtifactUploader:
     ) -> Dict[str, Any]:
         stats: Dict[str, Any] = {}
         db_path = Path(index_path) if index_path is not None else Path(".mcp-index/current.db")
-        if not db_path.exists():
+        if not db_path.exists() and index_path is None:
             db_path = Path("code_index.db")
         if db_path.exists():
             size = db_path.stat().st_size
@@ -324,7 +351,7 @@ class IndexArtifactUploader:
             if index_location is not None
             else Path(".mcp-index/vector_index.qdrant")
         )
-        if not vector_path.exists():
+        if not vector_path.exists() and index_location is None and index_path is None:
             vector_path = Path("vector_index.qdrant")
         if vector_path.exists():
             total_size = sum(

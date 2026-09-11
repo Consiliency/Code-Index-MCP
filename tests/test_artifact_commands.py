@@ -1,5 +1,6 @@
 from datetime import datetime
 from pathlib import Path
+from unittest.mock import Mock
 
 from click.testing import CliRunner
 
@@ -46,6 +47,64 @@ def _write_ready_index(repo_info: RepositoryInfo) -> None:
     store.close()
 
 
+def test_compress_only_never_uploads_and_uses_registered_generation(monkeypatch, tmp_path):
+    repo = _repo_info("repo-1", tmp_path)
+    _write_ready_index(repo)
+    uploader = Mock()
+    uploader.compress_indexes.return_value = (tmp_path / "prepared.tar.gz", "digest", 100)
+    monkeypatch.setattr("mcp_server.cli.artifact_commands._resolve_repository", lambda value: repo)
+    monkeypatch.setattr(
+        "mcp_server.cli.artifact_commands.IndexArtifactUploader", lambda **kwargs: uploader
+    )
+    result = CliRunner().invoke(artifact, ["push", "--compress-only"])
+    assert result.exit_code == 0, result.output
+    assert uploader.compress_indexes.call_args.kwargs["index_path"] == repo.index_path
+    assert uploader.compress_indexes.call_args.kwargs["repo_path"] == repo.path
+    uploader.upload_direct.assert_not_called()
+    uploader.trigger_workflow.assert_not_called()
+
+
+def test_implicit_repository_resolution_finds_registered_cwd(monkeypatch, tmp_path):
+    from mcp_server.cli.artifact_commands import _resolve_repository
+
+    owner = MultiRepositoryManager(central_index_path=tmp_path / "registry.json")
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    repo_id = owner.registry.register_repository(str(repo_path))
+    monkeypatch.chdir(repo_path)
+    monkeypatch.setattr("mcp_server.cli.artifact_commands.MultiRepositoryManager", lambda: owner)
+    resolved = _resolve_repository(None)
+    assert resolved is not None
+    assert resolved.repository_id == repo_id
+
+
+def test_push_records_uploaded_commit_and_next_skip_does_not_upload(monkeypatch, tmp_path):
+    owner = MultiRepositoryManager(central_index_path=tmp_path / "registry.json")
+    repo = _repo_info("repo-1", tmp_path)
+    _write_ready_index(repo)
+    owner.registry.register(repo)
+    uploader = Mock()
+    uploader.compress_indexes.return_value = (tmp_path / "prepared.tar.gz", "digest", 100)
+    monkeypatch.setattr("mcp_server.cli.artifact_commands.MultiRepositoryManager", lambda: owner)
+    monkeypatch.setattr(
+        "mcp_server.cli.artifact_commands._resolve_repository",
+        lambda value: owner.registry.get("repo-1"),
+    )
+    monkeypatch.setattr(
+        "mcp_server.cli.artifact_commands.IndexArtifactUploader", lambda **kwargs: uploader
+    )
+    runner = CliRunner()
+    first = runner.invoke(artifact, ["push", "--repository", "repo-1", "--validate"])
+    assert first.exit_code == 0, first.output
+    stored = owner.registry.get("repo-1")
+    assert stored.artifact_health == "published"
+    assert stored.last_published_commit == repo.last_indexed_commit
+    second = runner.invoke(artifact, ["push", "--repository", "repo-1", "--skip-if-current"])
+    assert second.exit_code == 0, second.output
+    uploader.upload_direct.assert_called_once()
+    owner.close()
+
+
 def test_artifact_pull_confirms_local_restore(monkeypatch, tmp_path):
     runner = CliRunner()
 
@@ -60,7 +119,7 @@ def test_artifact_pull_confirms_local_restore(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(
         "mcp_server.cli.artifact_commands.IndexArtifactDownloader._detect_repository",
-        lambda self: "owner/repo",
+        lambda self, repo_path=None: "owner/repo",
     )
     monkeypatch.setattr(
         "mcp_server.cli.artifact_commands._print_reconcile_guidance",
@@ -85,7 +144,7 @@ def test_artifact_pull_fails_when_no_index_restored(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(
         "mcp_server.cli.artifact_commands.IndexArtifactDownloader._detect_repository",
-        lambda self: "owner/repo",
+        lambda self, repo_path=None: "owner/repo",
     )
     monkeypatch.setattr(
         "mcp_server.cli.artifact_commands._print_reconcile_guidance",
@@ -113,7 +172,7 @@ def test_artifact_recover_confirms_local_restore(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(
         "mcp_server.cli.artifact_commands.IndexArtifactDownloader._detect_repository",
-        lambda self: "owner/repo",
+        lambda self, repo_path=None: "owner/repo",
     )
 
     with runner.isolated_filesystem(temp_dir=str(tmp_path)):
@@ -138,7 +197,7 @@ def test_artifact_sync_bootstraps_local_indexes(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(
         "mcp_server.cli.artifact_commands.IndexArtifactDownloader._detect_repository",
-        lambda self: "owner/repo",
+        lambda self, repo_path=None: "owner/repo",
     )
     monkeypatch.setattr(
         "mcp_server.cli.artifact_commands._print_reconcile_guidance",
@@ -248,12 +307,12 @@ def test_workspace_fetch_cli_prints_validation_truth(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(
         "mcp_server.artifacts.multi_repo_artifact_coordinator.IndexArtifactDownloader._detect_repository",
-        lambda self: "owner/repo",
+        lambda self, repo_path=None: "owner/repo",
     )
 
     result = runner.invoke(artifact, ["fetch-workspace", "--repository", "repo-1"])
 
     assert result.exit_code == 0
     assert "validation_status: passed" in result.output
-    assert "last_recovered_commit: recover123" in result.output
+    assert "last_recovered_commit: current-commit" in result.output
     assert "schema_version" in result.output

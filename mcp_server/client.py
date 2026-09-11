@@ -351,6 +351,7 @@ class IndexItClient:
         self.registry_path = Path(registry_path).resolve() if registry_path else None
         self._repo_resolver: RepoResolver | None = None
         self._dispatcher: DispatcherProtocol | None = None
+        self._owned_store_registry = None
 
     def __enter__(self) -> IndexItClient:
         self._ensure_services()
@@ -360,14 +361,22 @@ class IndexItClient:
         self.close()
 
     def close(self) -> None:
+        if self._owned_store_registry is not None:
+            shutdown = getattr(self._dispatcher, "shutdown", None)
+            try:
+                if shutdown is not None:
+                    shutdown()
+            finally:
+                self._owned_store_registry.shutdown()
+            self._owned_store_registry = None
         self._repo_resolver = None
         self._dispatcher = None
 
     def _ensure_services(self) -> None:
         if self._dispatcher is not None and self._repo_resolver is not None:
             return
-        _, self._repo_resolver, self._dispatcher, _, _ = initialize_stateless_services(
-            registry_path=self.registry_path
+        self._owned_store_registry, self._repo_resolver, self._dispatcher, _, _ = (
+            initialize_stateless_services(registry_path=self.registry_path)
         )
 
     @property

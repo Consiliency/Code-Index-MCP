@@ -678,22 +678,9 @@ class MultiRepositoryManager:
             return None
 
         try:
-            # Use BM25 search on the appropriate table
-            # Try both bm25_content and fts_code tables
-            bm25_results = []
-
-            # First try bm25_content table
-            try:
-                bm25_results = store.search_bm25(query, table="bm25_content", limit=limit)
-            except Exception as e:
-                logger.debug(f"bm25_content search failed, trying fts_code: {type(e).__name__}")
-                # Fall back to fts_code table
-                try:
-                    bm25_results = store.search_bm25(query, table="fts_code", limit=limit)
-                except Exception as e2:
-                    logger.warning(
-                        f"Both BM25 tables failed for {repository_id}: {type(e2).__name__}"
-                    )
+            bm25_results = store.search_bm25(
+                query, table="fts_code", limit=limit, file_pattern=file_pattern
+            )
 
             # Format results
             formatted_results = []
@@ -701,9 +688,11 @@ class MultiRepositoryManager:
                 formatted_results.append(
                     {
                         "file": result.get("filepath", result.get("file_path", "")),
+                        "file_path": result.get("filepath", result.get("file_path", "")),
+                        "content": result.get("content", result.get("snippet", "")),
                         "line": result.get("line", 0),
                         "snippet": result.get("snippet", ""),
-                        "score": result.get("score", 0.0),
+                        "score": -float(result.get("score", 0.0)),
                         "repository": repo_info.name,
                         "repository_id": repository_id,
                     }

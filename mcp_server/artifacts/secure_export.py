@@ -136,8 +136,10 @@ class SecureIndexExporter:
                     if backend != os.environ.get("QDRANT_URL"):
                         raise RuntimeError("Export backend is not the configured server")
                     client = QdrantClient(url=backend, timeout=30)
-                elif backend and Path(backend).is_relative_to(self.index_path.parent):
-                    client = QdrantClient(path=backend)
+                elif backend and Path(backend).resolve().is_relative_to(
+                    self.index_path.parent.resolve()
+                ):
+                    client = QdrantClient(path=str(Path(backend).resolve()))
                 else:
                     raise RuntimeError("Export backend is not owned by this generation")
             ids = sorted({row[1] for row in records})

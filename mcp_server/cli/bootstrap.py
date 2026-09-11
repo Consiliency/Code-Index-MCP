@@ -66,6 +66,7 @@ def initialize_stateless_services(
             multi_repo_enabled=None,
             reranker_type=reranker_type,
             semantic_indexer_registry=semantic_registry,
+            registry_path=resolved_registry_path,
         )
 
     git_index_manager = GitAwareIndexManager(

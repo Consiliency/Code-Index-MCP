@@ -549,6 +549,7 @@ class EnhancedDispatcher:
         plugin_set_registry: Optional[PluginSetRegistry] = None,
         semantic_indexer_registry: Optional[SemanticIndexerRegistry] = None,
         endpoint_rerank_transport: Optional[Callable[[Dict[str, Any]], Dict[str, Any]]] = None,
+        registry_path: Optional[Path] = None,
     ):
         """Initialize the enhanced dispatcher.
 
@@ -574,9 +575,6 @@ class EnhancedDispatcher:
             multi_repo_enabled = os.getenv("MCP_ENABLE_MULTI_REPO", "false").lower() == "true"
 
         if multi_repo_enabled:
-            default_storage_path = Path.home() / ".mcp" / "indexes"
-            storage_path = os.getenv("MCP_INDEX_STORAGE_PATH", str(default_storage_path))
-            registry_path = Path(storage_path) / "repository_registry.json"
             self._multi_repo_manager = MultiRepositoryManager(central_index_path=registry_path)
             self._cross_repo_coordinator = CrossRepositorySearchCoordinator(
                 self._multi_repo_manager
@@ -973,6 +971,8 @@ class EnhancedDispatcher:
             self._semantic_registry.shutdown()
         if hasattr(self._plugin_set_registry, "shutdown"):
             self._plugin_set_registry.shutdown()
+        if self._multi_repo_manager is not None:
+            self._multi_repo_manager.close()
         for plugin in self._legacy_plugins:
             close = getattr(plugin, "close", None)
             if callable(close):
@@ -4410,7 +4410,21 @@ class EnhancedDispatcher:
         )
 
         try:
+            if not contexts or not all(
+                self._multi_repo_manager._query_ready(
+                    ctx.repo_id, ctx.sqlite_store.registry_binding
+                )
+                for ctx in contexts
+            ):
+                raise RuntimeError("Cross-repository context is no longer current")
             result = await self._cross_repo_coordinator.search_symbol(symbol, scope)
+            if not all(
+                self._multi_repo_manager._query_ready(
+                    ctx.repo_id, ctx.sqlite_store.registry_binding
+                )
+                for ctx in contexts
+            ):
+                raise RuntimeError("Cross-repository context changed during query")
             return {
                 "query": result.query,
                 "total_results": result.total_results,
@@ -4419,6 +4433,15 @@ class EnhancedDispatcher:
                 "results": result.results,
                 "repository_stats": result.repository_stats,
                 "deduplication_stats": result.deduplication_stats,
+                **(
+                    {
+                        "code": result.code,
+                        "safe_fallback": result.safe_fallback,
+                        "repository_errors": result.repository_errors,
+                    }
+                    if result.code
+                    else {}
+                ),
             }
         except Exception as e:
             logger.error(f"Cross-repository symbol search failed: {type(e).__name__}")
@@ -4430,7 +4453,9 @@ class EnhancedDispatcher:
                 "results": [],
                 "repository_stats": {},
                 "deduplication_stats": {},
-                "error": str(e),
+                "error": "Cross-repository query unavailable",
+                "code": "index_unavailable",
+                "safe_fallback": "native_search",
             }
 
     async def cross_repo_code_search(
@@ -4456,7 +4481,21 @@ class EnhancedDispatcher:
         )
 
         try:
+            if not contexts or not all(
+                self._multi_repo_manager._query_ready(
+                    ctx.repo_id, ctx.sqlite_store.registry_binding
+                )
+                for ctx in contexts
+            ):
+                raise RuntimeError("Cross-repository context is no longer current")
             result = await self._cross_repo_coordinator.search_code(query, scope, semantic)
+            if not all(
+                self._multi_repo_manager._query_ready(
+                    ctx.repo_id, ctx.sqlite_store.registry_binding
+                )
+                for ctx in contexts
+            ):
+                raise RuntimeError("Cross-repository context changed during query")
 
             # Convert to dictionary format for MCP tools
             return {
@@ -4467,6 +4506,15 @@ class EnhancedDispatcher:
                 "results": result.results,
                 "repository_stats": result.repository_stats,
                 "deduplication_stats": result.deduplication_stats,
+                **(
+                    {
+                        "code": result.code,
+                        "safe_fallback": result.safe_fallback,
+                        "repository_errors": result.repository_errors,
+                    }
+                    if result.code
+                    else {}
+                ),
             }
         except Exception as e:
             logger.error(f"Cross-repository code search failed: {type(e).__name__}")
@@ -4478,7 +4526,9 @@ class EnhancedDispatcher:
                 "results": [],
                 "repository_stats": {},
                 "deduplication_stats": {},
-                "error": str(e),
+                "error": "Cross-repository query unavailable",
+                "code": "index_unavailable",
+                "safe_fallback": "native_search",
             }
 
     async def get_cross_repo_statistics(self, contexts: List[RepoContext]) -> Dict[str, Any]:

@@ -44,6 +44,8 @@ def test_multi_repo_workspace_hydration_restores_clean_state_and_query_truth(
                 ),
                 encoding="utf-8",
             )
+            repo_id = matrix.alpha.repo_id if repo == matrix.alpha.path else matrix.beta.repo_id
+            server.seed_repo_index(repo_id, repo)
 
         matrix.alpha.write_file(
             "delete_me.py", "def mre2e_deleted_symbol():\n    return 'delete'\n"
@@ -140,14 +142,16 @@ def test_multi_repo_workspace_hydration_restores_clean_state_and_query_truth(
         )
         monkeypatch.setattr(
             "mcp_server.artifacts.multi_repo_artifact_coordinator.IndexArtifactUploader._detect_repository",
-            lambda self: "owner/repo",
+            lambda self, repo_path=None: "owner/repo",
         )
 
         manager = MultiRepositoryManager(central_index_path=registry_path)
         publish_results = MultiRepoArtifactCoordinator(manager).publish_workspace(
             [matrix.alpha.repo_id, matrix.beta.repo_id]
         )
-        assert all(result.success for result in publish_results), publish_results
+        assert all(result.success for result in publish_results), [
+            result.error for result in publish_results
+        ]
 
     for repo_path in matrix.repos:
         shutil.rmtree(repo_path / ".mcp-index")
@@ -190,6 +194,9 @@ def test_multi_repo_workspace_hydration_restores_clean_state_and_query_truth(
                 json.dumps(metadata),
                 encoding="utf-8",
             )
+            manager.registry.update_indexed_commit(
+                kwargs["repo_id"], kwargs["target_commit"], branch=kwargs["tracked_branch"]
+            )
             return ArtifactDownloadResult(
                 artifact={
                     "name": f"{repo_path.name}-artifact",
@@ -206,7 +213,7 @@ def test_multi_repo_workspace_hydration_restores_clean_state_and_query_truth(
         )
         monkeypatch.setattr(
             "mcp_server.artifacts.multi_repo_artifact_coordinator.IndexArtifactDownloader._detect_repository",
-            lambda self: "owner/repo",
+            lambda self, repo_path=None: "owner/repo",
         )
 
         coordinator = MultiRepoArtifactCoordinator(manager)

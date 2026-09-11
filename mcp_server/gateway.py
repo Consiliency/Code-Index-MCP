@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import anyio
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -2174,7 +2175,11 @@ async def reindex(
         if not path and readiness.state in _RECOVERABLE_REINDEX_STATES:
             if git_index_manager is None or readiness.repository_id is None:
                 raise HTTPException(503, detail="Staged repository reindex is unavailable")
-            sync_result = git_index_manager.rebuild_repository_index(readiness.repository_id)
+            sync_result = await anyio.to_thread.run_sync(
+                git_index_manager.rebuild_repository_index,
+                readiness.repository_id,
+                abandon_on_cancel=False,
+            )
             if sync_result.action != "full_index":
                 raise HTTPException(
                     409,
@@ -2232,42 +2237,22 @@ async def reindex(
                     ) from exc
 
             def index_target(current):
-                stats = {"indexed_files": 0, "failed_files": 0}
+                source_target = target_path
+                if current.staging:
+                    source_target = current.workspace_root / target_path.relative_to(workspace_root)
                 if target_path.is_file():
-                    paths = [target_path]
-                else:
-                    paths = target_path.rglob("*")
-                active_plugins = dispatcher.plugins() if not target_path.is_file() else []
-                for file_path in paths:
-                    if not file_path.is_file():
-                        continue
-                    try:
-                        resolved_file = file_path.resolve(strict=True)
-                        resolved_file.relative_to(workspace_root)
-                        if guard is not None:
-                            guard.normalize_and_check(resolved_file)
-                        if target_path.is_file() or any(
-                            plugin.supports(resolved_file) for plugin in active_plugins
-                        ):
-                            result = dispatcher.index_file(current, resolved_file)
-                            if getattr(result, "status", None) in {
-                                "error",
-                                "not_found",
-                                "skipped_toctou",
-                            }:
-                                stats["failed_files"] += 1
-                            else:
-                                stats["indexed_files"] += 1
-                    except (OSError, ValueError, PathTraversalError) as exc:
-                        logger.warning(
-                            "Skipped unsafe reindex path %s: %s", file_path, type(exc).__name__
-                        )
-                    except Exception as exc:
-                        stats["failed_files"] += 1
-                        logger.warning("Failed to index %s: %s", file_path, type(exc).__name__)
-                return stats
+                    result = dispatcher.index_file(current, source_target)
+                    failed = getattr(result, "status", None) in {
+                        "error",
+                        "not_found",
+                        "skipped_toctou",
+                    }
+                    return {"indexed_files": int(not failed), "failed_files": int(failed)}
+                return dispatcher.index_directory(current, source_target, recursive=True)
 
-            stats = run_repository_mutation(repo_resolver, ctx, index_target)
+            stats = await anyio.to_thread.run_sync(
+                run_repository_mutation, repo_resolver, ctx, index_target, abandon_on_cancel=False
+            )
             if stats["failed_files"]:
                 raise RuntimeError("Reindex did not complete cleanly")
             indexed_count = stats["indexed_files"]
@@ -2287,7 +2272,9 @@ async def reindex(
                         "repository_id": ctx.repo_id,
                     },
                 )
-            sync_result = git_index_manager.rebuild_repository_index(ctx.repo_id)
+            sync_result = await anyio.to_thread.run_sync(
+                git_index_manager.rebuild_repository_index, ctx.repo_id, abandon_on_cancel=False
+            )
             if sync_result.action != "full_index":
                 raise HTTPException(
                     409,

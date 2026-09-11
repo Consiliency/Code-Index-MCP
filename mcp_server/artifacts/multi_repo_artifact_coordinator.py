@@ -228,7 +228,7 @@ class MultiRepoArtifactCoordinator:
 
                 index_location = Path(repo.index_location or repo.index_path.parent)
                 archive_path = index_location / f"index-archive-{uuid4().hex}.tar.gz"
-                uploader = IndexArtifactUploader()
+                uploader = IndexArtifactUploader(repo_path=repo.path)
                 archive_path, checksum, size = uploader.compress_indexes(
                     archive_path,
                     secure=True,
@@ -242,22 +242,23 @@ class MultiRepoArtifactCoordinator:
                     secure=True,
                     repo_id=repo.repository_id,
                     tracked_branch=repo.tracked_branch or repo.current_branch or "main",
-                    commit=repo.current_commit or "unknown",
+                    commit=repo.last_indexed_commit or "unknown",
                     index_location=index_location,
                     index_path=repo.index_path,
                 )
                 try:
                     uploader.upload_direct(archive_path, metadata)
-                    health = "prepared"
                 except Exception:
-                    health = "publish_failed"
+                    self.multi_repo_manager.registry.update_artifact_state(
+                        repo.repository_id, artifact_health="publish_failed"
+                    )
                     raise
                 profiles = self._read_local_profiles(repo.path, index_location, repo.index_path)
                 self.multi_repo_manager.registry.update_artifact_state(
                     repo.repository_id,
-                    last_published_commit=repo.current_commit,
-                    artifact_backend="local_workspace",
-                    artifact_health=health,
+                    last_published_commit=repo.last_indexed_commit,
+                    artifact_backend="github_release",
+                    artifact_health="published",
                     available_semantic_profiles=profiles,
                 )
                 validation_details = self._build_validation_details(
@@ -273,12 +274,12 @@ class MultiRepoArtifactCoordinator:
                         success=True,
                         details={
                             "profiles": profiles,
-                            "published_commit": repo.current_commit,
-                            "artifact_backend": "local_workspace",
-                            "artifact_health": health,
-                            "last_published_commit": repo.current_commit,
+                            "published_commit": repo.last_indexed_commit,
+                            "artifact_backend": "github_release",
+                            "artifact_health": "published",
+                            "last_published_commit": repo.last_indexed_commit,
                             "last_recovered_commit": repo.last_recovered_commit,
-                            "prepared_archive": "index-archive.tar.gz",
+                            "prepared_archive": archive_path.name,
                             **validation_details,
                         },
                     )
@@ -291,7 +292,7 @@ class MultiRepoArtifactCoordinator:
                         action="publish",
                         success=False,
                         details={},
-                        error=str(exc),
+                        error=f"Artifact publication failed ({type(exc).__name__})",
                     )
                 )
         return results
@@ -311,7 +312,9 @@ class MultiRepoArtifactCoordinator:
                     results.append(refused)
                     continue
 
-                downloader = IndexArtifactDownloader(registry=self.multi_repo_manager.registry)
+                downloader = IndexArtifactDownloader(
+                    registry=self.multi_repo_manager.registry, repo_path=repo.path
+                )
                 index_location = Path(repo.index_location or repo.index_path.parent)
                 download_workspace = tempfile.TemporaryDirectory(prefix="mcp-artifact-")
                 output_dir = Path(download_workspace.name)
@@ -343,18 +346,12 @@ class MultiRepoArtifactCoordinator:
                     raise RuntimeError(f"Artifact download did not hydrate {repo.index_path}")
                 self.multi_repo_manager.registry.update_artifact_state(
                     repo.repository_id,
-                    last_recovered_commit=artifact.get("workflow_run", {}).get("head_sha")
-                    or artifact.get("head_sha")
-                    or repo.current_commit,
+                    last_recovered_commit=repo.last_indexed_commit,
                     artifact_backend=repo.artifact_backend or "github_actions",
                     artifact_health=health,
                     available_semantic_profiles=profiles,
                 )
-                recovered_commit = (
-                    artifact.get("workflow_run", {}).get("head_sha")
-                    or artifact.get("head_sha")
-                    or repo.current_commit
-                )
+                recovered_commit = repo.last_indexed_commit
                 validation_reasons = getattr(result, "validation_reasons", []) or []
                 validation_details = self._build_validation_details(
                     repo,
