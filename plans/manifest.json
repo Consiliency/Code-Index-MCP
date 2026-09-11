@@ -141,6 +141,33 @@
       "updated_at": "2026-07-10T10:22:29Z"
     },
     {
+      "acceptance_criteria_count": 4,
+      "created_at": "2026-09-11T13:26:53Z",
+      "file": "plans/phase-plan-v13-DATA.md",
+      "handoff_ref": ".dev-skills/handoffs/codex-plan-phase/20260911T132653Z-data-plan.md",
+      "if_gates_produced": [],
+      "lanes": [
+        "SL-0",
+        "SL-1",
+        "SL-2"
+      ],
+      "lifecycle": [],
+      "owner_skill": "codex-plan-phase",
+      "phase_alias": "DATA",
+      "reflection_ref": "/home/viperjuice/.codex/skills/codex-plan-phase/reflections/448c2cf6/codex-v13-audit-remediation/20260911T132653Z-data-plan.md",
+      "roadmap_ref": {
+        "file": "specs/phase-plans-v13.md",
+        "slug": "phase-plans-v13",
+        "status": "committed",
+        "type": "roadmap"
+      },
+      "slug": "phase-plan-v13-DATA",
+      "status": "committed",
+      "task_summary": "Coherent retained storage, vector provenance and query reconciliation",
+      "type": "phase",
+      "updated_at": "2026-09-11T13:26:53Z"
+    },
+    {
       "acceptance_criteria_count": 3,
       "created_at": "2026-09-11T09:34:36.389431+00:00",
       "file": "plans/phase-plan-v13-DIST.md",
