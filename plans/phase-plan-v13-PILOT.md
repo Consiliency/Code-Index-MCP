@@ -147,6 +147,11 @@ logs, screenshots and receipts. No ambient env files, PMCP user config, private
 registries/indexes, raw fleet source or old private runs. Fresh browser context,
 never an existing login session. Active plan and plans/manifest.json are control
 outputs; upstream roadmap/contracts/receipts stay read-only. Never stage raw scratch.
+Control outputs also include `.dev-skills/handoffs/codex-plan-phase/**` and
+`.dev-skills/handoffs/codex-execute-phase/**`, retained as ignored metadata.
+Accepted DATA proof inputs are read-only:
+`.phase-loop/runs/v13-DATA-20260911-668bf75/verification.json` and
+`.phase-loop/runs/v13-DATA-20260911-668bf75/verification.log`.
 
 ## Verification
 
