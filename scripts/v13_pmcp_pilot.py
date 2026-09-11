@@ -583,6 +583,25 @@ async def invoke(client, tools: dict, name: str, arguments: dict):
 async def offline(root: Path, manifest: dict) -> dict:
     fixture = create_fixture(root, manifest, label="offline")
     goals = {"installed_identity": True}
+    cases = []
+
+    def checkpoint():
+        result = {
+            "kind": "offline",
+            "source": manifest["source"],
+            "wheel_sha256": manifest["wheel_sha256"],
+            "manifest_sha256": digest_json(manifest),
+            "goals": dict(goals),
+            "shutdown_seconds": [p.exit_seconds for p in fixture.get("processes", [])]
+            + [case["exit_seconds"] for case in cases],
+            "surviving_children": [pid for p in fixture.get("processes", []) for pid in p.survivors]
+            + [pid for case in cases for pid in case["surviving_children"]],
+            "lifecycle": list(cases),
+            "peak_rss_mib": max((p.peak_rss_mib for p in fixture.get("processes", [])), default=0),
+        }
+        write_json(root / "offline.partial.json", result)
+        return result
+
     for attempt in range(2):
         async with gateway(fixture, f"pmcp-{attempt}") as (client, owner):
             tools = await discover(client)
@@ -695,6 +714,7 @@ async def offline(root: Path, manifest: dict) -> dict:
             owner.observe()
         if attempt == 1:
             goals["reconnect"] = True
+        checkpoint()
     lifecycle_root = root / "lifecycle"
     lifecycle_root.mkdir()
     for script in ("installed_runtime_smoke.py", "safety_runtime_smoke.py"):
@@ -734,20 +754,39 @@ async def offline(root: Path, manifest: dict) -> dict:
     if len(cases) != 6 or any(not case["metrics_ports"] for case in cases):
         raise PilotRefused("installed_metrics_lifecycle_missing")
     goals["installed_lifecycle"] = True
+    checkpoint()
     # A separate owned listener occupies the configured port; startup must not steal it.
     collision = create_fixture(root, manifest, label="metrics-collision")
     with socket.socket() as listener:
         listener.bind(("127.0.0.1", int(collision["env"]["MCP_METRICS_PORT"])))
         listener.listen(1)
         async with gateway(collision, "pmcp-collision") as (client, owner):
-            tools = await discover(client)
-            await invoke(client, tools, "handshake", {"secret": collision["secret"]})
-            value = await invoke(client, tools, "get_status", {})
+            denied = tool_payload(
+                await client.call_tool("gateway.provision", {"server_name": "index-it-mcp"})
+            )
+            if denied.get("ok") is not False or denied.get("status") != "failed":
+                raise PilotRefused("metrics_collision_not_refused")
             if not listener.getsockname()[1]:
                 raise PilotRefused("metrics_listener_lost")
             owner.observe()
         if listener.fileno() < 0:
             raise PilotRefused("metrics_listener_closed")
+    async with gateway(collision, "pmcp-collision-recovery") as (client, owner):
+        tools = await discover(client)
+        await invoke(client, tools, "handshake", {"secret": collision["secret"]})
+        status = await invoke(client, tools, "get_status", {})
+        if "repositories" not in status:
+            raise PilotRefused("metrics_recovery_status_failed")
+        async with httpx.AsyncClient(trust_env=False) as http:
+            metrics = await http.get(
+                f"http://127.0.0.1:{collision['env']['MCP_METRICS_PORT']}/metrics"
+            )
+            if metrics.status_code != 200 or "mcp_tool_calls_total" not in metrics.text:
+                raise PilotRefused("metrics_recovery_listener_failed")
+        owner.observe()
+    with socket.socket() as listener:
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        listener.bind(("127.0.0.1", int(collision["env"]["MCP_METRICS_PORT"])))
     goals["metrics_contention"] = True
     fixture["processes"].extend(collision["processes"])
     for directory, secret in (
@@ -757,20 +796,7 @@ async def offline(root: Path, manifest: dict) -> dict:
         if any(secret in log.read_text(errors="replace") for log in directory.glob("*.log")):
             raise PilotRefused("credential_log_exposure")
     goals["privacy"] = True
-    result = {
-        "kind": "offline",
-        "source": manifest["source"],
-        "wheel_sha256": manifest["wheel_sha256"],
-        "manifest_sha256": digest_json(manifest),
-        "goals": goals,
-        "shutdown_seconds": [p.exit_seconds for p in fixture["processes"]]
-        + [case["exit_seconds"] for case in cases],
-        "surviving_children": [pid for p in fixture["processes"] for pid in p.survivors]
-        + [pid for case in cases for pid in case["surviving_children"]],
-        "lifecycle": cases,
-        "peak_rss_mib": max(p.peak_rss_mib for p in fixture["processes"]),
-    }
-    write_json(root / "offline.partial.json", result)
+    result = checkpoint()
     validate_receipt(result, manifest, "offline")
     write_json(root / "offline.json", result)
     return result
