@@ -334,6 +334,7 @@ agent-gate-local: agent-fast-local
 		tests/test_sqlite_migrations.py tests/test_baml_contract.py \
 		tests/test_tool_schema_handler_parity.py \
 		tests/test_dispatcher.py::TestEnhancedDispatcherProtocolConformance::test_direct_symbol_response_satisfies_http_contract \
+		tests/test_dispatcher.py::TestEnhancedDispatcherProtocolConformance::test_skip_cache_does_not_suppress_writes_to_another_store \
 		tests/docs/test_p8_historical_sweep.py tests/test_workflow_action_pins.py \
 		-q --no-cov
 	$(MAKE) release-smoke

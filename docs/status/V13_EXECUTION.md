@@ -59,6 +59,7 @@ import orders earlier; this is not a reason to bypass candidate-specific checks.
 - BAML generator/runtime/client are pinned and reproducible; historical tests, workflow census, changed-path routing and support/coverage documentation are aligned.
 - The first stamped run recorded 2,975 broad-suite passes and 313 phase-suite passes, but rejected acceptance because the separately invoked Git integration command selected zero tests. Its evidence remains intact under `.phase-loop/runs/v13-DIST-20260911-final/`.
 - Explicit integration selection exposed a pooled-schema regression; the focused reproducer and all nine Git integration tests now pass (16 combined tests). A new full stamped run must accept the final candidate, including wheel/image hashes, before IF-0-DIST-1 is produced.
+- Subsequent installed checks exposed a source-only skip cache suppressing unchanged files in an empty staged database. Destination-content validation and a two-store regression now pass; the installed wheel passes again. This is a narrow distribution prerequisite, not acceptance of STATE's full generation/cache contract.
 
 ## Resume
 

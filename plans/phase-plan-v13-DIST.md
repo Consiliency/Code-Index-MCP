@@ -57,6 +57,7 @@ SL-2 — Acceptance reducer
   - impl: Align BAML generator and runtime exactly at the locked version, regenerate, verify no generated drift without model calls.
   - impl: Installed smoke exposed an undeclared staged_full reindex response. Correct only the advertised reindex result schema and add schema validation controls; runtime lifecycle remains SAFETY-owned downstream. Keep actual SDK validation enabled.
   - impl: Container smoke exposed missing start_line/end_line in direct symbol responses. Repair those producer fields and verify the existing SymbolDef contract; generation/query admission remains STATE/DATA-owned downstream.
+  - impl: Once fresh pooled indexing succeeds, installed reindex exposes a source-only skip cache suppressing writes into the empty staged destination. Require the target store to contain the same content before skipping. Verify two real SQLite destinations; full cross-process generation/cache admission remains STATE-owned.
   - verify: Run migration/BAML/smoke contract tests, wheel smoke and container smoke with individual 300-second execution bounds and partial results. Build/install have separate bounded steps.
 
 ### SL-1 - Verification fidelity and support

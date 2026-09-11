@@ -10968,6 +10968,40 @@ class TestEnhancedDispatcherProtocolConformance:
         assert first.status == IndexResultStatus.INDEXED
         assert second.status == IndexResultStatus.SKIPPED_UNCHANGED
 
+    def test_skip_cache_does_not_suppress_writes_to_another_store(self, tmp_path):
+        from dataclasses import replace
+
+        from mcp_server.storage.sqlite_store import SQLiteStore
+
+        target = tmp_path / "sample.py"
+        target.write_text("value = 1\n")
+        plugin = MagicMock(spec=IPlugin, lang="python")
+        plugin.language = "python"
+        plugin.supports.return_value = True
+        plugin.indexFile.return_value = {"symbols": []}
+        dispatcher = Dispatcher([plugin])
+        stores = [SQLiteStore(str(tmp_path / name)) for name in ("active.db", "staged.db")]
+        ctx = _make_repo_ctx(stores[0])
+        ctx.registry_entry.path = tmp_path
+        ctx = replace(ctx, workspace_root=tmp_path)
+        try:
+            assert dispatcher.index_file(ctx, target).status == IndexResultStatus.INDEXED
+            staged_ctx = replace(ctx, sqlite_store=stores[1])
+            assert dispatcher.index_file(staged_ctx, target).status == IndexResultStatus.INDEXED
+            assert stores[1].get_file(target)["content_hash"] == dispatcher._get_file_hash(
+                target.read_text()
+            )
+            assert (
+                dispatcher.index_file(staged_ctx, target).status
+                == IndexResultStatus.SKIPPED_UNCHANGED
+            )
+            target.write_text("value = 2\n")
+            assert dispatcher.index_file(staged_ctx, target).status == IndexResultStatus.INDEXED
+            assert dispatcher.index_file(ctx, target).status == IndexResultStatus.INDEXED
+        finally:
+            for store in stores:
+                store.close()
+
     def test_remove_file_returns_not_found_when_repo_row_missing(self, tmp_path):
         from mcp_server.storage.sqlite_store import SQLiteStore
 

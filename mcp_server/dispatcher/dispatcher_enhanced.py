@@ -1013,8 +1013,14 @@ class EnhancedDispatcher:
         """Compute SHA-256 hash of raw file bytes (used for TOCTOU guard)."""
         return hashlib.sha256(path.read_bytes()).hexdigest()
 
-    def _should_reindex(self, path: Path, content: str) -> bool:
+    def _should_reindex(
+        self, path: Path, content: str, store: Optional[SQLiteStore] = None
+    ) -> bool:
         """Return True if the file needs to be (re-)indexed."""
+        if isinstance(store, SQLiteStore):
+            persisted = store.get_file(path)
+            if not persisted or persisted.get("content_hash") != self._get_file_hash(content):
+                return True
         key = str(path)
         with self._file_cache_lock:
             if key not in self._file_cache:
@@ -2492,7 +2498,7 @@ class EnhancedDispatcher:
                     )
 
             # Skip if file hasn't changed since last index
-            if not self._should_reindex(path, content):
+            if not self._should_reindex(path, content, ctx.sqlite_store):
                 logger.debug(f"Skipping {path} (unchanged)")
                 return IndexResult(
                     status=IndexResultStatus.SKIPPED_UNCHANGED,
@@ -2819,7 +2825,7 @@ class EnhancedDispatcher:
                     error=str(e),
                 )
 
-        if not self._should_reindex(path, content):
+        if not self._should_reindex(path, content, ctx.sqlite_store):
             return IndexResult(
                 status=IndexResultStatus.SKIPPED_UNCHANGED,
                 path=path,
