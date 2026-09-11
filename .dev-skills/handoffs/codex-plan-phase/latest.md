@@ -1,42 +1,48 @@
 ---
 from: codex-plan-phase
-timestamp: "2026-09-11T09:04:07Z"
+timestamp: "2026-09-11T10:05:45Z"
 repo: 448c2cf6
 repo_root: /mnt/HC_Volume_105438154/worktrees/Code-Index-MCP-v13-audit-remediation
 branch: codex/v13-audit-remediation
 branch_slug: codex-v13-audit-remediation
-commit: d4e09c54232fdddd76c393c4027d0f4c01fbd5a4
-run_id: 20260911T090407Z-freeze-approved
-artifact: /mnt/HC_Volume_105438154/worktrees/Code-Index-MCP-v13-audit-remediation/plans/phase-plan-v13-FREEZE.md
-artifact_state: staged
+commit: 3e99c40c1c092e209498b9091380fe9d3dfd218e
+run_id: 20260911T100545Z-dist-accepted
+artifact: /mnt/HC_Volume_105438154/worktrees/Code-Index-MCP-v13-audit-remediation/plans/phase-plan-v13-DIST.md
+artifact_state: tracked
 next_skill: codex-plan-phase
-next_command: codex-plan-phase specs/phase-plans-v13.md DIST
-next_phase: DIST
+next_command: codex-plan-phase specs/phase-plans-v13.md STATE
+next_phase: STATE
 automation:
   status: complete
   verification_status: passed
+  verification_artifact_path: .phase-loop/runs/v13-DIST-20260911-3e99c40/verification.json
   human_required: false
   blocker_class: null
   required_human_inputs: []
 ---
 
-# FREEZE Accepted
+# DIST Accepted
 
-The owner replied "Approved" on 2026-09-11 to both exact proposals:
-synthetic-only 100000 embedding input tokens including retries, 900 seconds,
-no commercial egress; manual signing-only GitHub OIDC job capped at five
-minutes, no routine hosted CI or private source/index uploads.
+Candidate: 3e99c40c1c092e209498b9091380fe9d3dfd218e.
+All seven commands, locked environment refresh and phase suite exited 0.
+Broad offline baseline: 2977 passed, 153 skipped, 31 deselected.
+Isolated Git integration: 9 passed. Phase suite: 314 passed.
+Actual installed wheel STDIO and configured non-root container HTTP passed
+register/index/query/refusal/restart workflows. No inference was used.
 
-Original verification rerun: 13 passed in 1.98s; structure 0; acceptance 0;
-locked dependency refresh 0. Standalone verification, not an outer loop run:
-`.phase-loop/runs/v13-FREEZE-20260911/verification.json`,
-SHA256 ea62c4440f8807df785c43485ed3c88d55817983036b503143a662395f56d528.
-Produced IF-0-FREEZE-1; all three ECs pass. No production fix is claimed.
+Standalone verification artifact (not an outer loop run):
+`.phase-loop/runs/v13-DIST-20260911-3e99c40/verification.json`.
+File SHA256: f0557cdcb69cd4f425bdd06c8b56736d48b5f85938f2038d5851f707f35e0bac.
+Validation: ok=True; commands [0,0,0,0,0,0,0], env_refresh 0, suite 0.
 
-Receipt: `docs/validation/v13/FREEZE.json`. Roadmap bytes unchanged.
-Next: plan DIST, then execute manually. Original checkout remains untouched;
-keep this unmerged worktree. No source/version release or inference run occurred.
-The manifest's terminal failed entry was re-registered through append_entry
-with its history preserved, then transitioned executing/completed. An initial
-slug lookup made no changes. Contract docs updated; metadata-only
-canonical_spec_update. No issues enrolled; inventory/dispositions both empty.
+Produced IF-0-DIST-1. Receipt: `docs/validation/v13/DIST.json`.
+Metadata-only canonical_spec_update; support/local-CI/agent docs updated.
+Issue inventory and dispositions are explicitly empty; findings use roadmap
+tracking. Earlier failed records stay preserved and are not approvals.
+Known agent-harness#819 startup warning remains; no outer runner was resumed.
+
+Next: plan STATE, then execute manually in this worktree. A STATE draft may be
+held in the conversation tools, but is not yet a tracked execution input.
+Original main checkout is untouched. Draft Code-Index-MCP#97 contains the
+implementation checkpoints. No version bump, final code review, merge,
+publication, browser or fleet acceptance is claimed.

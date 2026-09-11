@@ -8,7 +8,7 @@ Worktree: `/mnt/workspace/worktrees/Code-Index-MCP-v13-audit-remediation`.
 | Phase | Status | Evidence |
 | --- | --- | --- |
 | FREEZE | Accepted; owner decisions approved | `docs/validation/v13/FREEZE.json` |
-| DIST | Implementation checkpoint; final acceptance rerun pending | Installed wheel/image checks passed; no phase gate emitted yet |
+| DIST | Accepted | `docs/validation/v13/DIST.json`; IF-0-DIST-1 |
 | STATE | Not started | No implementation acceptance claimed |
 | SAFETY | Not started | No implementation acceptance claimed |
 | DATA | Not started | No implementation acceptance claimed |
@@ -63,8 +63,15 @@ import orders earlier; this is not a reason to bypass candidate-specific checks.
 
 ## Resume
 
-Read `docs/validation/v13/FREEZE.json` and
+DIST final candidate `3e99c40` passed all seven recorded commands, the locked
+environment refresh and the 314-test phase suite. Broad offline baseline:
+2,977 passed, 153 skipped, 31 deselected. Separately selected Git integration:
+9 passed. Installed wheel and configured non-root image passed real workflows
+and restart. Artifact hashes and exclusions are in the DIST receipt. Earlier
+failed attempts remain preserved and are not accepted evidence.
+
+Read `docs/validation/v13/DIST.json` and
 `.dev-skills/handoffs/codex-execute-phase/latest.md` in this worktree.
-Next phase: DIST.
-Command: `codex-execute-phase plans/phase-plan-v13-DIST.md`.
+Next phase: STATE.
+Command: `codex-plan-phase specs/phase-plans-v13.md STATE`.
 Do not restart v9 or infer v13 completion from old primary-checkout state.

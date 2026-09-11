@@ -145,7 +145,9 @@
       "created_at": "2026-09-11T09:34:36.389431+00:00",
       "file": "plans/phase-plan-v13-DIST.md",
       "handoff_ref": ".dev-skills/handoffs/codex-plan-phase/latest.md",
-      "if_gates_produced": [],
+      "if_gates_produced": [
+        "IF-0-DIST-1"
+      ],
       "lanes": [
         "SL-0",
         "SL-1",
@@ -161,11 +163,28 @@
             "mode": "manual"
           },
           "transition": "executing"
+        },
+        {
+          "at": "2026-09-11T10:11:27Z",
+          "by": "codex-execute-phase",
+          "metadata": {
+            "dirty_worktree_summary": "Only phase-owned closeout/control artifacts; authorized checkpoint commit follows.",
+            "doc_delta_decision": "docs_updated",
+            "if_gates_produced": [
+              "IF-0-DIST-1"
+            ],
+            "issue_dispositions": [],
+            "issue_inventory": [],
+            "reflection_status": "written",
+            "verification_artifact_path": ".phase-loop/runs/v13-DIST-20260911-3e99c40/verification.json",
+            "verification_status": "passed"
+          },
+          "transition": "completed"
         }
       ],
       "owner_skill": "codex-plan-phase",
       "phase_alias": "DIST",
-      "reflection_ref": null,
+      "reflection_ref": "/home/viperjuice/.codex/skills/codex-execute-phase/reflections/448c2cf6/codex-v13-audit-remediation/20260911T100545Z-dist-accepted.md",
       "registration_note": "Manual DIST planning and execution began before ledger registration; actual prior progress retained in git diff and test evidence.",
       "roadmap_ref": {
         "file": "specs/phase-plans-v13.md",
@@ -174,10 +193,10 @@
         "type": "roadmap"
       },
       "slug": "phase-plan-v13-DIST",
-      "status": "executing",
+      "status": "completed",
       "task_summary": "Repair installed distribution and verification fidelity",
       "type": "phase",
-      "updated_at": "2026-09-11T09:34:36Z"
+      "updated_at": "2026-09-11T10:11:27Z"
     },
     {
       "acceptance_criteria_count": 3,
