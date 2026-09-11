@@ -24,6 +24,8 @@ from tests.test_history_issue_storage import _history_record
 @pytest.fixture
 def runtime(tmp_path, monkeypatch):
     repo = _make_git_repo(tmp_path)
+    # Runtime databases must not become committed source during fixture edits.
+    (repo / ".git" / "info" / "exclude").write_text("/.mcp-index/\n")
     monkeypatch.setenv("MCP_INDEX_STORAGE_PATH", str(tmp_path / "indexes"))
     monkeypatch.setenv("MCP_ALLOWED_ROOTS", str(tmp_path))
     monkeypatch.setenv("MCP_ENABLE_MULTI_REPO", "false")
@@ -117,6 +119,18 @@ def test_standalone_manager_reuses_generation_bound_store(runtime):
     assert manager.store_registry is not None
     assert first.sqlite_store is second.sqlite_store
     assert manager.store_registry.is_current(repo_id, first.sqlite_store)
+
+
+def test_fixture_commits_do_not_capture_live_generation_files(runtime):
+    repo, _registry, repo_id, _store, manager = runtime
+    assert manager.rebuild_repository_index(repo_id).action == "full_index"
+    manager._resolve_ctx(repo_id)
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    tracked_runtime = subprocess.check_output(
+        ["git", "ls-files", ".mcp-index"], cwd=repo, text=True
+    )
+    assert not tracked_runtime
+    subprocess.run(["git", "diff", "--cached", "--exit-code"], cwd=repo, check=True)
 
 
 def test_production_rebuild_preserves_imported_data_links_and_cleanup_debt(runtime):

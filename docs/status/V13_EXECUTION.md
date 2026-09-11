@@ -243,6 +243,20 @@ Qdrant before rank/limit, retaining split chunks and excluding deleted/sentinel
 points. Five new vector controls pass locally; all fifteen maintenance/filter
 controls pass on the pinned disposable server. Eighteen source-filter/history
 controls pass with real SQLite and file-backed vectors. No live inference.
+
+The expanded candidate `c0713a7` also fixed generation-aware semantic readiness,
+signed SQLite/Qdrant point IDs and bound standalone manager stores. Its wheel,
+container, 73 vector/provenance tests, 19 file/server controls per mode and 140
+Git manager tests passed. Its broad run failed six tests (3,144 passed, 150
+skipped, 31 deselected), and the phase suite failed three (374 passed).
+That receipt is rejected, not accepted by its other successful commands.
+
+The shared synthetic fixture committed live .mcp-index WAL/SHM files via its
+blanket Git add. Closing pooled handles correctly changed those tracked files
+and tripped the final dirty-source fence. The fixture now locally excludes its
+runtime directory; a new test checks it never stages generation files. All 37
+selected reconciliation/watcher tests pass, with two benchmark cases deselected.
+No production fence was relaxed. Another complete exact-candidate run is required.
 All original phase gates must pass again on the repaired committed candidate.
 
 Expanded production semantic probes also reproduced readiness checking the

@@ -190,6 +190,14 @@ substitute for installed query workflows. Record all skips and failed attempts.
 
 ## Execution Checkpoint
 
+2026-09-11 c0713a7 verification rejected: six broad failures and three phase
+failures reproduced committed SQLite WAL/SHM files in the shared synthetic
+fixture. Its blanket Git commits captured runtime files after pooled reads;
+closing those handles correctly tripped the final dirty-source fence. Exclude
+the fixture's .mcp-index through its local Git excludes and assert no runtime
+files are staged. Keep the production admission check unchanged. Preserve the
+failed receipt and rerun every original command on the repaired candidate.
+
 2026-09-11 C18 acceptance repair: the exact dd0c763 verification passed all
 commands, but final source review found semantic source filters still used
 lexical FTS. Preserve that run as rejected acceptance evidence. Re-enter SL-0
