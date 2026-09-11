@@ -284,6 +284,44 @@
       "updated_at": "2026-09-11T09:06:59Z"
     },
     {
+      "acceptance_criteria_count": 3,
+      "created_at": "2026-09-11T10:20:30.214608+00:00",
+      "file": "plans/phase-plan-v13-STATE.md",
+      "handoff_ref": ".dev-skills/handoffs/codex-plan-phase/latest.md",
+      "if_gates_produced": [],
+      "lanes": [
+        "SL-0",
+        "SL-1",
+        "SL-2"
+      ],
+      "lifecycle": [
+        {
+          "at": "2026-09-11T10:20:30Z",
+          "by": "codex-execute-phase",
+          "metadata": {
+            "base_commit": "5d1a41f",
+            "issue_inventory": [],
+            "mode": "manual"
+          },
+          "transition": "executing"
+        }
+      ],
+      "owner_skill": "codex-plan-phase",
+      "phase_alias": "STATE",
+      "reflection_ref": null,
+      "roadmap_ref": {
+        "file": "specs/phase-plans-v13.md",
+        "slug": "phase-plans-v13",
+        "status": "committed",
+        "type": "roadmap"
+      },
+      "slug": "phase-plan-v13-STATE",
+      "status": "executing",
+      "task_summary": null,
+      "type": "phase",
+      "updated_at": "2026-09-11T10:20:30Z"
+    },
+    {
       "acceptance_criteria_count": 6,
       "created_at": "2026-07-06T02:11:25Z",
       "file": "plans/phase-plan-v9-COVERAGE.md",

@@ -1,3 +1,5 @@
+import hashlib
+import json
 import logging
 import os
 import sys
@@ -33,6 +35,7 @@ from .config.validation import (
 )
 from .core import RepoContext, RepoResolver
 from .core.logging import setup_logging
+from .core.repo_resolver import run_repository_mutation
 from .dispatcher.dispatcher_enhanced import EnhancedDispatcher
 from .health.repository_readiness import RepositoryReadiness, RepositoryReadinessState
 from .indexer.bm25_indexer import BM25Indexer
@@ -1471,6 +1474,19 @@ def get_metrics_json(
         raise HTTPException(500, f"Failed to get metrics: {str(e)}")
 
 
+def _require_current_generation(ctx: RepoContext) -> None:
+    if isinstance(repo_resolver, RepoResolver) and ctx.repo_id != _FALLBACK_REPO_ID:
+        if not repo_resolver.is_current(ctx):
+            raise HTTPException(
+                503,
+                detail={
+                    "code": "index_unavailable",
+                    "safe_fallback": "native_search",
+                    "remediation": "Repository generation changed; re-check readiness and retry.",
+                },
+            )
+
+
 @app.get("/symbol", response_model=SymbolDef | None)
 async def symbol(
     request: Request, symbol: str, current_user: User = Depends(require_permission(Permission.READ))
@@ -1488,10 +1504,14 @@ async def symbol(
         cached_result = None
         if query_cache and query_cache.config.enabled:
             cached_result = await query_cache.get_cached_result(
-                QueryType.SYMBOL_LOOKUP, symbol=symbol, repo_id=ctx.repo_id
+                QueryType.SYMBOL_LOOKUP,
+                symbol=symbol,
+                repo_id=ctx.repo_id,
+                generation=ctx.generation_key,
             )
 
         if cached_result is not None:
+            _require_current_generation(ctx)
             logger.debug(f"Found cached symbol: {symbol}")
             duration = time.time() - start_time
             business_metrics.record_search_performed(
@@ -1502,11 +1522,16 @@ async def symbol(
         # Record symbol lookup metrics
         with metrics_collector.time_function("symbol_lookup"):
             result = dispatcher.lookup(ctx, symbol)
+        _require_current_generation(ctx)
 
         # Cache the result if available
         if query_cache and query_cache.config.enabled and result:
             await query_cache.cache_result(
-                QueryType.SYMBOL_LOOKUP, result, symbol=symbol, repo_id=ctx.repo_id
+                QueryType.SYMBOL_LOOKUP,
+                result,
+                symbol=symbol,
+                repo_id=ctx.repo_id,
+                generation=ctx.generation_key,
             )
 
         # Record business metrics
@@ -1522,8 +1547,12 @@ async def symbol(
             logger.debug(f"Found symbol: {symbol}")
         else:
             logger.debug(f"Symbol not found: {symbol}")
+        _require_current_generation(ctx)
         return result
+    except HTTPException:
+        raise
     except Exception as e:
+        _require_current_generation(ctx)
         duration = time.time() - start_time
         business_metrics.record_search_performed(
             query=symbol, semantic=False, results_count=0, duration=duration
@@ -1632,6 +1661,8 @@ async def search(
 
         cache_params = {
             "repo_id": ctx.repo_id,
+            "generation": ctx.generation_key,
+            "mode": effective_mode,
             "q": q,
             "semantic": effective_mode == "semantic",
             "limit": limit,
@@ -1643,6 +1674,16 @@ async def search(
             "history_repos": options.history_repos,
             "include_source_metadata": options.include_source_metadata,
         }
+        if effective_mode in {"semantic", "hybrid"}:
+            settings = get_settings()
+            profile_registry = SemanticProfileRegistry.from_raw(
+                settings.get_semantic_profiles_config(),
+                settings.get_semantic_default_profile(),
+                tool_version=settings.app_version,
+            )
+            cache_params["profile"] = hashlib.sha256(
+                json.dumps(profile_registry.to_dict(), sort_keys=True, default=str).encode()
+            ).hexdigest()
 
         cached_results = None
         if query_cache and query_cache.config.enabled:
@@ -1652,6 +1693,7 @@ async def search(
             cached_results = await query_cache.get_cached_result(query_type, **cache_params)
 
         if cached_results is not None:
+            _require_current_generation(ctx)
             cached_results = [
                 r for r in (_normalize_search_result(x) for x in cached_results) if r is not None
             ]
@@ -1816,6 +1858,7 @@ async def search(
 
         # Cache the results if available
         results = [r for r in (_normalize_search_result(x) for x in results) if r is not None]
+        _require_current_generation(ctx)
         if query_cache and query_cache.config.enabled and results:
             query_type = (
                 QueryType.SEMANTIC_SEARCH if effective_mode == "semantic" else QueryType.SEARCH
@@ -1836,6 +1879,7 @@ async def search(
         )
 
         logger.debug(f"Search returned {len(results)} results using {effective_mode} mode")
+        _require_current_generation(ctx)
         return results
     except HTTPException:
         raise
@@ -2174,28 +2218,44 @@ async def reindex(
                         },
                     ) from exc
 
-            indexed_count = 0
-            if target_path.is_file():
-                dispatcher.index_file(ctx, target_path)
-                indexed_count = 1
-            else:
-                active_plugins = dispatcher.plugins()
-                for file_path in target_path.rglob("*"):
-                    if file_path.is_file():
-                        try:
-                            resolved_file = file_path.resolve(strict=True)
-                            resolved_file.relative_to(workspace_root)
-                            if guard is not None:
-                                guard.normalize_and_check(resolved_file)
-                            for plugin in active_plugins:
-                                if plugin.supports(resolved_file):
-                                    dispatcher.index_file(ctx, resolved_file)
-                                    indexed_count += 1
-                                    break
-                        except (OSError, ValueError, PathTraversalError) as e:
-                            logger.warning(f"Skipped unsafe reindex path {file_path}: {e}")
-                        except Exception as e:
-                            logger.warning(f"Failed to index {file_path}: {e}")
+            def index_target(current):
+                stats = {"indexed_files": 0, "failed_files": 0}
+                if target_path.is_file():
+                    paths = [target_path]
+                else:
+                    paths = target_path.rglob("*")
+                active_plugins = dispatcher.plugins() if not target_path.is_file() else []
+                for file_path in paths:
+                    if not file_path.is_file():
+                        continue
+                    try:
+                        resolved_file = file_path.resolve(strict=True)
+                        resolved_file.relative_to(workspace_root)
+                        if guard is not None:
+                            guard.normalize_and_check(resolved_file)
+                        if target_path.is_file() or any(
+                            plugin.supports(resolved_file) for plugin in active_plugins
+                        ):
+                            result = dispatcher.index_file(current, resolved_file)
+                            if getattr(result, "status", None) in {
+                                "error",
+                                "not_found",
+                                "skipped_toctou",
+                            }:
+                                stats["failed_files"] += 1
+                            else:
+                                stats["indexed_files"] += 1
+                    except (OSError, ValueError, PathTraversalError) as exc:
+                        logger.warning("Skipped unsafe reindex path %s: %s", file_path, exc)
+                    except Exception as exc:
+                        stats["failed_files"] += 1
+                        logger.warning("Failed to index %s: %s", file_path, exc)
+                return stats
+
+            stats = run_repository_mutation(repo_resolver, ctx, index_target)
+            if stats["failed_files"]:
+                raise RuntimeError("Reindex did not complete cleanly")
+            indexed_count = stats["indexed_files"]
 
             logger.info(f"Successfully reindexed {indexed_count} files in {path}")
             return {

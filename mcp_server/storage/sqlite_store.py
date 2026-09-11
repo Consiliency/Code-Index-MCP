@@ -10,6 +10,7 @@ import json
 import logging
 import re
 import sqlite3
+import threading
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -364,6 +365,8 @@ class SQLiteStore:
         self.db_path = db_path
         self.path_resolver = path_resolver or PathResolver()
         self._pool = pool
+        self._connection_state = threading.local()
+        self.registry_binding = None
         self._memory_uri = None
         self._memory_anchor = None
         if db_path == ":memory:" and pool is None:
@@ -498,9 +501,7 @@ class SQLiteStore:
             for row in rows
         ]
 
-    def clear_pending_vector_deletions(
-        self, ledger_ids: Optional[List[int]] = None
-    ) -> int:
+    def clear_pending_vector_deletions(self, ledger_ids: Optional[List[int]] = None) -> int:
         """Clear ledger rows once their remote vectors are deleted.
 
         With ``ledger_ids`` clears exactly those rows (the ids from
@@ -632,9 +633,7 @@ class SQLiteStore:
                     # deleted (its remote vector is in active use).  Only orphans
                     # (no live mapping) are remote deleted; the revived rows' ledger
                     # debt is still cleared below on success.
-                    live = self.get_live_semantic_point_ids(
-                        profile_id, collection, point_ids
-                    )
+                    live = self.get_live_semantic_point_ids(profile_id, collection, point_ids)
                     orphan_ids = [p for p in point_ids if p not in live]
                     if orphan_ids:
                         delete_remote(collection, orphan_ids)
@@ -651,9 +650,7 @@ class SQLiteStore:
                 continue
             drainable_ids.extend(group["ledger_ids"])
 
-        rows_drained = (
-            self.clear_pending_vector_deletions(drainable_ids) if drainable_ids else 0
-        )
+        rows_drained = self.clear_pending_vector_deletions(drainable_ids) if drainable_ids else 0
         return {
             "rows_drained": rows_drained,
             "rows_remaining": len(pending) - rows_drained,
@@ -828,6 +825,22 @@ class SQLiteStore:
         (skipping open/close) and applies row_factory + foreign_keys each
         time.  Commit/rollback semantics are identical to the non-pool path.
         """
+        existing = getattr(self._connection_state, "connection", None)
+        if existing is not None:
+            # A nested method must neither borrow another pool slot nor commit
+            # its caller's transaction. Savepoints isolate caught inner errors.
+            savepoint = f"mcp_nested_{uuid.uuid4().hex}"
+            if not existing.in_transaction:
+                existing.execute("BEGIN")
+            existing.execute(f"SAVEPOINT {savepoint}")
+            try:
+                yield existing
+                existing.execute(f"RELEASE SAVEPOINT {savepoint}")
+            except BaseException:
+                existing.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+                existing.execute(f"RELEASE SAVEPOINT {savepoint}")
+                raise
+            return
         if self._pool is not None:
             with self._pool.acquire() as conn:
                 conn.row_factory = sqlite3.Row
@@ -835,6 +848,7 @@ class SQLiteStore:
                 try:
                     # Preopened connections may cache the empty schema before migrations.
                     conn.execute("SELECT name FROM sqlite_master LIMIT 1").fetchone()
+                    self._connection_state.connection = conn
                     yield conn
                     conn.commit()
                 except sqlite3.OperationalError as e:
@@ -842,9 +856,11 @@ class SQLiteStore:
                     if self._mark_readonly_from_storage_failure(e) is not None:
                         raise TransientArtifactError(str(e)) from e
                     raise
-                except Exception:
+                except BaseException:
                     conn.rollback()
                     raise
+                finally:
+                    self._connection_state.connection = None
         else:
             if self._memory_uri is not None:
                 if self._memory_anchor is None:
@@ -855,6 +871,7 @@ class SQLiteStore:
             conn.row_factory = sqlite3.Row
             conn.execute("PRAGMA foreign_keys = ON")
             try:
+                self._connection_state.connection = conn
                 yield conn
                 conn.commit()
             except sqlite3.OperationalError as e:
@@ -862,10 +879,11 @@ class SQLiteStore:
                 if self._mark_readonly_from_storage_failure(e) is not None:
                     raise TransientArtifactError(str(e)) from e
                 raise
-            except Exception:
+            except BaseException:
                 conn.rollback()
                 raise
             finally:
+                self._connection_state.connection = None
                 conn.close()
 
     def _check_fts5_support(self, conn: sqlite3.Connection) -> bool:
@@ -1796,9 +1814,7 @@ class SQLiteStore:
             self._delete_chunker_rows(conn, stale)
         return {"target_scheme": target, "profile_id": profile_id, **stale}
 
-    def finalize_chunk_scheme_rebuild(
-        self, target_scheme: Optional[str] = None
-    ) -> None:
+    def finalize_chunk_scheme_rebuild(self, target_scheme: Optional[str] = None) -> None:
         """Phase 2: flip the scheme marker to the recorded rebuild target and clear
         the rebuilding flag, in one transaction - but ONLY after validating that:
 
@@ -1842,12 +1858,8 @@ class SQLiteStore:
             self._stamp_scheme(conn, target)
             self._delete_config(conn, CHUNK_SCHEME_REBUILD_KEY)
 
-    def _delete_chunker_rows(
-        self, conn: sqlite3.Connection, stale: Dict[str, Any]
-    ) -> None:
-        conn.execute(
-            "DELETE FROM code_chunks WHERE chunk_type != ?", (PRESERVED_CHUNK_TYPE,)
-        )
+    def _delete_chunker_rows(self, conn: sqlite3.Connection, stale: Dict[str, Any]) -> None:
+        conn.execute("DELETE FROM code_chunks WHERE chunk_type != ?", (PRESERVED_CHUNK_TYPE,))
         summary_hashes = stale.get("summary_hashes") or []
         for start in range(0, len(summary_hashes), 500):
             batch = summary_hashes[start : start + 500]
@@ -1952,9 +1964,7 @@ class SQLiteStore:
         """
         serialized_metadata = _merge_chunk_source_metadata(metadata, content, line_start)
         with self._get_connection() as conn:
-            self._assert_chunk_scheme_writable(
-                conn, chunk_type=chunk_type, target=scheme_target
-            )
+            self._assert_chunk_scheme_writable(conn, chunk_type=chunk_type, target=scheme_target)
             cursor = conn.execute(
                 """INSERT INTO code_chunks
                    (file_id, symbol_id, content, content_start, content_end,
@@ -2194,9 +2204,7 @@ class SQLiteStore:
         with self._get_connection() as conn:
             # Central guard: any non-document (chunker-derived) row in the batch
             # must satisfy the scheme check before any write; stamps an empty index.
-            if any(
-                chunk.get("chunk_type", "code") != PRESERVED_CHUNK_TYPE for chunk in chunks
-            ):
+            if any(chunk.get("chunk_type", "code") != PRESERVED_CHUNK_TYPE for chunk in chunks):
                 self._assert_chunk_scheme_writable(conn, chunk_type="code")
             count = 0
             for chunk in chunks:
@@ -3543,8 +3551,7 @@ class SQLiteStore:
             if profile_id:
                 if source_chunk_ids:
                     like_clauses = " OR ".join(
-                        ["chunk_id = ? OR chunk_id LIKE ? ESCAPE '\\'"]
-                        * len(source_chunk_ids)
+                        ["chunk_id = ? OR chunk_id LIKE ? ESCAPE '\\'"] * len(source_chunk_ids)
                     )
                     params: List[Any] = [profile_id]
                     for chunk_id in source_chunk_ids:

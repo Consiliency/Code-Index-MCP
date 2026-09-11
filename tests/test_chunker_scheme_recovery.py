@@ -39,9 +39,9 @@ from mcp_server.health.repository_readiness import (
     RepositoryReadinessState,
 )
 from mcp_server.storage.git_index_manager import (
-    GitAwareIndexManager,
     _QUARANTINE_REBUILD_STATES,
     _RECOVERABLE_REBUILD_STATES,
+    GitAwareIndexManager,
 )
 from mcp_server.storage.multi_repo_manager import RepositoryInfo
 from mcp_server.storage.sqlite_store import (
@@ -310,6 +310,8 @@ def test_scheme_mismatch_is_refused_then_recovered_by_staged_rebuild(tmp_path):
     ReadinessClassifier.clear_index_inspection_cache()
     assert ReadinessClassifier.classify_registered(repo_info).ready is True
 
+    assert repo_info.index_path != index_path
+    index_path = repo_info.index_path
     recovered = SQLiteStore(str(index_path))
     assert recovered.get_chunk_scheme_marker() == current_chunk_id_scheme()
     status, marker, target = recovered.get_chunk_scheme_status()
@@ -337,9 +339,9 @@ def test_scheme_mismatch_is_refused_then_recovered_by_staged_rebuild(tmp_path):
         assert_chunk_scheme_readable(raw)  # does not raise
 
     # Provenance was recorded for the rebuilt commit.
-    registry.update_indexed_commit.assert_called_once_with(
-        repo_info.repository_id, commit, branch="main"
-    )
+    registry.publish_generation.assert_called_once()
+    assert registry.publish_generation.call_args.kwargs["commit"] == commit
+    assert registry.publish_generation.call_args.kwargs["index_path"] == index_path
 
 
 # --------------------------------------------------------------------------- #
@@ -604,6 +606,7 @@ def test_delete_remote_points_error_does_not_trip_upsert_circuit_breaker(tmp_pat
     shared cached indexer, a transient delete blip must not degrade indexing for
     the rest of the run."""
     from types import SimpleNamespace  # noqa: F401
+
     from mcp_server.core.path_resolver import PathResolver
     from mcp_server.utils.semantic_indexer import SemanticIndexer
 

@@ -7,7 +7,7 @@ from typing import Any, Sequence
 
 from mcp_server.cli.bootstrap import initialize_stateless_services
 from mcp_server.core.repo_context import RepoContext
-from mcp_server.core.repo_resolver import RepoResolver
+from mcp_server.core.repo_resolver import RepoResolver, run_repository_mutation
 from mcp_server.dispatcher.protocol import DispatcherProtocol
 from mcp_server.health.repository_readiness import ReadinessClassifier
 
@@ -91,6 +91,36 @@ def _index_unavailable(readiness: Any) -> IndexUnavailable:
         readiness=readiness.to_dict(),
         message="Indexed search is available only when repository readiness is ready.",
         remediation=readiness.remediation,
+    )
+
+
+def _generation_unavailable(repo_resolver, ctx) -> IndexUnavailable | None:
+    if isinstance(repo_resolver, RepoResolver) and (
+        ctx is None or not repo_resolver.is_current(ctx)
+    ):
+        return IndexUnavailable(
+            readiness={},
+            message="Repository generation changed during query admission or execution.",
+            remediation="Re-check readiness and retry against the current generation.",
+        )
+    return None
+
+
+def _unavailable_search(options: ClientSearchOptions, unavailable: IndexUnavailable):
+    return ClientSearchResult(
+        query=options.query,
+        message=unavailable.message,
+        readiness=unavailable.readiness,
+        index_unavailable=unavailable,
+        code=unavailable.code,
+        safe_fallback=unavailable.safe_fallback,
+        remediation=unavailable.remediation,
+        semantic_requested=options.semantic,
+        source_type=options.source_type,
+        friction_categories=options.friction_categories,
+        history_labels=options.history_labels,
+        history_repos=options.history_repos,
+        include_source_metadata=options.include_source_metadata,
     )
 
 
@@ -204,23 +234,13 @@ def execute_search_service(
     )
     if readiness is not None and not readiness.ready:
         unavailable = _index_unavailable(readiness)
-        return ClientSearchResult(
-            query=options.query,
-            message=unavailable.message,
-            readiness=unavailable.readiness,
-            index_unavailable=unavailable,
-            code=unavailable.code,
-            safe_fallback=unavailable.safe_fallback,
-            remediation=unavailable.remediation,
-            source_type=options.source_type,
-            friction_categories=options.friction_categories,
-            history_labels=options.history_labels,
-            history_repos=options.history_repos,
-            include_source_metadata=options.include_source_metadata,
-        )
+        return _unavailable_search(options, unavailable)
 
     if ctx is None and repo_resolver is not None:
         ctx = _resolve_ctx(repo_resolver, options.repository, workspace_root=workspace_root)
+    unavailable = _generation_unavailable(repo_resolver, ctx)
+    if unavailable is not None:
+        return _unavailable_search(options, unavailable)
     semantic_readiness = None
     if options.semantic and ctx is not None:
         semantic_readiness = ReadinessClassifier.classify_semantic_registered(
@@ -252,6 +272,9 @@ def execute_search_service(
     try:
         raw_results = list(dispatcher.search(ctx, options.query, **_search_kwargs(options)))
     except Exception:
+        unavailable = _generation_unavailable(repo_resolver, ctx)
+        if unavailable is not None:
+            return _unavailable_search(options, unavailable)
         if options.semantic:
             return ClientSearchResult(
                 query=options.query,
@@ -274,6 +297,9 @@ def execute_search_service(
             )
         raise
 
+    unavailable = _generation_unavailable(repo_resolver, ctx)
+    if unavailable is not None:
+        return _unavailable_search(options, unavailable)
     return ClientSearchResult(
         query=options.query,
         results=tuple(_search_match_from_raw(item) for item in raw_results),
@@ -388,11 +414,38 @@ class IndexItClient:
             str(repository) if repository is not None else None,
             workspace_root=self.workspace_root,
         )
+        unavailable = _generation_unavailable(self.repo_resolver, ctx)
+        if unavailable is not None:
+            return ClientSymbolResult(
+                symbol=symbol,
+                found=False,
+                index_unavailable=unavailable,
+                message=unavailable.message,
+            )
         if ctx is None:
             return ClientSymbolResult(
                 symbol=symbol, found=False, message="Repository context could not be resolved"
             )
-        result = self.dispatcher.lookup(ctx, symbol)
+        try:
+            result = self.dispatcher.lookup(ctx, symbol)
+        except Exception:
+            unavailable = _generation_unavailable(self.repo_resolver, ctx)
+            if unavailable is None:
+                raise
+            return ClientSymbolResult(
+                symbol=symbol,
+                found=False,
+                index_unavailable=unavailable,
+                message=unavailable.message,
+            )
+        unavailable = _generation_unavailable(self.repo_resolver, ctx)
+        if unavailable is not None:
+            return ClientSymbolResult(
+                symbol=symbol,
+                found=False,
+                index_unavailable=unavailable,
+                message=unavailable.message,
+            )
         if not result:
             return ClientSymbolResult(
                 symbol=symbol,
@@ -454,7 +507,11 @@ class IndexItClient:
             )
         target_path = Path(path).expanduser() if path is not None else ctx.workspace_root
         if target_path.is_file():
-            self.dispatcher.index_file(ctx, target_path)
+            run_repository_mutation(
+                self.repo_resolver,
+                ctx,
+                lambda current: self.dispatcher.index_file(current, target_path),
+            )
             return ClientReindexResult(
                 path=str(target_path),
                 mode="file",
@@ -462,8 +519,14 @@ class IndexItClient:
                 indexed_files=1,
                 message=f"Reindexed file: {target_path}",
             )
-        stats = self.dispatcher.index_directory(ctx, target_path, recursive=True)
-        lexical_rows = ctx.sqlite_store.rebuild_fts_code() if ctx.sqlite_store else 0
+
+        def index_directory(current):
+            stats = self.dispatcher.index_directory(current, target_path, recursive=True)
+            stats["lexical_rows"] = current.sqlite_store.rebuild_fts_code()
+            return stats
+
+        stats = run_repository_mutation(self.repo_resolver, ctx, index_directory)
+        lexical_rows = stats["lexical_rows"]
         return ClientReindexResult(
             path=str(target_path),
             mode="merge",

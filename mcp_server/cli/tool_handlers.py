@@ -21,7 +21,7 @@ from mcp_server.cli.task_reindex import run_reindex_task
 from mcp_server.cli.task_write_summaries import run_write_summaries_task
 from mcp_server.client import ClientValidationError, build_search_options, execute_search_service
 from mcp_server.core.repo_context import RepoContext
-from mcp_server.core.repo_resolver import RepoResolver
+from mcp_server.core.repo_resolver import RepoResolver, run_repository_mutation
 from mcp_server.dispatcher.dispatcher_enhanced import SemanticSearchFailure
 from mcp_server.dispatcher.protocol import DispatcherProtocol
 from mcp_server.health.repository_readiness import (
@@ -412,8 +412,13 @@ async def handle_symbol_lookup(
         else:
             # Fallback: call without ctx for pre-SL-1 compatibility
             result = dispatcher.lookup(symbol)  # type: ignore[call-arg]
-    except TypeError:
-        result = dispatcher.lookup(symbol)  # type: ignore[call-arg]
+    except Exception:
+        if isinstance(repo_resolver, RepoResolver) and not repo_resolver.is_current(ctx):
+            return _resolution_transition_response("symbol_lookup")
+        raise
+
+    if isinstance(repo_resolver, RepoResolver) and not repo_resolver.is_current(ctx):
+        return _resolution_transition_response("symbol_lookup")
 
     if result:
         defined_in = (
@@ -1210,36 +1215,24 @@ async def handle_reindex(
                     active_store=active_store,
                     target_path=target_path,
                     requested_path=path,
+                    repo_resolver=repo_resolver,
                 ),
                 model_immediate_response="Reindex task created; poll tasks/get or tasks/result for progress.",
             )
         try:
-            if ctx is not None:
-                dispatcher.index_file(ctx, target_path)  # type: ignore[call-arg]
-            else:
-                dispatcher.index_file(target_path)  # type: ignore[call-arg]
-            durable_files = (
-                _record_reindexed_files(active_store, ctx.workspace_root, target_path)
-                if ctx is not None and active_store is not None
-                else 0
-            )
-            return _json_text_response(
-                {
-                    "path": str(target_path),
-                    "mode": "file",
-                    "indexed_files": 1,
-                    "durable_files": durable_files,
-                    "mutation_performed": True,
-                    "message": f"Reindexed file: {path}",
-                }
-            )
-        except TypeError:
-            dispatcher.index_file(target_path)  # type: ignore[call-arg]
-            durable_files = (
-                _record_reindexed_files(active_store, ctx.workspace_root, target_path)
-                if ctx is not None and active_store is not None
-                else 0
-            )
+            durable_files = 0
+
+            def index_file(current):
+                nonlocal durable_files
+                if current is None:
+                    return dispatcher.index_file(target_path)
+                result = dispatcher.index_file(current, target_path)
+                durable_files = _record_reindexed_files(
+                    current.sqlite_store, current.workspace_root, target_path
+                )
+                return result
+
+            run_repository_mutation(repo_resolver, ctx, index_file)
             return _json_text_response(
                 {
                     "path": str(target_path),
@@ -1272,23 +1265,29 @@ async def handle_reindex(
                     active_store=active_store,
                     target_path=target_path,
                     requested_path=path,
+                    repo_resolver=repo_resolver,
                 ),
                 model_immediate_response="Reindex task created; poll tasks/get or tasks/result for progress.",
             )
-        try:
-            if ctx is not None:
-                stats = dispatcher.index_directory(ctx, target_path, recursive=True)  # type: ignore[call-arg]
-            else:
-                stats = dispatcher.index_directory(target_path, recursive=True)  # type: ignore[call-arg]
-        except TypeError:
-            stats = dispatcher.index_directory(target_path, recursive=True)  # type: ignore[call-arg]
 
-        durable_files = (
-            _record_reindexed_files(active_store, ctx.workspace_root, target_path)
-            if ctx is not None and active_store is not None
-            else 0
-        )
-        lexical_rows = active_store.rebuild_fts_code() if active_store else 0
+        def index_directory(current):
+            if current is None:
+                stats = dispatcher.index_directory(target_path, recursive=True)
+                store = active_store
+            else:
+                stats = dispatcher.index_directory(current, target_path, recursive=True)
+                store = current.sqlite_store
+            stats["durable_files"] = (
+                _record_reindexed_files(store, current.workspace_root, target_path)
+                if current is not None and store is not None
+                else 0
+            )
+            stats["lexical_rows"] = store.rebuild_fts_code() if store else 0
+            return stats
+
+        stats = run_repository_mutation(repo_resolver, ctx, index_directory)
+        durable_files = stats["durable_files"]
+        lexical_rows = stats["lexical_rows"]
 
         response_data = {
             "path": str(target_path),

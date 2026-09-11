@@ -11,6 +11,7 @@ import shutil
 import sqlite3
 import subprocess
 import tempfile
+import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -186,7 +187,8 @@ class GitAwareIndexManager:
         self, repo_id: str, force_full: bool = False, bypass_branch_guard: bool = False
     ) -> IndexSyncResult:
         """Serialize repository synchronization through the shared per-repo lock."""
-        with lock_registry.acquire(repo_id):
+        repo = self.registry.get_repository(repo_id)
+        with lock_registry.acquire(repo_id, repo_path=repo.path if repo else None):
             return self._sync_repository_index_locked(
                 repo_id,
                 force_full=force_full,
@@ -285,11 +287,30 @@ class GitAwareIndexManager:
             )
 
         # Check if already up to date
-        if current_commit == last_indexed_commit and not force_full:
+        if (
+            current_commit == last_indexed_commit
+            and not force_full
+            and not repo_info.staleness_reason
+            and index_exists_before_mutation
+        ):
             return IndexSyncResult(
                 action="up_to_date",
                 commit=current_commit,
                 duration_seconds=(datetime.now() - start_time).total_seconds(),
+            )
+
+        if repo_info.staleness_reason in {"index_publication_pending", "partial_index_failure"}:
+            return self._rebuild_repository_index_locked(repo_id)
+
+        try:
+            self.registry.begin_generation_mutation(
+                repo_id,
+                expected_registration_id=repo_info.registration_id,
+                expected_generation=repo_info.index_generation,
+            )
+        except (OSError, ValueError):
+            return IndexSyncResult(
+                action="failed", commit=current_commit, error="Could not fence index mutation"
             )
 
         # Check for remote index artifact
@@ -298,7 +319,11 @@ class GitAwareIndexManager:
                 # Download existing index for this commit
                 if self._download_commit_index(repo_id, current_commit):
                     if self._index_exists(repo_info) and self.registry.update_indexed_commit(
-                        repo_id, current_commit, branch=current_branch
+                        repo_id,
+                        current_commit,
+                        branch=current_branch,
+                        expected_registration_id=repo_info.registration_id,
+                        expected_generation=repo_info.index_generation,
                     ):
                         repo_info.last_indexed_commit = current_commit
                         return IndexSyncResult(
@@ -352,7 +377,11 @@ class GitAwareIndexManager:
                                 semantic=result.semantic,
                             )
                         if self._index_exists(repo_info) and self.registry.update_indexed_commit(
-                            repo_id, current_commit, branch=current_branch
+                            repo_id,
+                            current_commit,
+                            branch=current_branch,
+                            expected_registration_id=repo_info.registration_id,
+                            expected_generation=repo_info.index_generation,
                         ):
                             repo_info.last_indexed_commit = current_commit
                             return IndexSyncResult(
@@ -536,7 +565,11 @@ class GitAwareIndexManager:
                 semantic=result.semantic,
             )
         if self._index_exists(repo_info) and self.registry.update_indexed_commit(
-            repo_id, current_commit, branch=current_branch
+            repo_id,
+            current_commit,
+            branch=current_branch,
+            expected_registration_id=repo_info.registration_id,
+            expected_generation=repo_info.index_generation,
         ):
             repo_info.last_indexed_commit = current_commit
             self.registry.update_last_sync_error(repo_id, None)
@@ -591,7 +624,8 @@ class GitAwareIndexManager:
 
     def rebuild_repository_index(self, repo_id: str) -> IndexSyncResult:
         """Build a full sibling index and publish it atomically for one repository."""
-        with lock_registry.acquire(repo_id):
+        repo = self.registry.get_repository(repo_id)
+        with lock_registry.acquire(repo_id, repo_path=repo.path if repo else None):
             return self._rebuild_repository_index_locked(repo_id)
 
     def _rebuild_repository_index_locked(self, repo_id: str) -> IndexSyncResult:
@@ -624,11 +658,14 @@ class GitAwareIndexManager:
 
         repo_path = Path(repo_info.path).resolve(strict=False)
         active_path = Path(repo_info.index_path).resolve(strict=False)
-        active_path.parent.mkdir(parents=True, exist_ok=True)
-        stage_dir = Path(
-            tempfile.mkdtemp(prefix=f".{active_path.name}.staging-", dir=active_path.parent)
-        )
-        stage_path = stage_dir / active_path.name
+        index_root = Path(repo_info.index_location).resolve(strict=False)
+        index_root.mkdir(parents=True, exist_ok=True)
+        generation = uuid.uuid4().hex
+        generation_dir = index_root / "generations"
+        generation_dir.mkdir(exist_ok=True)
+        generation_path = generation_dir / f"{generation}.db"
+        stage_dir = Path(tempfile.mkdtemp(prefix=".current.db.staging-", dir=index_root))
+        stage_path = stage_dir / "current.db"
         stage_store: Optional[SQLiteStore] = None
         publication_started = False
 
@@ -676,29 +713,41 @@ class GitAwareIndexManager:
             if readiness.state in _QUARANTINE_REBUILD_STATES:
                 quarantine_path = self._quarantine_active_index(active_path, readiness.state)
 
-            if not self.registry.update_staleness_reason(repo_id, "index_publication_pending"):
-                raise RuntimeError("Index publication could not be marked pending")
+            self.registry.begin_generation_mutation(
+                repo_id,
+                expected_registration_id=repo_info.registration_id,
+                expected_generation=repo_info.index_generation,
+            )
             publication_started = True
-            for suffix in ("-wal", "-shm"):
-                sidecar = Path(f"{active_path}{suffix}")
-                if sidecar.exists():
-                    sidecar.unlink()
-            os.replace(stage_path, active_path)
+            with stage_path.open("rb") as source:
+                os.fsync(source.fileno())
+            os.replace(stage_path, generation_path)
+            for directory in (generation_dir, index_root):
+                fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+                try:
+                    os.fsync(fd)
+                finally:
+                    os.close(fd)
             ReadinessClassifier.clear_index_inspection_cache()
             self._rebuild_checkpoint("after_replacement")
-            if not self._index_path_has_durable_rows(active_path):
+            if not self._index_path_has_durable_rows(generation_path):
                 raise RuntimeError("Published index failed durable-row validation")
             self._rebuild_checkpoint("before_provenance")
-            persisted_commit = self.registry.update_indexed_commit(
+            self.registry.publish_generation(
                 repo_id,
-                current_commit,
-                branch=current_branch,
+                generation=generation,
+                index_path=generation_path,
+                commit=current_commit,
+                branch=current_branch or repo_info.tracked_branch,
+                profile=getattr(repo_info, "index_profile", None),
+                expected_registration_id=getattr(repo_info, "registration_id", None),
+                expected_generation=getattr(repo_info, "index_generation", None),
             )
-            if persisted_commit != current_commit:
-                raise RuntimeError("Published index provenance could not be recorded")
+            repo_info.index_path = generation_path
+            repo_info.index_generation = generation
             repo_info.last_indexed_commit = current_commit
+            repo_info.last_indexed_branch = current_branch
             repo_info.staleness_reason = None
-            self.registry.update_last_sync_error(repo_id, None)
             return IndexSyncResult(
                 action="full_index",
                 commit=current_commit,
@@ -1264,13 +1313,10 @@ class GitAwareIndexManager:
         Returns:
             True if successful
         """
-        repo_info = self.registry.get_repository(repo_id)
-        if not repo_info:
-            return False
-
-        target = Path(repo_info.index_location)
-        target.mkdir(parents=True, exist_ok=True)
-        return self.artifact_manager.extract_commit_artifact(repo_id, commit, target)
+        # Legacy extraction replaces live SQLite/Qdrant files. Until artifacts use
+        # staged generation publication, build locally instead of admitting it.
+        logger.info("Artifact restore requires staged generation publication for %s", repo_id)
+        return False
 
     def create_commit_artifact(self, repo_id: str) -> Optional[Path]:
         """Create index artifact for current commit.
@@ -1298,7 +1344,7 @@ class GitAwareIndexManager:
 
     def _runtime_paths(self, repo_info: Any) -> Tuple[Path, Path]:
         index_location = Path(repo_info.index_location)
-        return index_location / "current.db", index_location / "semantic_qdrant"
+        return Path(repo_info.index_path), index_location / "semantic_qdrant"
 
     def _snapshot_active_runtime(self, repo_info: Any) -> RuntimeSnapshot:
         db_path, qdrant_path = self._runtime_paths(repo_info)
@@ -1351,53 +1397,19 @@ class GitAwareIndexManager:
             self._cleanup_runtime_snapshot(snapshot)
             return None
 
-        self._release_runtime_handles(repo_id, repo_info, ctx)
-        try:
-            restore_mode = self._restore_runtime_snapshot(snapshot)
-        finally:
-            counts_after = self._read_runtime_counts(snapshot.db_path)
-            self._cleanup_runtime_snapshot(snapshot)
-
-        semantic["runtime_restore_performed"] = True
-        semantic["runtime_restore_mode"] = restore_mode
-        semantic["runtime_counts_before"] = dict(snapshot.counts_before)
-        semantic["runtime_counts_after"] = dict(counts_after)
-        result.semantic = semantic
-        return RuntimeRestoreResult(
-            restored=True,
-            mode=restore_mode,
-            counts_before=dict(snapshot.counts_before),
-            counts_after=dict(counts_after),
+        # Other processes can still hold this database or vector store. Copying
+        # over their files cannot provide a coherent rollback; retain the fence.
+        semantic["runtime_restore_performed"] = False
+        semantic["runtime_restore_mode"] = None
+        semantic["runtime_restore_declined_reason"] = (
+            "Live runtime handles may exist; staged generation rebuild required"
         )
-
-    def _restore_runtime_snapshot(self, snapshot: RuntimeSnapshot) -> str:
-        for suffix in ("", "-wal", "-shm"):
-            runtime_file = Path(f"{snapshot.db_path}{suffix}")
-            if runtime_file.exists():
-                runtime_file.unlink()
-        if snapshot.qdrant_path.exists():
-            shutil.rmtree(snapshot.qdrant_path)
-
-        mode_parts: List[str] = []
-        backup_db = snapshot.backup_dir / "current.db"
-        backup_qdrant = snapshot.backup_dir / "semantic_qdrant"
-        if snapshot.db_existed and backup_db.exists():
-            snapshot.db_path.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(backup_db, snapshot.db_path)
-            for suffix in snapshot.sqlite_sidecars:
-                backup_sidecar = snapshot.backup_dir / f"{snapshot.db_path.name}{suffix}"
-                if backup_sidecar.exists():
-                    shutil.copy2(backup_sidecar, Path(f"{snapshot.db_path}{suffix}"))
-            mode_parts.append("sqlite_restored")
-        else:
-            mode_parts.append("sqlite_preserved_empty")
-
-        if snapshot.qdrant_existed and backup_qdrant.exists():
-            shutil.copytree(backup_qdrant, snapshot.qdrant_path)
-            mode_parts.append("qdrant_restored")
-        else:
-            mode_parts.append("qdrant_preserved_empty")
-        return "+".join(mode_parts)
+        semantic["runtime_counts_before"] = dict(snapshot.counts_before)
+        semantic["runtime_counts_after"] = self._read_runtime_counts(snapshot.db_path)
+        result.semantic = semantic
+        self.registry.update_staleness_reason(repo_id, "partial_index_failure")
+        self._cleanup_runtime_snapshot(snapshot)
+        return None
 
     def _release_runtime_handles(
         self,

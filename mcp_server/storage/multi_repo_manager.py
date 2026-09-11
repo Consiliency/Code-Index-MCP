@@ -56,6 +56,9 @@ class RepositoryInfo:
     git_common_dir: Optional[str] = None  # str for JSON-safety; __post_init__ coerces Path→str
     staleness_reason: Optional[str] = None
     last_sync_error: Optional[str] = None
+    registration_id: Optional[str] = None
+    index_generation: Optional[str] = None
+    index_profile: Optional[str] = None
 
     def __post_init__(self) -> None:
         """Normalize paths and derived fields."""

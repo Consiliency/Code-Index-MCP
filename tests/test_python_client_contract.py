@@ -83,12 +83,13 @@ def test_search_ready_transition_does_not_open_store_or_dispatch():
     )
     dispatcher = MagicMock()
 
-    with pytest.raises(RuntimeError, match="could not be resolved"):
-        execute_search_service(
-            dispatcher=dispatcher,
-            repo_resolver=resolver,
-            options=ClientSearchOptions(query="demo", repository="repo"),
-        )
+    result = execute_search_service(
+        dispatcher=dispatcher,
+        repo_resolver=resolver,
+        options=ClientSearchOptions(query="demo", repository="repo"),
+    )
+    assert result.index_unavailable is not None
+    assert result.safe_fallback == "native_search"
 
     resolver._store_registry.get.assert_not_called()
     dispatcher.search.assert_not_called()

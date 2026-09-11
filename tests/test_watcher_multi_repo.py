@@ -13,6 +13,7 @@ from mcp_server.core.repo_context import RepoContext
 from mcp_server.dispatcher.dispatcher_enhanced import IndexResult, IndexResultStatus
 from mcp_server.watcher.sweeper import WatcherSweeper
 from mcp_server.watcher_multi_repo import MultiRepositoryHandler, MultiRepositoryWatcher
+from tests.fixtures.multi_repo import boot_test_server, build_temp_repo
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -23,6 +24,7 @@ def _make_repo_context(workspace_root: Path, tracked_branch: str = "main") -> Re
     store = Mock()
     info = Mock()
     info.tracked_branch = tracked_branch
+    info.registration_id = None
     return RepoContext(
         repo_id="deadbeef" * 4,
         sqlite_store=store,
@@ -48,6 +50,8 @@ def _make_repo_info(path: str, auto_sync: bool = True):
     info.path = path
     info.auto_sync = auto_sync
     info.tracked_branch = "main"
+    info.registration_id = None
+    info.active = True
     return info
 
 
@@ -97,6 +101,45 @@ def _make_repo_resolver(ctx_map=None):
 
     resolver.resolve.side_effect = _resolve
     return resolver
+
+
+def test_watcher_uses_current_generation_and_external_registry_membership(tmp_path, monkeypatch):
+    from mcp_server.storage.repository_registry import RepositoryRegistry
+
+    first, first_id = build_temp_repo(tmp_path, "first", seed_files={"seed.py": "first = 1\n"})
+    second, second_id = build_temp_repo(tmp_path, "second", seed_files={"seed.py": "second = 2\n"})
+    with boot_test_server(tmp_path, [first]) as server:
+        dispatcher = _make_dispatcher()
+        resolver = server.repo_resolver
+        watcher = MultiRepositoryWatcher(
+            server.registry,
+            dispatcher,
+            Mock(store_registry=server.store_registry),
+            repo_resolver=resolver,
+            store_registry=server.store_registry,
+            sweeper=Mock(),
+        )
+        monkeypatch.setattr("mcp_server.watcher_multi_repo.Observer", Mock())
+        watcher.running = True
+        try:
+            watcher._reconcile_registry(server.registry.get_all_repositories())
+            handler = watcher.watchers[first_id]
+            old_store = handler.ctx.sqlite_store
+            external = RepositoryRegistry(server.registry.registry_path)
+            info = external.get(first_id)
+            external.update_indexed_commit(first_id, info.last_indexed_commit, branch="main")
+            assert handler._trigger_reindex_with_ctx(first / "seed.py")
+            assert dispatcher.index_file_guarded.call_args.args[0].sqlite_store is not old_store
+            external.unregister(first_id)
+            assert not handler._trigger_reindex_with_ctx(first / "seed.py")
+            external.register_repository(str(second))
+            watcher.git_monitor._check_repositories()
+            assert set(watcher.watchers) == {second_id}
+            assert external.get(first_id) is None
+            assert external.get(second_id) is not None
+        finally:
+            watcher.stop_watching_all()
+            watcher.executor.shutdown(wait=True)
 
 
 # ---------------------------------------------------------------------------

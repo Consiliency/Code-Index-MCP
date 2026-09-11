@@ -188,6 +188,7 @@ class TestWatcherUsesGuardedDispatch:
         ctx = MagicMock(spec=RepoContext)
         ctx.repo_id = "repo1"
         ctx.root = str(tmp_path)
+        ctx.workspace_root = tmp_path
         ctx.tracked_branch = "main"
 
         mock_dispatcher = MagicMock()
@@ -206,6 +207,7 @@ class TestWatcherUsesGuardedDispatch:
         handler = MultiRepositoryHandler.__new__(MultiRepositoryHandler)
         handler.ctx = ctx
         handler.repo_id = "repo1"
+        handler.repo_path = tmp_path
         handler.parent_watcher = mock_parent
         handler._inner_handler = MagicMock()
         handler._inner_handler.code_extensions = {".py"}

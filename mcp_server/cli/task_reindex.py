@@ -12,6 +12,7 @@ import anyio
 import mcp.types as types
 from mcp.server.experimental.task_context import ServerTaskContext
 
+from mcp_server.core.repo_resolver import run_repository_mutation
 from mcp_server.indexing.checkpoint import ReindexCheckpoint
 from mcp_server.indexing.checkpoint import clear as clear_checkpoint
 from mcp_server.indexing.checkpoint import save
@@ -38,7 +39,10 @@ def _record_reindexed_files(active_store: Any, workspace_root: Path, target_path
         paths = [
             path
             for path in target_path.rglob("*")
-            if path.is_file() and ".git" not in path.parts and ".mcp-index" not in path.parts
+            if path.is_file()
+            and ".git" not in path.parts
+            and ".mcp-index" not in path.parts
+            and path.name not in {".reindex-state", ".reindex-state.tmp"}
         ]
 
     recorded = 0
@@ -110,6 +114,7 @@ async def run_reindex_task(
     active_store: Any,
     target_path: Path,
     requested_path: str | None,
+    repo_resolver: Any = None,
 ) -> types.CallToolResult:
     repository_scope = str(ctx.workspace_root) if ctx is not None else str(target_path)
     await registry.bind_task(
@@ -185,10 +190,12 @@ async def run_reindex_task(
             loop,
         )
 
-    def do_work() -> dict[str, Any]:
+    def do_work(current) -> dict[str, Any]:
         if requested_path and target_path.is_file():
-            dispatcher.index_file(ctx, target_path)
-            durable_files = _record_reindexed_files(active_store, ctx.workspace_root, target_path)
+            mutation = dispatcher.index_file(current, target_path)
+            durable_files = _record_reindexed_files(
+                current.sqlite_store, current.workspace_root, target_path
+            )
             return {
                 "path": str(target_path),
                 "mode": "file",
@@ -196,20 +203,27 @@ async def run_reindex_task(
                 "durable_files": durable_files,
                 "mutation_performed": True,
                 "message": f"Reindexed file: {requested_path}",
+                "error": getattr(mutation, "error", None),
             }
 
-        return dispatcher.index_directory(
-            ctx,
+        outcome = dispatcher.index_directory(
+            current,
             target_path,
             recursive=True,
             progress_callback=publish_progress,
             cancel_check=lambda: task.is_cancelled,
         )
+        if not outcome.get("cancelled") and not task.is_cancelled:
+            outcome["durable_files"] = _record_reindexed_files(
+                current.sqlite_store, current.workspace_root, target_path
+            )
+            outcome["lexical_rows"] = current.sqlite_store.rebuild_fts_code()
+        return outcome
 
     try:
         async with anyio.create_task_group() as tg:
             tg.start_soon(cancel_observer)
-            outcome = await asyncio.to_thread(do_work)
+            outcome = await asyncio.to_thread(run_repository_mutation, repo_resolver, ctx, do_work)
             tg.cancel_scope.cancel()
     except Exception:
         if ctx is not None:
@@ -262,8 +276,8 @@ async def run_reindex_task(
         return result
 
     clear_checkpoint(ctx.workspace_root)
-    durable_files = _record_reindexed_files(active_store, ctx.workspace_root, target_path)
-    lexical_rows = active_store.rebuild_fts_code() if active_store else 0
+    durable_files = outcome["durable_files"]
+    lexical_rows = outcome["lexical_rows"]
     return _call_tool_result(
         {
             "path": str(target_path),

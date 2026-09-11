@@ -23,7 +23,7 @@ from ..core.ignore_patterns import EXCLUDED_DIR_PARTS as _INDEX_EXCLUDED_DIRS
 from ..core.ignore_patterns import (
     build_walker_filter,
 )
-from ..core.repo_context import RepoContext
+from ..core.repo_context import RepoContext, index_generation_key
 from ..graph import (
     CHUNKER_AVAILABLE,
     ContextSelector,
@@ -278,6 +278,7 @@ def _active_profile_permits_commercial() -> bool:
         return False
     return bool(getattr(contract, "commercial_egress", False))
 
+
 # Path segment penalties for lexical (BM25/fuzzy) results.
 # FTS5 scores are negative; adding a positive penalty degrades rank.
 _PATH_PENALTY_RULES: List[Tuple[str, float]] = [
@@ -443,6 +444,7 @@ class _SyncDictEndpointReranker:
                 match_type=c.get("match_type", "endpoint"),
                 score=float(c.get("score", 0.0) or 0.0),
                 context=c.get("context"),
+                generation_key=c.get("_rerank_generation"),
             )
             for c in candidates
         ]
@@ -652,9 +654,7 @@ class EnhancedDispatcher:
         # a reranker may declare `skips_semantic_path`; otherwise the text-only
         # type set decides. The endpoint (rerank.v1) path is embedding-consistent
         # and does not skip; VoyageReranker ("voyage") is Voyage-consistent too.
-        self._reranker_skips_semantic = _reranker_skips_semantic_path(
-            reranker_type, self._reranker
-        )
+        self._reranker_skips_semantic = _reranker_skips_semantic_path(reranker_type, self._reranker)
 
         # Initialize legacy plugin list (backward compatibility for callers injecting plugins)
         if plugins:
@@ -1602,6 +1602,10 @@ class EnhancedDispatcher:
         if not filtered:
             filtered = candidates
         for c in filtered:
+            if sqlite_store is not None and sqlite_store.registry_binding is not None:
+                c["_rerank_generation"] = hashlib.sha256(
+                    json.dumps(sqlite_store.registry_binding, sort_keys=True, default=str).encode()
+                ).hexdigest()
             if not c.get("_rerank_doc"):
                 c["_rerank_doc"] = self._get_chunk_content_for_reranking(
                     sqlite_store, c.get("file", "")
@@ -1712,11 +1716,23 @@ class EnhancedDispatcher:
         ``SemanticIndexerRegistry``. Registered repositories should still be
         able to execute strict semantic rebuilds in those flows.
         """
-        cache_key = self._graph_key(ctx)
+        settings = reload_settings()
+        profile_registry = SemanticProfileRegistry.from_raw(
+            settings.get_semantic_profiles_config(),
+            settings.get_semantic_default_profile(),
+            tool_version=settings.app_version,
+        )
+        profile_key = hashlib.sha256(
+            json.dumps(profile_registry.to_dict(), sort_keys=True, default=str).encode()
+        ).hexdigest()
+        cache_key = f"{self._graph_key(ctx)}:{profile_key}"
         with self._registered_semantic_indexer_lock:
             cached = self._registered_semantic_indexers.get(cache_key)
             if cached is not None:
                 return cached
+            if any(key.startswith(f"{ctx.repo_id}:") for key in self._registered_semantic_indexers):
+                # Never open a second client on an old generation's live file lock.
+                return None
 
         repo_info = getattr(ctx, "registry_entry", None)
         repo_path = getattr(repo_info, "path", None)
@@ -1781,7 +1797,14 @@ class EnhancedDispatcher:
 
     def _graph_key(self, ctx: RepoContext) -> str:
         root = Path(ctx.workspace_root).expanduser().resolve()
-        return f"{ctx.repo_id}:{root}"
+        generation = hashlib.sha256(
+            json.dumps(
+                index_generation_key(ctx.sqlite_store, ctx.registry_entry),
+                sort_keys=True,
+                default=str,
+            ).encode()
+        ).hexdigest()
+        return f"{ctx.repo_id}:{root}:{generation}"
 
     def get_runtime_feature_status(self, ctx: RepoContext) -> Dict[str, Dict[str, Any]]:
         semantic_reason = None
@@ -2042,7 +2065,11 @@ class EnhancedDispatcher:
                                             )
                                             if source_metadata is not None:
                                                 item = {**item, "source_metadata": source_metadata}
-                                    yield {k: v for k, v in item.items() if k != "_rerank_doc"}
+                                    yield {
+                                        k: v
+                                        for k, v in item.items()
+                                        if k not in {"_rerank_doc", "_rerank_generation"}
+                                    }
                                 self._operation_stats["searches"] += 1
                                 self._operation_stats["total_time"] += time.time() - start_time
                                 return
@@ -2106,7 +2133,11 @@ class EnhancedDispatcher:
                         sqlite_store, query, candidates, limit, semantic_source=True
                     )
                     for item in candidates:
-                        yield {k: v for k, v in item.items() if k != "_rerank_doc"}
+                        yield {
+                            k: v
+                            for k, v in item.items()
+                            if k not in {"_rerank_doc", "_rerank_generation"}
+                        }
                     self._operation_stats["searches"] += 1
                     self._operation_stats["total_time"] += time.time() - start_time
                     return
@@ -3542,8 +3573,7 @@ class EnhancedDispatcher:
             return
         if result.get("rows_drained") or result.get("groups_failed"):
             logger.info(
-                "Pending-vector-deletion drain: %s drained, %s remaining, "
-                "%s group(s) deferred",
+                "Pending-vector-deletion drain: %s drained, %s remaining, " "%s group(s) deferred",
                 result.get("rows_drained"),
                 result.get("rows_remaining"),
                 result.get("groups_failed"),

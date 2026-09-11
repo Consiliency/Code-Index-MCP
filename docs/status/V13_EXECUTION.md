@@ -9,7 +9,7 @@ Worktree: `/mnt/workspace/worktrees/Code-Index-MCP-v13-audit-remediation`.
 | --- | --- | --- |
 | FREEZE | Accepted; owner decisions approved | `docs/validation/v13/FREEZE.json` |
 | DIST | Accepted | `docs/validation/v13/DIST.json`; IF-0-DIST-1 |
-| STATE | Not started | No implementation acceptance claimed |
+| STATE | Executing; focused boundaries passing | No phase acceptance claimed; full candidate verification pending |
 | SAFETY | Not started | No implementation acceptance claimed |
 | DATA | Not started | No implementation acceptance claimed |
 | PILOT | Not started | No inference or browser acceptance claimed |
@@ -72,6 +72,37 @@ failed attempts remain preserved and are not accepted evidence.
 
 Read `docs/validation/v13/DIST.json` and
 `.dev-skills/handoffs/codex-execute-phase/latest.md` in this worktree.
-Next phase: STATE.
-Command: `codex-plan-phase specs/phase-plans-v13.md STATE`.
+Next phase: STATE, executing its tracked lane plan manually.
+Command: `codex-execute-phase plans/phase-plan-v13-STATE.md`.
 Do not restart v9 or infer v13 completion from old primary-checkout state.
+
+## STATE In Progress
+
+The local implementation adds durable reload/mutate/fsync registry transactions,
+registration identities and generation publication, cross-process writer locks,
+generation-specific rebuild files, current-context query guards, draining pools,
+watcher reconciliation and generation/profile/content-aware cache identities.
+Scoped Python/STDIO/HTTP/task reindex uses a durable pending fence. Exceptions and
+unclean outcomes cannot publish a successful generation. Active SQLite sidecars
+are retained, including after failed force-full attempts; automatic destructive
+rollback is removed.
+
+Focused controls include actual spawned writers, an external reader holding an
+old SQLite transaction during publication, a publisher killed before provenance,
+constructor/shutdown races, external registration changes, nested/cancelled pool
+borrows, real query-cache hits across generation changes, and scoped write fences.
+The first broad offline run had 3,010 passes and two test assumptions to update.
+Those assumptions were corrected; the latest registry/manager/watcher group had
+216 passes and the new cache/mutation boundary group had 42 passes. These are
+development results, not sealed exact-candidate acceptance. The next broad run
+had 3,017 passes and seven failures from lightweight contexts lacking the new
+generation property. A shared store-based identity preserves that compatibility;
+105 targeted retrieval/reranker/state tests now pass. The local `make agent-gate`
+also passes, including installed-wheel verification and 265 production/readiness
+tests. Final stamped full-suite verification is still required.
+
+DATA must implement staged vector/artifact restore and semantic handle retirement.
+Until then, unsafe legacy extraction into the active directory is disabled and
+semantic cache binding changes return unavailable without closing borrowed
+handles. SAFETY retains ownership of timed-out worker termination. No live index,
+inference, browser, final code-panel, version bump or publication is claimed.

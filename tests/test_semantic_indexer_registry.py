@@ -180,3 +180,33 @@ class TestSemanticIndexerRegistry:
 
         with pytest.raises(KeyError):
             registry.get("no-such-repo")
+
+    @pytest.mark.parametrize("change", ["generation", "profile", "unregister"])
+    def test_cached_indexer_rejects_changed_binding_without_closing_borrower(
+        self, tmp_path, mock_qdrant, mock_embedding_provider, change
+    ):
+        from mcp_server.utils.semantic_indexer_registry import SemanticIndexerRegistry
+
+        repo_reg = _make_registry_with_repos(tmp_path)
+        registry = SemanticIndexerRegistry(repo_reg)
+        held = registry.get("repo-a")
+        info = repo_reg.get("repo-a")
+        mock_qdrant.close.reset_mock()
+        if change == "unregister":
+            repo_reg.unregister("repo-a")
+        else:
+            repo_reg.publish_generation(
+                "repo-a",
+                generation="new" if change == "generation" else info.index_generation,
+                index_path=info.index_path,
+                commit=info.current_commit,
+                branch="main",
+                profile="changed" if change == "profile" else info.index_profile,
+                expected_registration_id=info.registration_id,
+                expected_generation=info.index_generation,
+            )
+        with pytest.raises((RuntimeError, KeyError)):
+            registry.get("repo-a")
+        assert held is registry._cache["repo-a"]
+        mock_qdrant.close.assert_not_called()
+        registry.shutdown()
