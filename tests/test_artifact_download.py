@@ -124,6 +124,43 @@ def test_install_indexes_accepts_legacy_code_index_after_validation(tmp_path: Pa
     assert index_path.read_text(encoding="utf-8") == "legacy-db"
 
 
+@pytest.mark.parametrize("collision", ["database", "sidecar", "metadata", "vectors"])
+def test_install_never_replaces_existing_generation_resources(tmp_path, collision):
+    source, destination = tmp_path / "source", tmp_path / "active"
+    source.mkdir()
+    destination.mkdir()
+    (source / "current.db").write_bytes(b"replacement")
+    (source / ".index_metadata.json").write_text("{}")
+    target = {
+        "database": destination / "current.db",
+        "sidecar": destination / "current.db-wal",
+        "metadata": destination / ".index_metadata.json",
+        "vectors": destination / "vector_index.qdrant",
+    }[collision]
+    if collision == "vectors":
+        target.mkdir()
+        target = target / "marker"
+    target.write_bytes(b"active")
+    downloader = IndexArtifactDownloader(repo="owner/repo")
+    with pytest.raises(FileExistsError, match="staging"):
+        downloader.install_indexes(source, index_location=destination, backup=False)
+    assert target.read_bytes() == b"active"
+    if collision != "database":
+        assert not (destination / "current.db").exists()
+
+
+def test_install_rejects_ambiguous_database_before_copying(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "current.db").write_bytes(b"current")
+    (source / "code_index.db").write_bytes(b"legacy")
+    with pytest.raises(ValueError, match="exactly one"):
+        IndexArtifactDownloader(repo="owner/repo").install_indexes(
+            source, index_location=tmp_path / "stage"
+        )
+    assert not (tmp_path / "stage" / "current.db").exists()
+
+
 @pytest.mark.parametrize(
     "verdict",
     [FreshnessVerdict.STALE_COMMIT, FreshnessVerdict.STALE_AGE, FreshnessVerdict.INVALID],

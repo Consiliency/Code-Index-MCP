@@ -11,8 +11,9 @@ import logging
 import re
 import sqlite3
 import threading
+import time
 import uuid
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from datetime import datetime, timezone
 from importlib.resources import files
 from pathlib import Path
@@ -401,6 +402,108 @@ class SQLiteStore:
         if self._readonly_diagnostics is None:
             return None
         return dict(self._readonly_diagnostics)
+
+    @staticmethod
+    def snapshot_database(source: Path, destination: Path) -> None:
+        """Copy a committed SQLite snapshot without modifying the active database."""
+        deadline = time.monotonic() + 30
+
+        def progress(status: int, remaining: int, total: int) -> None:
+            if time.monotonic() >= deadline:
+                raise TimeoutError("SQLite generation snapshot deadline exceeded")
+
+        with closing(sqlite3.connect(source.resolve().as_uri() + "?mode=ro", uri=True)) as reader:
+            with closing(sqlite3.connect(destination)) as writer:
+                reader.backup(writer, pages=256, progress=progress)
+
+    def prepare_generation(self, committed_hashes: Dict[str, str], profile_id: str) -> None:
+        """Regenerate code-owned rows in an unpublished copy, retaining owned data."""
+        self._require_writable()
+        with self._get_connection() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            retained_files = {
+                row[0]
+                for row in conn.execute(
+                    "SELECT DISTINCT file_id FROM code_chunks "
+                    "WHERE chunk_type = ? OR chunk_id LIKE 'history:%'",
+                    (PRESERVED_CHUNK_TYPE,),
+                )
+            }
+            files_by_id = {row["id"]: dict(row) for row in conn.execute("SELECT * FROM files")}
+            readable_scheme = evaluate_chunk_scheme(conn, self._current_scheme())[0] in {
+                "compatible",
+                "compatible_legacy",
+            }
+            valid_summaries = {
+                row["chunk_hash"]
+                for row in conn.execute("SELECT * FROM chunk_summaries")
+                if row["file_id"] in retained_files
+                or (
+                    readable_scheme
+                    and row["profile_id"] == profile_id
+                    and (file := files_by_id.get(row["file_id"])) is not None
+                    and file["content_hash"] is not None
+                    and committed_hashes.get(file["relative_path"]) == file["content_hash"]
+                )
+            }
+            stale = self._collect_stale_chunk_artifacts(conn, profile_id)
+            stale["summary_hashes"] = [
+                value for value in stale["summary_hashes"] if value not in valid_summaries
+            ]
+            self._delete_chunker_rows(conn, stale)
+            auxiliary_tables = {
+                row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            }
+            for file_id, file in files_by_id.items():
+                if file_id in retained_files:
+                    continue
+                for table in ("bm25_content", "bm25_documents", "bm25_index_status"):
+                    if table in auxiliary_tables:
+                        conn.execute(f"DELETE FROM {table} WHERE file_id = ?", (file_id,))
+                if "bm25_symbols" in auxiliary_tables:
+                    conn.execute(
+                        "DELETE FROM bm25_symbols WHERE symbol_id IN "
+                        "(SELECT id FROM symbols WHERE file_id = ?)",
+                        (file_id,),
+                    )
+                conn.execute(
+                    "DELETE FROM symbol_references WHERE file_id = ? OR symbol_id IN "
+                    "(SELECT id FROM symbols WHERE file_id = ?)",
+                    (file_id, file_id),
+                )
+                conn.execute("DELETE FROM imports WHERE file_id = ?", (file_id,))
+                conn.execute("DELETE FROM embeddings WHERE file_id = ?", (file_id,))
+                conn.execute(
+                    "DELETE FROM symbol_trigrams WHERE symbol_id IN "
+                    "(SELECT id FROM symbols WHERE file_id = ?)",
+                    (file_id,),
+                )
+                conn.execute("DELETE FROM symbols WHERE file_id = ?", (file_id,))
+                if file["relative_path"] not in committed_hashes:
+                    conn.execute("DELETE FROM files WHERE id = ?", (file_id,))
+            conn.execute("DELETE FROM query_cache")
+            conn.execute("DELETE FROM parse_cache")
+            conn.execute("DELETE FROM fts_code")
+            self._stamp_scheme(conn, self._current_scheme())
+            self._delete_config(conn, CHUNK_SCHEME_REBUILD_KEY)
+            self.rebuild_generation_indexes()
+
+    def rebuild_generation_indexes(self) -> None:
+        """Reconstruct symbol indexes and retained-document FTS from staged rows."""
+        with self._get_connection() as conn:
+            conn.execute("INSERT INTO fts_symbols(fts_symbols) VALUES('rebuild')")
+            conn.execute("DELETE FROM symbol_trigrams")
+            for symbol_id, name in conn.execute("SELECT id, name FROM symbols").fetchall():
+                self._store_trigrams(conn, symbol_id, name)
+            for row in conn.execute(
+                "SELECT DISTINCT file_id FROM code_chunks WHERE chunk_type = ? "
+                "OR chunk_id LIKE 'history:%'",
+                (PRESERVED_CHUNK_TYPE,),
+            ).fetchall():
+                self._refresh_fts_code_for_file(row[0])
+            conn.execute("INSERT INTO fts_code(fts_code) VALUES('rebuild')")
+            if conn.execute("PRAGMA foreign_key_check").fetchone() is not None:
+                raise RuntimeError("Staged generation has invalid row relationships")
 
     def _mark_readonly_from_storage_failure(
         self, error: sqlite3.OperationalError
@@ -1332,22 +1435,6 @@ class SQLiteStore:
         indexed_at_value = datetime.now(timezone.utc)
 
         with self._get_connection() as conn:
-            # Check if file already exists with same content hash
-            existing = (
-                self.get_file_by_content_hash(content_hash_value, repository_id)
-                if content_hash_value
-                else None
-            )
-            if existing and existing["relative_path"] != relative_path_str:
-                # File moved - record the move
-                self.move_file(
-                    existing["relative_path"],
-                    relative_path_str,
-                    repository_id,
-                    content_hash_value or "",
-                )
-                return existing["id"]
-
             # Store using relative path as primary identifier
             cursor = conn.execute(
                 """INSERT INTO files 
@@ -1859,7 +1946,10 @@ class SQLiteStore:
             self._delete_config(conn, CHUNK_SCHEME_REBUILD_KEY)
 
     def _delete_chunker_rows(self, conn: sqlite3.Connection, stale: Dict[str, Any]) -> None:
-        conn.execute("DELETE FROM code_chunks WHERE chunk_type != ?", (PRESERVED_CHUNK_TYPE,))
+        conn.execute(
+            "DELETE FROM code_chunks WHERE chunk_type != ? AND chunk_id NOT LIKE 'history:%'",
+            (PRESERVED_CHUNK_TYPE,),
+        )
         summary_hashes = stale.get("summary_hashes") or []
         for start in range(0, len(summary_hashes), 500):
             batch = summary_hashes[start : start + 500]
@@ -2281,13 +2371,16 @@ class SQLiteStore:
     def search_chunks_by_source_metadata(
         self,
         *,
+        query: Optional[str] = None,
         source_type: str = "friction",
         friction_categories: Optional[List[str]] = None,
         history_labels: Optional[List[str]] = None,
         history_repos: Optional[List[str]] = None,
         limit: int = 20,
     ) -> List[Dict[str, Any]]:
-        """Return chunks whose stored source metadata matches the requested filters."""
+        """Filter source records, then apply literal-term FTS ranking before limiting."""
+        if limit <= 0:
+            return []
         with self._get_connection() as conn:
             assert_chunk_scheme_readable(conn)
             cursor = conn.execute(
@@ -2296,6 +2389,7 @@ class SQLiteStore:
                    FROM code_chunks c
                    JOIN files f ON c.file_id = f.id
                    WHERE c.metadata LIKE '%"source_metadata"%'
+                     AND COALESCE(f.is_deleted, 0) = 0
                    ORDER BY f.path, c.line_start
                    """,
             )
@@ -2328,9 +2422,27 @@ class SQLiteStore:
                     "source_metadata": source_metadata,
                 }
             )
-            if len(results) >= limit:
+            if query is None and len(results) >= limit:
                 break
-        return results
+        if query is None or not results:
+            return results
+        terms = re.findall(r"\w+", query.casefold())
+        if not terms:
+            return []
+        # A private, ephemeral FTS table ranks exact chunks without modifying the
+        # admitted index or matching text from another chunk in the same file.
+        with closing(sqlite3.connect(":memory:")) as ranking:
+            ranking.execute("CREATE VIRTUAL TABLE candidates USING fts5(content)")
+            ranking.executemany(
+                "INSERT INTO candidates(rowid, content) VALUES (?, ?)",
+                [(index, row["snippet"]) for index, row in enumerate(results)],
+            )
+            matches = ranking.execute(
+                "SELECT rowid, bm25(candidates) FROM candidates WHERE candidates MATCH ? "
+                "ORDER BY bm25(candidates), rowid LIMIT ?",
+                (" AND ".join('"' + term + '"' for term in terms), limit),
+            ).fetchall()
+        return [{**results[index], "score": -rank} for index, rank in matches]
 
     def upsert_history_issue_documents(
         self,
@@ -3173,11 +3285,24 @@ class SQLiteStore:
 
             for row in rows:
                 file_id = row[0]
+                if conn.execute(
+                    "SELECT 1 FROM code_chunks WHERE file_id=? "
+                    "AND (chunk_type=? OR chunk_id LIKE 'history:%') LIMIT 1",
+                    (file_id, PRESERVED_CHUNK_TYPE),
+                ).fetchone():
+                    self._refresh_fts_code_for_file(file_id)
+                    inserted += 1
+                    continue
                 path_value = row[1] or row[2]
                 if not path_value:
                     continue
 
                 file_path = Path(path_value)
+                if self.path_resolver.source_root is not None:
+                    relative = row[2] or self.path_resolver.normalize_path(file_path)
+                    file_path = (self.path_resolver.source_root / relative).resolve()
+                    if not file_path.is_relative_to(self.path_resolver.source_root):
+                        raise ValueError("FTS input is outside the committed snapshot")
                 if not file_path.exists() or file_path.name in _LEXICAL_EXCLUDED_FILENAMES:
                     continue
 

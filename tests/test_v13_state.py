@@ -207,6 +207,8 @@ def test_scoped_mutation_fences_reads_and_publishes_only_clean_outcomes(tmp_path
         before = server.registry.get(repo_id)
 
         def mutate(current):
+            assert current.staging
+            assert current.sqlite_store.db_path != ctx.sqlite_store.db_path
             assert not resolver.is_current(ctx)
             assert not resolver.classify(path).ready
             assert server.registry.get(repo_id).staleness_reason == "index_publication_pending"
@@ -235,7 +237,7 @@ def test_scoped_mutation_fences_reads_and_publishes_only_clean_outcomes(tmp_path
                 assert after is None
             else:
                 assert after.index_generation == before.index_generation
-                assert after.staleness_reason == "index_publication_pending"
+                assert after.staleness_reason == "partial_index_failure"
 
 
 @pytest.mark.asyncio

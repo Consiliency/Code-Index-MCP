@@ -74,7 +74,7 @@ def test_friction_filtered_search_returns_only_matching_chunks(sqlite_store, tmp
     results = list(
         dispatcher.search(
             ctx,
-            "ignored",
+            "second",
             source_type="friction",
             friction_categories=["fixme"],
             limit=5,
@@ -123,7 +123,7 @@ def test_friction_filtered_search_finds_matches_after_many_plain_chunks(sqlite_s
                 registry_entry=SimpleNamespace(path=tmp_path, name="repo"),
                 workspace_root=tmp_path,
             ),
-            "ignored",
+            "late marker",
             source_type="friction",
             friction_categories=["todo"],
             limit=5,

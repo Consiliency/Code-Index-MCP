@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import uuid
 from pathlib import Path
 from typing import Callable, Optional, TypeVar
 
@@ -52,6 +51,7 @@ class RepoResolver:
     def __init__(self, registry: RepositoryRegistry, store_registry: StoreRegistry):
         self._registry = registry
         self._store_registry = store_registry
+        self._index_manager = None
 
     def classify(self, selector: str | Path) -> RepositoryReadiness:
         """Classify repository readiness for a selector without registering it."""
@@ -96,56 +96,52 @@ class RepoResolver:
     def mutate(
         self, ctx: RepoContext, operation: Callable[[RepoContext], _MutationResult]
     ) -> _MutationResult:
-        """Run a scoped mutation under a durable read fence and one writer lock."""
+        """Run a scoped mutation in the same staged boundary as full rebuilds."""
         with lock_registry.acquire(ctx.repo_id, repo_path=ctx.workspace_root):
             if not self.is_current(ctx):
                 raise RuntimeError("Repository generation changed before mutation")
             current = self.resolve_ready(ctx.workspace_root)
             if current is None or current.generation_key != ctx.generation_key:
                 raise RuntimeError("Repository became unavailable before mutation")
-            info = current.registry_entry
-            self._registry.begin_generation_mutation(
-                ctx.repo_id,
-                expected_registration_id=info.registration_id,
-                expected_generation=info.index_generation,
-            )
-            # On exceptions, cancellation or an unclean outcome the pending fence
-            # survives restart. Only the staged rebuild may recover that state.
-            result = operation(current)
-            if isinstance(result, dict):
-                failed = any(
-                    result.get(key)
-                    for key in (
-                        "failed_files",
-                        "semantic_failed",
-                        "semantic_blocked",
-                        "cancelled",
-                        "error",
-                        "semantic_error",
-                        "low_level_blocker",
+            if self._index_manager is None:
+                raise RuntimeError("Staged repository mutation owner is unavailable")
+            from mcp_server.storage.git_index_manager import UpdateResult
+
+            outcome = []
+
+            def staged_operation(stage):
+                result = operation(stage)
+                outcome.append(result)
+                if isinstance(result, dict):
+                    failed = any(
+                        result.get(key)
+                        for key in (
+                            "failed_files",
+                            "semantic_failed",
+                            "semantic_blocked",
+                            "cancelled",
+                            "error",
+                            "semantic_error",
+                            "low_level_blocker",
+                        )
                     )
-                )
-            else:
-                failed = getattr(result, "status", None) in {"error", "not_found", "skipped_toctou"}
-            if failed:
-                raise RuntimeError("Index mutation did not complete cleanly; rebuild required")
-            git_state = self._registry.update_git_state(ctx.repo_id)
-            if not git_state or (
-                git_state.get("commit") != info.current_commit
-                or git_state.get("branch") != info.current_branch
-            ):
-                raise RuntimeError("Repository Git state changed during mutation")
-            self._registry.publish_generation(
-                ctx.repo_id,
-                generation=uuid.uuid4().hex,
-                index_path=info.index_path,
-                commit=info.last_indexed_commit,
-                branch=info.last_indexed_branch or info.tracked_branch,
-                profile=info.index_profile,
-                expected_registration_id=info.registration_id,
-                expected_generation=info.index_generation,
+                    indexed = result.get("indexed_files", 0)
+                else:
+                    status = getattr(result, "status", None)
+                    failed = status not in {"indexed", "deleted", "moved", "skipped_unchanged"}
+                    indexed = int(status == "indexed")
+                    semantic = getattr(result, "semantic", None) or {}
+                    failed = failed or bool(
+                        semantic.get("semantic_failed") or semantic.get("semantic_blocked")
+                    )
+                return UpdateResult(indexed=indexed, failed=int(bool(failed)))
+
+            sync = self._index_manager._rebuild_repository_index_locked(
+                ctx.repo_id, stage_operation=staged_operation
             )
-            return result
+            if sync.action != "full_index":
+                raise RuntimeError("Staged mutation did not publish; rebuild required")
+            return outcome[0]
 
     def _context_from_readiness(self, readiness: RepositoryReadiness) -> Optional[RepoContext]:
         repo_id = readiness.repository_id

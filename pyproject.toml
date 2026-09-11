@@ -36,6 +36,7 @@ dependencies = [
     "tree-sitter-language-pack>=0.9,<0.10",
     "jedi>=0.19.0",
     "watchdog>=3.0.0",
+    "pathspec>=1.0.4,<2",
     "click>=8.1.0",
     "pydantic>=2.0.0",
     "argon2-cffi>=23.1.0",

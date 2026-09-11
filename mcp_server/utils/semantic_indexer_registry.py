@@ -121,7 +121,10 @@ class SemanticIndexerRegistry:
             collection=self._collection_name(repo_id, branch, commit),
             profile_registry=profiles,
             semantic_profile=profiles.default_profile,
-            path_resolver=PathResolver(info.path),
+            path_resolver=PathResolver(
+                info.path,
+                source_root=ctx.workspace_root if ctx is not None and ctx.staging else None,
+            ),
             sqlite_store=ctx.sqlite_store if ctx is not None else None,
             staging=bool(ctx is not None and ctx.staging),
         )

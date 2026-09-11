@@ -95,6 +95,8 @@ class CrossRepoSearchResult:
     results: List[Dict[str, Any]]
     search_time: float
     error: Optional[str] = None
+    code: Optional[str] = None
+    safe_fallback: Optional[str] = None
 
 
 class MultiRepositoryManager:
@@ -351,16 +353,11 @@ class MultiRepositoryManager:
 
     def get_ready_repositories(self) -> List[RepositoryInfo]:
         """Return repositories ready for local search/reconcile use."""
-        ready = []
-        for repo in self.list_repositories(active_only=True):
-            health = repo.artifact_health or ""
-            if health in {
-                "ready",
-                "prepared",
-                "published",
-            } or self.has_local_runtime_state(repo.repository_id):
-                ready.append(repo)
-        return ready
+        return [
+            repo
+            for repo in self.list_repositories(active_only=True)
+            if self._query_ready(repo.repository_id)
+        ]
 
     def get_stale_repositories(self) -> List[RepositoryInfo]:
         """Return repositories whose local/runtime state appears stale or missing."""
@@ -408,6 +405,31 @@ class MultiRepositoryManager:
             "file": file_path,
             "line": line_number,
         }
+
+    def _query_ready(self, repository_id: str, binding: Optional[tuple] = None) -> bool:
+        from mcp_server.health.repository_readiness import ReadinessClassifier
+
+        repo = self.registry.get(repository_id)
+        return bool(
+            repo
+            and self.is_repo_authorized(repository_id)
+            and (binding is None or StoreRegistry.binding(repo) == binding)
+            and ReadinessClassifier.classify_registered(repo).ready
+        )
+
+    @staticmethod
+    def _query_unavailable(
+        repository_id: str, repo: Optional[RepositoryInfo]
+    ) -> CrossRepoSearchResult:
+        return CrossRepoSearchResult(
+            repository_id=repository_id,
+            repository_name=repo.name if repo else repository_id,
+            results=[],
+            search_time=0.0,
+            error="index_unavailable",
+            code="index_unavailable",
+            safe_fallback="native_search",
+        )
 
     async def search_symbol(
         self,
@@ -495,6 +517,10 @@ class MultiRepositoryManager:
     ) -> Optional[CrossRepoSearchResult]:
         """Search a single repository."""
         start_time = datetime.now()
+        repo_info = self.registry.get(repository_id)
+        if not self._query_ready(repository_id):
+            return self._query_unavailable(repository_id, repo_info)
+        binding = StoreRegistry.binding(repo_info)
 
         # Get connection
         try:
@@ -503,11 +529,6 @@ class MultiRepositoryManager:
             logger.error(f"Failed to get connection for {repository_id}: {type(e).__name__}")
             return None
         if not store:
-            return None
-
-        # Get repository info
-        repo_info = self.registry.get(repository_id)
-        if not repo_info:
             return None
 
         try:
@@ -538,6 +559,8 @@ class MultiRepositoryManager:
 
             search_time = (datetime.now() - start_time).total_seconds()
 
+            if not self._query_ready(repository_id, binding):
+                return self._query_unavailable(repository_id, repo_info)
             return CrossRepoSearchResult(
                 repository_id=repository_id,
                 repository_name=repo_info.name,
@@ -645,13 +668,13 @@ class MultiRepositoryManager:
     ) -> Optional[CrossRepoSearchResult]:
         """Search code content in a single repository using BM25."""
         start_time = datetime.now()
+        repo_info = self.registry.get(repository_id)
+        if not self._query_ready(repository_id):
+            return self._query_unavailable(repository_id, repo_info)
+        binding = StoreRegistry.binding(repo_info)
 
         store = self._get_connection(repository_id)
         if not store:
-            return None
-
-        repo_info = self.registry.get(repository_id)
-        if not repo_info:
             return None
 
         try:
@@ -688,6 +711,8 @@ class MultiRepositoryManager:
 
             search_time = (datetime.now() - start_time).total_seconds()
 
+            if not self._query_ready(repository_id, binding):
+                return self._query_unavailable(repository_id, repo_info)
             return CrossRepoSearchResult(
                 repository_id=repository_id,
                 repository_name=repo_info.name,

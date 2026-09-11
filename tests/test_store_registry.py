@@ -253,6 +253,11 @@ class TestStoreRegistry:
             total_symbols=0,
             indexed_at=datetime.now(),
             active=True,
+            current_commit="fixture",
+            last_indexed_commit="fixture",
+            current_branch="main",
+            tracked_branch="main",
+            last_indexed_branch="main",
         )
         manager.registry.register(repo_info)
 

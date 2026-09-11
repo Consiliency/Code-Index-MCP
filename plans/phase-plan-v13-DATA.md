@@ -82,12 +82,12 @@ SL-0 — Vector SDK, provenance and generation lease foundation
   Blocks: SL-1, SL-2
   Parallel-safe: no
 
-SL-1 — Retained storage and staged publication
+SL-1 — Storage, artifact and query integration
   Depends on: SL-0
   Blocks: SL-2
   Parallel-safe: no
 
-SL-2 — Query admission, ignore reconciliation and documentation reducer
+SL-2 — DATA documentation and evidence reducer
   Depends on: SL-0, SL-1
   Blocks: (none)
   Parallel-safe: no
@@ -110,12 +110,12 @@ SL-2 — Query admission, ignore reconciliation and documentation reducer
   - test: Real file-backed client and disposable pinned server, including a second process holding the live local lock and a failed server connection with no fallback.
   - verify: Run focused vector/provenance tests and separate named file/server smoke nodes, each capped at 300 seconds. Deterministic synthetic vectors only.
 
-### SL-1 - Retained storage and staged publication
+### SL-1 - Storage, artifact and query integration
 
-- **Scope**: Preserve owned data while admitting one coherent durable generation.
-- **Owned files**: `mcp_server/storage/sqlite_store.py`, `mcp_server/storage/git_index_manager.py`, `mcp_server/storage/repository_registry.py`, `mcp_server/storage/store_registry.py`, `mcp_server/storage/multi_repo_manager.py`, `mcp_server/artifacts/artifact_download.py`, `mcp_server/artifacts/publisher.py`, `tests/test_v13_data_storage.py`, `tests/test_git_index_manager.py`, `tests/test_store_registry.py`, `tests/test_registry_concurrency.py`, `tests/test_sqlite_store.py`, `tests/test_history_issue_storage.py`, `tests/test_history_source_metadata.py`, `tests/test_chunker_scheme_recovery.py`, `tests/test_artifact_download.py`, `tests/test_artifact_lifecycle.py`, `tests/test_multi_repo_manager.py`, `tests/test_multi_repo_search.py`
+- **Scope**: Preserve owned data and integrate one coherent generation across storage, artifact, query and watcher entrypoints.
+- **Owned files**: `mcp_server/storage/sqlite_store.py`, `mcp_server/storage/git_index_manager.py`, `mcp_server/storage/repository_registry.py`, `mcp_server/storage/store_registry.py`, `mcp_server/storage/multi_repo_manager.py`, `mcp_server/artifacts/artifact_download.py`, `mcp_server/artifacts/publisher.py`, `tests/test_v13_data_storage.py`, `tests/test_git_index_manager.py`, `tests/test_store_registry.py`, `tests/test_registry_concurrency.py`, `tests/test_sqlite_store.py`, `tests/test_history_issue_storage.py`, `tests/test_history_source_metadata.py`, `tests/test_chunker_scheme_recovery.py`, `tests/test_artifact_download.py`, `tests/test_artifact_lifecycle.py`, `tests/test_multi_repo_manager.py`, `tests/test_multi_repo_search.py`, `mcp_server/dispatcher/dispatcher_enhanced.py`, `mcp_server/dispatcher/cross_repo_coordinator.py`, `mcp_server/core/repo_resolver.py`, `mcp_server/core/ignore_patterns.py`, `mcp_server/core/path_resolver.py`, `mcp_server/health/repository_readiness.py`, `mcp_server/client.py`, `mcp_server/gateway.py`, `mcp_server/cli/tool_handlers.py`, `mcp_server/cli/task_reindex.py`, `mcp_server/cli/bootstrap.py`, `mcp_server/watcher_multi_repo.py`, `mcp_server/watcher/ref_poller.py`, `mcp_server/watcher/sweeper.py`, `mcp_server/watcher/file_watcher.py`, `tests/test_v13_data_queries.py`, `tests/test_v13_data_reconciliation.py`, `tests/test_dispatcher.py`, `tests/test_cross_repo_coordinator.py`, `tests/test_history_search_filters.py`, `tests/test_tool_readiness_fail_closed.py`, `tests/test_tool_handlers_readiness.py`, `tests/test_repository_readiness.py`, `tests/test_ignore_patterns.py`, `tests/test_watcher_sweep.py`, `tests/test_watcher_multi_repo.py`, `tests/test_watcher.py`, `tests/test_sweeper_observability.py`, `tests/test_client.py`, `tests/test_python_client_search.py`, `tests/test_python_client_contract.py`, `tests/test_python_client_indexing.py`, `tests/test_python_client_sources.py`, `tests/test_friction_search_filters.py`, `tests/test_gateway.py`, `tests/test_v13_state.py`, `tests/test_v13_safety.py`, `scripts/installed_runtime_smoke.py`, `scripts/safety_runtime_smoke.py`, `scripts/release_smoke.py`, `scripts/v13_pilot_estimate.py`, `scripts/agent_validation.py`, `pyproject.toml`, `uv.lock`, `mcp_server/artifacts/artifact_upload.py`, `mcp_server/artifacts/secure_export.py`, `mcp_server/cli/artifact_commands.py`, `tests/test_artifact_upload.py`, `tests/test_artifact_commands.py`, `mcp_server/cli/stdio_runner.py`
 - **Depends on**: SL-0
-- **Interfaces provided**: retained-stage, coherent-publication, source-filter-query, legacy-query-admission
+- **Interfaces provided**: retained-stage, coherent-publication, source-filter-query, legacy-query-admission, uniform-query-admission, committed-input-reconciliation, pilot-estimate
 - **Interfaces consumed**: staged-context, semantic-leases, exact-backend, batch-provenance, vector-maintenance, freeze-contract (pre-existing), state-contract (pre-existing), safety-contract (pre-existing)
 - **Parallel-safe**: no
 - **Tasks**:
@@ -127,15 +127,6 @@ SL-2 — Query admission, ignore reconciliation and documentation reducer
   - impl: Extend source-metadata search to apply query/rank before limit and make legacy cross-repository storage entrypoints obey readiness/generation checks.
   - verify: Run storage, history, registry and artifact tests; leave integration-dependent ECs unchecked until SL-2 enters real dispatcher construction sites.
 
-### SL-2 - Query admission, ignore reconciliation and documentation reducer
-
-- **Scope**: Integrate the staged generation interfaces across actual entrypoints and reconcile all DATA evidence.
-- **Owned files**: `mcp_server/dispatcher/dispatcher_enhanced.py`, `mcp_server/dispatcher/cross_repo_coordinator.py`, `mcp_server/core/repo_resolver.py`, `mcp_server/core/ignore_patterns.py`, `mcp_server/core/path_resolver.py`, `mcp_server/health/repository_readiness.py`, `mcp_server/client.py`, `mcp_server/gateway.py`, `mcp_server/cli/tool_handlers.py`, `mcp_server/cli/task_reindex.py`, `mcp_server/cli/bootstrap.py`, `mcp_server/watcher_multi_repo.py`, `mcp_server/watcher/ref_poller.py`, `mcp_server/watcher/sweeper.py`, `mcp_server/watcher/file_watcher.py`, `tests/test_v13_data_queries.py`, `tests/test_v13_data_reconciliation.py`, `tests/test_dispatcher.py`, `tests/test_cross_repo_coordinator.py`, `tests/test_history_search_filters.py`, `tests/test_tool_readiness_fail_closed.py`, `tests/test_tool_handlers_readiness.py`, `tests/test_repository_readiness.py`, `tests/test_ignore_patterns.py`, `tests/test_watcher_sweep.py`, `tests/test_watcher_multi_repo.py`, `tests/test_watcher.py`, `tests/test_sweeper_observability.py`, `tests/test_client.py`, `tests/test_python_client_search.py`, `tests/test_python_client_contract.py`, `tests/test_python_client_indexing.py`, `tests/test_python_client_sources.py`, `tests/test_friction_search_filters.py`, `tests/test_gateway.py`, `tests/test_v13_state.py`, `tests/test_v13_safety.py`, `scripts/installed_runtime_smoke.py`, `scripts/safety_runtime_smoke.py`, `scripts/release_smoke.py`, `scripts/v13_pilot_estimate.py`, `scripts/agent_validation.py`, `pyproject.toml`, `uv.lock`, `docs/contracts/v13-data.md`, `docs/validation/v13/DATA.json`, `docs/status/V13_EXECUTION.md`, `docs/operations/v13-data-generation.md`
-- **Depends on**: SL-0, SL-1
-- **Interfaces provided**: uniform-query-admission, committed-input-reconciliation, pilot-estimate, data-receipt
-- **Interfaces consumed**: staged-context, semantic-leases, exact-backend, batch-provenance, vector-maintenance, retained-stage, coherent-publication, source-filter-query, legacy-query-admission, freeze-contract (pre-existing), state-contract (pre-existing), safety-contract (pre-existing)
-- **Parallel-safe**: no
-- **Tasks**:
   - impl: Wire dispatcher staging/leases to the supplied context and retained SQLite mappings; preserve canonical file paths and complete generation cache identity.
   - test: Real STDIO/HTTP/Python/cross-repository no-match and refusal matrix, including branch switches, stale commits, sibling worktrees, SHA-256 Git and generation changes during queries.
   - impl: Use the shared admission contract at every public surface; filtered queries must actually match/rank, not return the first metadata rows.
@@ -143,7 +134,19 @@ SL-2 — Query admission, ignore reconciliation and documentation reducer
   - impl: Reconcile committed create/modify/delete/rename with fresh registry state; prune excluded directories and detect overlapping-path hash changes. Watchers do not admit dirty edits.
   - impl: Produce a pure synthetic corpus byte/chunk/token upper-bound estimate for PILOT; no inference requests or claims of measured quality.
   - verify: Update installed fixture commits as required by committed-input policy. Run local gates, installed wheel/container, broad offline suite and all DATA operational controls.
-  - impl: Reduce all producer evidence into the DATA contract, per-EC receipt and status; retain controlled-rollout posture and explicit exclusions.
+
+### SL-2 - DATA documentation and evidence reducer
+
+- **Scope**: Reconcile producer findings, implementation and exact-candidate verification into the DATA contract and receipt.
+- **Owned files**: `docs/contracts/v13-data.md`, `docs/validation/v13/DATA.json`, `docs/status/V13_EXECUTION.md`, `docs/operations/v13-data-generation.md`
+- **Depends on**: SL-0, SL-1
+- **Interfaces provided**: data-receipt
+- **Interfaces consumed**: staged-context, semantic-leases, exact-backend, batch-provenance, vector-maintenance, retained-stage, coherent-publication, source-filter-query, legacy-query-admission, uniform-query-admission, committed-input-reconciliation, pilot-estimate, freeze-contract (pre-existing), state-contract (pre-existing), safety-contract (pre-existing)
+- **Parallel-safe**: no
+- **Tasks**:
+  - impl: Document the admitted generation, restore compatibility, query/ignore behavior and controlled-rollout limits.
+  - verify: Run all phase verification and reconcile every failure, skip and exact-candidate artifact.
+  - impl: Reduce producer evidence into the per-EC receipt and execution status; no acceptance from checkpoint tests alone.
 
 ## Execution Notes
 
@@ -185,6 +188,28 @@ substitute for installed query workflows. Record all skips and failed attempts.
 
 ## Execution Checkpoint
 
+2026-09-11 storage/query checkpoint: 479 focused tests and 140 separate Git
+manager tests pass after formatting. Added production retained-row rebuilds,
+immutable Git snapshots, scoped mutation staging, dispatcher leases, source
+query ranking, nested ignore fidelity, SHA-256/dirty-tree admission and committed
+watcher recovery. Semantic close failure now prevents publication; FTS reads
+the snapshot and retains imported documents. Single-repo STDIO watcher wiring
+was added to SL-1 ownership. A sweep reconciles once per repository and ignores
+untracked inputs. These are checkpoint tests, not whole-phase acceptance.
+
+Remaining integration includes verified artifact restore/export, incremental
+vector/deletion coherence, final public-surface matrix, pilot estimate and
+installed/full-suite proof. No DATA receipt or IF gate is produced yet.
+
+2026-09-11 integration refinement: combine the unfinished storage/query writer
+lanes because verified artifact restore and export consume the same path,
+ignore, vector and generation interfaces. The remaining SL-2 is a dedicated
+evidence/documentation reducer. Added the existing upload/export/CLI consumers
+and their tests to SL-1 ownership. No roadmap, acceptance, signer policy or
+PILOT budget changed; no implementation fanout. Artifact installation now
+refuses active destinations; verified generation restore remains unfinished.
+
+
 2026-09-11: SL-0 foundation implemented and locally verified, not whole-phase
 acceptance. The focused group passed 106 tests with 11 maintenance tests selected
 separately; an additional real-client concurrent good/drifted write test passed.
@@ -204,6 +229,7 @@ artifact restore, query/ignore/watcher corrections and installed acceptance.
 
 ## Spec Closeout Plan
 
+- Public README/CHANGELOG no-doc-change decision for DATA: PREP owns release-facing version and release-note changes; DATA updates the runtime contract and operations guide named below.
 - schema: `spec_delta_closeout.v1`
 - decision: `canonical_spec_update`
 - target surfaces: `docs/contracts/v13-data.md`, `docs/operations/v13-data-generation.md`

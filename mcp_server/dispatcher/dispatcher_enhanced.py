@@ -3,6 +3,7 @@
 import ast
 import asyncio
 import hashlib
+import inspect
 import json
 import logging
 import os
@@ -10,8 +11,11 @@ import re
 import sqlite3
 import threading
 import time
+from contextlib import ExitStack, contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from enum import Enum
+from functools import wraps
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, Union
 
@@ -63,6 +67,26 @@ from .result_aggregator import (
 )
 
 logger = logging.getLogger(__name__)
+_semantic_borrower = ContextVar("dispatcher_semantic_borrower", default=None)
+
+
+def _semantic_operation(method):
+    """Keep nested operations and lazy iterators inside one generation lease."""
+    if inspect.isgeneratorfunction(method):
+
+        @wraps(method)
+        def generate(self, ctx, *args, **kwargs):
+            with self._semantic_lease(ctx):
+                yield from method(self, ctx, *args, **kwargs)
+
+        return generate
+
+    @wraps(method)
+    def call(self, ctx, *args, **kwargs):
+        with self._semantic_lease(ctx):
+            return method(self, ctx, *args, **kwargs)
+
+    return call
 
 
 class SemanticSearchFailure(RuntimeError):
@@ -598,45 +622,6 @@ class EnhancedDispatcher:
         self._semantic_registry: Optional[SemanticIndexerRegistry] = semantic_indexer_registry
         # Fallback process-global semantic indexer for repos not tracked by the registry.
         self._semantic_indexer_fallback: Optional[SemanticIndexer] = None
-        self._registered_semantic_indexers: Dict[str, SemanticIndexer] = {}
-        self._registered_semantic_indexer_lock = threading.RLock()
-        if self._semantic_enabled and semantic_indexer_registry is None:
-            try:
-                settings = reload_settings()
-                profile_registry = SemanticProfileRegistry.from_raw(
-                    settings.get_semantic_profiles_config(),
-                    settings.get_semantic_default_profile(),
-                    tool_version=settings.app_version,
-                )
-                semantic_profile_id = settings.get_semantic_default_profile()
-                semantic_profile = profile_registry.get(semantic_profile_id)
-                if semantic_profile is None:
-                    raise RuntimeError(
-                        f"Semantic default profile '{semantic_profile_id}' is not available"
-                    )
-
-                qdrant_path = os.getenv("QDRANT_PATH", "vector_index.qdrant")
-                collection_name = _get_profile_collection_name(
-                    semantic_profile, settings.semantic_collection_name
-                )
-
-                if Path(qdrant_path).exists():
-                    self._semantic_indexer_fallback = SemanticIndexer(
-                        qdrant_path=qdrant_path,
-                        collection=collection_name,
-                        profile_registry=profile_registry,
-                        semantic_profile=semantic_profile_id,
-                    )
-                    logger.info(
-                        "Semantic search initialized: %s at %s (profile=%s)",
-                        collection_name,
-                        qdrant_path,
-                        semantic_profile_id,
-                    )
-                else:
-                    logger.warning(f"Qdrant path not found: {qdrant_path}")
-            except Exception as e:
-                logger.warning(f"Failed to initialize semantic search: {type(e).__name__}")
 
         # Initialize reranker
         self._reranker = None  # type: Optional[Any]
@@ -984,6 +969,8 @@ class EnhancedDispatcher:
 
     def shutdown(self) -> None:
         """Close managed plugin workers and any explicitly injected adapters."""
+        if self._semantic_registry is not None:
+            self._semantic_registry.shutdown()
         if hasattr(self._plugin_set_registry, "shutdown"):
             self._plugin_set_registry.shutdown()
         for plugin in self._legacy_plugins:
@@ -1693,96 +1680,53 @@ class EnhancedDispatcher:
             return False
         return isinstance(getattr(entry, "path", None), (str, Path))
 
+    @staticmethod
+    def _input_path(ctx: RepoContext, path: Union[str, Path]) -> Path:
+        path = Path(path).absolute()
+        if ctx.staging:
+            canonical_root = Path(ctx.registry_entry.path).resolve()
+            if path.is_relative_to(canonical_root) and not path.is_relative_to(ctx.workspace_root):
+                path = ctx.workspace_root / path.relative_to(canonical_root)
+        return path
+
     def _get_semantic_indexer(self, ctx: RepoContext) -> Optional[SemanticIndexer]:
-        """Return the SemanticIndexer for ctx.repo_id, or local fallback for legacy contexts."""
+        """Return the resource borrowed by this operation, never an unscoped owner."""
+        borrowed = _semantic_borrower.get()
+        if borrowed is not None and borrowed[:2] == (id(self), id(ctx)):
+            return borrowed[2]
         if not getattr(self, "_semantic_enabled", True):
             return None
-        if self._semantic_registry is not None:
-            try:
-                return self._semantic_registry.get(ctx.repo_id)
-            except (KeyError, Exception):
-                return None
-        if self._is_registered_context(ctx):
-            return self._get_or_build_registered_semantic_indexer(ctx)
+        if self._semantic_registry is not None or self._is_registered_context(ctx):
+            raise RuntimeError("Semantic access requires a scoped generation lease")
         return self._semantic_indexer_fallback
 
-    def _get_or_build_registered_semantic_indexer(
-        self, ctx: RepoContext
-    ) -> Optional[SemanticIndexer]:
-        """Lazily build a repo-scoped semantic indexer for registered contexts.
-
-        Some CLI paths construct ``EnhancedDispatcher`` without injecting a
-        ``SemanticIndexerRegistry``. Registered repositories should still be
-        able to execute strict semantic rebuilds in those flows.
-        """
-        settings = reload_settings()
-        profile_registry = SemanticProfileRegistry.from_raw(
-            settings.get_semantic_profiles_config(),
-            settings.get_semantic_default_profile(),
-            tool_version=settings.app_version,
-        )
-        profile_key = hashlib.sha256(
-            json.dumps(profile_registry.to_dict(), sort_keys=True, default=str).encode()
-        ).hexdigest()
-        cache_key = f"{self._graph_key(ctx)}:{profile_key}"
-        with self._registered_semantic_indexer_lock:
-            cached = self._registered_semantic_indexers.get(cache_key)
-            if cached is not None:
-                return cached
-            if any(key.startswith(f"{ctx.repo_id}:") for key in self._registered_semantic_indexers):
-                # Never open a second client on an old generation's live file lock.
-                return None
-
-        repo_info = getattr(ctx, "registry_entry", None)
-        repo_path = getattr(repo_info, "path", None)
-        index_location = getattr(repo_info, "index_location", None)
-        if not isinstance(repo_path, (str, Path)) or not isinstance(index_location, (str, Path)):
-            return None
-
-        try:
-            settings = reload_settings()
-            profile_registry = SemanticProfileRegistry.from_raw(
-                settings.get_semantic_profiles_config(),
-                settings.get_semantic_default_profile(),
-                tool_version=settings.app_version,
-            )
-            semantic_profile_id = settings.get_semantic_default_profile()
-            semantic_profile = profile_registry.get(semantic_profile_id)
-            if semantic_profile is None:
-                return None
-
-            repo_identifier = ctx.repo_id
-            branch = (
-                getattr(repo_info, "tracked_branch", None)
-                or getattr(repo_info, "current_branch", None)
-                or ctx.tracked_branch
-                or "unknown"
-            )
-            qdrant_path = Path(index_location) / "semantic_qdrant"
-            collection_name = _get_profile_collection_name(
-                semantic_profile,
-                settings.semantic_collection_name,
-            )
-            indexer = SemanticIndexer(
-                qdrant_path=str(qdrant_path),
-                profile_registry=profile_registry,
-                semantic_profile=semantic_profile_id,
-                repo_identifier=repo_identifier,
-                branch=branch,
-                commit=getattr(repo_info, "current_commit", None),
-                collection=collection_name,
-            )
-        except Exception as exc:
-            logger.warning(
-                "Failed to initialize registered semantic indexer for %s: %s",
-                ctx.repo_id,
-                type(exc).__name__,
-            )
-            return None
-
-        with self._registered_semantic_indexer_lock:
-            self._registered_semantic_indexers.setdefault(cache_key, indexer)
-            return self._registered_semantic_indexers[cache_key]
+    @contextmanager
+    def _semantic_lease(self, ctx: RepoContext):
+        borrowed = _semantic_borrower.get()
+        if borrowed is not None and borrowed[:2] == (id(self), id(ctx)):
+            yield borrowed[2]
+            return
+        with ExitStack() as resources:
+            indexer = None
+            if getattr(self, "_semantic_enabled", False):
+                try:
+                    if self._semantic_registry is not None:
+                        indexer = resources.enter_context(
+                            self._semantic_registry.lease(ctx.repo_id, ctx=ctx)
+                        )
+                    elif self._is_registered_context(ctx):
+                        raise RuntimeError("Registered semantic generation owner is unavailable")
+                    else:
+                        indexer = self._semantic_indexer_fallback
+                except Exception as exc:
+                    if getattr(ctx, "staging", False):
+                        raise
+                    logger.warning("Semantic generation unavailable (%s)", type(exc).__name__)
+            token = _semantic_borrower.set((id(self), id(ctx), indexer))
+            try:
+                yield indexer
+            finally:
+                _semantic_borrower.reset(token)
 
     def _sqlite_repository_id(self, ctx: RepoContext) -> int:
         repo_info = ctx.registry_entry
@@ -1805,6 +1749,7 @@ class EnhancedDispatcher:
         ).hexdigest()
         return f"{ctx.repo_id}:{root}:{generation}"
 
+    @_semantic_operation
     def get_runtime_feature_status(self, ctx: RepoContext) -> Dict[str, Dict[str, Any]]:
         semantic_reason = None
         semantic_available = False
@@ -1865,12 +1810,10 @@ class EnhancedDispatcher:
             except Exception as exc:
                 logger.warning("Plugin eviction failed for %s: %s", repo_id, type(exc).__name__)
         if self._semantic_registry is not None and hasattr(self._semantic_registry, "evict"):
-            try:
-                evicted["semantic"] = 1 if self._semantic_registry.evict(repo_id) else 0
-            except Exception as exc:
-                logger.warning("Semantic eviction failed for %s: %s", repo_id, type(exc).__name__)
+            evicted["semantic"] = 1 if self._semantic_registry.evict(repo_id) else 0
         return evicted
 
+    @_semantic_operation
     def search(
         self,
         ctx: RepoContext,
@@ -1904,6 +1847,7 @@ class EnhancedDispatcher:
                 effective_source_type or friction_categories or history_labels or history_repos
             ):
                 filtered_results = sqlite_store.search_chunks_by_source_metadata(
+                    query=query,
                     source_type=effective_source_type or "friction",
                     friction_categories=friction_categories,
                     history_labels=history_labels,
@@ -2495,8 +2439,14 @@ class EnhancedDispatcher:
                 record_handled_error(__name__, exc)
                 pass
 
+    @_semantic_operation
     def index_file(self, ctx: RepoContext, path: Path, do_semantic: bool = True) -> IndexResult:
         """Index a single file if it has changed."""
+        path = self._input_path(ctx, path)
+        if build_walker_filter(ctx.workspace_root)(path):
+            return IndexResult(
+                IndexResultStatus.ERROR, path, None, None, "Path excluded by repository policy"
+            )
         path = path.resolve()
 
         if not path.exists():
@@ -2631,6 +2581,7 @@ class EnhancedDispatcher:
                     semantic_stats = self.rebuild_semantic_for_paths(ctx, [path])
                 except Exception as e:
                     logger.warning(f"Semantic indexing failed for {path}: {type(e).__name__}")
+                    raise RuntimeError("Semantic indexing did not complete") from e
 
             return IndexResult(
                 status=IndexResultStatus.INDEXED,
@@ -2800,12 +2751,22 @@ class EnhancedDispatcher:
             },
         }
 
+    @_semantic_operation
     def index_file_guarded(self, ctx: RepoContext, path: Path, expected_hash: str) -> IndexResult:
         """TOCTOU-guarded index: re-hashes immediately before plugin write.
 
         If the file hash at dispatch time differs from expected_hash, the file
         was modified between watcher observation and dispatch; skip indexing.
         """
+        path = self._input_path(ctx, path)
+        if build_walker_filter(ctx.workspace_root)(path):
+            return IndexResult(
+                IndexResultStatus.ERROR,
+                path,
+                expected_hash,
+                None,
+                "Path excluded by repository policy",
+            )
         path = path.resolve()
 
         if not path.exists():
@@ -2912,6 +2873,7 @@ class EnhancedDispatcher:
                     semantic_stats = self.rebuild_semantic_for_paths(ctx, [path])
                 except Exception as e:
                     logger.warning(f"Semantic indexing failed for {path}: {type(e).__name__}")
+                    raise RuntimeError("Semantic indexing did not complete") from e
 
             return IndexResult(
                 status=IndexResultStatus.INDEXED,
@@ -2953,6 +2915,7 @@ class EnhancedDispatcher:
             "prompt_fingerprint": writer._prompt_fingerprint(),
         }
 
+    @_semantic_operation
     def rebuild_semantic_for_paths(
         self,
         ctx: RepoContext,
@@ -3539,6 +3502,7 @@ class EnhancedDispatcher:
             record_handled_error(__name__, exc)
             return {"total": 0, "by_language": {}}
 
+    @_semantic_operation
     def _drain_pending_vector_deletions(self, ctx: RepoContext) -> None:
         """Best-effort recovery drain of the remote-vector crash-ledger (I4).
 
@@ -3554,6 +3518,8 @@ class EnhancedDispatcher:
         the reindex it is hooked into.
         """
         store = getattr(ctx, "sqlite_store", None)
+        if ctx.staging:
+            return
         if store is None or not hasattr(store, "drain_pending_vector_deletions"):
             return
         try:
@@ -3579,6 +3545,7 @@ class EnhancedDispatcher:
                 result.get("groups_failed"),
             )
 
+    @_semantic_operation
     def index_directory(
         self,
         ctx: RepoContext,
@@ -3588,6 +3555,7 @@ class EnhancedDispatcher:
         cancel_check: Optional[Callable[[], bool]] = None,
     ) -> Dict[str, Any]:
         """Index all files in a directory, respecting ignore patterns."""
+        directory = self._input_path(ctx, directory)
         logger.info(f"Indexing directory: {directory} (recursive={recursive})")
 
         # Recovery point (I4): finish any deferred remote-vector deletions left by
@@ -3595,10 +3563,6 @@ class EnhancedDispatcher:
         # the store and a semantic (Qdrant) client are available; best-effort so a
         # recovery failure can never block the reindex.
         self._drain_pending_vector_deletions(ctx)
-
-        # Note: We don't use ignore patterns during indexing
-        # ALL files are indexed for local search capability
-        # Filtering happens only during export/sharing
 
         # Get all supported extensions
         supported_extensions = get_all_extensions()
@@ -4106,9 +4070,10 @@ class EnhancedDispatcher:
 
         return health
 
+    @_semantic_operation
     def remove_file(self, ctx: RepoContext, path: Union[Path, str]) -> IndexResult:
         """Remove a file from all per-repo indexes."""
-        path = Path(path).resolve()
+        path = self._input_path(ctx, path).resolve()
         logger.info(f"Removing file from index: {path}")
 
         # Evict from skip cache so a subsequent index_file() call is not skipped
@@ -4195,6 +4160,7 @@ class EnhancedDispatcher:
                 error=str(e),
             )
 
+    @_semantic_operation
     def move_file(
         self,
         ctx: RepoContext,
@@ -4211,8 +4177,8 @@ class EnhancedDispatcher:
         lock_registry.acquire(repo_id); the reentrant RLock makes any re-acquire here
         a no-op.  Callers outside the watcher loop must acquire the lock themselves.
         """
-        old_path = Path(old_path).resolve()
-        new_path = Path(new_path).resolve()
+        old_path = self._input_path(ctx, old_path).resolve()
+        new_path = self._input_path(ctx, new_path).resolve()
         logger.info(f"Moving file in index: {old_path} -> {new_path}")
 
         if not ctx.sqlite_store:

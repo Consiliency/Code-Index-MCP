@@ -4,7 +4,7 @@ import threading
 import time
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
@@ -13,6 +13,9 @@ from ..core.path_resolver import PathResolver
 from ..core.repo_context import RepoContext
 from ..dispatcher.dispatcher_enhanced import EnhancedDispatcher
 from ..plugins.language_registry import get_all_extensions
+
+if TYPE_CHECKING:
+    from ..storage.git_index_manager import GitAwareIndexManager
 
 logger = logging.getLogger(__name__)
 
@@ -84,8 +87,10 @@ class _Handler(FileSystemEventHandler):
         query_cache=None,
         path_resolver: Optional[PathResolver] = None,
         ctx: Optional[RepoContext] = None,
+        index_manager: Optional["GitAwareIndexManager"] = None,
     ):
         self.dispatcher = dispatcher
+        self.index_manager = index_manager
         self.query_cache = query_cache
         self.path_resolver = path_resolver or PathResolver()
         workspace_root = getattr(self.path_resolver, "repository_root", None) or Path.cwd()
@@ -211,7 +216,23 @@ class _Handler(FileSystemEventHandler):
                 "Failed to schedule cache invalidation for %s (%s)", path, type(exc).__name__
             )
 
+    def _reconcile_if_managed(self, path: Path) -> bool:
+        if not isinstance(self.dispatcher, EnhancedDispatcher):
+            return False
+        if self.index_manager is None:
+            logger.warning("Watcher mutation unavailable without a generation owner")
+            return True
+        ctx = self.index_manager._resolve_ctx(self.ctx.repo_id)
+        if ctx is not None:
+            self.ctx = ctx
+            result = self.index_manager.sync_repository_index(ctx.repo_id)
+            if result.action in {"full_index", "incremental_update"}:
+                self._kick_cache_invalidation(path)
+        return True
+
     def _trigger_reindex(self, path: Path) -> None:
+        if self._reconcile_if_managed(path):
+            return
         if path.suffix not in self.code_extensions:
             return
         if not path.exists():
@@ -231,6 +252,8 @@ class _Handler(FileSystemEventHandler):
 
     def trigger_reindex(self, path: Path) -> None:
         """Public test/integration entrypoint — skips the existence check."""
+        if self._reconcile_if_managed(path):
+            return
         if path.suffix not in self.code_extensions:
             return
         logger.info("Re-indexing %s", path)
@@ -250,6 +273,8 @@ class _Handler(FileSystemEventHandler):
             logger.error("trigger_reindex failed for %s (%s)", path, type(exc).__name__)
 
     def _remove_file_from_index(self, path: Path) -> None:
+        if self._reconcile_if_managed(path):
+            return
         if path.suffix not in self.code_extensions:
             return
         logger.info("Removing from index: %s", path)
@@ -265,6 +290,8 @@ class _Handler(FileSystemEventHandler):
         self._remove_file_from_index(path)
 
     def _handle_file_move(self, old_path: Path, new_path: Path) -> None:
+        if self._reconcile_if_managed(new_path):
+            return
         if (
             old_path.suffix not in self.code_extensions
             or new_path.suffix not in self.code_extensions
@@ -315,6 +342,7 @@ class FileWatcher:
         query_cache=None,
         path_resolver: Optional[PathResolver] = None,
         ctx: Optional[RepoContext] = None,
+        index_manager: Optional["GitAwareIndexManager"] = None,
     ):
         self._observer = Observer()
         handler_ctx = ctx or RepoContext(
@@ -329,7 +357,9 @@ class FileWatcher:
                 name=root.name,
             ),
         )
-        self._handler = _Handler(dispatcher, query_cache, path_resolver, ctx=handler_ctx)
+        self._handler = _Handler(
+            dispatcher, query_cache, path_resolver, ctx=handler_ctx, index_manager=index_manager
+        )
         self._observer.schedule(self._handler, str(root), recursive=True)
 
     def start(self) -> None:

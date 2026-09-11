@@ -1187,7 +1187,12 @@ async def initialize_services() -> None:
         # Start FileWatcher — deferred until after auto-index when _auto_index is True
         if _file_watcher is None and isinstance(dispatcher, EnhancedDispatcher):
             try:
-                _file_watcher = FileWatcher(root=current_dir, dispatcher=dispatcher)
+                _file_watcher = FileWatcher(
+                    root=current_dir,
+                    dispatcher=dispatcher,
+                    ctx=_local_ctx,
+                    index_manager=_git_index_manager,
+                )
                 if not _auto_index:
                     _file_watcher.start()
                     logger.info(f"FileWatcher started, watching {current_dir}")

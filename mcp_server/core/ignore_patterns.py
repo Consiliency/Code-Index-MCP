@@ -2,15 +2,15 @@
 Utility module for handling ignore patterns from .gitignore and .mcp-index-ignore files.
 """
 
-import fnmatch
 import logging
 from pathlib import Path
 from typing import Callable, List, Optional
 
+from pathspec import GitIgnoreSpec
+
 logger = logging.getLogger(__name__)
 
 # Union of _EXCLUDED_DIR_PARTS from watcher.py and _INDEX_EXCLUDED_DIRS from dispatcher_enhanced.py.
-# Nested .gitignore traversal is intentionally out of scope for P1 — future work.
 EXCLUDED_DIR_PARTS: frozenset[str] = frozenset(
     {
         # From watcher.py _EXCLUDED_DIR_PARTS
@@ -46,16 +46,15 @@ EXCLUDED_DIR_PARTS: frozenset[str] = frozenset(
 
 
 def build_walker_filter(root: Path) -> Callable[[Path], bool]:
-    """Return a filter function that returns True when a path should be skipped during walking.
-
-    Checks EXCLUDED_DIR_PARTS membership on path parts and delegates to IgnorePatternManager
-    for .gitignore / .mcp-index-ignore patterns. Only root-level .gitignore is read; nested
-    .gitignore traversal is future work.
-    """
+    """Apply repository-relative exclusions before entering or parsing a path."""
     ignore_mgr = IgnorePatternManager(root)
 
     def filter_fn(path: Path) -> bool:
-        if any(part in EXCLUDED_DIR_PARTS for part in path.parts):
+        try:
+            relative = path.absolute().relative_to(ignore_mgr.root_path)
+        except ValueError:
+            return True
+        if any(part in EXCLUDED_DIR_PARTS for part in relative.parts):
             return True
         return ignore_mgr.should_ignore(path)
 
@@ -63,59 +62,31 @@ def build_walker_filter(root: Path) -> Callable[[Path], bool]:
 
 
 class IgnorePatternManager:
-    """Manages ignore patterns from .gitignore and .mcp-index-ignore at the repo root.
+    """Repository-scoped Git-wildmatch rules, including nested ignore files."""
 
-    Only the root-level .gitignore is read. Nested .gitignore files are not traversed —
-    this is a deliberate P1 scope limitation. Support for nested .gitignore requires
-    adding a pathspec dependency and is tracked as future work.
-    """
-
-    def __init__(self, root_path: Path = None):
-        """
-        Initialize the ignore pattern manager.
-
-        Args:
-            root_path: Root directory to look for ignore files. Defaults to current directory.
-        """
-        self.root_path = root_path or Path.cwd()
-        self._patterns: List[str] = []
-        self._gitignore_patterns: List[str] = []
-        self._mcp_ignore_patterns: List[str] = []
+    def __init__(self, root_path: Optional[Path] = None):
+        self.root_path = (root_path or Path.cwd()).absolute()
         self._load_patterns()
 
+    @staticmethod
+    def _read_patterns(path: Path) -> List[str]:
+        if path.is_symlink():
+            raise ValueError("Ignore policy cannot be a symbolic link")
+        try:
+            return [
+                line
+                for line in path.read_text(encoding="utf-8").splitlines()
+                if line and not line.startswith("#")
+            ]
+        except FileNotFoundError:
+            return []
+
     def _load_patterns(self):
-        """Load patterns from all ignore files."""
-        # Load .gitignore patterns
-        self._gitignore_patterns = self._load_gitignore_patterns()
-
-        # Load .mcp-index-ignore patterns
+        self._gitignore_patterns = self._read_patterns(self.root_path / ".gitignore")
         self._mcp_ignore_patterns = self._load_mcp_ignore_patterns()
-
-        # Combine all patterns
         self._patterns = self._gitignore_patterns + self._mcp_ignore_patterns
-
-        logger.info(f"Loaded {len(self._patterns)} ignore patterns total")
-
-    def _load_gitignore_patterns(self) -> List[str]:
-        """Load patterns from .gitignore file."""
-        patterns = []
-        gitignore_path = self.root_path / ".gitignore"
-
-        if gitignore_path.exists():
-            try:
-                with open(gitignore_path, "r") as f:
-                    for line in f:
-                        line = line.strip()
-                        # Skip comments and empty lines
-                        if line and not line.startswith("#"):
-                            # Skip negation patterns for now
-                            if not line.startswith("!"):
-                                patterns.append(line)
-                logger.debug(f"Loaded {len(patterns)} patterns from .gitignore")
-            except Exception as e:
-                logger.error(f"Error reading .gitignore: {e}")
-
-        return patterns
+        self._git_specs = {self.root_path: GitIgnoreSpec.from_lines(self._gitignore_patterns)}
+        self._mcp_spec = GitIgnoreSpec.from_lines(self._mcp_ignore_patterns)
 
     def _load_mcp_ignore_patterns(self) -> List[str]:
         """Load patterns from .mcp-index-ignore file."""
@@ -157,64 +128,44 @@ class IgnorePatternManager:
             "*_pb2_grpc.py",
         ]
 
-        if ignore_path.exists():
-            try:
-                with open(ignore_path, "r") as f:
-                    for line in f:
-                        line = line.strip()
-                        if line and not line.startswith("#"):
-                            patterns.append(line)
-                logger.debug(f"Loaded {len(patterns)} patterns from .mcp-index-ignore")
-            except Exception as e:
-                logger.error(f"Error reading .mcp-index-ignore: {e}")
-        else:
-            # Use default patterns if file doesn't exist
-            patterns = default_patterns
-            logger.debug(f"Using {len(patterns)} default security patterns")
-
-        return patterns
+        if ignore_path.exists() or ignore_path.is_symlink():
+            return self._read_patterns(ignore_path)
+        return default_patterns
 
     def should_ignore(self, file_path: Path) -> bool:
-        """
-        Check if a file should be ignored based on all patterns.
-
-        Args:
-            file_path: Path to check (can be absolute or relative)
-
-        Returns:
-            True if file should be ignored, False otherwise
-        """
-        # Convert to relative path for pattern matching
+        """Reject outside/symlink paths and honor scoped rules before traversal."""
+        path = file_path if file_path.is_absolute() else self.root_path / file_path
         try:
-            if file_path.is_absolute():
-                rel_path = file_path.relative_to(self.root_path)
-            else:
-                rel_path = file_path
+            relative = path.absolute().relative_to(self.root_path)
         except ValueError:
-            # Path is outside root, use as-is
-            rel_path = file_path
-
-        # Convert to string for pattern matching
-        path_str = str(rel_path).replace("\\", "/")
-
-        for pattern in self._patterns:
-            # Handle directory patterns
-            if pattern.endswith("/"):
-                # Check if any parent directory matches
-                for parent in rel_path.parents:
-                    if fnmatch.fnmatch(parent.name, pattern[:-1]):
-                        return True
-                # Check if the path itself is a directory matching the pattern
-                if rel_path.name == pattern[:-1]:
-                    return True
-            else:
-                # Check file patterns
-                if fnmatch.fnmatch(path_str, pattern):
-                    return True
-                # Also check just the filename
-                if fnmatch.fnmatch(rel_path.name, pattern):
-                    return True
-
+            return True
+        if ".." in relative.parts:
+            return True
+        parent = self.root_path
+        scopes = []
+        for index, component in enumerate(relative.parts):
+            if parent not in self._git_specs:
+                self._git_specs[parent] = GitIgnoreSpec.from_lines(
+                    self._read_patterns(parent / ".gitignore")
+                )
+            scopes.append((parent, self._git_specs[parent]))
+            candidate = parent / component
+            if candidate.is_symlink():
+                return True
+            is_directory = index < len(relative.parts) - 1 or candidate.is_dir()
+            ignored = False
+            for scope, spec in scopes:
+                name = candidate.relative_to(scope).as_posix() + ("/" if is_directory else "")
+                match = spec.check_file(name).include
+                if match is not None:
+                    ignored = match
+            name = candidate.relative_to(self.root_path).as_posix() + ("/" if is_directory else "")
+            match = self._mcp_spec.check_file(name).include
+            if match is not None:
+                ignored = match
+            if ignored:
+                return True
+            parent = candidate
         return False
 
     def get_patterns(self) -> List[str]:
@@ -243,14 +194,15 @@ def get_ignore_manager(root_path: Path = None) -> IgnorePatternManager:
     Get or create the ignore pattern manager.
 
     Args:
-        root_path: Root directory for ignore files. Only used on first call.
+        root_path: Root directory for this policy instance.
 
     Returns:
         IgnorePatternManager instance
     """
     global _ignore_manager
-    if _ignore_manager is None:
-        _ignore_manager = IgnorePatternManager(root_path)
+    root = (root_path or Path.cwd()).absolute()
+    if _ignore_manager is None or _ignore_manager.root_path != root:
+        _ignore_manager = IgnorePatternManager(root)
     return _ignore_manager
 
 

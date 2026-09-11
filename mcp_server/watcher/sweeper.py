@@ -3,6 +3,7 @@
 import hashlib
 import logging
 import os
+import subprocess
 import threading
 import time
 from pathlib import Path
@@ -85,6 +86,7 @@ class WatcherSweeper:
         store_provider: Optional[Callable[[str], SQLiteStore]] = None,
         interval_minutes: int = DEFAULT_SWEEP_MINUTES,
         clock: Callable[[], float] = time.monotonic,
+        on_repository_drift: Optional[Callable[[str], None]] = None,
     ) -> None:
         self._on_missed_create = on_missed_create or on_missed_path or (lambda _r, _p: None)
         self._on_missed_delete = on_missed_delete or (lambda _r, _p: None)
@@ -93,6 +95,7 @@ class WatcherSweeper:
         self._store = store
         self._store_provider = store_provider
         self._clock = clock
+        self._on_repository_drift = on_repository_drift
 
         # Env var overrides constructor arg when set
         env_val = os.environ.get(ENV_SWEEP_MINUTES)
@@ -157,25 +160,45 @@ class WatcherSweeper:
 
             gitignore_filter = build_walker_filter(repo_root)
             repo_has_drift = False
+            tracked_paths = None
+            if (repo_root / ".git").exists():
+                tracked_paths = {
+                    os.fsdecode(path)
+                    for path in subprocess.run(
+                        ["git", "ls-tree", "-r", "-z", "--name-only", "HEAD"],
+                        cwd=repo_root,
+                        capture_output=True,
+                        check=True,
+                        timeout=30,
+                    ).stdout.split(b"\0")
+                    if path
+                }
 
             fs_by_path: Dict[str, str] = {}
-            for fs_path in repo_root.rglob("*"):
-                if not fs_path.is_file():
-                    continue
-                if fs_path.suffix not in _CODE_EXTENSIONS:
-                    continue
-                if gitignore_filter(fs_path):
-                    continue
-
-                try:
-                    rel = fs_path.relative_to(repo_root)
-                except ValueError:
-                    continue
-
-                rel_str = str(rel).replace("\\", "/")
-                fs_by_path[rel_str] = self._hash_file(fs_path)
+            for directory, children, filenames in os.walk(repo_root, followlinks=False):
+                root = Path(directory)
+                children[:] = [name for name in children if not gitignore_filter(root / name)]
+                for name in filenames:
+                    fs_path = root / name
+                    if fs_path.suffix not in _CODE_EXTENSIONS or gitignore_filter(fs_path):
+                        continue
+                    if (
+                        tracked_paths is not None
+                        and fs_path.relative_to(repo_root).as_posix() not in tracked_paths
+                    ):
+                        continue
+                    if fs_path.is_file():
+                        fs_by_path[fs_path.relative_to(repo_root).as_posix()] = self._hash_file(
+                            fs_path
+                        )
 
             created = set(fs_by_path) - set(known_by_path)
+            modified = {
+                path
+                for path in set(fs_by_path) & set(known_by_path)
+                if fs_by_path[path]
+                != (known_by_path[path].get("content_hash") or known_by_path[path].get("hash"))
+            }
             deleted = {
                 rel
                 for rel in set(known_by_path) - set(fs_by_path)
@@ -185,11 +208,17 @@ class WatcherSweeper:
             renamed_created = {new for _old, new in renamed}
             renamed_deleted = {old for old, _new in renamed}
 
+            if self._on_repository_drift is not None:
+                if created or modified or deleted:
+                    self._on_repository_drift(repo_id)
+                    drifted.append(repo_id)
+                continue
+
             for old_rel, new_rel in sorted(renamed):
                 self._on_missed_rename(repo_id, old_rel, new_rel)
                 repo_has_drift = True
 
-            for rel_str in sorted(created - renamed_created):
+            for rel_str in sorted((created - renamed_created) | modified):
                 self._on_missed_create(repo_id, rel_str)
                 repo_has_drift = True
 

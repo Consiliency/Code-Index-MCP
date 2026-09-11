@@ -552,28 +552,13 @@ class IndexArtifactDownloader:
         index_path: Path | str | None = None,
         backup: bool = True,
     ) -> List[str]:
-        print("\n📝 Installing indexes...")
+        """Hydrate a fresh staging destination; never replace a live generation.
+
+        The legacy backup argument is retained for caller compatibility. Existing
+        resources require generation publication, not an in-place backup/restore.
+        """
         index_root = Path(index_location) if index_location is not None else Path(".mcp-index")
         target_db = Path(index_path) if index_path is not None else index_root / "current.db"
-        index_root.mkdir(parents=True, exist_ok=True)
-        if backup:
-            backup_dir = index_root / f"index_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-            backup_dir.mkdir(exist_ok=True)
-            for src in [
-                target_db,
-                index_root / "vector_index.qdrant",
-                index_root / ".index_metadata.json",
-            ]:
-                if not src.exists():
-                    continue
-                print(f"  Backing up {src.name}...")
-                if src.is_dir():
-                    shutil.copytree(src, backup_dir / src.name)
-                else:
-                    shutil.copy2(src, backup_dir / src.name)
-            print(f"  ✅ Backup created in {backup_dir}")
-
-        installed_items: List[str] = []
         install_map = {
             "current.db": target_db,
             "code_index.db": target_db,
@@ -581,38 +566,34 @@ class IndexArtifactDownloader:
             "artifact-metadata.json": index_root / "artifact-metadata.json",
             "vector_index.qdrant": index_root / "vector_index.qdrant",
         }
-        for item in source_dir.iterdir():
-            dest = install_map.get(item.name)
-            if dest is None:
-                continue
-            if dest.exists():
-                if dest.is_dir():
-                    shutil.rmtree(dest)
-                else:
-                    dest.unlink()
-            print(f"  Installing {item.name}...")
+        sources = [item for item in source_dir.iterdir() if item.name in install_map]
+        databases = [item for item in sources if item.name in {"current.db", "code_index.db"}]
+        if len(databases) != 1 or not databases[0].is_file():
+            raise ValueError("Artifact staging requires exactly one SQLite database")
+        destinations = set(install_map.values()) | {
+            Path(f"{target_db}-wal"),
+            Path(f"{target_db}-shm"),
+        }
+        if any(path.exists() or path.is_symlink() for path in destinations):
+            raise FileExistsError("Artifact installation requires an unused staging destination")
+        for item in sources:
+            if item.is_symlink() or (
+                item.is_dir() and any(child.is_symlink() for child in item.rglob("*"))
+            ):
+                raise ValueError("Artifact staging does not accept symbolic links")
+
+        installed_items = []
+        for item in sources:
+            dest = install_map[item.name]
             dest.parent.mkdir(parents=True, exist_ok=True)
             if item.is_dir():
                 shutil.copytree(item, dest)
             else:
-                shutil.copy2(item, dest)
+                with item.open("rb") as reader, dest.open("xb") as writer:
+                    shutil.copyfileobj(reader, writer)
+                    writer.flush()
+                    os.fsync(writer.fileno())
             installed_items.append(str(dest))
-
-        print("✅ Indexes installed successfully!")
-        if installed_items:
-            print(f"📦 Restored items: {', '.join(installed_items)}")
-        metadata_path = index_root / "artifact-metadata.json"
-        if metadata_path.exists():
-            try:
-                metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-                commit = metadata.get("commit")
-                branch = metadata.get("tracked_branch") or metadata.get("branch")
-                if commit:
-                    label = f"{commit} ({branch})" if branch else commit
-                    print(f"🔖 Restored artifact commit: {label}")
-            except Exception as exc:
-                record_handled_error(__name__, exc)
-                pass
         return installed_items
 
     def download_selected_artifact(

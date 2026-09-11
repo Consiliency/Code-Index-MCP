@@ -2384,6 +2384,7 @@ class SemanticIndexer:
         file_embedding_text = prep["file_embedding_text"]
         language = prep["language"]
         relative_path = prep["relative_path"]
+        canonical_path = str(self.path_resolver.resolve_path(relative_path))
 
         chunk_embeds = embeds[: len(normalized_chunks)]
         file_embed = None
@@ -2400,7 +2401,7 @@ class SemanticIndexer:
             chunk_id = str(chunk.chunk_id or chunk.node_id)
 
             payload = {
-                "file": str(path),
+                "file": canonical_path,
                 "relative_path": relative_path,
                 "content_hash": content_hash,
                 "chunk_id": normalized["derived_chunk_id"],
@@ -2436,7 +2437,7 @@ class SemanticIndexer:
             points.append(
                 models.PointStruct(
                     id=self._symbol_id(
-                        str(path),
+                        canonical_path,
                         f"{normalized['symbol']}#{normalized['derived_chunk_id']}",
                         normalized["start_line"],
                         content_hash,
@@ -2449,7 +2450,7 @@ class SemanticIndexer:
         if file_embed is not None:
             file_summary_chunk_id = self._file_summary_chunk_id(relative_path)
             file_summary_payload = {
-                "file": str(path),
+                "file": canonical_path,
                 "relative_path": relative_path,
                 "content_hash": None,
                 "chunk_id": file_summary_chunk_id,
@@ -2469,7 +2470,7 @@ class SemanticIndexer:
             }
             points.append(
                 models.PointStruct(
-                    id=self._symbol_id(str(path), "file_summary", 1),
+                    id=self._symbol_id(canonical_path, "file_summary", 1),
                     vector=file_embed,
                     payload=file_summary_payload,
                 )

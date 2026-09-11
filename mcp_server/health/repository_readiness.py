@@ -248,7 +248,7 @@ class ReadinessClassifier:
         live_git_required = bool(
             getattr(repo_info, "git_common_dir", None)
             and isinstance(cached_commit, str)
-            and len(cached_commit) == 40
+            and len(cached_commit) in {40, 64}
             and all(char in "0123456789abcdef" for char in cached_commit.lower())
         )
         if live_git_required:
@@ -318,6 +318,9 @@ class ReadinessClassifier:
             elif current_commit and last_indexed_commit and current_commit != last_indexed_commit:
                 state = RepositoryReadinessState.STALE_COMMIT
                 remediation = "Run reindex to update the repository index to the current commit."
+            elif live_git_required and not _tracked_tree_clean(registered_path):
+                state = RepositoryReadinessState.STALE_COMMIT
+                remediation = "Commit or discard tracked edits before querying the committed index."
 
         return RepositoryReadiness(
             state=state,
@@ -637,6 +640,22 @@ def _git_commit(path: Path) -> Optional[str]:
     return _run_git(["rev-parse", "HEAD"], path)
 
 
+def _tracked_tree_clean(path: Path) -> bool:
+    try:
+        return (
+            subprocess.run(
+                ["git", "diff", "--quiet", "--no-ext-diff", "HEAD", "--"],
+                cwd=path,
+                capture_output=True,
+                timeout=10,
+                env=get_full_env(),
+            ).returncode
+            == 0
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
 def _run_git(args: list[str], cwd: Path) -> Optional[str]:
     try:
         result = subprocess.run(
@@ -646,10 +665,11 @@ def _run_git(args: list[str], cwd: Path) -> Optional[str]:
             text=True,
             check=True,
             env=get_full_env(),
+            timeout=10,
         )
         value = result.stdout.strip()
         return value if value and value != "HEAD" else None
-    except (FileNotFoundError, subprocess.CalledProcessError):
+    except (OSError, subprocess.SubprocessError):
         return None
 
 

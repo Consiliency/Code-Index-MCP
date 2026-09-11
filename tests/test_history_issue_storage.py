@@ -83,3 +83,47 @@ def test_history_issue_storage_filters_exclude_source_code_and_friction_chunks(s
     assert len(history_results) == 1
     assert len(friction_results) == 1
     assert history_results[0]["file"] != friction_results[0]["file"]
+
+
+def test_history_query_filters_and_ranks_before_limit(sqlite_store):
+    repo_id = sqlite_store.create_repository("/repo", "repo")
+    unrelated = _history_record(11, "reflection", "2026-07-05T00:00:00Z")
+    weak = _history_record(12, "reflection", "2026-07-05T00:00:00Z")
+    weak["summary"] = "quasar " + "unrelated " * 200
+    strong = _history_record(99, "reflection", "2026-07-05T00:00:00Z")
+    strong["summary"] = "quasar quasar quasar"
+    sqlite_store.upsert_history_issue_documents(repo_id, [unrelated, weak, strong])
+    result = sqlite_store.search_chunks_by_source_metadata(
+        query="quasar",
+        source_type="history",
+        history_labels=["reflection"],
+        limit=1,
+    )
+    assert len(result) == 1
+    assert result[0]["source_metadata"]["records"][0]["number"] == 99
+    assert (
+        sqlite_store.search_chunks_by_source_metadata(query="absenttoken", source_type="history")
+        == []
+    )
+    assert (
+        sqlite_store.search_chunks_by_source_metadata(
+            query="quasar", source_type="history", limit=0
+        )
+        == []
+    )
+
+
+def test_filtered_query_cannot_match_a_different_chunk_in_same_file(sqlite_store):
+    repo_id = sqlite_store.create_repository("/repo", "repo")
+    reflection = _history_record(11, "reflection", "2026-07-05T00:00:00Z")
+    retrospective = _history_record(11, "retrospective", "2026-07-05T00:00:00Z")
+    retrospective["summary"] = "uniquemarker"
+    sqlite_store.upsert_history_issue_documents(repo_id, [reflection, retrospective])
+    assert (
+        sqlite_store.search_chunks_by_source_metadata(
+            query="uniquemarker",
+            source_type="history",
+            history_labels=["reflection"],
+        )
+        == []
+    )

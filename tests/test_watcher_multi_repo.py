@@ -114,7 +114,10 @@ def test_watcher_uses_current_generation_and_external_registry_membership(tmp_pa
         watcher = MultiRepositoryWatcher(
             server.registry,
             dispatcher,
-            Mock(store_registry=server.store_registry),
+            Mock(
+                store_registry=server.store_registry,
+                sync_repository_index=Mock(return_value=Mock(action="up_to_date")),
+            ),
             repo_resolver=resolver,
             store_registry=server.store_registry,
             sweeper=Mock(),
@@ -128,8 +131,10 @@ def test_watcher_uses_current_generation_and_external_registry_membership(tmp_pa
             external = RepositoryRegistry(server.registry.registry_path)
             info = external.get(first_id)
             external.update_indexed_commit(first_id, info.last_indexed_commit, branch="main")
-            assert handler._trigger_reindex_with_ctx(first / "seed.py")
-            assert dispatcher.index_file_guarded.call_args.args[0].sqlite_store is not old_store
+            assert not handler._trigger_reindex_with_ctx(first / "seed.py")
+            assert handler.ctx.sqlite_store is not old_store
+            dispatcher.index_file_guarded.assert_not_called()
+            watcher.index_manager.sync_repository_index.assert_called_once_with(first_id)
             external.unregister(first_id)
             assert not handler._trigger_reindex_with_ctx(first / "seed.py")
             external.register_repository(str(second))

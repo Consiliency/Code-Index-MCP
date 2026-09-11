@@ -222,6 +222,8 @@ class MultiRepositoryHandler(FileSystemEventHandler):
 
     def _trigger_reindex_with_ctx(self, path: Path) -> bool:
         """Branch + gitignore guarded reindex via ctx-aware dispatcher."""
+        if isinstance(getattr(self.parent_watcher, "repo_resolver", None), RepoResolver):
+            return self._reconcile_committed_event(path)
         if not self._refresh_context():
             return False
         current_branch = self._get_current_branch()
@@ -279,6 +281,8 @@ class MultiRepositoryHandler(FileSystemEventHandler):
 
     def _remove_with_ctx(self, path: Path) -> bool:
         """Branch + gitignore guarded remove via ctx-aware dispatcher."""
+        if isinstance(getattr(self.parent_watcher, "repo_resolver", None), RepoResolver):
+            return self._reconcile_committed_event(path)
         if not self._refresh_context():
             return False
         current_branch = self._get_current_branch()
@@ -310,6 +314,8 @@ class MultiRepositoryHandler(FileSystemEventHandler):
 
     def _move_with_ctx(self, old_path: Path, new_path: Path) -> bool:
         """Branch + gitignore guarded move via ctx-aware dispatcher."""
+        if isinstance(getattr(self.parent_watcher, "repo_resolver", None), RepoResolver):
+            return self._reconcile_committed_event(new_path)
         if not self._refresh_context():
             return False
         current_branch = self._get_current_branch()
@@ -339,6 +345,13 @@ class MultiRepositoryHandler(FileSystemEventHandler):
             path=old_path,
             action="remove_stale_source",
         )
+
+    def _reconcile_committed_event(self, path: Path) -> bool:
+        """Watchdog is a hint to reconcile Git, never authority for working-tree bytes."""
+        if not self._refresh_context() or build_walker_filter(self.repo_path)(path):
+            return False
+        result = self.parent_watcher.index_manager.sync_repository_index(self.repo_id)
+        return result.action in {"full_index", "incremental_update"}
 
     def on_any_event(self, event):
         """Route watchdog events through branch + gitignore guards."""
@@ -462,7 +475,13 @@ class MultiRepositoryWatcher:
             on_missed_create=self._on_missed_create,
             on_missed_delete=self._on_missed_delete,
             on_missed_rename=self._on_missed_rename,
+            on_repository_drift=self._reconcile_repository_drift,
         )
+
+    def _reconcile_repository_drift(self, repo_id: str) -> None:
+        result = self.index_manager.sync_repository_index(repo_id, force_full=True)
+        if result.action in {"full_index", "incremental_update"}:
+            self.mark_repository_changed(repo_id)
 
     def enqueue_full_rescan(self, repo_id: str) -> None:
         """Submit a force-full reindex to the thread pool; returns immediately."""

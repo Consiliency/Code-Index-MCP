@@ -276,6 +276,7 @@ class TestSearch:
 
         dispatcher = Dispatcher([])
         dispatcher._semantic_registry = MagicMock(get=MagicMock(return_value=semantic_indexer))
+        dispatcher._semantic_registry.lease.return_value.__enter__.return_value = semantic_indexer
 
         results = list(dispatcher.search(ctx, "class SemanticIndexer", semantic=True, limit=5))
 
@@ -298,6 +299,7 @@ class TestSearch:
 
         dispatcher = Dispatcher([])
         dispatcher._semantic_registry = MagicMock(get=MagicMock(return_value=semantic_indexer))
+        dispatcher._semantic_registry.lease.return_value.__enter__.return_value = semantic_indexer
 
         with pytest.raises(SemanticSearchFailure, match="Semantic search failed"):
             list(dispatcher.search(ctx, "class SemanticIndexer", semantic=True, limit=5))
@@ -320,6 +322,7 @@ class TestSearch:
 
         dispatcher = Dispatcher([])
         dispatcher._semantic_registry = MagicMock(get=MagicMock(return_value=semantic_indexer))
+        dispatcher._semantic_registry.lease.return_value.__enter__.return_value = semantic_indexer
 
         results = list(
             dispatcher.search(ctx, "semantic preflight validation", semantic=False, limit=5)
@@ -530,7 +533,7 @@ class TestIndexFile:
         mock_plugin.supports.return_value = True
         mock_plugin.indexFile.return_value = {"symbols": [{"name": "hello", "kind": "function"}]}
 
-        ctx = _make_repo_ctx()
+        ctx = _make_repo_ctx(workspace_root=tmp_path)
         dispatcher.index_file(ctx, test_file)
 
         mock_plugin.indexFile.assert_called_once()
@@ -547,7 +550,7 @@ class TestIndexFile:
         mock_plugin.supports.return_value = True
 
         # Should try latin-1 encoding
-        ctx = _make_repo_ctx()
+        ctx = _make_repo_ctx(workspace_root=tmp_path)
         dispatcher.index_file(ctx, test_file)
 
         # Plugin should be called with latin-1 decoded content
@@ -694,7 +697,7 @@ class TestConcurrency:
             test_file.write_text(f"def func{i}(): pass")
             files.append(test_file)
 
-        ctx = _make_repo_ctx()
+        ctx = _make_repo_ctx(workspace_root=tmp_path)
         # Index files concurrently
         with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
             futures = [executor.submit(dispatcher.index_file, ctx, f) for f in files]
@@ -1005,7 +1008,7 @@ class TestSymbolRouting:
 # ---------------------------------------------------------------------------
 
 
-def _make_repo_ctx(sqlite_store=None) -> RepoContext:
+def _make_repo_ctx(sqlite_store=None, workspace_root=Path("/tmp/test-repo")) -> RepoContext:
     """Build a minimal RepoContext for tests."""
     from pathlib import Path
     from unittest.mock import MagicMock
@@ -1017,12 +1020,12 @@ def _make_repo_ctx(sqlite_store=None) -> RepoContext:
 
     registry_entry = MagicMock(spec=RepositoryInfo)
     registry_entry.tracked_branch = "main"
-    registry_entry.path = Path("/tmp/test-repo")
+    registry_entry.path = workspace_root
 
     return RepoContext(
         repo_id="test-repo-id-0001",
         sqlite_store=sqlite_store,
-        workspace_root=Path("/tmp/test-repo"),
+        workspace_root=workspace_root,
         tracked_branch="main",
         registry_entry=registry_entry,
     )
@@ -1033,6 +1036,7 @@ class TestEnhancedDispatcherProtocolConformance:
 
     def test_direct_symbol_response_satisfies_http_contract(self, sqlite_store):
         from pydantic import TypeAdapter
+
         from mcp_server.plugin_base import SymbolDef
 
         repo = sqlite_store.create_repository("/tmp/test-repo", "fixture")
@@ -1116,7 +1120,7 @@ class TestEnhancedDispatcherProtocolConformance:
 
     def test_index_file_accepts_ctx(self, tmp_path):
         """index_file(ctx, path) must accept ctx as first positional arg."""
-        ctx = _make_repo_ctx()
+        ctx = _make_repo_ctx(workspace_root=tmp_path)
         d = Dispatcher([])
         f = tmp_path / "test.py"
         f.write_text("x = 1")
@@ -1131,7 +1135,7 @@ class TestEnhancedDispatcherProtocolConformance:
         assert isinstance(result, dict)
 
     def test_index_directory_treats_unsupported_plugin_files_as_ignored(self, tmp_path):
-        ctx = _make_repo_ctx()
+        ctx = _make_repo_ctx(workspace_root=tmp_path)
         target = tmp_path / "data.json"
         target.write_text('{"ok": true}\n')
 
@@ -1221,7 +1225,7 @@ class TestEnhancedDispatcherProtocolConformance:
         assert snapshots[-1]["in_flight_path"] is None
 
     def test_index_directory_uses_bounded_markdown_path_for_changelog(self, tmp_path, monkeypatch):
-        ctx = _make_repo_ctx()
+        ctx = _make_repo_ctx(workspace_root=tmp_path)
         changelog = tmp_path / "CHANGELOG.md"
         changelog.write_text(
             "# Changelog\n\n## [Unreleased]\n\n### Added\n- Bounded lexical repair\n",
@@ -1245,7 +1249,7 @@ class TestEnhancedDispatcherProtocolConformance:
         assert result["last_progress_path"] == str(changelog.resolve())
 
     def test_index_directory_uses_bounded_markdown_path_for_roadmap(self, tmp_path, monkeypatch):
-        ctx = _make_repo_ctx()
+        ctx = _make_repo_ctx(workspace_root=tmp_path)
         roadmap = tmp_path / "ROADMAP.md"
         roadmap.write_text(
             "# Roadmap\n\n## Current Phase\n\n### Next Up\n- Repair roadmap lexical timeout\n",
@@ -1271,7 +1275,7 @@ class TestEnhancedDispatcherProtocolConformance:
     def test_index_directory_uses_bounded_markdown_path_for_final_analysis(
         self, tmp_path, monkeypatch
     ):
-        ctx = _make_repo_ctx()
+        ctx = _make_repo_ctx(workspace_root=tmp_path)
         analysis_report = tmp_path / "FINAL_COMPREHENSIVE_MCP_ANALYSIS.md"
         analysis_report.write_text(
             "# Final Comprehensive MCP Analysis\n\n## Executive Summary\n\n### Timeout Evidence\n- Repair final-analysis lexical timeout\n",
@@ -1297,7 +1301,7 @@ class TestEnhancedDispatcherProtocolConformance:
         assert result["last_progress_path"] == str(analysis_report.resolve())
 
     def test_index_directory_uses_bounded_markdown_path_for_agents(self, tmp_path, monkeypatch):
-        ctx = _make_repo_ctx()
+        ctx = _make_repo_ctx(workspace_root=tmp_path)
         agents = tmp_path / "AGENTS.md"
         agents.write_text(
             "# MCP Server Agent Configuration\n\n## Current State\n\n### Search Strategy\n- Preserve AGENTS heading discoverability\n",
@@ -1321,7 +1325,7 @@ class TestEnhancedDispatcherProtocolConformance:
         assert result["last_progress_path"] == str(agents.resolve())
 
     def test_index_directory_uses_bounded_markdown_path_for_readme(self, tmp_path, monkeypatch):
-        ctx = _make_repo_ctx()
+        ctx = _make_repo_ctx(workspace_root=tmp_path)
         readme = tmp_path / "README.md"
         readme.write_text(
             "# Code Index MCP\n\n## Overview\n\n### Local-first search\n- Preserve README heading discoverability\n",
@@ -10889,7 +10893,7 @@ class TestEnhancedDispatcherProtocolConformance:
         assert store.get_file_by_path("same.py", row_b) is None
 
     def test_index_file_returns_not_found_for_missing_required_path(self, tmp_path):
-        ctx = _make_repo_ctx()
+        ctx = _make_repo_ctx(workspace_root=tmp_path)
         result = Dispatcher([]).index_file(ctx, tmp_path / "missing.py")
 
         assert result.status == IndexResultStatus.NOT_FOUND
@@ -10900,7 +10904,7 @@ class TestEnhancedDispatcherProtocolConformance:
         plugin.supports.return_value = True
         plugin.indexFile.side_effect = RuntimeError("plugin boom")
         dispatcher = Dispatcher([plugin])
-        ctx = _make_repo_ctx()
+        ctx = _make_repo_ctx(workspace_root=tmp_path)
         target = tmp_path / "test.py"
         target.write_text("x = 1\n")
 
@@ -10958,7 +10962,7 @@ class TestEnhancedDispatcherProtocolConformance:
         plugin.supports.return_value = True
         plugin.indexFile.return_value = {"symbols": []}
         dispatcher = Dispatcher([plugin])
-        ctx = _make_repo_ctx()
+        ctx = _make_repo_ctx(workspace_root=tmp_path)
         target = tmp_path / "test.py"
         target.write_text("x = 1\n")
 
@@ -11026,7 +11030,7 @@ class TestEnhancedDispatcherProtocolConformance:
 
         assert result.status == IndexResultStatus.NOT_FOUND
 
-    def test_runtime_feature_status_registered_uses_lazy_semantic_indexer_when_registry_missing(
+    def test_runtime_feature_status_registered_refuses_missing_generation_owner(
         self,
     ):
         ctx = _make_repo_ctx(MagicMock())
@@ -11034,13 +11038,11 @@ class TestEnhancedDispatcherProtocolConformance:
         d = Dispatcher([])
         d._semantic_registry = None
         d._semantic_indexer_fallback = None
-        d._get_or_build_registered_semantic_indexer = MagicMock(return_value=object())
 
         status = d.get_runtime_feature_status(ctx)
 
-        assert status["semantic"]["status"] == "available"
-        assert status["semantic"]["reason"] is None
-        d._get_or_build_registered_semantic_indexer.assert_called_once_with(ctx)
+        assert status["semantic"]["status"] == "unavailable"
+        assert status["semantic"]["reason"] == "semantic_indexer_unavailable"
 
     def test_plugins_takes_no_ctx(self):
         """plugins() is process-global; must accept no ctx arg."""
