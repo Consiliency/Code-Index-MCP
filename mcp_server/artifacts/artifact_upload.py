@@ -75,48 +75,25 @@ class IndexArtifactUploader:
         repo_path: Path | str = ".",
         index_location: Path | str | None = None,
         index_path: Path | str | None = None,
+        semantic_indexer=None,
     ) -> Tuple[Path, str, int]:
         repo_root = Path(repo_path)
         index_root = (
             Path(index_location) if index_location is not None else repo_root / ".mcp-index"
         )
         db_path = Path(index_path) if index_path is not None else index_root / "current.db"
-        if secure:
-            print("🔒 Creating secure index archive (filtering sensitive files)...")
-            exporter = SecureIndexExporter(
-                repo_path=repo_root,
-                index_location=index_root,
-                index_path=db_path,
-            )
-            stats = exporter.create_secure_archive(str(output_path))
-            checksum = self._calculate_checksum(output_path)
-            size = output_path.stat().st_size
-            print(f"✅ Secure archive created: {output_path} ({size / 1024 / 1024:.1f} MB)")
-            print(f"   Files included: {stats['files_included']}")
-            print(f"   Files excluded: {stats['files_excluded']}")
-            print(f"   Checksum: {checksum}")
-            return output_path, checksum, size
-
-        print("📦 Compressing index files (unsafe mode - includes all files)...")
-        with tarfile.open(output_path, "w:gz", compresslevel=9) as tar:
-            candidates = [
-                (db_path, "current.db"),
-                (index_root / ".index_metadata.json", ".index_metadata.json"),
-                (index_root / "vector_index.qdrant", "vector_index.qdrant"),
-            ]
-            if not db_path.exists():
-                candidates[0] = (repo_root / "code_index.db", "code_index.db")
-            for file_path, arcname in candidates:
-                if file_path.exists():
-                    print(f"  Adding {arcname}...")
-                    tar.add(file_path, arcname=arcname)
-                else:
-                    print(f"  ⚠️  Skipping {arcname} (not found)")
-
+        exporter = SecureIndexExporter(
+            repo_path=repo_root,
+            index_location=index_root,
+            index_path=db_path,
+            semantic_indexer=semantic_indexer,
+            secure=secure,
+        )
+        stats = exporter.create_secure_archive(str(output_path))
         checksum = self._calculate_checksum(output_path)
         size = output_path.stat().st_size
-        print(f"✅ Compressed to {output_path} ({size / 1024 / 1024:.1f} MB)")
-        print(f"   Checksum: {checksum}")
+        print(f"Archive created: {output_path} ({size} bytes)")
+        print(f"Files included: {stats['files_included']}; excluded: {stats['files_excluded']}")
         return output_path, checksum, size
 
     def _calculate_checksum(self, file_path: Path) -> str:
@@ -163,7 +140,7 @@ class IndexArtifactUploader:
 
         schema_version = schema_version or self._get_schema_version(index_path=index_path)
         compatibility = self._build_compatibility_metadata(
-            schema_version, index_location=index_location
+            schema_version, index_location=index_location, index_path=index_path
         )
         semantic_profiles = compatibility.get("semantic_profiles")
         semantic_profile_hash = semantic_profile_hash or build_semantic_profile_hash(
@@ -244,9 +221,19 @@ class IndexArtifactUploader:
         return payload if isinstance(payload, dict) else {}
 
     def _build_compatibility_metadata(
-        self, schema_version: str, index_location: Path | str | None = None
+        self,
+        schema_version: str,
+        index_location: Path | str | None = None,
+        *,
+        index_path: Path | str | None = None,
     ) -> Dict[str, Any]:
-        index_metadata = self._read_index_metadata(index_location=index_location)
+        index_metadata = (
+            SecureIndexExporter.read_generation_metadata(
+                Path(index_path), Path(index_location or Path(index_path).parent)
+            )
+            if index_path is not None
+            else self._read_index_metadata(index_location=index_location)
+        )
         profile_id, primary_profile = get_primary_semantic_profile_metadata(index_metadata)
         semantic_profiles = extract_semantic_profile_metadata(index_metadata)
         settings = get_settings()

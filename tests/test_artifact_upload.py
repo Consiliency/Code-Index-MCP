@@ -107,14 +107,10 @@ def test_metadata_only_cannot_hide_prepare_only():
 
 
 def _sqlite_db(path: Path) -> None:
+    from mcp_server.storage.sqlite_store import SQLiteStore
+
     path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(path)
-    try:
-        conn.execute("CREATE TABLE files (id INTEGER PRIMARY KEY, relative_path TEXT)")
-        conn.execute("CREATE TABLE symbols (id INTEGER PRIMARY KEY, file_id INTEGER)")
-        conn.commit()
-    finally:
-        conn.close()
+    SQLiteStore(str(path)).close()
 
 
 def test_compress_indexes_uses_repo_scoped_current_db(tmp_path: Path):
@@ -142,7 +138,9 @@ def test_compress_indexes_uses_repo_scoped_current_db(tmp_path: Path):
         names = tar.getnames()
     assert "current.db" in names
     assert "code_index.db" not in names
-    assert ".index_metadata.json" in names
+    assert (
+        ".index_metadata.json" not in names
+    )  # No fabricated semantic metadata for lexical-only export.
 
 
 def test_create_metadata_includes_full_p31_identity(tmp_path: Path):

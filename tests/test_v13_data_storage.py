@@ -292,6 +292,318 @@ def test_staged_summary_scope_matches_snapshot_input(runtime, tmp_path):
         store.close()
 
 
+def test_code_refresh_retains_document_rows_and_records_all_profile_vector_debt(runtime):
+    repo, registry, repo_id, store, manager = runtime
+    file_id, document_symbol = _seed_retained(store, repo)
+    store.store_chunk(
+        file_id=file_id,
+        content="old code",
+        content_start=0,
+        content_end=8,
+        line_start=1,
+        line_end=1,
+        chunk_id="old-code",
+        node_id="old-code",
+        treesitter_file_id="fixture",
+    )
+    store.store_chunk_summary("old-code", file_id, 0, 8, "old summary", "fixture")
+    store.upsert_semantic_point("secondary", "old-code:part:0", 303, "secondary-old")
+    ctx = RepoContext(
+        repo_id=repo_id,
+        sqlite_store=store,
+        workspace_root=repo,
+        tracked_branch="main",
+        registry_entry=registry.get(repo_id),
+    )
+    path = repo / "imported-note.md"
+    path.write_text("new code")
+    manager.dispatcher._persist_index_shard(
+        ctx,
+        path,
+        "new code",
+        "markdown",
+        {
+            "chunks": [{"chunk_id": "new-code", "content": "new code"}],
+        },
+    )
+    assert store.get_chunk_by_chunk_id("document:fixture")["symbol_id"] == document_symbol
+    assert store.get_chunk_summary("document:fixture")["summary_text"] == "retained summary"
+    assert store.get_chunk_summary("old-code") is None
+    assert store.get_semantic_point_ids("fixture", ["document:fixture"]) == [101]
+    assert store.get_semantic_point_ids("secondary", ["old-code:part:0"]) == []
+    assert any(
+        row["point_id"] == 303 and row["collection"] == "secondary-old"
+        for row in store.get_pending_vector_deletions()
+    )
+
+
+@pytest.mark.parametrize(
+    "restore_fault", [None, "missing", "duplicate", "path", "dimension", "provenance", "commit"]
+)
+def test_real_semantic_generation_uses_its_own_backend_and_matching_summary_ids(
+    runtime, monkeypatch, restore_fault
+):
+    import json
+    from types import SimpleNamespace
+
+    from mcp_server.config.settings import Settings
+    from mcp_server.utils.semantic_indexer_registry import SemanticIndexerRegistry
+    from tests.test_embedding_provenance import _FakeProvenanceProvider, _openai_response, _profile
+
+    repo, registry, repo_id, _store, manager = runtime
+    (repo / "hello.py").write_text("def hello():\n    return 'semantic sentinel'\n")
+    (repo / "same.py").write_text((repo / "hello.py").read_text())
+    subprocess.run(["git", "add", "hello.py", "same.py"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "Synthetic semantic fixture"], cwd=repo, check=True)
+    monkeypatch.delenv("QDRANT_URL", raising=False)
+    settings = Settings(
+        semantic_search_enabled=True,
+        semantic_default_profile="fixture",
+        semantic_profiles_json=json.dumps({"fixture": _profile().to_dict()}),
+    )
+    monkeypatch.setattr("mcp_server.config.settings.get_settings", lambda: settings)
+    monkeypatch.setattr("mcp_server.utils.semantic_indexer_registry.get_settings", lambda: settings)
+    monkeypatch.setattr(
+        "mcp_server.dispatcher.dispatcher_enhanced.reload_settings", lambda: settings
+    )
+    provider = _FakeProvenanceProvider(_openai_response)
+    monkeypatch.setattr(
+        "mcp_server.utils.semantic_indexer.create_embedding_provider", lambda **kw: provider
+    )
+    global_probe = MagicMock(side_effect=AssertionError("Unowned global backend probe"))
+    monkeypatch.setattr("mcp_server.setup.semantic_preflight.run_semantic_preflight", global_probe)
+
+    class FixtureWriter:
+        def __init__(self, db_path, **kwargs):
+            self.db_path = db_path
+
+        async def process_scope(self, **kwargs):
+            store = SQLiteStore(self.db_path)
+            try:
+                rows = store.get_missing_summaries(limit=kwargs["limit"])
+                for row in rows:
+                    store.store_chunk_summary(
+                        row["chunk_id"],
+                        row["file_id"],
+                        row["content_start"],
+                        row["content_end"],
+                        "Synthetic summary",
+                        "fixture",
+                        profile_id="fixture",
+                        is_authoritative=True,
+                    )
+                return SimpleNamespace(
+                    summaries_written=len(rows),
+                    chunks_attempted=len(rows),
+                    authoritative_chunks=len(rows),
+                    missing_chunk_ids=[],
+                    files_attempted=1,
+                    files_summarized=1,
+                )
+            finally:
+                store.close()
+
+    monkeypatch.setattr("mcp_server.indexing.summarization.ComprehensiveChunkWriter", FixtureWriter)
+    manager.dispatcher._semantic_enabled = True
+    manager.dispatcher._semantic_registry = SemanticIndexerRegistry(registry)
+    result = manager.rebuild_repository_index(repo_id)
+    assert result.action == "full_index", (result.error, result.semantic)
+    global_probe.assert_not_called()
+    assert provider.calls
+    ctx = manager._resolve_ctx(repo_id)
+    with manager.dispatcher._semantic_registry.lease(repo_id) as indexer:
+        points, offset = indexer.qdrant.scroll(indexer.collection, with_payload=True, limit=100)
+        assert points and offset is None
+        points = [point for point in points if point.id != indexer.PROVENANCE_POINT_ID]
+        assert {point.payload["file"] for point in points} == {
+            str(repo / "hello.py"),
+            str(repo / "same.py"),
+        }
+        with ctx.sqlite_store._get_connection() as connection:
+            first_ids = {row[0] for row in connection.execute("SELECT chunk_id FROM code_chunks")}
+            assert len(first_ids) == 2
+            assert connection.execute("SELECT COUNT(*) FROM semantic_points").fetchone()[0] > 0
+            assert {
+                row[0] for row in connection.execute("SELECT collection FROM semantic_points")
+            } == {indexer.collection}
+        import tarfile
+
+        from mcp_server.artifacts.secure_export import SecureIndexExporter
+
+        archive = repo.parent / "semantic-export.tar.gz"
+        SecureIndexExporter(
+            repo_path=repo, index_path=ctx.sqlite_store.db_path, semantic_indexer=indexer
+        ).create_secure_archive(str(archive))
+        extracted = repo.parent / "semantic-extracted"
+        extracted.mkdir()
+        with tarfile.open(archive) as bundle:
+            bundle.extractall(extracted, filter="data")
+    assert manager.rebuild_repository_index(repo_id).action == "full_index"
+    with manager._resolve_ctx(repo_id).sqlite_store._get_connection() as connection:
+        assert {
+            row[0] for row in connection.execute("SELECT chunk_id FROM code_chunks")
+        } == first_ids
+    before_path = registry.get(repo_id).index_path
+    before_bytes = before_path.read_bytes()
+    vectors_path = extracted / "semantic-vectors.jsonl"
+    vectors = [json.loads(line) for line in vectors_path.read_text().splitlines()]
+    if restore_fault == "missing":
+        vectors.pop()
+    elif restore_fault == "duplicate":
+        vectors.append(vectors[0])
+    elif restore_fault == "path":
+        vectors[0]["payload"]["relative_path"] = "../outside.py"
+    elif restore_fault == "dimension":
+        vectors[0]["vector"].pop()
+    elif restore_fault == "provenance":
+        metadata_path = extracted / ".index_metadata.json"
+        metadata = json.loads(metadata_path.read_text())
+        metadata["semantic_profiles"]["fixture"]["model_version"] = "wrong-revision"
+        metadata_path.write_text(json.dumps(metadata))
+    vectors_path.write_text("\n".join(json.dumps(point) for point in vectors) + "\n")
+    result = manager.restore_verified_artifact(
+        repo_id,
+        extracted,
+        expected_commit="0" * 40 if restore_fault == "commit" else _get_head_commit(repo),
+    )
+    assert before_path.read_bytes() == before_bytes
+    if restore_fault:
+        assert result.action == "failed"
+        assert registry.get(repo_id).index_path == before_path
+        assert registry.get(repo_id).staleness_reason == "partial_index_failure"
+        return
+    assert result.action == "full_index", result.error
+    with manager.dispatcher._semantic_registry.lease(repo_id) as indexer:
+        points, _ = indexer.qdrant.scroll(indexer.collection, with_vectors=True, limit=100)
+        assert len([point for point in points if point.id != indexer.PROVENANCE_POINT_ID]) == 4
+
+
+def test_artifact_restore_preserves_local_imports_and_cleanup_debt(runtime, monkeypatch):
+    import json
+    from datetime import datetime, timezone
+
+    from mcp_server.artifacts.artifact_download import IndexArtifactDownloader
+    from mcp_server.artifacts.secure_export import SecureIndexExporter
+
+    repo, registry, repo_id, _original, manager = runtime
+    assert manager.rebuild_repository_index(repo_id).action == "full_index"
+    active = manager._resolve_ctx(repo_id)
+    extracted = repo.parent / "artifact-fixture"
+    extracted.mkdir()
+    SecureIndexExporter(repo_path=repo).create_filtered_database(
+        active.sqlite_store.db_path, str(extracted / "current.db")
+    )
+    _seed_retained(active.sqlite_store, repo)
+    old_path = registry.get(repo_id).index_path
+    before = old_path.read_bytes()
+    commit = _get_head_commit(repo)
+    (extracted / "artifact-metadata.json").write_text(
+        json.dumps({"commit": commit, "timestamp": datetime.now(timezone.utc).isoformat()})
+    )
+    downloader = IndexArtifactDownloader(repo="fixture/repository", index_manager=manager)
+    # The accepted SAFETY suite covers signature/integrity verification before this boundary.
+    monkeypatch.setattr(downloader, "download_artifact", lambda *args, **kwargs: extracted)
+    result = downloader.download_selected_artifact(
+        {"id": 1},
+        output_dir=extracted,
+        repo_id=repo_id,
+        repo_path=repo,
+        target_commit=commit,
+        tracked_branch="main",
+        index_path=old_path,
+        index_location=registry.get(repo_id).index_location,
+    )
+    assert result.installed_items == [str(registry.get(repo_id).index_path)]
+    assert registry.get(repo_id).index_path != old_path
+    assert old_path.read_bytes() == before
+    restored = manager._resolve_ctx(repo_id).sqlite_store
+    assert restored.get_chunk_summary("document:fixture")["summary_text"] == "retained summary"
+    assert restored.get_semantic_point_ids("fixture", ["document:fixture"]) == [101]
+    assert restored.get_pending_vector_deletions()
+    assert restored.search_code_fts("hello")
+
+
+def test_export_snapshots_wal_and_filters_owned_rows_without_leaking_paths(runtime):
+    from mcp_server.artifacts.secure_export import SecureIndexExporter
+
+    repo, _registry, _repo_id, store, _manager = runtime
+    (repo / "nested").mkdir()
+    (repo / "nested" / ".gitignore").write_text("*.py\n!public.py\n")
+    repository_id = store.ensure_repository_row(repo)
+    for name in ("nested/hidden.py", "nested/public.py"):
+        file_id = store.store_file(repository_id, repo / name, name)
+        symbol_id = store.store_symbol(file_id, name, "function", 1, 1)
+        store.store_chunk(
+            file_id=file_id,
+            symbol_id=symbol_id,
+            content=name,
+            content_start=0,
+            content_end=len(name),
+            line_start=1,
+            line_end=1,
+            chunk_id=name,
+            node_id=name,
+            treesitter_file_id=name,
+        )
+        store.store_chunk_summary(name, file_id, 0, len(name), name, "fixture")
+        store.upsert_semantic_point("fixture", name, file_id, "fixture")
+    target = repo.parent / "export.db"
+    exporter = SecureIndexExporter(repo_path=repo, index_path=store.db_path)
+    assert exporter.create_filtered_database(store.db_path, str(target)) == (1, 1)
+    with sqlite3.connect(target) as connection:
+        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+        assert connection.execute("SELECT relative_path FROM files").fetchall() == [
+            ("nested/public.py",)
+        ]
+        assert connection.execute("SELECT chunk_hash FROM chunk_summaries").fetchall() == [
+            ("nested/public.py",)
+        ]
+        assert (
+            connection.execute("SELECT COUNT(*) FROM pending_vector_deletions").fetchone()[0] == 0
+        )
+    assert not (Path.cwd() / "excluded_files.log").exists()
+    assert (
+        len(store.get_semantic_point_ids("fixture", ["nested/hidden.py", "nested/public.py"])) == 2
+    )
+
+
+def test_export_explicit_missing_generation_never_falls_back_to_legacy(runtime):
+    from mcp_server.artifacts.secure_export import SecureIndexExporter
+
+    repo, _registry, _repo_id, store, _manager = runtime
+    SQLiteStore.snapshot_database(Path(store.db_path), repo / "code_index.db")
+    with pytest.raises(FileNotFoundError):
+        SecureIndexExporter(repo_path=repo, index_path=repo / "absent.db").create_secure_archive(
+            str(repo.parent / "archive.tar.gz")
+        )
+
+
+def test_hard_delete_records_vector_debt_and_clears_inbound_references(runtime):
+    repo, _registry, _repo_id, store, _manager = runtime
+    repository_id = store.ensure_repository_row(repo)
+    removed = store.store_file(repository_id, repo / "hello.py", "hello.py")
+    symbol = store.store_symbol(removed, "removed", "function", 1, 1)
+    retained = store.store_file(repository_id, repo / "other.py", "other.py")
+    store.store_reference(symbol, retained, 1)
+    store.store_chunk(
+        file_id=removed,
+        content="removed",
+        content_start=0,
+        content_end=7,
+        line_start=1,
+        line_end=1,
+        chunk_id="removed",
+        node_id="removed",
+        treesitter_file_id="fixture",
+    )
+    store.upsert_semantic_point("profile", "removed", 909, "original-owner")
+    assert store.remove_file("hello.py", repository_id)
+    assert store.get_semantic_point_ids("profile", ["removed"]) == []
+    assert store.get_pending_vector_deletions()[0]["collection"] == "original-owner"
+    with store._get_connection() as connection:
+        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+
+
 @pytest.mark.parametrize("drift", ["none", "content", "profile"])
 def test_snapshot_retains_documents_and_only_valid_code_summaries(runtime, tmp_path, drift):
     repo, registry, repo_id, original, _manager = runtime
@@ -424,7 +736,9 @@ def test_legacy_query_entrypoints_recheck_admission(runtime, monkeypatch, surfac
         manager._store_registry.shutdown()
 
 
-@pytest.mark.parametrize("failure", ["none", "missing_point", "upsert"])
+@pytest.mark.parametrize(
+    "failure", ["none", "missing_point", "upsert", "unacknowledged", "cleanup"]
+)
 def test_retained_vector_copy_uses_real_generation_clients_without_active_mutation(
     runtime, tmp_path, monkeypatch, failure
 ):
@@ -474,7 +788,15 @@ def test_retained_vector_copy_uses_real_generation_clients_without_active_mutati
                     monkeypatch.setattr(
                         staged.qdrant, "upsert", MagicMock(side_effect=OSError("write fault"))
                     )
-                if failure == "none":
+                elif failure == "unacknowledged":
+                    from types import SimpleNamespace
+
+                    monkeypatch.setattr(
+                        staged.qdrant,
+                        "upsert",
+                        MagicMock(return_value=SimpleNamespace(status="acknowledged")),
+                    )
+                if failure in {"none", "cleanup"}:
                     manager._copy_retained_vectors(repo_id, ctx)
                     assert staged.qdrant.count(staged.collection).count == 257
                     for point in staged.qdrant.retrieve(
@@ -490,6 +812,41 @@ def test_retained_vector_copy_uses_real_generation_clients_without_active_mutati
                             row[0]
                             for row in connection.execute("SELECT collection FROM semantic_points")
                         } == {staged.collection}
+                        stage._record_pending_vector_deletions(
+                            connection,
+                            [
+                                {
+                                    "profile_id": "fixture",
+                                    "chunk_id": "document:0",
+                                    "point_id": 0,
+                                    "collection": staged.collection,
+                                },
+                                {
+                                    "profile_id": "fixture",
+                                    "chunk_id": "old-owner",
+                                    "point_id": 0,
+                                    "collection": original.collection,
+                                },
+                            ],
+                        )
+                        connection.execute(
+                            "DELETE FROM semantic_points WHERE chunk_id='document:0'"
+                        )
+                    if failure == "cleanup":
+                        monkeypatch.setattr(
+                            staged.qdrant, "delete", MagicMock(side_effect=OSError("delete fault"))
+                        )
+                        with pytest.raises(RuntimeError):
+                            manager._finalize_staged_vectors(repo_id, ctx)
+                        assert len(stage.get_pending_vector_deletions()) == 2
+                    else:
+                        manager._finalize_staged_vectors(repo_id, ctx)
+                        assert (
+                            staged.qdrant.count(staged.collection).count == 257
+                        )  # Includes provenance sentinel.
+                        assert {
+                            row["collection"] for row in stage.get_pending_vector_deletions()
+                        } == {original.collection}
                 else:
                     with pytest.raises((RuntimeError, OSError)):
                         manager._copy_retained_vectors(repo_id, ctx)

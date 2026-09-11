@@ -59,6 +59,9 @@ class ArtifactPublisher:
         *,
         tracked_branch: str = "main",
         index_location: Path | str | None = None,
+        index_path: Path | str | None = None,
+        repo_path: Path | str = ".",
+        semantic_indexer=None,
     ) -> ArtifactRef:
         """Idempotent publish: creates a SHA-keyed release and atomically moves index-latest.
 
@@ -78,6 +81,9 @@ class ArtifactPublisher:
             archive_path, checksum, size = self._uploader.compress_indexes(
                 Path(f"index-archive-{safe_repo}-{safe_branch}-{short_sha}-{uuid4().hex}.tar.gz"),
                 index_location=index_location,
+                index_path=index_path,
+                repo_path=repo_path,
+                semantic_indexer=semantic_indexer,
             )
             attestation = attest(archive_path, repo=repo, gh_cmd=self._gh_cmd)
             policy = DeltaPolicy()
@@ -95,6 +101,7 @@ class ArtifactPublisher:
                 tracked_branch=tracked_branch,
                 commit=commit,
                 index_location=index_location,
+                index_path=index_path,
             )
             self._ensure_sha_release(sha_tag, commit, repo)
             # Keep prepared bytes and partial releases available for diagnosis/resume.

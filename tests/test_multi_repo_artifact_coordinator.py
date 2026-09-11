@@ -135,6 +135,7 @@ def test_coordinator_fetch_updates_registry(monkeypatch, tmp_path: Path):
             (),
             {
                 "artifact": {"head_sha": "recover123", "id": 17, "name": "repo-artifact"},
+                "installed_items": [str(repo_info.index_path)],
                 "validation_reasons": [],
             },
         )()
@@ -266,7 +267,13 @@ def test_workspace_publish_and_fetch_do_not_chdir(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(
         "mcp_server.artifacts.multi_repo_artifact_coordinator.IndexArtifactDownloader.download_latest",
         lambda self, output_dir, backup=True, full_only=False, **kwargs: type(
-            "Result", (), {"artifact": {"head_sha": "recover123"}, "validation_reasons": []}
+            "Result",
+            (),
+            {
+                "artifact": {"head_sha": "recover123"},
+                "validation_reasons": [],
+                "installed_items": [str(repo_info.index_path)],
+            },
         )(),
     )
     monkeypatch.setattr(

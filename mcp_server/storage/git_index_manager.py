@@ -7,6 +7,7 @@ supporting incremental updates and artifact management.
 import hashlib
 import json
 import logging
+import math
 import os
 import shutil
 import sqlite3
@@ -345,6 +346,146 @@ class GitAwareIndexManager:
         with lock_registry.acquire(repo_id, repo_path=repo.path if repo else None):
             return self._rebuild_repository_index_locked(repo_id)
 
+    def restore_verified_artifact(
+        self, repo_id: str, extracted: Path, *, expected_commit: str
+    ) -> IndexSyncResult:
+        """Admit an integrity/identity/signature-verified archive through generation publication."""
+        repo = self.registry.get_repository(repo_id)
+        if repo is None:
+            raise KeyError(repo_id)
+        database = extracted / "current.db"
+        if not database.is_file():
+            raise ValueError("Artifact has no portable current.db generation")
+
+        def restore(ctx):
+            if ctx.registry_entry.current_commit != expected_commit:
+                raise ValueError("Artifact commit changed before staging")
+            mappings = ctx.sqlite_store.import_artifact_rows(database, ctx.workspace_root)
+            if mappings:
+                self._restore_artifact_vectors(ctx, extracted, mappings)
+            with ctx.sqlite_store._get_connection() as connection:
+                count = connection.execute("SELECT COUNT(*) FROM files").fetchone()[0]
+            return UpdateResult(indexed=count)
+
+        with lock_registry.acquire(repo_id, repo_path=repo.path):
+            return self._rebuild_repository_index_locked(
+                repo_id, stage_operation=restore, replace_derived=True
+            )
+
+    def _restore_artifact_vectors(
+        self, ctx: RepoContext, extracted: Path, mappings: List[Dict]
+    ) -> None:
+        from qdrant_client import models
+
+        if getattr(self.dispatcher, "_semantic_enabled", False) is not True:
+            raise RuntimeError("Semantic artifact restore requires its configured profile")
+        metadata = json.loads((extracted / ".index_metadata.json").read_text(encoding="utf-8"))
+        manifest = metadata.get("vector_export", {})
+        if (
+            manifest.get("format") != "semantic-vectors.v1"
+            or manifest.get("file") != "semantic-vectors.jsonl"
+        ):
+            raise ValueError("Artifact vector format requires a new portable export")
+        ids = {row["point_id"] for row in mappings}
+        with ctx.sqlite_store._get_connection() as connection:
+            chunk_paths = {
+                row[0]: row[1]
+                for row in connection.execute(
+                    "SELECT c.chunk_id, f.relative_path FROM code_chunks c JOIN files f ON f.id=c.file_id"
+                )
+            }
+        mapped_chunks, mapped_paths = {}, {}
+        for row in mappings:
+            chunk_id = row["chunk_id"]
+            relative = (
+                chunk_id[: -len(":file-summary")]
+                if chunk_id.endswith(":file-summary")
+                else chunk_paths.get(chunk_id.split(":part:")[0])
+            )
+            if relative is None:
+                raise ValueError("Artifact mapping has no source record")
+            mapped_chunks.setdefault(row["point_id"], set()).add(chunk_id)
+            mapped_paths.setdefault(row["point_id"], set()).add(relative)
+        seen = set()
+        with self.dispatcher._semantic_registry.lease(ctx.repo_id, ctx=ctx) as indexer:
+            profile = indexer.semantic_profile.profile_id
+            record = metadata.get("semantic_profiles", {}).get(profile, {})
+            if not record.get("attested") or any(
+                row["profile_id"] != profile or row["collection"] != manifest.get("collection")
+                for row in mappings
+            ):
+                raise ValueError("Artifact vectors lack an attested profile owner")
+            indexer._prepare_for_writes()
+            indexer._check_indexed_profile(indexer._attestation, record=record)
+            batch = []
+
+            def flush():
+                if not batch:
+                    return
+                result = indexer.qdrant.upsert(indexer.collection, batch, wait=True)
+                if getattr(result, "status", None) not in {
+                    "completed",
+                    models.UpdateStatus.COMPLETED,
+                }:
+                    raise RuntimeError("Artifact vector upsert was not acknowledged")
+                batch.clear()
+
+            with (extracted / "semantic-vectors.jsonl").open(encoding="utf-8") as source:
+                for line in source:
+                    point = models.PointStruct.model_validate_json(line)
+                    if point.id not in ids:
+                        continue  # Locally retained imported rows take precedence.
+                    if point.id in seen:
+                        raise ValueError("Artifact contains duplicate vector identities")
+                    if (
+                        not isinstance(point.vector, list)
+                        or len(point.vector) != indexer.embedding_dimension
+                        or not all(math.isfinite(value) for value in point.vector)
+                    ):
+                        raise ValueError("Artifact vector dimensions do not match provenance")
+                    payload = dict(point.payload or {})
+                    relative = payload.get("relative_path")
+                    if (
+                        not isinstance(relative, str)
+                        or Path(relative).is_absolute()
+                        or ".." in Path(relative).parts
+                    ):
+                        raise ValueError("Artifact vector source path is invalid")
+                    if relative not in mapped_paths[point.id]:
+                        raise ValueError("Artifact vector points at a different source file")
+                    expected_chunks = mapped_chunks[point.id]
+                    if (
+                        payload.get("chunk_id") not in expected_chunks
+                        and payload.get("source_chunk_id") not in expected_chunks
+                    ):
+                        raise ValueError(
+                            "Artifact vector payload does not match its storage mapping"
+                        )
+                    payload["file"] = str(indexer.path_resolver.resolve_path(relative))
+                    batch.append(
+                        models.PointStruct(id=point.id, vector=point.vector, payload=payload)
+                    )
+                    seen.add(point.id)
+                    if len(batch) == 256:
+                        flush()
+                flush()
+            if seen != ids:
+                raise ValueError("Artifact vector mappings are incomplete")
+            with ctx.sqlite_store._get_connection() as connection:
+                for row in mappings:
+                    connection.execute(
+                        "UPDATE semantic_points SET collection=? WHERE profile_id=? AND chunk_id=?",
+                        (indexer.collection, profile, row["chunk_id"]),
+                    )
+                all_ids = [
+                    row[0]
+                    for row in connection.execute(
+                        "SELECT DISTINCT point_id FROM semantic_points WHERE profile_id=?",
+                        (profile,),
+                    )
+                ]
+            indexer.write_collection_provenance(all_ids)
+
     def _rebuild_repository_index_locked(
         self,
         repo_id: str,
@@ -352,6 +493,7 @@ class GitAwareIndexManager:
         changes: Optional[ChangeSet] = None,
         force_full: bool = False,
         stage_operation=None,
+        replace_derived: bool = False,
     ) -> IndexSyncResult:
         start_time = datetime.now()
         repo_info = self.registry.get_repository(repo_id)
@@ -445,7 +587,7 @@ class GitAwareIndexManager:
             from ..config.settings import get_settings
 
             profile = get_settings().get_semantic_default_profile()
-            if changes is None and stage_operation is None:
+            if replace_derived or (changes is None and stage_operation is None):
                 stage_store.prepare_generation(hashes, profile)
             else:
                 with stage_store._get_connection() as connection:
@@ -498,6 +640,8 @@ class GitAwareIndexManager:
                 result = self._incremental_index_update(repo_id, stage_ctx, changes)
             if not result.clean:
                 raise RuntimeError("Staged full index did not complete cleanly")
+            if getattr(self.dispatcher, "_semantic_enabled", False) is True:
+                self._finalize_staged_vectors(repo_id, stage_ctx)
             stage_store.rebuild_generation_indexes()
             # Parser inputs are disposable; all published paths remain canonical.
             with stage_store._get_connection() as connection:
@@ -644,6 +788,42 @@ class GitAwareIndexManager:
         except (OSError, subprocess.SubprocessError):
             return False
 
+    def _finalize_staged_vectors(self, repo_id: str, ctx: RepoContext) -> None:
+        """Drain only this unpublished owner and verify its live point mappings."""
+        if not ctx.staging:
+            raise RuntimeError("Vector publication requires an unpublished generation")
+        with self.dispatcher._semantic_registry.lease(repo_id, ctx=ctx) as staged:
+            drained = ctx.sqlite_store.drain_pending_vector_deletions(
+                lambda collection, ids: staged.delete_remote_points(ids, collection=collection),
+                only_collection=staged.collection,
+            )
+            if drained["groups_failed"]:
+                raise RuntimeError("Staged vector cleanup did not complete")
+            with ctx.sqlite_store._get_connection() as connection:
+                records = connection.execute(
+                    "SELECT point_id, collection FROM semantic_points WHERE profile_id=?",
+                    (staged.semantic_profile.profile_id,),
+                ).fetchall()
+            if records:
+                record = staged._indexed_profile_record()
+                if not record or not record.get("attested"):
+                    raise RuntimeError("Staged vectors lack attested provenance")
+            if any(row["collection"] != staged.collection for row in records):
+                raise RuntimeError("Staged vectors belong to another generation")
+            ids = list(dict.fromkeys(row["point_id"] for row in records))
+            for start in range(0, len(ids), 256):
+                batch = ids[start : start + 256]
+                points = staged.qdrant.retrieve(
+                    staged.collection,
+                    batch,
+                    with_payload=False,
+                    with_vectors=False,
+                )
+                if {point.id for point in points} != set(batch):
+                    raise RuntimeError("Staged vector mappings are incomplete")
+            if ids:
+                staged.write_collection_provenance(ids)
+
     def _copy_retained_vectors(self, repo_id: str, ctx: RepoContext) -> None:
         """Copy attested retained points into the stage without mutating their owner."""
         from qdrant_client import models
@@ -681,7 +861,7 @@ class GitAwareIndexManager:
                     )
                     if {point.id for point in points} != set(ids):
                         raise RuntimeError("Retained vector mappings are incomplete")
-                    staged.qdrant.upsert(
+                    acknowledged = staged.qdrant.upsert(
                         collection_name=staged.collection,
                         points=[
                             models.PointStruct(
@@ -693,6 +873,8 @@ class GitAwareIndexManager:
                         ],
                         wait=True,
                     )
+                    if acknowledged.status not in {"completed", models.UpdateStatus.COMPLETED}:
+                        raise RuntimeError("Retained vector copy was not acknowledged")
                     with ctx.sqlite_store._get_connection() as connection:
                         connection.executemany(
                             "UPDATE semantic_points SET collection=? WHERE profile_id=? AND chunk_id=?",

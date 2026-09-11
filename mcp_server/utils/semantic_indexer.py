@@ -1061,7 +1061,12 @@ class SemanticIndexer:
 
         for start in range(0, len(points), batch_size):
             batch = points[start : start + batch_size]
-            self.qdrant.upsert(collection_name=self.collection, points=batch)
+            result = self.qdrant.upsert(collection_name=self.collection, points=batch, wait=True)
+            if self.staging and getattr(result, "status", None) not in {
+                "completed",
+                models.UpdateStatus.COMPLETED,
+            }:
+                raise RuntimeError("Staged vector write was not acknowledged")
 
     def _init_qdrant_client(self, qdrant_path: str) -> QdrantClient:
         """Open exactly the selected backend, without lock removal or fallback."""
@@ -1441,9 +1446,9 @@ class SemanticIndexer:
 
         self._check_indexed_profile(attestation)
 
-    def _check_indexed_profile(self, attestation: ProfileAttestation) -> None:
+    def _check_indexed_profile(self, attestation: ProfileAttestation, *, record=None) -> None:
         """Refuse mixed vector spaces before metadata restamping or batch writes."""
-        record = self._indexed_profile_record()
+        record = self._indexed_profile_record() if record is None else record
         # Only cross-check against a persisted record that was itself attested;
         # an un-attested/legacy record is not authoritative, so step 1's live
         # attestation is the guard.
@@ -2235,26 +2240,41 @@ class SemanticIndexer:
         relative_path = self.path_resolver.normalize_path(path)
         language = self._infer_chunk_language(path)
         used_fallback_chunks = False
-        try:
-            chunk_results = chunk_file(
-                path,
-                language,
-                extract_metadata=True,
-                include_retrieval_metadata=True,
-            )
-        except TypeError:
+        if self.staging:
+            # SQLite owns the exact chunks summarized for this unpublished generation.
+            file_row = self.sqlite_store.get_file_by_path(path)
+            if file_row is None:
+                raise RuntimeError("Staged semantic input has no stored file")
+            chunk_results = [
+                SimpleNamespace(
+                    content=row["content"],
+                    chunk_id=row["chunk_id"],
+                    node_id=row["node_id"],
+                    metadata=json.loads(row["metadata"] or "{}"),
+                    node_type=row["node_type"],
+                    start_line=row["line_start"],
+                    end_line=row["line_end"],
+                )
+                for row in self.sqlite_store.get_chunks_for_file(file_row["id"])
+                if row["chunk_type"] != "document" and not row["chunk_id"].startswith("history:")
+            ]
+        else:
             try:
                 chunk_results = chunk_file(
                     path,
                     language,
                     extract_metadata=True,
+                    include_retrieval_metadata=True,
                 )
+            except TypeError:
+                try:
+                    chunk_results = chunk_file(path, language, extract_metadata=True)
+                except Exception:
+                    used_fallback_chunks = True
+                    chunk_results = self._fallback_text_chunks(path, relative_path)
             except Exception:
                 used_fallback_chunks = True
                 chunk_results = self._fallback_text_chunks(path, relative_path)
-        except Exception:
-            used_fallback_chunks = True
-            chunk_results = self._fallback_text_chunks(path, relative_path)
 
         chunks = [chunk for chunk in chunk_results if chunk.content.strip()]
         symbols: List[Dict[str, Any]] = []
@@ -2922,7 +2942,12 @@ class SemanticIndexer:
         if dimension:
             vector[0] = 1.0
         point = models.PointStruct(id=self.PROVENANCE_POINT_ID, vector=vector, payload=payload)
-        self.qdrant.upsert(collection_name=self.collection, points=[point])
+        result = self.qdrant.upsert(collection_name=self.collection, points=[point], wait=True)
+        if self.staging and getattr(result, "status", None) not in {
+            "completed",
+            models.UpdateStatus.COMPLETED,
+        }:
+            raise RuntimeError("Staged provenance write was not acknowledged")
         logger.info(
             "Wrote collection-provenance sentinel to '%s' (point_set_id=%s)",
             self.collection,

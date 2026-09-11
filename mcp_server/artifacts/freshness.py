@@ -5,6 +5,7 @@ from __future__ import annotations
 import subprocess
 from datetime import datetime, timedelta, timezone
 from enum import Enum
+from pathlib import Path
 
 
 class FreshnessVerdict(str, Enum):
@@ -14,7 +15,9 @@ class FreshnessVerdict(str, Enum):
     INVALID = "invalid"
 
 
-def verify_artifact_freshness(meta: dict, head_commit: str, max_age_days: int) -> FreshnessVerdict:
+def verify_artifact_freshness(
+    meta: dict, head_commit: str, max_age_days: int, *, repo_path: Path | str | None = None
+) -> FreshnessVerdict:
     """Return a verdict for the artifact described by *meta*.
 
     Args:
@@ -39,8 +42,10 @@ def verify_artifact_freshness(meta: dict, head_commit: str, max_age_days: int) -
             ["git", "merge-base", "--is-ancestor", commit, head_commit],
             check=True,
             capture_output=True,
+            cwd=repo_path,
+            timeout=10,
         )
-    except subprocess.CalledProcessError:
+    except (OSError, subprocess.SubprocessError):
         return FreshnessVerdict.STALE_COMMIT
 
     # Check age.

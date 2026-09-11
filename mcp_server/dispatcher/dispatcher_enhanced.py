@@ -3178,10 +3178,24 @@ class EnhancedDispatcher:
             )
             return stats
 
-        semantic_preflight = run_semantic_preflight(
-            settings=settings,
-            strict=False,
-        ).to_dict()
+        if ctx.staging:
+            _sem._prepare_for_writes()
+            semantic_preflight = {
+                "can_write_semantic_vectors": True,
+                "blocker": None,
+                "effective_config": {
+                    "selected_profile": _sem.semantic_profile.profile_id,
+                    "collection_name": _sem.collection,
+                    "normalized_collection_name": _sem.collection,
+                    "vector_dimension": _sem.embedding_dimension,
+                    "distance_metric": _sem.distance_metric,
+                },
+            }
+        else:
+            semantic_preflight = run_semantic_preflight(
+                settings=settings,
+                strict=False,
+            ).to_dict()
         collection_bootstrap = summarize_collection_bootstrap(semantic_preflight)
         if not semantic_preflight.get("can_write_semantic_vectors", True):
             blocker = semantic_preflight.get("blocker") or {}
@@ -3313,6 +3327,8 @@ class EnhancedDispatcher:
         except ValueError:
             relative_path = sqlite_store.path_resolver.normalize_path(path)
         content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        previous = sqlite_store.get_file_by_path(path, repository_row)
+        preserve_summaries = bool(previous and previous.get("content_hash") == content_hash)
 
         file_id = sqlite_store.store_file(
             repository_id=repository_row,
@@ -3330,7 +3346,9 @@ class EnhancedDispatcher:
             # check before any delete/insert. Stamps an empty index; raises
             # ChunkSchemeMismatchError (refusing the write) on a scheme mismatch.
             sqlite_store._assert_chunk_scheme_writable(conn, chunk_type="code")
-            self._clear_file_index_rows(sqlite_store, file_id, conn=conn)
+            self._clear_file_index_rows(
+                sqlite_store, file_id, conn=conn, preserve_summaries=preserve_summaries
+            )
 
             for symbol in shard.get("symbols", []) if isinstance(shard, dict) else []:
                 if not isinstance(symbol, dict):
@@ -3380,6 +3398,37 @@ class EnhancedDispatcher:
                         "Host chunk derivation failed for %s: %s", path, type(exc).__name__
                     )
                     shard_chunks = []
+
+            if ctx.staging:
+                from chunker.types import compute_definition_id, compute_file_id, compute_node_id
+
+                shard_chunks = [dict(chunk) for chunk in shard_chunks if isinstance(chunk, dict)]
+                identities = {}
+                for chunk in shard_chunks:
+                    route = (
+                        chunk.get("qualified_route")
+                        or chunk.get("parent_route")
+                        or [
+                            f"{chunk.get('node_type') or 'chunk'}@L{chunk.get('start_line') or chunk.get('line_start') or 1}"
+                        ]
+                    )
+                    node_id = compute_node_id(
+                        relative_path,
+                        language,
+                        route,
+                        int(chunk.get("byte_start") or chunk.get("content_start") or 0),
+                        str(chunk.get("content") or ""),
+                    )
+                    identities[chunk.get("node_id") or chunk.get("chunk_id")] = node_id
+                    chunk.update(
+                        chunk_id=node_id,
+                        node_id=node_id,
+                        file_id=compute_file_id(relative_path),
+                        definition_id=compute_definition_id(relative_path, language, route),
+                    )
+                for chunk in shard_chunks:
+                    if chunk.get("parent_chunk_id"):
+                        chunk["parent_chunk_id"] = identities.get(chunk["parent_chunk_id"])
 
             for index, chunk in enumerate(shard_chunks):
                 if not isinstance(chunk, dict):
@@ -3459,7 +3508,7 @@ class EnhancedDispatcher:
                     ),
                 )
 
-            conn.execute("DELETE FROM fts_code WHERE file_id = ?", (str(file_id),))
+            conn.execute("DELETE FROM fts_code WHERE CAST(file_id AS TEXT) = ?", (str(file_id),))
             conn.execute(
                 "INSERT INTO fts_code (content, file_id) VALUES (?, ?)", (content, file_id)
             )
@@ -3469,19 +3518,41 @@ class EnhancedDispatcher:
         sqlite_store: SQLiteStore,
         file_id: int,
         conn: Optional[sqlite3.Connection] = None,
+        preserve_summaries: bool = False,
     ) -> None:
         if conn is None:
             with sqlite_store._get_connection() as owned_conn:
-                self._clear_file_index_rows(sqlite_store, file_id, conn=owned_conn)
+                self._clear_file_index_rows(
+                    sqlite_store, file_id, conn=owned_conn, preserve_summaries=preserve_summaries
+                )
                 return
-        conn.execute(
-            "DELETE FROM symbol_trigrams WHERE symbol_id IN "
-            "(SELECT id FROM symbols WHERE file_id = ?)",
-            (file_id,),
+        sqlite_store.delete_chunks_for_file(
+            file_id, preserve_imported=True, preserve_summaries=preserve_summaries
         )
-        conn.execute("DELETE FROM symbols WHERE file_id = ?", (file_id,))
-        conn.execute("DELETE FROM code_chunks WHERE file_id = ?", (file_id,))
-        conn.execute("DELETE FROM fts_code WHERE file_id = ?", (str(file_id),))
+        derived = [
+            row[0]
+            for row in conn.execute(
+                "SELECT id FROM symbols s WHERE file_id=? AND NOT EXISTS "
+                "(SELECT 1 FROM code_chunks c WHERE c.symbol_id=s.id AND "
+                "(c.chunk_type='document' OR c.chunk_id LIKE 'history:%'))",
+                (file_id,),
+            ).fetchall()
+        ]
+        tables = {
+            row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
+        for start in range(0, len(derived), 500):
+            batch = derived[start : start + 500]
+            placeholders = ",".join("?" for _ in batch)
+            for table in ("symbol_trigrams", "symbol_references", "bm25_symbols"):
+                if table in tables:
+                    conn.execute(f"DELETE FROM {table} WHERE symbol_id IN ({placeholders})", batch)
+            conn.execute(f"DELETE FROM symbols WHERE id IN ({placeholders})", batch)
+        conn.execute(
+            "DELETE FROM fts_code WHERE CAST(file_id AS TEXT)=? OR file_id IN "
+            "(SELECT path FROM files WHERE id=? UNION SELECT relative_path FROM files WHERE id=?)",
+            (str(file_id), file_id, file_id),
+        )
 
     def get_statistics(self, ctx: RepoContext) -> Dict[str, Any]:
         """Get statistics about indexed files and languages."""
@@ -4213,8 +4284,10 @@ class EnhancedDispatcher:
 
         store = ctx.sqlite_store
         repository_id = self._sqlite_repository_id(ctx)
-        semantic_contract = self.get_semantic_summary_contract(ctx) or {}
         _sem = self._get_semantic_indexer(ctx)
+        semantic_contract = (
+            (self.get_semantic_summary_contract(ctx) or {}) if _sem is not None else {}
+        )
         invalidation = store.plan_semantic_invalidation(
             old_relative,
             repository_id=repository_id,
@@ -4226,6 +4299,19 @@ class EnhancedDispatcher:
         )
 
         def _sqlite_primary() -> Tuple[str, str]:
+            nonlocal content_hash
+            if content_hash is None:
+                content_hash = self._hash_file_bytes(new_path)
+            if ctx.staging:
+                previous = store.get_file_by_path(old_relative, repository_id)
+                if previous is None:
+                    raise FileNotFoundError(old_relative)
+                self._clear_file_index_rows(store, previous["id"])
+                with store._get_connection() as conn:
+                    conn.execute(
+                        "UPDATE files SET hash=NULL, content_hash=NULL WHERE id=?",
+                        (previous["id"],),
+                    )
             moved = store.move_file(
                 old_relative,
                 new_relative,
@@ -4262,6 +4348,13 @@ class EnhancedDispatcher:
                 shadow_op=_semantic_shadow,
                 rollback=_sqlite_rollback,
             )
+            if ctx.staging:
+                with self._file_cache_lock:
+                    self._file_cache.pop(str(old_path), None)
+                    self._file_cache.pop(str(new_path), None)
+                indexed = self.index_file(ctx, new_path, do_semantic=False)
+                if indexed.status != IndexResultStatus.INDEXED:
+                    raise RuntimeError("Renamed committed content was not reindexed")
             semantic_stats = None
             if _sem is not None:
                 semantic_stats = self.rebuild_semantic_for_paths(ctx, [new_path])

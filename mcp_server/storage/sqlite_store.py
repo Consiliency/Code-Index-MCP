@@ -6,6 +6,7 @@ for efficient full-text search capabilities.
 """
 
 import functools
+import hashlib
 import json
 import logging
 import re
@@ -488,6 +489,151 @@ class SQLiteStore:
             self._delete_config(conn, CHUNK_SCHEME_REBUILD_KEY)
             self.rebuild_generation_indexes()
 
+    def import_artifact_rows(self, source_db: Path, source_root: Path) -> List[Dict]:
+        """Merge portable rows into a prepared stage, retaining local imported records."""
+        from ..core.ignore_patterns import build_walker_filter
+
+        excluded = build_walker_filter(source_root)
+        repository_id = self.ensure_repository_row(self.path_resolver.repository_root)
+        with closing(
+            sqlite3.connect(source_db.resolve().as_uri() + "?mode=ro", uri=True)
+        ) as source:
+            source.row_factory = sqlite3.Row
+            assert_chunk_scheme_readable(source)
+            if source.execute("PRAGMA foreign_key_check").fetchall():
+                raise ValueError("Artifact contains dangling storage relationships")
+            with self._get_connection() as target:
+                file_ids, symbol_ids = {}, {}
+                imported_chunks = set()
+                code_paths = set()
+
+                def insert(table, row, **overrides):
+                    columns = {item[1] for item in target.execute(f"PRAGMA table_info({table})")}
+                    values = {
+                        key: value
+                        for key, value in dict(row).items()
+                        if key in columns and key != "id"
+                    }
+                    values.update(overrides)
+                    names = list(values)
+                    return target.execute(
+                        f"INSERT INTO {table} ({','.join(names)}) VALUES ({','.join('?' for _ in names)})",
+                        [values[name] for name in names],
+                    ).lastrowid
+
+                for row in source.execute("SELECT * FROM files WHERE is_deleted=0"):
+                    relative = row["relative_path"]
+                    path = source_root / relative
+                    if (
+                        Path(relative).is_absolute()
+                        or ".." in Path(relative).parts
+                        or excluded(path)
+                    ):
+                        raise ValueError("Artifact contains an excluded source path")
+                    has_code = (
+                        source.execute(
+                            "SELECT 1 FROM code_chunks WHERE file_id=? AND chunk_type!='document' "
+                            "AND chunk_id NOT LIKE 'history:%' LIMIT 1",
+                            (row["id"],),
+                        ).fetchone()
+                        or not source.execute(
+                            "SELECT 1 FROM code_chunks WHERE file_id=?", (row["id"],)
+                        ).fetchone()
+                    )
+                    if has_code:
+                        if (
+                            not path.is_file()
+                            or hashlib.sha256(path.read_bytes()).hexdigest() != row["content_hash"]
+                        ):
+                            raise ValueError("Artifact source differs from committed input")
+                        code_paths.add(relative)
+                    existing = target.execute(
+                        "SELECT id FROM files WHERE repository_id=? AND relative_path=?",
+                        (repository_id, relative),
+                    ).fetchone()
+                    if existing and not has_code:
+                        continue
+                    canonical = str(self.path_resolver.resolve_path(relative))
+                    if existing:
+                        file_id = existing[0]
+                        target.execute(
+                            "UPDATE files SET path=?, hash=?, content_hash=?, language=?, is_deleted=0 WHERE id=?",
+                            (canonical, row["hash"], row["content_hash"], row["language"], file_id),
+                        )
+                    else:
+                        file_id = insert("files", row, repository_id=repository_id, path=canonical)
+                    file_ids[row["id"]] = file_id
+                    if has_code:
+                        target.execute(
+                            "DELETE FROM fts_code WHERE CAST(file_id AS TEXT)=?", (str(file_id),)
+                        )
+                        target.execute(
+                            "INSERT INTO fts_code (content, file_id) VALUES (?, ?)",
+                            (path.read_text(encoding="utf-8", errors="replace"), file_id),
+                        )
+                for row in source.execute("SELECT * FROM symbols"):
+                    if row["file_id"] in file_ids:
+                        symbol_ids[row["id"]] = insert(
+                            "symbols", row, file_id=file_ids[row["file_id"]]
+                        )
+                for row in source.execute("SELECT * FROM code_chunks"):
+                    file_id = file_ids.get(row["file_id"])
+                    if file_id is None:
+                        continue
+                    present = target.execute(
+                        "SELECT file_id, content FROM code_chunks WHERE chunk_id=?",
+                        (row["chunk_id"],),
+                    ).fetchone()
+                    if present:
+                        if present[0] != file_id or present[1] != row["content"]:
+                            raise ValueError("Artifact chunk identity collides with retained data")
+                        continue
+                    insert(
+                        "code_chunks",
+                        row,
+                        file_id=file_id,
+                        symbol_id=symbol_ids.get(row["symbol_id"]),
+                    )
+                    imported_chunks.add(row["chunk_id"])
+                for table in ("imports", "symbol_references", "embeddings"):
+                    for row in source.execute(f"SELECT * FROM {table}"):
+                        if row["file_id"] not in file_ids:
+                            continue
+                        overrides = {"file_id": file_ids[row["file_id"]]}
+                        if "symbol_id" in row.keys():
+                            if row["symbol_id"] is not None and row["symbol_id"] not in symbol_ids:
+                                continue
+                            overrides["symbol_id"] = symbol_ids.get(row["symbol_id"])
+                        insert(table, row, **overrides)
+                for row in source.execute("SELECT * FROM chunk_summaries"):
+                    if (
+                        row["chunk_hash"] in imported_chunks
+                        and not target.execute(
+                            "SELECT 1 FROM chunk_summaries WHERE chunk_hash=?",
+                            (row["chunk_hash"],),
+                        ).fetchone()
+                    ):
+                        insert("chunk_summaries", row, file_id=file_ids[row["file_id"]])
+                mappings = []
+                file_summaries = {f"{path}:file-summary" for path in code_paths}
+                for row in source.execute("SELECT * FROM semantic_points"):
+                    chunk_id = row["chunk_id"]
+                    if (
+                        chunk_id in imported_chunks
+                        or chunk_id.split(":part:")[0] in imported_chunks
+                        or chunk_id in file_summaries
+                    ):
+                        if target.execute(
+                            "SELECT 1 FROM semantic_points WHERE profile_id=? AND chunk_id=?",
+                            (row["profile_id"], chunk_id),
+                        ).fetchone():
+                            raise ValueError("Artifact mapping collides with retained data")
+                        insert("semantic_points", row)
+                        mappings.append(dict(row))
+                if target.execute("PRAGMA foreign_key_check").fetchall():
+                    raise ValueError("Artifact merge has dangling storage relationships")
+        return mappings
+
     def rebuild_generation_indexes(self) -> None:
         """Reconstruct symbol indexes and retained-document FTS from staged rows."""
         with self._get_connection() as conn:
@@ -671,6 +817,8 @@ class SQLiteStore:
     def drain_pending_vector_deletions(
         self,
         delete_remote: Callable[[Optional[str], List[Any]], None],
+        *,
+        only_collection: Optional[str] = None,
     ) -> Dict[str, int]:
         """Best-effort recovery drain of the remote-vector crash-ledger (I4).
 
@@ -712,6 +860,9 @@ class SQLiteStore:
         pending = self.get_pending_vector_deletions()
         if not pending:
             return {"rows_drained": 0, "rows_remaining": 0, "groups_failed": 0}
+        total_pending = len(pending)
+        if only_collection is not None:
+            pending = [row for row in pending if row.get("collection") == only_collection]
 
         groups: Dict[Tuple[Optional[str], Optional[str]], Dict[str, List[Any]]] = {}
         for row in pending:
@@ -748,7 +899,7 @@ class SQLiteStore:
                     profile_id,
                     collection,
                     len(point_ids),
-                    exc,
+                    type(exc).__name__,
                 )
                 continue
             drainable_ids.extend(group["ledger_ids"])
@@ -756,7 +907,7 @@ class SQLiteStore:
         rows_drained = self.clear_pending_vector_deletions(drainable_ids) if drainable_ids else 0
         return {
             "rows_drained": rows_drained,
-            "rows_remaining": len(pending) - rows_drained,
+            "rows_remaining": total_pending - rows_drained,
             "groups_failed": groups_failed,
         }
 
@@ -2201,11 +2352,64 @@ class SQLiteStore:
                 )
             return cursor.rowcount > 0
 
-    def delete_chunks_for_file(self, file_id: int) -> int:
-        """Delete all chunks for a file. Returns number of chunks deleted."""
+    def delete_chunks_for_file(
+        self, file_id: int, *, preserve_imported: bool = False, preserve_summaries: bool = False
+    ) -> int:
+        """Invalidate owned chunks, persisting vector debt before removing mappings."""
         with self._get_connection() as conn:
             self._assert_chunk_scheme_deletable(conn)
-            cursor = conn.execute("DELETE FROM code_chunks WHERE file_id = ?", (file_id,))
+            chunks = conn.execute(
+                "SELECT chunk_id, chunk_type FROM code_chunks WHERE file_id=?", (file_id,)
+            ).fetchall()
+            retained = {
+                row[0]
+                for row in chunks
+                if preserve_imported
+                and (row[1] == PRESERVED_CHUNK_TYPE or row[0].startswith("history:"))
+            }
+            stale_ids = {row[0] for row in chunks if row[0] not in retained}
+            summaries = conn.execute(
+                "SELECT chunk_hash FROM chunk_summaries WHERE file_id=?", (file_id,)
+            ).fetchall()
+            stale_summaries = [
+                row[0]
+                for row in summaries
+                if not any(row[0] == key or row[0].startswith(key + ":") for key in retained)
+            ]
+            stale_ids.update(stale_summaries)
+            file = conn.execute("SELECT relative_path FROM files WHERE id=?", (file_id,)).fetchone()
+            if file and file[0]:
+                stale_ids.add(f"{file[0]}:file-summary")
+            identifiers = sorted(stale_ids)
+            points = {}
+            for start in range(0, len(identifiers), 64):
+                batch = identifiers[start : start + 64]
+                clause = " OR ".join("chunk_id=? OR chunk_id LIKE ? ESCAPE '\\'" for _ in batch)
+                parameters = [
+                    value for key in batch for value in (key, _escape_like(key) + ":part:%")
+                ]
+                for point in conn.execute(
+                    f"SELECT profile_id, chunk_id, point_id, collection FROM semantic_points WHERE {clause}",
+                    parameters,
+                ).fetchall():
+                    points[(point["profile_id"], point["chunk_id"])] = dict(point)
+            self._record_pending_vector_deletions(conn, list(points.values()))
+            conn.executemany(
+                "DELETE FROM semantic_points WHERE profile_id=? AND chunk_id=?", list(points)
+            )
+            if not preserve_summaries:
+                conn.executemany(
+                    "DELETE FROM chunk_summaries WHERE chunk_hash=?",
+                    [(key,) for key in stale_summaries],
+                )
+            if preserve_imported:
+                cursor = conn.execute(
+                    "DELETE FROM code_chunks WHERE file_id=? AND chunk_type!=? "
+                    "AND chunk_id NOT LIKE 'history:%'",
+                    (file_id, PRESERVED_CHUNK_TYPE),
+                )
+            else:
+                cursor = conn.execute("DELETE FROM code_chunks WHERE file_id=?", (file_id,))
             return cursor.rowcount
 
     def upsert_semantic_point(
@@ -2526,7 +2730,7 @@ class SQLiteStore:
                 for row in cursor.fetchall()
                 if isinstance(row["content"], str) and row["content"].strip()
             )
-            conn.execute("DELETE FROM fts_code WHERE file_id = ?", (str(file_id),))
+            conn.execute("DELETE FROM fts_code WHERE CAST(file_id AS TEXT) = ?", (str(file_id),))
             conn.execute(
                 "INSERT INTO fts_code (content, file_id) VALUES (?, ?)", (content, file_id)
             )
@@ -3453,13 +3657,29 @@ class SQLiteStore:
             absolute_path = path_row[0] if path_row else None
 
             # Delete all associated data (cascade should handle most)
-            conn.execute("DELETE FROM symbol_references WHERE file_id = ?", (file_id,))
+            self.delete_chunks_for_file(file_id)
+            conn.execute(
+                "DELETE FROM symbol_references WHERE file_id=? OR symbol_id IN "
+                "(SELECT id FROM symbols WHERE file_id=?)",
+                (file_id, file_id),
+            )
+            tables = {
+                row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            }
+            for table in ("bm25_content", "bm25_documents", "bm25_index_status"):
+                if table in tables:
+                    conn.execute(f"DELETE FROM {table} WHERE file_id=?", (file_id,))
+            if "bm25_symbols" in tables:
+                conn.execute(
+                    "DELETE FROM bm25_symbols WHERE symbol_id IN (SELECT id FROM symbols WHERE file_id=?)",
+                    (file_id,),
+                )
             conn.execute("DELETE FROM imports WHERE file_id = ?", (file_id,))
             conn.execute("DELETE FROM embeddings WHERE file_id = ?", (file_id,))
             # fts_code.file_id may be stored as an integer, an absolute path, or a
             # relative path depending on the indexing plugin — delete all three forms.
             conn.execute(
-                "DELETE FROM fts_code WHERE file_id = ? OR file_id = ? OR file_id = ?",
+                "DELETE FROM fts_code WHERE CAST(file_id AS TEXT) = ? OR file_id = ? OR file_id = ?",
                 (str(file_id), absolute_path or relative_path, relative_path),
             )
             conn.execute(

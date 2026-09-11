@@ -185,54 +185,33 @@ def test_artifact_sync_reports_existing_local_drift(monkeypatch, tmp_path):
     assert "too large for automatic incremental sync" in result.output.lower()
 
 
-def test_incremental_reconcile_uses_python_plugin_without_preindex(monkeypatch, tmp_path):
-    calls = []
+def test_incremental_reconcile_requires_committed_registered_generation(monkeypatch, tmp_path):
+    import subprocess
 
-    class FakePythonPlugin:
-        lang = "python"
+    from tests.test_git_index_manager import _make_git_repo
 
-        def __init__(self, sqlite_store=None, preindex=True):
-            calls.append(preindex)
-
-        def supports(self, path):
-            return True
-
-        def indexFile(self, path, content):
-            return {"file": str(path), "symbols": [], "language": "python"}
-
-    monkeypatch.chdir(tmp_path)
-    Path(".mcp-index").mkdir(exist_ok=True)
-    Path(".mcp-index/current.db").write_text("placeholder", encoding="utf-8")
-    monkeypatch.setattr("mcp_server.cli.artifact_commands.SQLiteStore", lambda path: object())
-    monkeypatch.setattr("mcp_server.cli.artifact_commands.PythonPlugin", FakePythonPlugin)
-    monkeypatch.setattr(
-        "mcp_server.cli.artifact_commands.EnhancedDispatcher",
-        lambda **kwargs: object(),
-    )
-
-    class FakeIndexer:
-        def __init__(self, store, dispatcher, repo_path):
-            pass
-
-        def update_from_changes(self, changes):
-            return type(
-                "Stats",
-                (),
-                {
-                    "files_indexed": 1,
-                    "files_removed": 0,
-                    "files_moved": 0,
-                    "files_skipped": 0,
-                    "errors": 0,
-                },
-            )()
-
-    monkeypatch.setattr("mcp_server.cli.artifact_commands.IncrementalIndexer", FakeIndexer)
-
-    result = _run_incremental_reconcile([FileChange("mcp_server/example.py", "modified")])
-
-    assert result is True
-    assert calls == [False]
+    repo = _make_git_repo(tmp_path)
+    owner = MultiRepositoryManager(central_index_path=tmp_path / "registry.json")
+    repo_id = owner.registry.register_repository(str(repo))
+    monkeypatch.chdir(repo)
+    monkeypatch.setattr("mcp_server.cli.artifact_commands.MultiRepositoryManager", lambda: owner)
+    change = FileChange("hello.py", "modified")
+    assert _run_incremental_reconcile([change])
+    first = owner.registry.get(repo_id).index_path
+    (repo / "hello.py").write_text("print('committed replacement')\n")
+    assert not _run_incremental_reconcile([change])
+    assert owner.registry.get(repo_id).index_path == first
+    subprocess.run(["git", "add", "hello.py"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "Synthetic committed drift"], cwd=repo, check=True)
+    assert _run_incremental_reconcile([change])
+    current = owner.registry.get(repo_id).index_path
+    assert current != first
+    store = SQLiteStore(str(current))
+    try:
+        assert store.search_code_fts("replacement")
+    finally:
+        store.close()
+        owner.close()
 
 
 def test_workspace_fetch_cli_prints_validation_truth(monkeypatch, tmp_path):
@@ -262,6 +241,7 @@ def test_workspace_fetch_cli_prints_validation_truth(monkeypatch, tmp_path):
             (),
             {
                 "artifact": {"head_sha": "recover123", "id": 23, "name": "repo-artifact"},
+                "installed_items": [str(repo_info.index_path)],
                 "validation_reasons": [],
             },
         )(),

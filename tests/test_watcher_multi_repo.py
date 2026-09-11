@@ -481,6 +481,7 @@ class TestArtifactPublishTriggers:
             sweeper=Mock(),
         )
         watcher._artifact_publisher = Mock()
+        watcher.dispatcher._semantic_registry = None
         return watcher, registry, artifact_manager
 
     @pytest.mark.parametrize("action", ["full_index", "incremental_update"])
@@ -495,6 +496,9 @@ class TestArtifactPublishTriggers:
             "synced123",
             tracked_branch="main",
             index_location=str(tmp_path / "repo" / ".mcp-index"),
+            index_path=tmp_path / "repo" / ".mcp-index" / "current.db",
+            repo_path=str(tmp_path / "repo"),
+            semantic_indexer=None,
         )
         registry.update_artifact_state.assert_any_call(
             "repo-1",

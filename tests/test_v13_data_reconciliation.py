@@ -2,10 +2,47 @@
 
 import subprocess
 
+import pytest
+
 from mcp_server.core.repo_resolver import RepoResolver
 from mcp_server.storage.store_registry import StoreRegistry
 from mcp_server.watcher_multi_repo import MultiRepositoryWatcher
 from tests.test_v13_data_storage import runtime
+
+
+@pytest.mark.parametrize("operation", ["modify", "rename", "delete"])
+def test_incremental_committed_mutation_updates_content_and_keeps_move_identity(runtime, operation):
+    repo, _registry, repo_id, _original, manager = runtime
+    source = repo / "hello.py"
+    content = "\n".join(f"number_{i} = {i}" for i in range(40)) + "\noldsentinel = 1\n"
+    source.write_text(content)
+    for i in range(8):
+        (repo / f"unchanged{i}.py").write_text(f"unchanged_{i} = {i}\n")
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "Synthetic incremental base"], cwd=repo, check=True)
+    assert manager.rebuild_repository_index(repo_id).action == "full_index"
+    old_id = manager._resolve_ctx(repo_id).sqlite_store.get_file_id_by_path("hello.py")
+    if operation == "delete":
+        source.unlink()
+    else:
+        if operation == "rename":
+            target = repo / "renamed.py"
+            source.rename(target)
+            source = target
+        source.write_text(content.replace("oldsentinel", "newsentinel"))
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "Synthetic incremental change"], cwd=repo, check=True)
+    result = manager.sync_repository_index(repo_id)
+    assert result.action == "incremental_update", result.error
+    store = manager._resolve_ctx(repo_id).sqlite_store
+    assert not store.search_code_fts("oldsentinel")
+    if operation != "delete":
+        assert store.search_code_fts("newsentinel")
+        assert store.get_file_id_by_path(source.name) == old_id
+    if operation == "rename":
+        assert store.get_file_id_by_path("hello.py") is None
+        with store._get_connection() as connection:
+            assert connection.execute("SELECT COUNT(*) FROM file_moves").fetchone()[0] == 1
 
 
 def test_sweep_repairs_existing_path_drift_once_and_ignores_untracked(runtime):

@@ -721,12 +721,22 @@ class MultiRepositoryWatcher:
                     and self._artifact_publisher is not None
                 ):
                     try:
-                        self._artifact_publisher.publish_on_reindex(
-                            repo_id,
-                            synced_commit,
-                            tracked_branch=getattr(repo_info, "tracked_branch", None) or "main",
-                            index_location=getattr(repo_info, "index_location", None),
+                        from contextlib import nullcontext
+
+                        semantic = getattr(self.dispatcher, "_semantic_registry", None)
+                        lease = (
+                            semantic.lease(repo_id) if semantic is not None else nullcontext(None)
                         )
+                        with lease as indexer:
+                            self._artifact_publisher.publish_on_reindex(
+                                repo_id,
+                                synced_commit,
+                                tracked_branch=getattr(repo_info, "tracked_branch", None) or "main",
+                                index_location=getattr(repo_info, "index_location", None),
+                                index_path=repo_info.index_path,
+                                repo_path=repo_info.path,
+                                semantic_indexer=indexer,
+                            )
                         if hasattr(self.registry, "update_artifact_state"):
                             self.registry.update_artifact_state(
                                 repo_id,

@@ -47,10 +47,19 @@ class ArtifactDownloadResult:
 class IndexArtifactDownloader:
     """Handle downloading index files from GitHub Actions Artifacts."""
 
-    def __init__(self, repo: Optional[str] = None, token: Optional[str] = None):
+    def __init__(
+        self,
+        repo: Optional[str] = None,
+        token: Optional[str] = None,
+        *,
+        index_manager=None,
+        registry=None,
+    ):
         self.repo = repo or self._detect_repository()
         self.token = token or os.environ.get("GITHUB_TOKEN", "")
         self.api_base = f"https://api.github.com/repos/{self.repo}"
+        self._index_manager = index_manager
+        self._registry = registry
         if not self.token:
             print("⚠️  No GitHub token found. Using gh CLI for authentication.")
 
@@ -611,6 +620,10 @@ class IndexArtifactDownloader:
         semantic_profile_hash: Optional[str] = None,
         allow_unsafe: bool = False,
     ) -> ArtifactDownloadResult:
+        if allow_unsafe and repo_id is not None:
+            raise ValueError(
+                "Registered generations require artifact identity and freshness verification"
+            )
         try:
             extracted_dir = self.download_artifact(
                 artifact["id"],
@@ -642,7 +655,7 @@ class IndexArtifactDownloader:
         head_commit = artifact.get("workflow_run", {}).get("head_sha", "HEAD")
         if target_commit:
             head_commit = target_commit
-        verdict = verify_artifact_freshness(meta, head_commit, max_age_days)
+        verdict = verify_artifact_freshness(meta, head_commit, max_age_days, repo_path=repo_path)
         rejected_reasons: List[str] = []
         if verdict is not FreshnessVerdict.FRESH:
             rejected_reasons.append(f"freshness verdict: {verdict.value}")
@@ -655,17 +668,61 @@ class IndexArtifactDownloader:
                 "; ".join(rejected_reasons),
             )
 
-        installed_items = self.install_indexes(
-            extracted_dir,
-            index_location=index_location,
-            index_path=index_path,
-            backup=backup,
-        )
+        if repo_id is not None:
+            if rejected_reasons:
+                raise ValueError(
+                    "Mismatched artifacts cannot be admitted as registered generations"
+                )
+            installed_items = self._install_verified_generation(
+                repo_id, extracted_dir, head_commit, repo_path
+            )
+        else:
+            installed_items = self.install_indexes(
+                extracted_dir,
+                index_location=index_location,
+                index_path=index_path,
+                backup=backup,
+            )
         return ArtifactDownloadResult(
             artifact=artifact,
             installed_items=installed_items,
             validation_reasons=rejected_reasons,
         )
+
+    def _install_verified_generation(
+        self, repo_id: str, extracted: Path, commit: str, repo_path
+    ) -> List[str]:
+        from mcp_server.dispatcher.dispatcher_enhanced import EnhancedDispatcher
+        from mcp_server.storage.git_index_manager import GitAwareIndexManager
+        from mcp_server.storage.repository_registry import RepositoryRegistry
+
+        manager = self._index_manager
+        owned = manager is None
+        if owned:
+            registry = self._registry if self._registry is not None else RepositoryRegistry()
+            dispatcher = EnhancedDispatcher(
+                enable_advanced_features=False,
+                use_plugin_factory=True,
+                semantic_search_enabled=get_settings().semantic_search_enabled,
+                memory_aware=False,
+                multi_repo_enabled=False,
+            )
+            manager = GitAwareIndexManager(registry, dispatcher)
+        try:
+            info = manager.registry.get(repo_id)
+            if info is None or (
+                repo_path is not None and Path(info.path).resolve() != Path(repo_path).resolve()
+            ):
+                raise ValueError("Artifact destination is not the registered repository")
+            result = manager.restore_verified_artifact(repo_id, extracted, expected_commit=commit)
+            if result.action != "full_index":
+                raise ValueError(result.error or "Artifact generation was not admitted")
+            return [str(manager.registry.get(repo_id).index_path)]
+        finally:
+            if owned:
+                manager.dispatcher.shutdown()
+                if manager.store_registry is not None:
+                    manager.store_registry.shutdown()
 
     def download_latest(
         self,

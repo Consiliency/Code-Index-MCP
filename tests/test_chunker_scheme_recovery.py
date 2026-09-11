@@ -530,6 +530,8 @@ def test_dispatcher_drain_wiring_noops_without_semantic(tmp_path):
     """The reindex hook (EnhancedDispatcher._drain_pending_vector_deletions) drains
     when a semantic client is present and no-ops cleanly when it is not - without
     constructing a full dispatcher."""
+    from contextlib import nullcontext
+
     from mcp_server.dispatcher.dispatcher_enhanced import EnhancedDispatcher
 
     store = SQLiteStore(str(tmp_path / "code_index.db"))
@@ -540,11 +542,15 @@ def test_dispatcher_drain_wiring_noops_without_semantic(tmp_path):
 
     class _Ctx:
         sqlite_store = store
+        staging = False
 
     ctx = _Ctx()
 
     # Semantic disabled -> no client -> clean no-op, ledger untouched.
     class _NoSem:
+        def _semantic_lease(self, ctx):
+            return nullcontext()
+
         def _get_semantic_indexer(self, ctx):
             return None
 
@@ -554,7 +560,7 @@ def test_dispatcher_drain_wiring_noops_without_semantic(tmp_path):
     # Semantic present -> drains through delete_remote_points, clears the ledger.
     client = _FakeVectorClient()
 
-    class _WithSem:
+    class _WithSem(_NoSem):
         def _get_semantic_indexer(self, ctx):
             return client
 
