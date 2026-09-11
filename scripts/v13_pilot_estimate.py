@@ -19,10 +19,10 @@ SYNTHETIC_CORPUS = {
 # PILOT must enforce these bounds against serialized input before each request.
 # Retries consume another slot; these are budgets, not measured inference costs.
 REQUEST_ENVELOPES = {
-    "summary": {"requests": 4, "max_input_utf8_bytes": 8192},
-    "document_embedding": {"requests": 6, "max_input_utf8_bytes": 4096},
-    "query_embedding": {"requests": 40, "max_input_utf8_bytes": 512},
-    "provenance_probe": {"requests": 12, "max_input_utf8_bytes": 128},
+    "summary": {"requests": 4, "max_input_utf8_bytes": 8192, "framing_input_units": 128},
+    "document_embedding": {"requests": 6, "max_input_utf8_bytes": 4096, "framing_input_units": 32},
+    "query_embedding": {"requests": 40, "max_input_utf8_bytes": 512, "framing_input_units": 32},
+    "provenance_probe": {"requests": 12, "max_input_utf8_bytes": 128, "framing_input_units": 33},
 }
 
 
@@ -37,7 +37,8 @@ def estimate() -> dict:
     ]
     chunks = sum(len(chunk_text(content, "python", path)) for path, content in files)
     token_bound = sum(
-        item["requests"] * item["max_input_utf8_bytes"] for item in REQUEST_ENVELOPES.values()
+        item["requests"] * (item["max_input_utf8_bytes"] + item["framing_input_units"])
+        for item in REQUEST_ENVELOPES.values()
     )
     return {
         "schema": "v13-pilot-estimate.v1",

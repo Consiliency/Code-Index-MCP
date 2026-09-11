@@ -47,6 +47,7 @@ logger = logging.getLogger(__name__)
 
 # Server-level constants
 _SERVER_NAME = "code-index-mcp-fast-search"
+_SHUTDOWN_GRACE_SECONDS = 3.0
 _SERVER_INSTRUCTIONS = (
     "This server provides a pre-built code index (BM25 + semantic vector search). "
     "Indexed search is authoritative when repository readiness is ready. "
@@ -1627,7 +1628,7 @@ async def _serve(registry_path=None) -> None:
         nonlocal watchdog
         if watchdog is None:
             logger.info("Transport stopping; shutting down owned resources")
-            watchdog = threading.Timer(15.0, _force_shutdown)
+            watchdog = threading.Timer(_SHUTDOWN_GRACE_SECONDS, _force_shutdown)
             watchdog.daemon = True
             watchdog.start()
         serve_scope.cancel()

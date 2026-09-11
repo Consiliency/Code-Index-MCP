@@ -138,6 +138,19 @@ SL-1 — Installed operational driver, browser and documentation reducer
 
 ## Execution Notes
 
+2026-09-11 SL-0 checkpoint: 20 policy/configuration counterexamples reproduced
+with provider interception and no real requests; repaired focused coverage is
+191 passing tests. The installed core-wheel five-second check first failed at
+six seconds against the old watchdog. After repair all six lifecycle controls
+passed, including an admitted mutation exit at 3.071 seconds, failed exit status,
+preserved pending fence and no child survivors. Core-wheel metrics are absent;
+production-extra metrics ownership remains an explicit SL-1 requirement.
+Budget loopback tests retain off-host socket denial and cover durable accounting,
+deadline/rollback, failed attempts, unsettled restart, corruption, authentication,
+redirect refusal and non-overlapping forwarding. No live allowance initialized.
+The pure envelope estimate now includes framing overhead; the approved limits
+and immutable roadmap have not changed. No PILOT EC or IF is accepted yet.
+
 Read committed source, public installed PMCP package/CLI metadata, accepted
 receipts, frozen audit inputs and synthetic fixtures created for v13.
 Scratch read/write: `.phase-loop/runs/v13-PILOT-*/**`, `build/**`,

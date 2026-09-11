@@ -12,6 +12,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, cast
 
 import mcp.types as types
 
+from ..config.settings import commercial_egress_allowed, learned_models_allowed
 from ..setup.semantic_preflight import EnrichmentModelResolution, resolve_enrichment_model
 from ..storage.sqlite_store import SQLiteStore, assert_chunk_scheme_readable
 
@@ -286,7 +287,7 @@ class ChunkWriter:
 
     def _has_sampling_capability(self) -> bool:
         """Return True if the connected MCP client supports sampling/createMessage."""
-        if self.session is None:
+        if self.session is None or not commercial_egress_allowed():
             return False
         try:
             params = getattr(self.session, "client_params", None)
@@ -297,9 +298,11 @@ class ChunkWriter:
 
     def _has_direct_api(self) -> bool:
         """Return True if any direct LLM API key or profile endpoint is configured."""
+        if not learned_models_allowed():
+            return False
         if self.summarization_config.get("base_url"):
             return True
-        return bool(
+        return commercial_egress_allowed() and bool(
             os.environ.get("CEREBRAS_API_KEY")
             or os.environ.get("ANTHROPIC_API_KEY")
             or os.environ.get("OPENAI_API_KEY")
@@ -374,6 +377,8 @@ class ChunkWriter:
         self, system: str, prompt: str, *, max_tokens: int = 150
     ) -> tuple[str, str]:
         """Call the profile-configured OpenAI-compatible endpoint."""
+        if not learned_models_allowed():
+            raise RuntimeError("Deployment policy forbids learned summarization")
         from openai import AsyncOpenAI
 
         cfg = self.summarization_config
@@ -405,14 +410,18 @@ class ChunkWriter:
         self, system: str, prompt: str
     ) -> tuple[Optional[str], Optional[str]]:
         """Try profile endpoint first, then Cerebras, Anthropic, OpenAI."""
+        if not learned_models_allowed():
+            return None, None
         if self.summarization_config.get("base_url"):
             try:
                 return await self._call_profile_api(system, prompt)
             except Exception as exc:
                 logger.warning(
-                    "Profile summarization endpoint failed (%s), falling back to env API",
+                    "Profile summarization endpoint failed (%s)",
                     type(exc).__name__,
                 )
+        if not commercial_egress_allowed():
+            return None, None
         if os.environ.get("CEREBRAS_API_KEY"):
             return await self._call_cerebras_api(system, prompt), None
         elif os.environ.get("ANTHROPIC_API_KEY"):
@@ -557,7 +566,11 @@ class ChunkWriter:
                 logger.warning("MCP sampling failed (%s)", type(exc).__name__)
 
         # Path 2: BAML SummarizeChunkAlone (Cerebras, cache-friendly prompt structure)
-        if summary_text is None and os.environ.get("CEREBRAS_API_KEY"):
+        if (
+            summary_text is None
+            and commercial_egress_allowed()
+            and os.environ.get("CEREBRAS_API_KEY")
+        ):
             try:
                 from mcp_server.indexing.baml_client.baml_client.async_client import b
 
@@ -825,6 +838,8 @@ class FileBatchSummarizer(ChunkWriter):
         Raises ``FileTooLargeError`` when *file_content* exceeds the threshold
         so callers can switch to the per-chunk fallback.
         """
+        if not commercial_egress_allowed():
+            raise RuntimeError("Deployment policy forbids commercial summarization")
         if len(file_content) > _BATCH_FILE_SIZE_THRESHOLD:
             raise FileTooLargeError(
                 f"{file_path} ({len(file_content):,} chars) exceeds batch threshold "
@@ -953,6 +968,17 @@ class FileBatchSummarizer(ChunkWriter):
             )
         active_chunks = to_summarize[:max_chunks] if max_chunks is not None else to_summarize
         existing_authoritative = len(chunks) - len(to_summarize)
+
+        if not learned_models_allowed() or (
+            not self.summarization_config.get("base_url") and not commercial_egress_allowed()
+        ):
+            return self._blocked_call_result(
+                reason="deployment_policy",
+                file_path=file_path,
+                selected_chunks=active_chunks,
+                remaining_chunks=to_summarize,
+                existing_authoritative=existing_authoritative,
+            )
 
         try:
             summary_call: Any

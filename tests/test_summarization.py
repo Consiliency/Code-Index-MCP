@@ -1833,3 +1833,166 @@ async def test_process_scope_returns_exact_timeout_result_for_repo_scope_single_
     assert result.blocked_call_file_path == str(first)
     assert result.blocked_call_chunk_ids == ("first-chunk-1",)
     assert result.blocked_call_timeout_seconds == 30.0
+
+
+@pytest.mark.parametrize("posture", ["standalone_local", "fleet_local", "lexical_only", "invalid"])
+@pytest.mark.parametrize("surface", ["chunk", "file"])
+@pytest.mark.parametrize("configured_endpoint", [False, True])
+@pytest.mark.asyncio
+async def test_explicit_profiles_do_not_leak_summary_egress(
+    tmp_path, monkeypatch, posture, surface, configured_endpoint
+):
+    from mcp_server.indexing.baml_client.baml_client.async_client import b
+
+    monkeypatch.setenv("MCP_DEPLOYMENT_PROFILE", posture)
+    monkeypatch.setenv("MCP_ALLOW_COMMERCIAL_EGRESS", "1")
+    for key in ("CEREBRAS_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"):
+        monkeypatch.setenv(key, "synthetic-key")
+    calls = []
+
+    async def sample(**kwargs):
+        calls.append("sampling")
+        return SimpleNamespace(content=SimpleNamespace(text="Unexpected summary"), model="fixture")
+
+    async def commercial(*args, **kwargs):
+        calls.append("commercial")
+        return "Unexpected summary"
+
+    async def baml_chunk(**kwargs):
+        calls.append("baml")
+        return SimpleNamespace(summary="Unexpected summary")
+
+    async def baml_file(**kwargs):
+        calls.append("baml")
+        return SimpleNamespace(
+            summaries=[SimpleNamespace(chunk_id="policy-chunk", summary="Unexpected summary")]
+        )
+
+    async def local_failure(*args, **kwargs):
+        calls.append("local")
+        raise RuntimeError("Synthetic local endpoint unavailable")
+
+    monkeypatch.setattr(b, "SummarizeChunkAlone", baml_chunk)
+    monkeypatch.setattr(b, "SummarizeFileChunks", baml_file)
+    db = tmp_path / "policy.db"
+    store, file_id = _seed_chunk_summary_tables(db, tmp_path)
+    content = "def alpha():\n    return 1\n"
+    _store_chunk(
+        store,
+        file_id=file_id,
+        chunk_id="policy-chunk",
+        content=content,
+        line_start=1,
+        line_end=2,
+        symbol="alpha",
+    )
+    session = SimpleNamespace(
+        client_params=SimpleNamespace(capabilities=SimpleNamespace(sampling=SimpleNamespace())),
+        create_message=sample,
+    )
+    cfg = (
+        {"base_url": "http://127.0.0.1:9/v1", "model_name": "fixture"}
+        if configured_endpoint
+        else {}
+    )
+    writer = (ChunkWriter if surface == "chunk" else FileBatchSummarizer)(
+        str(db), None, session=session, summarization_config=cfg
+    )
+    monkeypatch.setattr(writer, "_call_profile_api", local_failure)
+    for method in ("_call_cerebras_api", "_call_anthropic_api", "_call_openai_api"):
+        monkeypatch.setattr(writer, method, commercial)
+    try:
+        if surface == "chunk":
+            result = await writer.summarize_chunk(
+                "policy-chunk", file_id, 1, 2, "alpha", content, language="python"
+            )
+            assert result is None
+        else:
+            result = await writer.summarize_file_chunks(
+                file_id,
+                "sample.py",
+                content,
+                [
+                    {
+                        "chunk_id": "policy-chunk",
+                        "content": content,
+                        "line_start": 1,
+                        "line_end": 2,
+                        "language": "python",
+                        "node_type": "function_definition",
+                    }
+                ],
+            )
+            assert result.summaries_written == 0
+            assert result.missing_chunk_ids == ("policy-chunk",)
+        assert not (set(calls) - {"local"}), calls
+        if posture in {"lexical_only", "invalid"} or not configured_endpoint:
+            assert calls == []
+        else:
+            assert "local" in calls
+    finally:
+        if writer._sqlite_store is not None:
+            writer._sqlite_store.close()
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_lexical_policy_blocks_profile_client_construction(tmp_path, monkeypatch):
+    monkeypatch.setenv("MCP_DEPLOYMENT_PROFILE", "lexical_only")
+    constructed = []
+
+    def unexpected_client(**kwargs):
+        constructed.append(True)
+        raise AssertionError("Provider constructor must not be called")
+
+    monkeypatch.setattr("openai.AsyncOpenAI", unexpected_client)
+    writer = ChunkWriter(
+        str(tmp_path / "unused.db"),
+        None,
+        summarization_config={"base_url": "http://127.0.0.1:9/v1"},
+    )
+    monkeypatch.setattr(writer, "_resolve_effective_profile_model", lambda: None)
+    with pytest.raises(RuntimeError, match="Deployment policy"):
+        await writer._call_profile_api("synthetic system", "synthetic input")
+    assert constructed == []
+
+
+@pytest.mark.asyncio
+async def test_local_policy_blocks_actual_baml_batch_construction(tmp_path, monkeypatch):
+    from mcp_server.indexing.baml_client.baml_client.async_client import b
+
+    monkeypatch.setenv("MCP_DEPLOYMENT_PROFILE", "fleet_local")
+    calls = []
+
+    async def unexpected_batch(**kwargs):
+        calls.append(True)
+        return SimpleNamespace(summaries=[])
+
+    monkeypatch.setattr(b, "SummarizeFileChunks", unexpected_batch)
+    writer = FileBatchSummarizer(str(tmp_path / "unused.db"), None)
+    with pytest.raises(RuntimeError, match="Deployment policy"):
+        await writer._call_batch_api(1, "sample.py", "pass", [], {})
+    assert calls == []
+
+
+@pytest.mark.parametrize("explicit", [False, True])
+@pytest.mark.asyncio
+async def test_permitted_commercial_summary_fallback_remains_available(
+    tmp_path, monkeypatch, explicit
+):
+    if explicit:
+        monkeypatch.setenv("MCP_DEPLOYMENT_PROFILE", "commercial")
+        monkeypatch.setenv("MCP_ALLOW_COMMERCIAL_EGRESS", "1")
+    else:
+        monkeypatch.delenv("MCP_DEPLOYMENT_PROFILE", raising=False)
+    monkeypatch.setenv("CEREBRAS_API_KEY", "synthetic-key")
+    calls = []
+
+    async def allowed(*args):
+        calls.append(True)
+        return "Synthetic summary"
+
+    writer = ChunkWriter(str(tmp_path / "unused.db"), None)
+    monkeypatch.setattr(writer, "_call_cerebras_api", allowed)
+    assert await writer._call_direct_api("synthetic", "synthetic") == ("Synthetic summary", None)
+    assert calls == [True]

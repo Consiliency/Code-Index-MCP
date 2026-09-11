@@ -352,7 +352,21 @@
         "SL-0",
         "SL-1"
       ],
-      "lifecycle": [],
+      "lifecycle": [
+        {
+          "at": "2026-09-11T19:03:59Z",
+          "by": "codex-execute-phase",
+          "metadata": {
+            "allowance_used": 0,
+            "base_commit": "c1bfbad73af2382037a7ed442895e63e18398bd3",
+            "inference_requests": 0,
+            "issue_inventory": [],
+            "mode": "manual",
+            "upstream_receipt": "docs/validation/v13/DATA.json"
+          },
+          "transition": "executing"
+        }
+      ],
       "owner_skill": "codex-plan-phase",
       "phase_alias": "PILOT",
       "reflection_ref": "/home/viperjuice/.codex/skills/codex-plan-phase/reflections/448c2cf6/codex-v13-audit-remediation/20260911T190131Z-pilot-plan.md",
@@ -363,10 +377,10 @@
         "type": "roadmap"
       },
       "slug": "phase-plan-v13-PILOT",
-      "status": "committed",
+      "status": "executing",
       "task_summary": "Installed PMCP, browser and budgeted local inference acceptance",
       "type": "phase",
-      "updated_at": "2026-09-11T19:01:31Z"
+      "updated_at": "2026-09-11T19:03:59Z"
     },
     {
       "acceptance_criteria_count": 4,

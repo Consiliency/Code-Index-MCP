@@ -236,14 +236,13 @@ def run(root: Path, entrypoint: str, env: dict[str, str]):
                         time.sleep(0.01)
                         if proc.poll() is None:
                             proc.send_signal(signal.SIGTERM)
-                proc.wait(timeout=18)
+                proc.wait(timeout=6)
                 duration = time.monotonic() - start
+                assert duration <= 5, (mode, duration)
                 if mode != "inflight":
                     assert proc.returncode == 0, (mode, proc.returncode)
-                    assert duration < 8, (mode, duration)
                 else:
                     assert proc.returncode in (0, 1), proc.returncode
-                    assert duration < 17, duration
                 live = [
                     child.pid
                     for child in children
