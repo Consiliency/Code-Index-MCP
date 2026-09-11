@@ -369,6 +369,7 @@
       ],
       "owner_skill": "codex-plan-phase",
       "phase_alias": "PILOT",
+      "readiness_amendment": "Measured installed warm symbol latency fails 100ms; repair and recheck before live admission",
       "reflection_ref": "/home/viperjuice/.codex/skills/codex-plan-phase/reflections/448c2cf6/codex-v13-audit-remediation/20260911T190131Z-pilot-plan.md",
       "roadmap_ref": {
         "file": "specs/phase-plans-v13.md",
@@ -378,9 +379,9 @@
       },
       "slug": "phase-plan-v13-PILOT",
       "status": "executing",
-      "task_summary": "Installed PMCP, browser and budgeted local inference acceptance",
+      "task_summary": "Installed PMCP acceptance with serial R07 fresh Git probe repair",
       "type": "phase",
-      "updated_at": "2026-09-11T19:03:59Z"
+      "updated_at": "2026-09-11T19:47:28.600448+00:00"
     },
     {
       "acceptance_criteria_count": 4,

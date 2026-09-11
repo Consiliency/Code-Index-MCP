@@ -4,7 +4,7 @@ phase: PILOT
 roadmap: specs/phase-plans-v13.md
 roadmap_sha256: 178b8328d8e7dc76ddc0804d7b72d3ccddb55e23577a3d52cb7cbd70d5fd5308
 automation:
-  suite_command: "env SEMANTIC_SEARCH_ENABLED=false MCP_TEST_MODE=1 uv run --locked --extra dev pytest tests/test_v13_pilot_budget.py tests/test_v13_pmcp_pilot.py tests/test_semantic_profile_settings.py tests/test_summarization.py tests/test_deployment_profiles.py tests/integration/test_sigterm_shutdown.py tests/test_v13_safety.py -q --no-cov"
+  suite_command: "env SEMANTIC_SEARCH_ENABLED=false MCP_TEST_MODE=1 uv run --locked --extra dev pytest tests/test_repository_readiness.py tests/test_v13_pilot_budget.py tests/test_v13_pmcp_pilot.py tests/test_semantic_profile_settings.py tests/test_summarization.py tests/test_deployment_profiles.py tests/integration/test_sigterm_shutdown.py tests/test_v13_safety.py -q --no-cov"
 ---
 
 # PILOT: Installed PMCP And Bounded Local Acceptance
@@ -103,8 +103,8 @@ SL-1 — Installed operational driver, browser and documentation reducer
 
 - **Scope**: Repair local admission/shutdown prerequisites and enforce cumulative pilot allowance.
 - **Depends on**: (none)
-- **Owned files**: `mcp_server/config/settings.py`, `mcp_server/indexing/summarization.py`, `mcp_server/cli/stdio_runner.py`, `scripts/safety_runtime_smoke.py`, `scripts/v13_pilot_estimate.py`, `scripts/v13_pilot_budget.py`, `tests/test_semantic_profile_settings.py`, `tests/test_summarization.py`, `tests/test_deployment_profiles.py`, `tests/integration/test_sigterm_shutdown.py`, `tests/test_v13_safety.py`, `tests/test_v13_pilot_budget.py`
-- **Interfaces provided**: complete-profile-resources, summary-policy-admission, five-second-owned-shutdown, durable-local-budget
+- **Owned files**: `mcp_server/health/repository_readiness.py`, `tests/test_repository_readiness.py`, `tests/test_v13_data_reconciliation.py`, `mcp_server/config/settings.py`, `mcp_server/indexing/summarization.py`, `mcp_server/cli/stdio_runner.py`, `scripts/safety_runtime_smoke.py`, `scripts/v13_pilot_estimate.py`, `scripts/v13_pilot_budget.py`, `tests/test_semantic_profile_settings.py`, `tests/test_summarization.py`, `tests/test_deployment_profiles.py`, `tests/integration/test_sigterm_shutdown.py`, `tests/test_v13_safety.py`, `tests/test_v13_pilot_budget.py`
+- **Interfaces provided**: fresh-single-probe-readiness, complete-profile-resources, summary-policy-admission, five-second-owned-shutdown, durable-local-budget
 - **Interfaces consumed**: freeze-contract (pre-existing), accepted-data-contract (pre-existing), accepted-safety-contract (pre-existing)
 - **Parallel-safe**: no
 - **Tasks**:
@@ -113,8 +113,11 @@ SL-1 — Installed operational driver, browser and documentation reducer
   - test: Strengthen actual installed SIGTERM/SIGINT/EOF/repeated/partial/in-flight controls to five seconds with real children and preserved publication fence.
   - impl: Bound owned shutdown without acknowledging unfinished work or abandoning children.
   - test: Budget exact-boundary/retry/concurrency/time/restart/corruption/route/log controls with loopback stubs.
+  - test: Update the pure estimate assertion to include framing reservations; do not change DATA source/storage/query expectations or accepted receipts.
   - impl: Add durable reservation ledger and narrow local forwarding guard; derive pure estimate from workload/envelopes.
-  - verify: Focused policy/budget/lifecycle tests and formatting pass before any live inference.
+  - test: Preserve fresh SHA-1/SHA-256 commit, branch, tracked edit and missing/detached Git refusals with real repositories, including staged/unstaged/rename/delete and untracked controls; assert one Git subprocess per classification.
+  - impl: Read fresh machine-framed Git status once per classification without cross-request caches or removing query/generation fences. Recheck installed warm symbol latency before any inference.
+  - verify: Focused readiness/policy/budget/lifecycle tests and formatting pass before any live inference.
 
 ### SL-1 - Installed operational driver, browser and documentation reducer
 
@@ -122,7 +125,7 @@ SL-1 — Installed operational driver, browser and documentation reducer
 - **Depends on**: SL-0
 - **Owned files**: `scripts/v13_pmcp_pilot.py`, `tests/test_v13_pmcp_pilot.py`, `scripts/release_smoke.py`, `scripts/installed_runtime_smoke.py`, `scripts/agent_validation.py`, `docs/operations/v13-pmcp-pilot.md`, `docs/SUPPORT_MATRIX.md`, `docs/status/V13_EXECUTION.md`, `docs/validation/v13/PILOT.json`
 - **Interfaces provided**: pmcp-installed-receipts, browser-receipts, budgeted-contention-receipts, pilot-rollout-verdict
-- **Interfaces consumed**: complete-profile-resources, summary-policy-admission, five-second-owned-shutdown, durable-local-budget, freeze-contract (pre-existing), accepted-data-contract (pre-existing), accepted-safety-contract (pre-existing)
+- **Interfaces consumed**: fresh-single-probe-readiness, complete-profile-resources, summary-policy-admission, five-second-owned-shutdown, durable-local-budget, freeze-contract (pre-existing), accepted-data-contract (pre-existing), accepted-safety-contract (pre-existing)
 - **Parallel-safe**: no
 - **Tasks**:
   - test: Receipt reducer rejects candidate/manifest drift, missing goals, over-budget/threshold results, absent successful contention samples and missing browser evidence.
@@ -137,6 +140,14 @@ SL-1 — Installed operational driver, browser and documentation reducer
   - impl: Reduce all results into PILOT receipt and provisioning/support verdict. No accepted EC or IF with a missing goal.
 
 ## Execution Notes
+
+2026-09-11 R07 amendment: the production-extra installed offline driver passed
+all 13 goals on bca40bc, including real metrics refusal/recovery and six lifecycle
+controls. Diagnostic warm symbol p95 was 137.489ms through PMCP and 125.915ms
+through direct STDIO, failing the unchanged 100ms bound. Lexical PMCP p95 was
+179.631ms. Live inference remains unstarted. SL-0 serially owns the bounded
+readiness probe repair and regression tests before resuming SL-1; no accepted
+upstream receipt, query fence, roadmap byte or threshold changes are authorized.
 
 2026-09-11 SL-0 checkpoint: 20 policy/configuration counterexamples reproduced
 with provider interception and no real requests; repaired focused coverage is

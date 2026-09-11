@@ -1,14 +1,14 @@
 ---
 from: codex-plan-phase
-timestamp: "2026-09-11T19:01:31Z"
+timestamp: "2026-09-11T19:50:00Z"
 repo: 448c2cf6
 repo_root: /mnt/HC_Volume_105438154/worktrees/Code-Index-MCP-v13-audit-remediation
 branch: codex/v13-audit-remediation
 branch_slug: codex-v13-audit-remediation
-commit: c1bfbad73af2382037a7ed442895e63e18398bd3
-run_id: 20260911T190131Z-pilot-plan
+commit: bca40bc34f63870bde4fa9c8ec60300a6c57970e
+run_id: 20260911T195000Z-pilot-readiness
 artifact: /mnt/workspace/worktrees/Code-Index-MCP-v13-audit-remediation/plans/phase-plan-v13-PILOT.md
-artifact_state: tracked
+artifact_state: staged
 next_skill: codex-execute-phase
 next_command: codex-execute-phase plans/phase-plan-v13-PILOT.md
 next_phase: PILOT
@@ -23,33 +23,30 @@ automation:
   issue_dispositions: []
 ---
 
-# PILOT Ready For Execution
+# PILOT R07 Repair Amendment
 
-DATA accepted on source 668bf75; receipt/docs committed at 869bced. Read
-docs/validation/v13/DATA.json. Its full verification passed 14 commands,
-378 phase tests, 3151 broad tests with 150 skips/31 deselections, 140 Git tests,
-actual wheel/container workflows and 19 controls per real Qdrant mode.
+Continue the same two serial lanes. Readiness module and its focused tests are
+now owned by SL-0, along with the pure estimate assertion in the DATA regression
+file. All other DATA expectations and accepted contracts/receipts remain intact.
+Literal validation passes; structural validator has two lanes and no warnings.
 
-PILOT plan has two serial, disjoint lanes and all four frozen EC references.
-Literal validation passes; structural validator reports 2 lanes, 0 warnings.
-Known Consiliency/agent-harness#819 administrative import warning remains;
-outer loop stays disabled. No implementation agents.
+Production-extra offline PMCP acceptance on bca40bc passed all 13 driver goals,
+including metrics collision refusal/recovery, reconnect and six lifecycle cases.
+Diagnostic warm symbol p95 failed at 137.489ms PMCP / 125.915ms direct STDIO;
+lexical PMCP passed at 179.631ms. Preserve 100ms symbol / 500ms search limits.
+Repair fresh Git probe cost without caching readiness across requests or removing
+generation fences, then rerun installed proof before any inference admission.
+Real SHA-1/SHA-256 transition tests cover edits, rename/delete, untracked,
+wrong branch, detached/missing Git, and one process per ordinary classification.
+Bare repositories retain metadata identity but cannot become query-ready.
+The pure estimate includes framing: 81740 units, not the older 79360.
 
-SL-0 first: reproduce JSON summarizer resource omission, explicit missing YAML
-fallback, summary sampling/BAML/commercial egress gaps and 15-second installed
-inflight exit. Fix within owned paths; implement durable cumulative local budget.
-SL-1 then: exact installed wheel/PMCP provisioning, two synthetic repositories
-and sibling, actual Inspector/FastAPI admin browser workflows, local inference
-and query/index contention, evidence reduction and controlled-rollout verdict.
-
-No endpoint or inference request made. The owner-approved allowance is unused:
-100000 total input tokens including retries, 900 seconds, concurrency one.
-No commercial egress, fleet corpus, unrelated PMCP config or indexes. Reuse
-one durable allowance across retries/restarts. Reranking stays dark/disabled.
-Optional metrics ownership requires the locked production extra, not core-wheel
-claims. PMCP 2.7.3 has no bundled dashboard. BAML generator/runtime remain 0.221.0.
-
-No new roadmap review claimed: the unchanged four-seat-reviewed roadmap is
-authoritative at 178b8328d8e7dc76ddc0804d7b72d3ccddb55e23577a3d52cb7cbd70d5fd5308.
-No PILOT acceptance, final code panel, version bump, merge or publication.
-Single signing-only job 34597512666 was already used; never redispatch.
+No live endpoint contacted or allowance initialized. Remaining PILOT work:
+browser driver/actual Inspector and admin UI, bounded live workflow/provenance/
+contention, full regression and receipt reduction. No PILOT EC/IF acceptance.
+No version bump, final code panel, merge or publication.
+Outer phase-loop stays disabled under Consiliency/agent-harness#819.
+No implementation agents, no worktree pruning, no commercial or fleet inference.
+Single signing job 34597512666 already used; never redispatch.
+The panel-approved roadmap remains unchanged at
+178b8328d8e7dc76ddc0804d7b72d3ccddb55e23577a3d52cb7cbd70d5fd5308.
