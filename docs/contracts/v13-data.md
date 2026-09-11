@@ -1,7 +1,7 @@
 # V13 Data Contract
 
-Status: implementation candidate; acceptance requires the DATA receipt and its
-exact-commit verification artifact. This extends, and does not relax, the frozen
+Status: accepted in `docs/validation/v13/DATA.json`, bound to its exact-commit
+verification artifact. This extends, and does not relax, the frozen
 table ownership, STATE admission and SAFETY trust contracts.
 
 ## Generation Publication

@@ -11,7 +11,7 @@ Worktree: `/mnt/workspace/worktrees/Code-Index-MCP-v13-audit-remediation`.
 | DIST | Accepted | `docs/validation/v13/DIST.json`; IF-0-DIST-1 |
 | STATE | Accepted | `docs/validation/v13/STATE.json`; IF-0-STATE-1 |
 | SAFETY | Accepted | `docs/validation/v13/SAFETY.json`; IF-0-SAFETY-1 |
-| DATA | Implemented; final verification pending | Candidate contract/runbook; no IF/EC acceptance yet |
+| DATA | Accepted | `docs/validation/v13/DATA.json`; IF-0-DATA-1 |
 | PILOT | Not started | No inference or browser acceptance claimed |
 | PREP | Not started | No version bump or implementation code review claimed |
 | SHIP | Not started | No merge, publication or issue closure claimed |
@@ -70,10 +70,10 @@ environment refresh and the 314-test phase suite. Broad offline baseline:
 and restart. Artifact hashes and exclusions are in the DIST receipt. Earlier
 failed attempts remain preserved and are not accepted evidence.
 
-Read `docs/validation/v13/SAFETY.json` and
+Read `docs/validation/v13/DATA.json` and
 `.dev-skills/handoffs/codex-execute-phase/latest.md` in this worktree.
-Current phase: DATA, finish exact-candidate verification and its evidence reducer.
-Command: `codex-execute-phase plans/phase-plan-v13-DATA.md`.
+Next phase: PILOT, plan installed provisioning and bounded operational acceptance.
+Command: `codex-plan-phase specs/phase-plans-v13.md PILOT`.
 Do not restart v9 or infer v13 completion from old primary-checkout state.
 
 ## STATE Implementation History
@@ -257,6 +257,22 @@ and tripped the final dirty-source fence. The fixture now locally excludes its
 runtime directory; a new test checks it never stages generation files. All 37
 selected reconciliation/watcher tests pass, with two benchmark cases deselected.
 No production fence was relaxed. Another complete exact-candidate run is required.
+
+### DATA Accepted
+
+Source `668bf754d1728d07e113c8560acb6e5cf79a9b3f` passed fourteen commands,
+locked environment refresh and 378 phase tests. Broad offline: 3,151 passed,
+150 skipped, 31 deselected. Separate Git manager: 140 passed. Real Qdrant
+file/server nodes each passed 19 controls; wheel and non-root image passed
+actual query/restart/privacy and six lifecycle cases, with no surviving children.
+The independent validator returned `ok=true`, no findings or diagnostics.
+
+The DATA receipt binds exact source/tree, plan, contract, wheel, image and
+verification hashes, records all four ECs and produces IF-0-DATA-1. Prior
+rejected attempts remain preserved. PILOT now owns installed PMCP, interactive
+browser and budgeted local inference acceptance, including the still-unmet
+five-second in-flight shutdown threshold. No version bump, final code panel,
+merge, publication or extra signing job has occurred.
 All original phase gates must pass again on the repaired committed candidate.
 
 Expanded production semantic probes also reproduced readiness checking the

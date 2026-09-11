@@ -24,7 +24,7 @@ PILOT retains the approved live-inference budget and browser acceptance.
 
 ## Interface Freeze Gates
 
-- [ ] IF-0-DATA-1 - Retained owned rows, generation-scoped SQLite/vector/profile publication, exact backend ownership, per-batch provenance, uniform query admission and committed-source reconciliation.
+- [x] IF-0-DATA-1 - Retained owned rows, generation-scoped SQLite/vector/profile publication, exact backend ownership, per-batch provenance, uniform query admission and committed-source reconciliation.
 
 ## Frozen Interfaces
 
@@ -183,12 +183,21 @@ substitute for installed query workflows. Record all skips and failed attempts.
 
 ## Acceptance Criteria
 
-- [ ] EC-DATA-1 - proven by `tests/test_v13_data_storage.py` and installed rebuild probes; falsified by lost retained rows/debt or active vector mutation before publication.
-- [ ] EC-DATA-2 - proven by `tests/test_v13_data_vectors.py` and both `scripts/v13_qdrant_smoke.py` modes; falsified by truncation at 1000, payload misassociation, a broken live lock, backend fallback or an upsert after provenance drift.
-- [ ] EC-DATA-3 - proven by `tests/test_v13_data_queries.py` and installed entrypoint probes; falsified by ready results from an unsupported/stale generation or filtered results that ignore the query.
-- [ ] EC-DATA-4 - proven by `tests/test_v13_data_reconciliation.py` and `tests/test_ignore_patterns.py`; falsified by excluded/dirty input reaching embedding admission or missed committed modifications remaining stale after reconciliation.
+- [x] EC-DATA-1 - proven by `tests/test_v13_data_storage.py` and installed rebuild probes; falsified by lost retained rows/debt or active vector mutation before publication.
+- [x] EC-DATA-2 - proven by `tests/test_v13_data_vectors.py` and both `scripts/v13_qdrant_smoke.py` modes; falsified by truncation at 1000, payload misassociation, a broken live lock, backend fallback or an upsert after provenance drift.
+- [x] EC-DATA-3 - proven by `tests/test_v13_data_queries.py` and installed entrypoint probes; falsified by ready results from an unsupported/stale generation or filtered results that ignore the query.
+- [x] EC-DATA-4 - proven by `tests/test_v13_data_reconciliation.py` and `tests/test_ignore_patterns.py`; falsified by excluded/dirty input reaching embedding admission or missed committed modifications remaining stale after reconciliation.
 
 ## Execution Checkpoint
+
+2026-09-11 DATA accepted on source 668bf75: all fourteen stamped commands,
+locked refresh and 378 phase tests pass. Broad offline: 3151 passed, 150 skipped,
+31 deselected; separate Git manager: 140 passed. Both real Qdrant modes pass
+19 controls; actual wheel and non-root image workflows pass. Independent
+verification validator: ok=true, no findings. `docs/validation/v13/DATA.json`
+records exact hashes, exclusions, prior rejected attempts and all four ECs.
+Only IF-0-DATA-1 is produced. PILOT still owes its five-second shutdown,
+bounded live inference, PMCP and browser gates. Roadmap bytes unchanged.
 
 2026-09-11 c0713a7 verification rejected: six broad failures and three phase
 failures reproduced committed SQLite WAL/SHM files in the shared synthetic

@@ -1,7 +1,7 @@
 # Generation Operations
 
-Applies to the v13 implementation candidate. Consult `docs/validation/v13/DATA.json`
-for accepted evidence before relying on these changes in a deployment.
+Applies to the accepted v13 DATA contract. `docs/validation/v13/DATA.json` binds
+the verified source and installed artifacts; PILOT remains a separate deployment gate.
 
 ## Index And Recover
 
