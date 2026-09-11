@@ -1,7 +1,7 @@
 # V13 SAFETY Contract
 
-Status: implemented, awaiting exact-candidate stamped acceptance. No
-IF-0-SAFETY-1 is emitted until the phase receipt accepts all four ECs.
+Status: accepted on source `b99e754`. IF-0-SAFETY-1 is emitted by
+`docs/validation/v13/SAFETY.json`, with exact source/artifact hashes and all four ECs.
 
 ## Trust And Capabilities
 
@@ -55,9 +55,12 @@ durable identity or fleet promotion is claimed. See `docs/security/auth-boundary
 
 ## Acceptance Evidence
 
-The phase suite, broad offline suite, local gate, installed wheel/container
-workflows and rechecked live-signing receipt must all pass on the candidate.
-Development checks so far are not an accepted phase receipt. DATA remains
+All ten stamped commands, locked refresh and phase suite passed. Focused:
+93 tests; Git manager: 140; broad offline: 2,944 passed, 150 skipped and
+31 deselected; phase suite: 223. Installed wheel and non-root container
+workflows and the rechecked live-signing receipt passed. The independent
+artifact validator returned no findings. The earlier failed candidate remains
+preserved and rejected. DATA remains
 responsible for vector/artifact staging, table retention and full query policy;
 PILOT owns inference/browser/PMCP acceptance, PREP the fresh four-model code
 panel and version bump, and SHIP publication.

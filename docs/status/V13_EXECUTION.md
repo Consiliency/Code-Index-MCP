@@ -10,7 +10,7 @@ Worktree: `/mnt/workspace/worktrees/Code-Index-MCP-v13-audit-remediation`.
 | FREEZE | Accepted; owner decisions approved | `docs/validation/v13/FREEZE.json` |
 | DIST | Accepted | `docs/validation/v13/DIST.json`; IF-0-DIST-1 |
 | STATE | Accepted | `docs/validation/v13/STATE.json`; IF-0-STATE-1 |
-| SAFETY | Implemented; exact-candidate verification pending | `plans/phase-plan-v13-SAFETY.md`; signing proof recorded, gate withheld |
+| SAFETY | Accepted | `docs/validation/v13/SAFETY.json`; IF-0-SAFETY-1 |
 | DATA | Not started | No implementation acceptance claimed |
 | PILOT | Not started | No inference or browser acceptance claimed |
 | PREP | Not started | No version bump or implementation code review claimed |
@@ -172,3 +172,20 @@ failures covering legacy symbol search, summaries, transport logs and background
 exceptions. The repairs also remove HTTP access-query strings, preserve actual
 socket peers in the container, and cover malformed SDK input. The expanded
 installed probes and a new complete stamped run remain required.
+
+### Accepted SAFETY Candidate
+
+The complete replacement run on `b99e754` passed all ten commands, locked
+environment refresh and 223 phase tests. Focused safety: 93 passed; Git
+manager: 140 passed; broad offline: 2,944 passed, 150 skipped, 31 deselected.
+Local gate, actual wheel, configured non-root container and signing recheck
+passed. Both installed runtimes exercised six lifecycle cases with real plugin
+children and no survivors; container HTTP restart/proxy/privacy controls passed.
+The separate fixture-cleanup failure was repaired and the full command rerun.
+
+The independent evidence validator returned `ok=true` with no findings.
+`docs/validation/v13/SAFETY.json` binds exact source, plan, wheel, container,
+signing and verification hashes and emits IF-0-SAFETY-1. The immutable roadmap
+is unchanged. DATA is next; PILOT still owes the frozen performance target,
+live inference, PMCP and browser proof. No version bump, final code panel,
+merge or publication has occurred.

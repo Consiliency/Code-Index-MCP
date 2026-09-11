@@ -21,7 +21,7 @@ may leave the machine; no commercial provider is involved.
 
 ## Interface Freeze Gates
 
-- [ ] IF-0-SAFETY-1 - Verified artifact policy, supported capability guards, bounded installed process exit, metadata-only normal diagnostics and local ephemeral admin exposure.
+- [x] IF-0-SAFETY-1 - Verified artifact policy, supported capability guards, bounded installed process exit, metadata-only normal diagnostics and local ephemeral admin exposure.
 
 ## Frozen Interfaces
 
@@ -155,10 +155,10 @@ prior failed evidence. Real browser and PMCP acceptance belong to PILOT.
 
 ## Acceptance Criteria
 
-- [ ] EC-SAFETY-1 - proven by `tests/test_artifact_attestation.py`, `tests/test_artifact_download.py` and the independently verified `docs/validation/v13/SAFETY-signing.json` receipt; falsified by unsigned extraction, wrong-producer acceptance or an unverified roundtrip.
-- [ ] EC-SAFETY-2 - proven by `tests/security/test_plugin_sandbox.py` and `docs/security/sandbox.md`; falsified by supported filesystem/SQLite forms escaping capability roots or permitting writes in readonly mode.
-- [ ] EC-SAFETY-3 - proven by `scripts/safety_runtime_smoke.py`, installed release smoke and `tests/test_v13_safety.py`; falsified by a surviving owned worker, unbounded exit, content sentinel in normal logs or falsely claimed metrics ownership.
-- [ ] EC-SAFETY-4 - proven by auth restart, loopback and trusted-proxy controls in `tests/test_v13_safety.py` and `tests/test_security.py`; falsified by surviving ephemeral sessions or spoofed client identity from an untrusted peer.
+- [x] EC-SAFETY-1 - proven by `tests/test_artifact_attestation.py`, `tests/test_artifact_download.py` and the independently verified `docs/validation/v13/SAFETY-signing.json` receipt; falsified by unsigned extraction, wrong-producer acceptance or an unverified roundtrip.
+- [x] EC-SAFETY-2 - proven by `tests/security/test_plugin_sandbox.py` and `docs/security/sandbox.md`; falsified by supported filesystem/SQLite forms escaping capability roots or permitting writes in readonly mode.
+- [x] EC-SAFETY-3 - proven by `scripts/safety_runtime_smoke.py`, installed release smoke and `tests/test_v13_safety.py`; falsified by a surviving owned worker, unbounded exit, content sentinel in normal logs or falsely claimed metrics ownership.
+- [x] EC-SAFETY-4 - proven by auth restart, loopback and trusted-proxy controls in `tests/test_v13_safety.py` and `tests/test_security.py`; falsified by surviving ephemeral sessions or spoofed client identity from an untrusted peer.
 
 ## Spec Closeout Plan
 
