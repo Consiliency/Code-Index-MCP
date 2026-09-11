@@ -19,6 +19,7 @@ from mcp_server.interfaces.inference_contracts import ProvenanceField
 from mcp_server.utils.semantic_indexer import SemanticIndexer
 from tests.test_embedding_provenance import (
     _FakeProvenanceProvider,
+    _items,
     _make_indexer,
     _openai_response,
     _profile,
@@ -134,6 +135,72 @@ def test_maintenance_crosses_page_boundary(real_indexer, count, operation):
                 assert point.payload["relative_path"] == "moved.py"
             else:
                 assert point.payload["is_deleted"] is True
+
+
+@pytest.mark.parametrize("count", [1000, 1001])
+@pytest.mark.parametrize("identity_key", ["chunk_id", "source_chunk_id"])
+def test_maintenance_filtered_ranking_precedes_limit(real_indexer, count, identity_key):
+    indexer = real_indexer
+    indexer.embedding_client = _FakeProvenanceProvider(
+        lambda texts, input_type: _openai_response(
+            texts, input_type, items=_items([[1.0] * 8 for _ in texts])
+        )
+    )
+    points = [
+        models.PointStruct(
+            id=i,
+            vector=([1.0] * 8 if i == count else [1.0] + [0.0] * 7),
+            payload={identity_key: f"source-{i}", "file": f"source-{i}.py"},
+        )
+        for i in range(1, count + 1)
+    ]
+    for offset, payload in enumerate(
+        [
+            {"chunk_id": "excluded"},
+            {identity_key: "source-1", "is_deleted": True},
+            {identity_key: "source-1", indexer.PROVENANCE_TAG: True},
+        ],
+        start=1,
+    ):
+        points.append(models.PointStruct(id=count + offset, vector=[1.0] * 8, payload=payload))
+    indexer.qdrant.upsert(collection_name=indexer.collection, points=points, wait=True)
+
+    results = indexer.search(
+        "concept", limit=1, source_chunk_ids=[f"source-{i}" for i in range(1, count + 1)]
+    )
+
+    assert len(results) == 1
+    assert results[0][identity_key] == f"source-{count}"
+    assert results[0]["score"] > 0.9
+    assert indexer.embedding_client.calls == [(["concept"], "query")]
+
+
+def test_empty_semantic_candidates_do_not_embed_or_search(real_indexer):
+    provider = real_indexer.embedding_client
+    before = list(provider.calls)
+    assert real_indexer.search("concept", source_chunk_ids=[]) == []
+    assert provider.calls == before
+
+
+@pytest.mark.parametrize("derived", [0, 2**63 - 1, 2**63, 2**64 - 1])
+def test_generated_point_ids_fit_both_sqlite_and_qdrant(real_indexer, tmp_path, derived):
+    from mcp_server.storage.sqlite_store import SQLiteStore
+
+    point_id = real_indexer._reserve_safe_id(derived)
+    assert 0 < point_id < 2**63
+    store = SQLiteStore(str(tmp_path / "point-ids.db"))
+    try:
+        store.upsert_semantic_point("fixture", "source", point_id, real_indexer.collection)
+        real_indexer.qdrant.upsert(
+            collection_name=real_indexer.collection,
+            points=[models.PointStruct(id=point_id, vector=[1.0] * 8)],
+            wait=True,
+        )
+        ids = store.get_semantic_point_ids("fixture", ["source"])
+        assert ids == [point_id]
+        assert real_indexer.qdrant.retrieve(real_indexer.collection, ids=ids)[0].id == point_id
+    finally:
+        store.close()
 
 
 def test_explicit_memory_backend_never_contacts_default_server(monkeypatch):

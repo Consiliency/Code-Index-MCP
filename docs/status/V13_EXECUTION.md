@@ -227,3 +227,36 @@ Next: seal a source candidate, rerun every original phase command through the
 verification helper, and produce DATA acceptance only if all gates pass. PMCP,
 browser, live inference, final four-seat review, version bump and SHIP remain
 pending. No extra OIDC job was dispatched and the roadmap bytes are unchanged.
+
+### DATA Acceptance Repair
+
+Candidate `dd0c763` passed fourteen stamped commands, locked refresh and 358
+phase tests. Broad offline: 3,135 passed, 150 skipped, 31 deselected; separate
+Git manager: 140 passed. Wheel, non-root container and both Qdrant modes passed.
+That run is preserved but rejected for acceptance: final source review found
+C18 semantic source filters still returned lexical FTS results.
+
+Four dispatcher regressions reproduced missing semantic matches and silent
+lexical success when the semantic provider was unavailable or failed. The
+repair selects all matching SQLite source identities and applies them inside
+Qdrant before rank/limit, retaining split chunks and excluding deleted/sentinel
+points. Five new vector controls pass locally; all fifteen maintenance/filter
+controls pass on the pinned disposable server. Eighteen source-filter/history
+controls pass with real SQLite and file-backed vectors. No live inference.
+All original phase gates must pass again on the repaired committed candidate.
+
+Expanded production semantic probes also reproduced readiness checking the
+legacy metadata/collection instead of the generation owner, and unsigned
+hash-derived point IDs overflowing SQLite. Readiness now consumes the owner's
+pure generation locator; new vector IDs fit positive signed 63-bit links while
+source chunk IDs remain unchanged. Boundary roundtrips pass in both SQLite and
+real file-backed Qdrant. Public semantic rebuild/restore/restart verification is
+passing through the real Python client and STDIO/HTTP handlers. Missing or
+incomplete generation metadata refuses readiness despite legacy root metadata.
+The standalone Git manager now reuses generation-bound pooled stores instead
+of comparing the Python identities of separate registry snapshots. This exposed
+one test hashing the pre-checkpoint main database without its committed WAL;
+its setup now checkpoints before the byte-preservation comparison.
+All 140 Git manager tests pass. The disposable server now passes 19 explicit
+maintenance, filtered-ranking and signed-ID controls. These are diagnostic
+results, not phase acceptance; the repaired source still needs stamped gates.

@@ -1022,9 +1022,7 @@ class GitAwareIndexManager:
             if self.store_registry is not None:
                 store = self.store_registry.get(repo_id)
             else:
-                registry_get = getattr(self.registry, "get", None)
-                registered_info = registry_get(repo_id) if callable(registry_get) else None
-                if registered_info is repo_info:
+                if isinstance(self.registry, RepositoryRegistry):
                     self.store_registry = StoreRegistry.for_registry(self.registry)
                     store = self.store_registry.get(repo_id)
                 else:

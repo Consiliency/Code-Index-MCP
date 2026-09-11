@@ -89,6 +89,17 @@ class SemanticIndexerRegistry:
                 raise RuntimeError("Semantic context is no longer current")
         return info, binding, staged
 
+    @classmethod
+    def generation_root(cls, info: "RepositoryInfo", binding: tuple | None = None) -> Path:
+        """Locate this configured generation without creating files or opening Qdrant."""
+        binding = cls._binding(info) if binding is None else binding
+        database = Path(info.index_path).resolve()
+        generation = info.index_generation or "legacy"
+        namespace = hashlib.sha256(
+            json.dumps([info.registration_id, generation, info.index_profile, binding[-1]]).encode()
+        ).hexdigest()[:32]
+        return database.parent / (database.stem + ".semantic") / generation / namespace
+
     def _construct(
         self, repo_id: str, info: "RepositoryInfo", binding: tuple, ctx: "RepoContext | None"
     ) -> "SemanticIndexer":
@@ -102,12 +113,7 @@ class SemanticIndexerRegistry:
         )
         branch = info.tracked_branch or info.current_branch or "unknown"
         commit = info.last_indexed_commit or info.current_commit
-        database = Path(info.index_path).resolve()
-        generation = info.index_generation or "legacy"
-        namespace = hashlib.sha256(
-            json.dumps([info.registration_id, generation, info.index_profile, binding[-1]]).encode()
-        ).hexdigest()[:32]
-        root = database.parent / (database.stem + ".semantic") / generation / namespace
+        root = self.generation_root(info, binding)
         root.mkdir(parents=True, exist_ok=True)
         server = os.environ.get("QDRANT_URL")
         use_server = os.environ.get("QDRANT_USE_SERVER", "true").lower() not in {"0", "false", "no"}
@@ -117,7 +123,7 @@ class SemanticIndexerRegistry:
             repo_identifier=repo_id,
             branch=branch,
             commit=commit,
-            lineage_id=namespace,
+            lineage_id=root.name,
             collection=self._collection_name(repo_id, branch, commit),
             profile_registry=profiles,
             semantic_profile=profiles.default_profile,

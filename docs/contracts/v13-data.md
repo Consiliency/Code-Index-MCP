@@ -46,6 +46,9 @@ status, dimensions, model/revision, normalization and fingerprint. Same-dimensio
 drift after a matching probe is rejected before upsert, including after restart.
 Maintenance uses paginated scroll and acknowledged SDK writes, preserving
 vector/payload association across deletion, move, interruption and retry.
+New hash-derived vector point IDs fit SQLite's positive signed 63-bit integer
+range and cannot use the provenance sentinel. This does not alter upstream
+source chunk IDs or rewrite retained vector mappings.
 
 ## Portable Artifacts
 
@@ -79,6 +82,14 @@ change during a query refuses the result. Non-ready paths return
 503 refusal. A ready empty result means no match, not unavailable.
 
 Source metadata filters apply the actual query and ranking before the limit.
+Semantic readiness resolves the same generation-specific metadata directory and
+collection as the resource owner. Missing or incomplete generation metadata
+cannot be satisfied by an unrelated legacy repo-root metadata file.
+Lexical queries rank the complete matching metadata set with FTS. Semantic
+queries restrict Qdrant to those source chunk identities before vector ranking,
+including all derived subchunks. Deleted vectors and provenance sentinel points
+are excluded before top-k. Empty candidate sets make no embedding request;
+unavailable or failed semantic queries cannot substitute lexical results.
 Cross-repository aggregate failures remain visible and do not become a successful
 partial or empty response. The legacy coordinator's unimplemented semantic mode
 returns unavailable, never an unlabeled lexical fallback. Python clients close

@@ -4,7 +4,7 @@ phase: DATA
 roadmap: specs/phase-plans-v13.md
 roadmap_sha256: 178b8328d8e7dc76ddc0804d7b72d3ccddb55e23577a3d52cb7cbd70d5fd5308
 automation:
-  suite_command: "env SEMANTIC_SEARCH_ENABLED=false MCP_TEST_MODE=1 uv run --locked --extra dev pytest tests/test_v13_data_storage.py tests/test_v13_data_vectors.py tests/test_v13_data_queries.py tests/test_v13_data_reconciliation.py tests/test_semantic_indexer_registry.py tests/test_embedding_provenance.py tests/test_history_search_filters.py tests/test_history_issue_storage.py tests/test_ignore_patterns.py tests/test_watcher_sweep.py tests/test_repository_readiness.py tests/test_tool_readiness_fail_closed.py -q --no-cov"
+  suite_command: "env SEMANTIC_SEARCH_ENABLED=false MCP_TEST_MODE=1 uv run --locked --extra dev pytest tests/test_v13_data_storage.py tests/test_v13_data_vectors.py tests/test_v13_data_queries.py tests/test_v13_data_reconciliation.py tests/test_semantic_indexer_registry.py tests/test_embedding_provenance.py tests/test_friction_search_filters.py tests/test_history_search_filters.py tests/test_history_issue_storage.py tests/test_ignore_patterns.py tests/test_watcher_sweep.py tests/test_repository_readiness.py tests/test_tool_readiness_fail_closed.py -q --no-cov"
 ---
 
 # DATA: Coherent Rebuild And Retrieval
@@ -98,7 +98,7 @@ SL-2 — DATA documentation and evidence reducer
 
 - **Scope**: Establish exact Qdrant backend ownership and generation-aware semantic operations.
 - **Owned files**: `mcp_server/utils/semantic_indexer.py`, `mcp_server/utils/semantic_indexer_registry.py`, `mcp_server/core/repo_context.py`, `mcp_server/utils/embedding_providers.py`, `mcp_server/artifacts/semantic_profiles.py`, `tests/test_v13_data_vectors.py`, `tests/test_semantic_indexer_registry.py`, `tests/test_semantic_stale_vector_cleanup.py`, `tests/test_semantic_indexer_collection_lifecycle.py`, `tests/test_embedding_provenance.py`, `tests/test_profile_aware_semantic_indexer.py`, `tests/test_semantic_namespace_resolver.py`, `tests/test_semantic_profiles.py`, `scripts/v13_qdrant_smoke.py`
-- **Interfaces provided**: staged-context, semantic-leases, exact-backend, batch-provenance, vector-maintenance
+- **Interfaces provided**: staged-context, semantic-leases, exact-backend, batch-provenance, vector-maintenance, filtered-vector-query, semantic-generation-location
 - **Interfaces consumed**: freeze-contract (pre-existing), state-contract (pre-existing), safety-contract (pre-existing)
 - **Parallel-safe**: no
 - **Tasks**:
@@ -108,6 +108,8 @@ SL-2 — DATA documentation and evidence reducer
   - impl: Bind indexer paths, collections, SQLite mappings and metadata to explicit context generations; add scoped borrower leases and safe retirement.
   - impl: Validate each embedding batch and persisted provenance on restart; reject same-dimensional drift and partial responses before upsert. Propagate durable metadata failures.
   - test: Real file-backed client and disposable pinned server, including a second process holding the live local lock and a failed server connection with no fallback.
+  - impl: Restrict semantic retrieval to supplied source chunk identities before vector rank/limit, including derived subchunks, and exclude deleted/provenance points before limiting.
+  - test: Real file/server filtered ranking beyond 1000 records, split chunks and empty candidate sets; no lexical substitute.
   - verify: Run focused vector/provenance tests and separate named file/server smoke nodes, each capped at 300 seconds. Deterministic synthetic vectors only.
 
 ### SL-1 - Storage, artifact and query integration
@@ -116,7 +118,7 @@ SL-2 — DATA documentation and evidence reducer
 - **Owned files**: `mcp_server/storage/sqlite_store.py`, `mcp_server/storage/git_index_manager.py`, `mcp_server/storage/repository_registry.py`, `mcp_server/storage/store_registry.py`, `mcp_server/storage/multi_repo_manager.py`, `mcp_server/artifacts/artifact_download.py`, `mcp_server/artifacts/publisher.py`, `tests/test_v13_data_storage.py`, `tests/test_git_index_manager.py`, `tests/test_store_registry.py`, `tests/test_registry_concurrency.py`, `tests/test_sqlite_store.py`, `tests/test_history_issue_storage.py`, `tests/test_history_source_metadata.py`, `tests/test_chunker_scheme_recovery.py`, `tests/test_artifact_download.py`, `tests/test_artifact_lifecycle.py`, `tests/test_multi_repo_manager.py`, `tests/test_multi_repo_search.py`, `mcp_server/dispatcher/dispatcher_enhanced.py`, `mcp_server/dispatcher/cross_repo_coordinator.py`, `mcp_server/core/repo_resolver.py`, `mcp_server/core/ignore_patterns.py`, `mcp_server/core/path_resolver.py`, `mcp_server/health/repository_readiness.py`, `mcp_server/client.py`, `mcp_server/gateway.py`, `mcp_server/cli/tool_handlers.py`, `mcp_server/cli/task_reindex.py`, `mcp_server/cli/bootstrap.py`, `mcp_server/watcher_multi_repo.py`, `mcp_server/watcher/ref_poller.py`, `mcp_server/watcher/sweeper.py`, `mcp_server/watcher/file_watcher.py`, `tests/test_v13_data_queries.py`, `tests/test_v13_data_reconciliation.py`, `tests/test_dispatcher.py`, `tests/test_cross_repo_coordinator.py`, `tests/test_history_search_filters.py`, `tests/test_tool_readiness_fail_closed.py`, `tests/test_tool_handlers_readiness.py`, `tests/test_repository_readiness.py`, `tests/test_ignore_patterns.py`, `tests/test_watcher_sweep.py`, `tests/test_watcher_multi_repo.py`, `tests/test_watcher.py`, `tests/test_sweeper_observability.py`, `tests/test_client.py`, `tests/test_python_client_search.py`, `tests/test_python_client_contract.py`, `tests/test_python_client_indexing.py`, `tests/test_python_client_sources.py`, `tests/test_friction_search_filters.py`, `tests/test_gateway.py`, `tests/test_v13_state.py`, `tests/conftest.py`, `tests/test_v13_safety.py`, `scripts/installed_runtime_smoke.py`, `scripts/safety_runtime_smoke.py`, `scripts/release_smoke.py`, `scripts/v13_pilot_estimate.py`, `scripts/agent_validation.py`, `pyproject.toml`, `uv.lock`, `mcp_server/artifacts/artifact_upload.py`, `mcp_server/artifacts/secure_export.py`, `mcp_server/cli/artifact_commands.py`, `tests/test_artifact_upload.py`, `tests/test_artifact_commands.py`, `mcp_server/cli/stdio_runner.py`, `mcp_server/artifacts/multi_repo_artifact_coordinator.py`, `tests/test_multi_repo_artifact_coordinator.py`, `mcp_server/artifacts/freshness.py`, `tests/test_artifact_freshness.py`, `tests/integration/test_multi_repo_hydration.py`, `tests/smoke/test_secondary_tool_readiness_smoke.py`, `tests/test_benchmark_query_regressions.py`, `tests/test_collection_provenance.py`, `tests/test_dispatcher_advanced.py`, `tests/test_dispatcher_p3_integration.py`, `tests/test_git_integration.py`, `tests/test_multi_repo_failure_matrix.py`, `tests/test_multi_repo_production_matrix.py`, `tests/test_multi_repository_support.py`, `tests/test_repo_context.py`, `tests/fixtures/multi_repo.py`
 - **Depends on**: SL-0
 - **Interfaces provided**: retained-stage, coherent-publication, source-filter-query, legacy-query-admission, uniform-query-admission, committed-input-reconciliation, pilot-estimate
-- **Interfaces consumed**: staged-context, semantic-leases, exact-backend, batch-provenance, vector-maintenance, freeze-contract (pre-existing), state-contract (pre-existing), safety-contract (pre-existing)
+- **Interfaces consumed**: staged-context, semantic-leases, exact-backend, batch-provenance, vector-maintenance, filtered-vector-query, semantic-generation-location, freeze-contract (pre-existing), state-contract (pre-existing), safety-contract (pre-existing)
 - **Parallel-safe**: no
 - **Tasks**:
   - test: Seed real history/documents, imported vectors, summaries, relationships and outstanding deletion intents; run production rebuild rather than a mock that copies rows.
@@ -187,6 +189,31 @@ substitute for installed query workflows. Record all skips and failed attempts.
 - [ ] EC-DATA-4 - proven by `tests/test_v13_data_reconciliation.py` and `tests/test_ignore_patterns.py`; falsified by excluded/dirty input reaching embedding admission or missed committed modifications remaining stale after reconciliation.
 
 ## Execution Checkpoint
+
+2026-09-11 C18 acceptance repair: the exact dd0c763 verification passed all
+commands, but final source review found semantic source filters still used
+lexical FTS. Preserve that run as rejected acceptance evidence. Re-enter SL-0
+serially to add filtered-vector-query and real file/server controls, then SL-1
+to consume complete SQLite metadata candidates and preserve semantic failure
+semantics. SL-2 must rerun every original command on the repaired candidate.
+Lane ownership remains disjoint; no roadmap, budget or acceptance is weakened.
+
+A real rebuild/readiness assertion also reproduced a generation metadata and
+collection mismatch in the public semantic classifier. SL-0 exposes its pure
+generation location calculation; SL-1 consumes that location and the existing
+namespace resolver for readiness. Tests must reject missing/stale generation
+metadata even when legacy root metadata exists, and exercise public semantic
+queries after rebuild/restart. This is C12/C18 integration, not PILOT inference.
+The expanded real rebuild also exposed unsigned hash IDs overflowing SQLite's
+signed integer links. SL-0 restricts newly derived point IDs to positive signed
+63-bit values, preserving the reserved sentinel; SL-1 verifies real rebuild,
+restore and query roundtrips. Upstream chunk identities are unchanged.
+The standalone Git manager must also use StoreRegistry for a real registry:
+successive registry reads return new snapshots, not the same Python object.
+The public transport test reproduced unbound context admission from that old
+identity comparison. The ownership fix retains pooled generation handles;
+the archive byte-preservation fixture explicitly checkpoints its committed
+setup before taking a main-database-only hash.
 
 2026-09-11 final integration candidate: public query/refusal matrix, real Git
 branch identity, generation-bound artifact callers, truthful publication health,

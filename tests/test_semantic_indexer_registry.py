@@ -85,6 +85,23 @@ def mock_embedding_provider(monkeypatch):
 
 
 class TestSemanticIndexerRegistry:
+    def test_generation_location_is_pure_and_matches_constructor(
+        self, tmp_path, mock_qdrant, mock_embedding_provider
+    ):
+        from mcp_server.utils.semantic_indexer_registry import SemanticIndexerRegistry
+
+        repo_reg = _make_registry_with_repos(tmp_path)
+        info = repo_reg.get("repo-a")
+        root = SemanticIndexerRegistry.generation_root(info)
+        assert not root.exists()
+        registry = SemanticIndexerRegistry(repo_reg)
+        try:
+            indexer = registry.get("repo-a")
+            assert Path(indexer.metadata_file).parent == root
+            assert Path(indexer.qdrant_path) == root / "vectors"
+        finally:
+            registry.shutdown()
+
     def test_embedding_providers_module_imports_with_default_install_client_dependency(self):
         module = importlib.import_module("mcp_server.utils.embedding_providers")
         assert hasattr(module, "OpenAICompatibleEmbeddingProvider")

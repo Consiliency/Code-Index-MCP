@@ -2580,15 +2580,16 @@ class SQLiteStore:
         friction_categories: Optional[List[str]] = None,
         history_labels: Optional[List[str]] = None,
         history_repos: Optional[List[str]] = None,
-        limit: int = 20,
+        limit: Optional[int] = 20,
+        include_chunk_id: bool = False,
     ) -> List[Dict[str, Any]]:
-        """Filter source records, then apply literal-term FTS ranking before limiting."""
-        if limit <= 0:
+        """Filter then rank; an unlimited identity-bearing set feeds vector retrieval."""
+        if limit is not None and limit <= 0:
             return []
         with self._get_connection() as conn:
             assert_chunk_scheme_readable(conn)
             cursor = conn.execute(
-                """SELECT c.content, c.line_start, c.line_end, c.metadata,
+                """SELECT c.chunk_id, c.content, c.line_start, c.line_end, c.metadata,
                           COALESCE(f.path, f.relative_path, CAST(c.file_id AS TEXT)) AS file_path
                    FROM code_chunks c
                    JOIN files f ON c.file_id = f.id
@@ -2624,9 +2625,10 @@ class SQLiteStore:
                     "line_end": row["line_end"],
                     "snippet": row["content"],
                     "source_metadata": source_metadata,
+                    **({"chunk_id": row["chunk_id"]} if include_chunk_id else {}),
                 }
             )
-            if query is None and len(results) >= limit:
+            if query is None and limit is not None and len(results) >= limit:
                 break
         if query is None or not results:
             return results
@@ -2644,7 +2646,7 @@ class SQLiteStore:
             matches = ranking.execute(
                 "SELECT rowid, bm25(fts_code) FROM fts_code WHERE fts_code MATCH ? "
                 "ORDER BY bm25(fts_code), rowid LIMIT ?",
-                (" AND ".join('"' + term + '"' for term in terms), limit),
+                (" AND ".join('"' + term + '"' for term in terms), -1 if limit is None else limit),
             ).fetchall()
         return [{**results[index], "score": -rank} for index, rank in matches]
 

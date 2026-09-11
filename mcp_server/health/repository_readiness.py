@@ -479,8 +479,20 @@ class ReadinessClassifier:
                 remediation="Configure a semantic profile before treating semantic search as ready.",
             )
 
-        metadata = _load_index_metadata(Path(repo_info.path))
+        metadata_root = Path(repo_info.path)
         expected_collection = _profile_collection_name(profile)
+        generation = getattr(repo_info, "index_generation", None)
+        if generation:
+            from ..artifacts.semantic_namespace import SemanticNamespaceResolver
+            from ..utils.semantic_indexer_registry import SemanticIndexerRegistry
+
+            metadata_root = SemanticIndexerRegistry.generation_root(repo_info)
+            expected_collection = SemanticNamespaceResolver().resolve_collection_name(
+                repo_identifier=repo_info.repo_id,
+                profile_id=profile.profile_id,
+                lineage_id=metadata_root.name,
+            )
+        metadata = _load_index_metadata(metadata_root)
         evidence = _semantic_evidence(sqlite_store, profile.profile_id, expected_collection)
         metadata_profile = _current_profile_metadata(metadata, profile.profile_id)
         discovered_fingerprint = _metadata_fingerprint(metadata_profile)
@@ -552,8 +564,20 @@ class ReadinessClassifier:
                 evidence=evidence,
             )
 
-        if metadata_profile is None or (
-            discovered_fingerprint and discovered_fingerprint != profile.compatibility_fingerprint
+        if (
+            metadata_profile is None
+            or (
+                discovered_fingerprint
+                and discovered_fingerprint != profile.compatibility_fingerprint
+            )
+            or (
+                generation
+                and (
+                    discovered_fingerprint != profile.compatibility_fingerprint
+                    or discovered_dimension != profile.vector_dimension
+                    or discovered_collection != expected_collection
+                )
+            )
         ):
             return SemanticReadiness(
                 state=SemanticReadinessState.SEMANTIC_STALE,

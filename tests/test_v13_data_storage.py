@@ -110,6 +110,15 @@ def _seed_retained(store, repo):
     return file_id, symbol_id
 
 
+def test_standalone_manager_reuses_generation_bound_store(runtime):
+    _repo, _registry, repo_id, _store, manager = runtime
+    first = manager._resolve_ctx(repo_id)
+    second = manager._resolve_ctx(repo_id)
+    assert manager.store_registry is not None
+    assert first.sqlite_store is second.sqlite_store
+    assert manager.store_registry.is_current(repo_id, first.sqlite_store)
+
+
 def test_production_rebuild_preserves_imported_data_links_and_cleanup_debt(runtime):
     repo, registry, repo_id, original, manager = runtime
     file_id, symbol_id = _seed_retained(original, repo)
@@ -351,11 +360,14 @@ def test_real_semantic_generation_uses_its_own_backend_and_matching_summary_ids(
     from tests.test_embedding_provenance import _FakeProvenanceProvider, _openai_response, _profile
 
     repo, registry, repo_id, _store, manager = runtime
-    (repo / "hello.py").write_text("def hello():\n    return 'semantic sentinel'\n")
+    (repo / "hello.py").write_text(
+        "def hello():\n    # TODO: maintain synthetic observation\n    return 'semantic sentinel'\n"
+    )
     (repo / "same.py").write_text((repo / "hello.py").read_text())
     subprocess.run(["git", "add", "hello.py", "same.py"], cwd=repo, check=True)
     subprocess.run(["git", "commit", "-qm", "Synthetic semantic fixture"], cwd=repo, check=True)
     monkeypatch.delenv("QDRANT_URL", raising=False)
+    monkeypatch.setenv("SEMANTIC_SEARCH_ENABLED", "true")
     settings = Settings(
         semantic_search_enabled=True,
         semantic_default_profile="fixture",
@@ -411,6 +423,81 @@ def test_real_semantic_generation_uses_its_own_backend_and_matching_summary_ids(
     global_probe.assert_not_called()
     assert provider.calls
     ctx = manager._resolve_ctx(repo_id)
+    from mcp_server.health.repository_readiness import ReadinessClassifier
+
+    semantic_readiness = ReadinessClassifier.classify_semantic_registered(
+        ctx.registry_entry, ctx.sqlite_store
+    )
+    assert semantic_readiness.ready, semantic_readiness.to_dict()
+
+    def assert_public_semantic_queries():
+        import asyncio
+        from urllib.parse import urlencode
+
+        from starlette.requests import Request
+
+        import mcp_server.gateway as gateway
+        from mcp_server import ClientSearchOptions, open_client
+        from mcp_server.cli.tool_handlers import handle_search_code
+        from mcp_server.core.repo_resolver import RepoResolver
+
+        manager.dispatcher._semantic_registry.evict(repo_id)
+        with open_client(workspace_root=repo, registry_path=registry.registry_path) as client:
+            response = client.search_code(
+                ClientSearchOptions(
+                    query="concept",
+                    semantic=True,
+                    source_type="friction",
+                    friction_categories=("todo",),
+                )
+            )
+            assert response.code is None, response
+            assert len(response.results) == 2
+            assert all(row.source_metadata for row in response.results)
+        resolver = RepoResolver(registry, manager.store_registry)
+        monkeypatch.setattr(gateway, "repo_resolver", resolver)
+        monkeypatch.setattr(gateway, "dispatcher", manager.dispatcher)
+        monkeypatch.setattr(gateway, "query_cache", None)
+        monkeypatch.setattr(gateway, "get_settings", lambda: settings)
+        monkeypatch.setattr(gateway, "metrics_collector", MagicMock())
+        monkeypatch.setattr(gateway, "business_metrics", MagicMock())
+
+        async def query_transports():
+            blocks = await handle_search_code(
+                arguments={
+                    "query": "concept",
+                    "repository": str(repo),
+                    "semantic": True,
+                    "source_type": "friction",
+                    "friction_categories": ["todo"],
+                },
+                dispatcher=manager.dispatcher,
+                repo_resolver=resolver,
+            )
+            payload = json.loads(blocks[0].text)
+            assert len(payload.get("results", [])) == 2, payload
+            request = Request(
+                {
+                    "type": "http",
+                    "headers": [],
+                    "query_string": urlencode({"repository": str(repo)}).encode(),
+                }
+            )
+            rows = await gateway.search(
+                request,
+                q="concept",
+                semantic=True,
+                source_type="friction",
+                friction_categories="todo",
+                current_user=SimpleNamespace(username="synthetic"),
+            )
+            assert len(rows) == 2, rows
+            assert all(row.get("source_metadata") for row in rows)
+
+        asyncio.run(query_transports())
+
+    if restore_fault is None:
+        assert_public_semantic_queries()
     with manager.dispatcher._semantic_registry.lease(repo_id) as indexer:
         points, offset = indexer.qdrant.scroll(indexer.collection, with_payload=True, limit=100)
         assert points and offset is None
@@ -476,6 +563,29 @@ def test_real_semantic_generation_uses_its_own_backend_and_matching_summary_ids(
     with manager.dispatcher._semantic_registry.lease(repo_id) as indexer:
         points, _ = indexer.qdrant.scroll(indexer.collection, with_vectors=True, limit=100)
         assert len([point for point in points if point.id != indexer.PROVENANCE_POINT_ID]) == 4
+    assert_public_semantic_queries()
+
+    current = manager._resolve_ctx(repo_id)
+    metadata_file = (
+        SemanticIndexerRegistry.generation_root(current.registry_entry) / ".index_metadata.json"
+    )
+    original_metadata = metadata_file.read_text()
+    (repo / ".index_metadata.json").write_text(original_metadata)
+    metadata_file.unlink()
+    assert not ReadinessClassifier.classify_semantic_registered(
+        current.registry_entry, current.sqlite_store
+    ).ready
+    incomplete = json.loads(original_metadata)
+    incomplete["semantic_profiles"]["fixture"].pop("compatibility_fingerprint")
+    incomplete["semantic_profiles"]["fixture"].pop("compatibility_hash")
+    metadata_file.write_text(json.dumps(incomplete))
+    assert not ReadinessClassifier.classify_semantic_registered(
+        current.registry_entry, current.sqlite_store
+    ).ready
+    metadata_file.write_text(original_metadata)
+    assert ReadinessClassifier.classify_semantic_registered(
+        current.registry_entry, current.sqlite_store
+    ).ready
 
 
 def test_artifact_restore_preserves_local_imports_and_cleanup_debt(runtime, monkeypatch):
@@ -494,6 +604,9 @@ def test_artifact_restore_preserves_local_imports_and_cleanup_debt(runtime, monk
         active.sqlite_store.db_path, str(extracted / "current.db")
     )
     _seed_retained(active.sqlite_store, repo)
+    # Hash the complete committed fixture, not the pre-checkpoint main DB alone.
+    with active.sqlite_store._get_connection() as connection:
+        assert connection.execute("PRAGMA wal_checkpoint(FULL)").fetchone()[0] == 0
     old_path = registry.get(repo_id).index_path
     before = old_path.read_bytes()
     commit = _get_head_commit(repo)

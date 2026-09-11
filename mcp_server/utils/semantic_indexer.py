@@ -272,8 +272,8 @@ class SemanticIndexer:
     # WITHOUT reading the local ``.index_metadata.json`` file.
     PROVENANCE_VERSION = "collection-provenance.v1"
     # Reserved point id for the provenance sentinel. Ordinary points use
-    # content-hash-derived 64-bit ids (``_symbol_id`` / ``_document_section_id``).
-    # A real point hashing to this id is astronomically unlikely (~2**-64) but
+    # content-hash-derived 63-bit ids (``_symbol_id`` / ``_document_section_id``).
+    # A real point hashing to this id is astronomically unlikely (~2**-63) but
     # NOT impossible, so both id-derivations route through ``_reserve_safe_id``,
     # which relocates any real id that lands on the reserved value — guaranteeing
     # id 0 is never occupied by a real chunk and is safe to reserve.
@@ -1823,16 +1823,11 @@ class SemanticIndexer:
         return self._reserve_safe_id(int.from_bytes(h, "big", signed=False))
 
     def _reserve_safe_id(self, value: int) -> int:
-        """Keep a derived point id off the reserved provenance sentinel id.
-
-        ``_symbol_id`` / ``_document_section_id`` truncate a hash to 64 bits, so a
-        real point could (with probability ~2**-64) derive an id equal to the
-        reserved ``PROVENANCE_POINT_ID``. Fail-safe: relocate such a collision to a
-        fixed non-reserved id so a real point can never occupy — and thereby
-        clobber — the provenance sentinel.
-        """
+        """Fit SQLite's signed integer links without occupying the Qdrant sentinel."""
+        maximum = (1 << 63) - 1
+        value &= maximum
         if value == self.PROVENANCE_POINT_ID:
-            return 0xFFFFFFFFFFFFFFFF
+            return maximum
         return value
 
     def _looks_like_code_intent(self, query: str) -> bool:
@@ -2765,12 +2760,15 @@ class SemanticIndexer:
         }
 
     # ------------------------------------------------------------------
-    def query(self, text: str, limit: int = 5) -> Iterable[dict[str, Any]]:
+    def query(
+        self, text: str, limit: int = 5, *, source_chunk_ids: Optional[List[str]] = None
+    ) -> Iterable[dict[str, Any]]:
         """Query indexed code snippets using a natural language description.
 
         Args:
             text: Natural language query
             limit: Maximum number of results
+            source_chunk_ids: Restrict retrieval to these source chunks before ranking.
 
         Yields:
             Search results with metadata and scores
@@ -2783,6 +2781,23 @@ class SemanticIndexer:
                 "Qdrant is not available - cannot perform semantic search. "
                 "Check connection status with validate_connection()."
             )
+        if limit <= 0 or source_chunk_ids == []:
+            return
+
+        query_filter = models.Filter(
+            must_not=[
+                models.FieldCondition(key=self.PROVENANCE_TAG, match=models.MatchValue(value=True)),
+                models.FieldCondition(key="is_deleted", match=models.MatchValue(value=True)),
+            ],
+            should=(
+                [
+                    models.FieldCondition(key=key, match=models.MatchAny(any=source_chunk_ids))
+                    for key in ("source_chunk_id", "chunk_id")
+                ]
+                if source_chunk_ids is not None
+                else None
+            ),
+        )
 
         if self._provider_supports_provenance():
             try:
@@ -2807,12 +2822,14 @@ class SemanticIndexer:
                 results = self.qdrant.search(
                     collection_name=self.collection,
                     query_vector=embedding,
+                    query_filter=query_filter,
                     limit=query_limit,
                 )
             else:
                 response = self.qdrant.query_points(
                     collection_name=self.collection,
                     query=embedding,
+                    query_filter=query_filter,
                     limit=query_limit,
                     with_payload=True,
                 )
@@ -2822,7 +2839,7 @@ class SemanticIndexer:
             for res in results:
                 payload = dict(res.payload or {})
                 # Never surface the reserved collection-provenance sentinel.
-                if payload.get(self.PROVENANCE_TAG):
+                if payload.get(self.PROVENANCE_TAG) or payload.get("is_deleted"):
                     continue
                 payload["score"] = res.score
                 payload.update(self._semantic_result_metadata())
@@ -3257,12 +3274,15 @@ class SemanticIndexer:
         }
 
     # ------------------------------------------------------------------
-    def search(self, query: str, limit: int = 20) -> list[dict[str, Any]]:
+    def search(
+        self, query: str, limit: int = 20, *, source_chunk_ids: Optional[List[str]] = None
+    ) -> list[dict[str, Any]]:
         """Search for code using semantic similarity.
 
         Args:
             query: Natural language search query
             limit: Maximum number of results
+            source_chunk_ids: Restrict retrieval to these source chunks before ranking.
 
         Returns:
             List of search results with metadata and scores
@@ -3275,7 +3295,7 @@ class SemanticIndexer:
                 "Qdrant is not available - semantic search unavailable. "
                 "Use is_available property to check before calling."
             )
-        return list(self.query(query, limit))
+        return list(self.query(query, limit, source_chunk_ids=source_chunk_ids))
 
     # ------------------------------------------------------------------
     # Document-specific methods

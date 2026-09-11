@@ -85,7 +85,7 @@ def main() -> None:
                 "pytest",
                 "tests/test_v13_data_vectors.py",
                 "-k",
-                "maintenance",
+                "maintenance or generated_point_ids",
                 "-q",
                 "--no-cov",
                 "-o",
@@ -120,7 +120,7 @@ def main() -> None:
             ]
             passed = (
                 result.returncode == 0
-                and len(outcomes) == 11
+                and len(outcomes) == 19
                 and all(item["passed"] for item in outcomes)
             )
             print(

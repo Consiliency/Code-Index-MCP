@@ -1846,16 +1846,49 @@ class EnhancedDispatcher:
             if sqlite_store and (
                 effective_source_type or friction_categories or history_labels or history_repos
             ):
-                filtered_results = sqlite_store.search_chunks_by_source_metadata(
-                    query=query,
-                    source_type=effective_source_type or "friction",
-                    friction_categories=friction_categories,
-                    history_labels=history_labels,
-                    history_repos=history_repos,
-                    limit=limit,
-                )
-                for item in filtered_results:
-                    yield item
+                try:
+                    if semantic and _semantic_indexer is None:
+                        raise SemanticSearchFailure("Filtered semantic indexer is unavailable")
+                    filtered_results = sqlite_store.search_chunks_by_source_metadata(
+                        query=None if semantic else query,
+                        source_type=effective_source_type or "friction",
+                        friction_categories=friction_categories,
+                        history_labels=history_labels,
+                        history_repos=history_repos,
+                        limit=None if semantic else limit,
+                        include_chunk_id=semantic,
+                    )
+                    if semantic:
+                        # Restrict Qdrant before top-k, retaining every derived subchunk
+                        # through its source identity instead of one mapped point ID.
+                        chunks = {item["chunk_id"]: item for item in filtered_results}
+                        ranked = _semantic_indexer.search(
+                            query=query, limit=limit, source_chunk_ids=list(chunks)
+                        )
+                        filtered_results = []
+                        for result in ranked:
+                            identity = result.get("source_chunk_id") or result.get("chunk_id")
+                            if identity not in chunks:
+                                raise SemanticSearchFailure("Vector result escaped source filter")
+                            item = {k: v for k, v in chunks[identity].items() if k != "chunk_id"}
+                            item.update(
+                                {
+                                    "score": result.get("score", 0.0),
+                                    "semantic_source": result.get("semantic_source", "semantic"),
+                                    "semantic_profile_id": result.get("semantic_profile_id"),
+                                    "semantic_collection_name": result.get(
+                                        "semantic_collection_name"
+                                    ),
+                                }
+                            )
+                            filtered_results.append(item)
+                except Exception as exc:
+                    if semantic:
+                        raise SemanticSearchFailure(
+                            f"Filtered semantic search failed: {type(exc).__name__}"
+                        ) from exc
+                    raise
+                yield from filtered_results
                 self._operation_stats["searches"] += 1
                 self._operation_stats["total_time"] += time.time() - start_time
                 return
