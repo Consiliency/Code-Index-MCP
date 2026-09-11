@@ -11,7 +11,8 @@ def test_serve_uses_explicit_host_port(monkeypatch):
     runner = CliRunner()
     calls = []
 
-    def fake_run(app, host, port, reload):
+    def fake_run(app, host, port, reload, proxy_headers):
+        assert proxy_headers is False
         calls.append((app, host, port, reload))
 
     monkeypatch.setattr("uvicorn.run", fake_run)
@@ -28,7 +29,8 @@ def test_serve_uses_env_defaults(monkeypatch):
     runner = CliRunner()
     calls = []
 
-    def fake_run(app, host, port, reload):
+    def fake_run(app, host, port, reload, proxy_headers):
+        assert proxy_headers is False
         calls.append((app, host, port, reload))
 
     monkeypatch.setenv("MCP_SERVER_HOST", "0.0.0.0")
@@ -45,7 +47,8 @@ def test_serve_preserves_explicit_storage_env(monkeypatch):
     runner = CliRunner()
     calls = []
 
-    def fake_run(app, host, port, reload):
+    def fake_run(app, host, port, reload, proxy_headers):
+        assert proxy_headers is False
         calls.append((app, host, port, reload))
 
     monkeypatch.setenv("MCP_INDEX_STORAGE_PATH", "/tmp/custom-indexes")

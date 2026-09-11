@@ -223,7 +223,10 @@ async def run_reindex_task(
     try:
         async with anyio.create_task_group() as tg:
             tg.start_soon(cancel_observer)
-            outcome = await asyncio.to_thread(run_repository_mutation, repo_resolver, ctx, do_work)
+            # Do not abandon a mutating worker when its request scope is cancelled.
+            outcome = await anyio.to_thread.run_sync(
+                run_repository_mutation, repo_resolver, ctx, do_work, abandon_on_cancel=False
+            )
             tg.cancel_scope.cancel()
     except Exception:
         if ctx is not None:

@@ -239,7 +239,7 @@ class MultiRepositoryManager:
             conn.close()
 
         except Exception as e:
-            logger.error(f"Error analyzing repository: {e}")
+            logger.error(f"Error analyzing repository: {type(e).__name__}")
 
         return stats
 
@@ -386,7 +386,7 @@ class MultiRepositoryManager:
         try:
             return self._store_registry.get(repository_id)
         except (KeyError, Exception) as e:
-            logger.error(f"Failed to connect to repository {repository_id}: {e}")
+            logger.error(f"Failed to connect to repository {repository_id}: {type(e).__name__}")
             return None
 
     def _normalize_symbol_result(self, result: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -464,7 +464,7 @@ class MultiRepositoryManager:
                     if result:
                         results.append(result)
                 except Exception as e:
-                    logger.error(f"Search failed for {repo.name}: {e}")
+                    logger.error(f"Search failed for {repo.name}: {type(e).__name__}")
                     results.append(
                         CrossRepoSearchResult(
                             repository_id=repo.repository_id,
@@ -500,7 +500,7 @@ class MultiRepositoryManager:
         try:
             store = self._get_connection(repository_id)
         except Exception as e:
-            logger.error(f"Failed to get connection for {repository_id}: {e}")
+            logger.error(f"Failed to get connection for {repository_id}: {type(e).__name__}")
             return None
         if not store:
             return None
@@ -546,7 +546,7 @@ class MultiRepositoryManager:
             )
 
         except Exception as e:
-            logger.error(f"Error searching repository {repository_id}: {e}")
+            logger.error(f"Error searching repository {repository_id}: {type(e).__name__}")
             return CrossRepoSearchResult(
                 repository_id=repository_id,
                 repository_name=repo_info.name,
@@ -587,7 +587,7 @@ class MultiRepositoryManager:
             logger.warning("No repositories to search")
             return []
 
-        logger.info(f"Code search for '{query}' across {len(repos)} repositories")
+        logger.info("Code search across %d repositories (query_chars=%d)", len(repos), len(query))
 
         # Update statistics
         self._search_stats["total_searches"] += 1
@@ -615,7 +615,7 @@ class MultiRepositoryManager:
                     if result:
                         results.append(result)
                 except Exception as e:
-                    logger.error(f"Search failed in {repo.name}: {e}")
+                    logger.error(f"Search failed in {repo.name}: {type(e).__name__}")
                     results.append(
                         CrossRepoSearchResult(
                             repository_id=repo.repository_id,
@@ -663,12 +663,14 @@ class MultiRepositoryManager:
             try:
                 bm25_results = store.search_bm25(query, table="bm25_content", limit=limit)
             except Exception as e:
-                logger.debug(f"bm25_content search failed, trying fts_code: {e}")
+                logger.debug(f"bm25_content search failed, trying fts_code: {type(e).__name__}")
                 # Fall back to fts_code table
                 try:
                     bm25_results = store.search_bm25(query, table="fts_code", limit=limit)
                 except Exception as e2:
-                    logger.warning(f"Both BM25 tables failed for {repository_id}: {e2}")
+                    logger.warning(
+                        f"Both BM25 tables failed for {repository_id}: {type(e2).__name__}"
+                    )
 
             # Format results
             formatted_results = []
@@ -694,7 +696,7 @@ class MultiRepositoryManager:
             )
 
         except Exception as e:
-            logger.error(f"BM25 search failed in {repository_id}: {e}")
+            logger.error(f"BM25 search failed in {repository_id}: {type(e).__name__}")
             return CrossRepoSearchResult(
                 repository_id=repository_id,
                 repository_name=repo_info.name,
@@ -804,7 +806,7 @@ class MultiRepositoryManager:
                 logger.info(f"Optimized index for {repo.name}")
 
             except Exception as e:
-                logger.error(f"Failed to optimize {repo.name}: {e}")
+                logger.error(f"Failed to optimize {repo.name}: {type(e).__name__}")
 
         logger.info(f"Optimized {optimized} repository indexes")
 

@@ -40,8 +40,9 @@ def test_verify_binds_trusted_workflow_ref_and_predicate(tmp_path, monkeypatch):
     with patch("subprocess.run", return_value=MagicMock(returncode=0)) as run:
         verify_attestation(FAKE_ARCHIVE, att, expected_repo=REPO)
     args = run.call_args.args[0]
-    assert args[args.index("--signer-workflow") + 1] == (
-        "owner/repo/.github/workflows/sign-published-image.yml"
+    assert "--signer-workflow" not in args
+    assert args[args.index("--cert-identity") + 1] == (
+        "https://github.com/owner/repo/.github/workflows/sign-published-image.yml@refs/heads/main"
     )
     assert args[args.index("--source-ref") + 1] == "refs/heads/main"
     assert args[args.index("--signer-digest") + 1] == "a" * 40

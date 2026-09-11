@@ -229,8 +229,20 @@ def http_probe(root: Path, url: str, rebuild: bool) -> None:
                 raise AssertionError(f"HTTP {exc.code} returned non-JSON for {path}") from exc
 
     assert os.getuid() != 0, "Container probe must run as the configured non-root user"
+    prior_session = root / "synthetic-http-session.json"
+    if not rebuild:
+        prior = json.loads(prior_session.read_text())
+        code, _ = request("/status", token=prior["access_token"])
+        assert code == 401, "access session survived process restart"
+        code, _ = request("/api/v1/auth/refresh", data={"refresh_token": prior["refresh_token"]})
+        assert code == 401, "refresh session survived process restart"
     code, auth = request("/api/v1/auth/login", data={"username": "admin", "password": PASSWORD})
     assert code == 200, code
+    if rebuild:
+        prior_session.write_text(
+            json.dumps({key: auth[key] for key in ("access_token", "refresh_token")})
+        )
+        prior_session.chmod(0o600)
     token = auth["access_token"]
     fixture = str(root / "fixture")
     if rebuild:

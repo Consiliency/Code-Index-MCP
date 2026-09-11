@@ -70,7 +70,7 @@ def _verify_signature(
     if not re.fullmatch(r"refs/(?:heads|tags)/[A-Za-z0-9_./-]+", source_ref):
         raise AttestationError("Invalid attestation source-ref policy")
     signer_digest = os.environ.get("MCP_ATTESTATION_SIGNER_DIGEST")
-    if signer_digest and not re.fullmatch(r"[0-9a-f]{40,64}", signer_digest):
+    if signer_digest and not re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", signer_digest):
         raise AttestationError("Invalid attestation signer-digest policy")
     if attestation.subject_digest and attestation.subject_digest != _sha256_of(archive_path):
         raise AttestationError("Attestation artifact digest mismatch")
@@ -84,8 +84,6 @@ def _verify_signature(
         str(attestation.bundle_path),
         "--repo",
         expected_repo,
-        "--signer-workflow",
-        workflow,
         "--source-ref",
         source_ref,
         "--cert-identity",

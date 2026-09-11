@@ -45,7 +45,7 @@ class RefPoller:
     def stop(self) -> None:
         self._stop_event.set()
         if self._thread is not None:
-            self._thread.join(timeout=5)
+            self._thread.join()
 
     def _run(self) -> None:
         while not self._stop_event.is_set():

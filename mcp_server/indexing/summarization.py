@@ -1383,6 +1383,16 @@ class LazyChunkWriter(ChunkWriter):
         if self._task is None:
             self._task = asyncio.create_task(self._worker())
 
+    async def stop(self) -> None:
+        """Cancel and await the owned background task before closing its storage."""
+        if self._task is not None:
+            task, self._task = self._task, None
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        if self._sqlite_store is not None:
+            self._sqlite_store.close()
+            self._sqlite_store = None
+
     def update_session(self, session: Any) -> None:
         """Refresh the MCP session reference used for sampling.
 
@@ -1397,7 +1407,7 @@ class LazyChunkWriter(ChunkWriter):
             try:
                 await self.summarize_chunk(**chunk)
             except Exception as exc:
-                logger.error("Error summarizing chunk: %s", exc)
+                logger.error("Error summarizing chunk (%s)", type(exc).__name__)
             finally:
                 self.queue.task_done()
 

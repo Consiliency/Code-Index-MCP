@@ -10,7 +10,7 @@ Worktree: `/mnt/workspace/worktrees/Code-Index-MCP-v13-audit-remediation`.
 | FREEZE | Accepted; owner decisions approved | `docs/validation/v13/FREEZE.json` |
 | DIST | Accepted | `docs/validation/v13/DIST.json`; IF-0-DIST-1 |
 | STATE | Accepted | `docs/validation/v13/STATE.json`; IF-0-STATE-1 |
-| SAFETY | Executing; plan validated | `plans/phase-plan-v13-SAFETY.md`; no implementation acceptance claimed |
+| SAFETY | Implemented; exact-candidate verification pending | `plans/phase-plan-v13-SAFETY.md`; signing proof recorded, gate withheld |
 | DATA | Not started | No implementation acceptance claimed |
 | PILOT | Not started | No inference or browser acceptance claimed |
 | PREP | Not started | No version bump or implementation code review claimed |
@@ -129,3 +129,29 @@ hashes. The prior rejected run remains intact. Only this bounded state contract
 is accepted: SAFETY/DATA/PILOT/PREP/SHIP work and their gates remain outstanding.
 Live GitHub check found no open Code-Index-MCP issues; findings remain roadmap
 items. Draft Code-Index-MCP#97 is open and has not been merged.
+
+## SAFETY Implementation
+
+Artifact verification now checks trusted policy before extraction/publication,
+preserves prepared bytes, and consumes supported GitHub OIDC bundles. The single
+approved digest-only signing job succeeded in seven seconds on source `7251903`;
+the image job was skipped. Local verification accepted the synthetic archive and
+rejected seven negative controls. The first CLI verification exposed incompatible
+flags; the repaired invocation binds the exact workflow through certificate
+identity. No additional signing job was dispatched and no archive was uploaded.
+Metadata-only evidence is in `docs/validation/v13/SAFETY-signing.json`.
+
+Supported filesystem and SQLite capability forms are guarded, with explicit
+cooperative rather than hostile-code containment limits. STDIO signals and EOF
+share an awaited lifetime owner, sandbox transport deadlines reap workers, and
+timed-out mutation threads retain ownership until drained or service fail-stop.
+Metrics have loopback ownership and socket release; forwarded HTTP identity
+requires trusted peers. Normal diagnostics omit query and exception content.
+
+Development checks passed 185 artifact/capability cases and the expanded focused
+lifecycle groups. An independently installed core wheel passed two SDK sessions
+and six lifecycle cases, each with a real plugin child and no surviving child.
+Normal exits took under one second; the admitted long reindex failed closed at
+the 15-second service deadline. These diagnostic results do not close SAFETY:
+the final candidate must pass all stamped commands, including updated content
+sentinels, crypto re-verification and the non-root container/restart checks.

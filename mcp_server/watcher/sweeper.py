@@ -113,8 +113,10 @@ class WatcherSweeper:
         self._thread.start()
 
     def stop(self) -> None:
-        """Signal the sweep thread to stop; returns immediately."""
+        """Stop and drain the sweep owner before its storage can be released."""
         self._stop_event.set()
+        if self._thread is not None and self._thread is not threading.current_thread():
+            self._thread.join()
 
     def _loop(self) -> None:
         """Daemon loop: wait for interval or stop, then sweep."""

@@ -23,6 +23,7 @@ IMAGE = "ghcr.io/consiliency/code-index-mcp:local-smoke"
 CANONICAL_ENTRYPOINTS = ("mcp-index", "index-it-mcp")
 REMOVED_ENTRYPOINTS = ("code-index-mcp",)
 PROBE = REPO / "scripts/installed_runtime_smoke.py"
+SAFETY_PROBE = REPO / "scripts/safety_runtime_smoke.py"
 
 
 def _run(
@@ -61,6 +62,7 @@ def smoke_wheel() -> None:
         runtime.mkdir()
         probe = runtime / PROBE.name
         shutil.copyfile(PROBE, probe)
+        shutil.copyfile(SAFETY_PROBE, runtime / SAFETY_PROBE.name)
         _run(["uv", "build", "--wheel", "--out-dir", str(dist)], timeout=300)
         wheels = sorted(dist.glob("index_it_mcp-*.whl"))
         if len(wheels) != 1:
@@ -127,6 +129,20 @@ def smoke_wheel() -> None:
                 env=env,
                 timeout=300,
             )
+        _run(
+            [
+                str(python),
+                "-I",
+                str(runtime / SAFETY_PROBE.name),
+                "--root",
+                str(runtime),
+                "--entrypoint",
+                str(_venv_bin(venv_dir, "index-it-mcp")),
+            ],
+            cwd=runtime,
+            env=env,
+            timeout=300,
+        )
 
 
 def smoke_stdio() -> None:
@@ -163,6 +179,7 @@ def smoke_container() -> None:
         root = Path(tmp)
         root.chmod(0o777)
         shutil.copyfile(PROBE, root / PROBE.name)
+        shutil.copyfile(SAFETY_PROBE, root / SAFETY_PROBE.name)
         mount = ["-v", f"{root}:/smoke"]
         probe = ["python", "-I", "/smoke/installed_runtime_smoke.py", "--root", "/smoke"]
         # The image's configured USER owns the fixture; no root override or fake services.
@@ -205,6 +222,21 @@ def smoke_container() -> None:
             subprocess.run(
                 ["docker", "rm", "-f", container], check=True, timeout=60, stdout=subprocess.DEVNULL
             )
+        _run(
+            [
+                "docker",
+                "run",
+                "--rm",
+                *mount,
+                image_id,
+                "python",
+                "-I",
+                "/smoke/safety_runtime_smoke.py",
+                "--root",
+                "/smoke",
+            ],
+            timeout=300,
+        )
 
 
 def parse_args() -> argparse.Namespace:

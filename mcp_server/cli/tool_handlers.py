@@ -14,6 +14,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional, Sequence
 
+import anyio
 import mcp.types as types
 
 from mcp_server.cli.bootstrap import _allowed_roots, _path_within_allowed, validate_index
@@ -183,7 +184,7 @@ def _resolve_ctx(
             else repo_resolver.resolve(target)
         )
     except Exception as exc:
-        logger.debug("RepoResolver.resolve(%s) failed: %s", target, exc)
+        logger.debug("RepoResolver.resolve(%s) failed: %s", target, type(exc).__name__)
         return None
 
 
@@ -204,7 +205,7 @@ def _classify_ctx(
     try:
         readiness = classifier(target)
     except Exception as exc:
-        logger.debug("RepoResolver.classify(%s) failed: %s", target, exc)
+        logger.debug("RepoResolver.classify(%s) failed: %s", target, type(exc).__name__)
         return RepositoryReadiness(
             state=RepositoryReadinessState.UNREGISTERED_REPOSITORY,
             requested_path=str(target),
@@ -361,7 +362,7 @@ def _record_reindexed_files(active_store: Any, workspace_root: Path, target_path
             )
             recorded += 1
         except Exception as exc:
-            logger.debug("Could not record reindexed file %s: %s", file_path, exc)
+            logger.debug("Could not record reindexed file %s: %s", file_path, type(exc).__name__)
     return recorded
 
 
@@ -566,7 +567,7 @@ async def handle_search_code(
             )
         ]
     except Exception as e:
-        logger.error(f"Search failed: {e}")
+        logger.error(f"Search failed: {type(e).__name__}")
         return [
             types.TextContent(
                 type="text",
@@ -1181,7 +1182,9 @@ async def handle_reindex(
         and not target_path.is_file()
     )
     if git_index_manager is not None and whole_repository and ctx is not None:
-        sync_result = git_index_manager.rebuild_repository_index(ctx.repo_id)
+        sync_result = await anyio.to_thread.run_sync(
+            git_index_manager.rebuild_repository_index, ctx.repo_id, abandon_on_cancel=False
+        )
         if sync_result.action != "full_index":
             return _json_text_response(
                 {
@@ -1232,7 +1235,9 @@ async def handle_reindex(
                 )
                 return result
 
-            run_repository_mutation(repo_resolver, ctx, index_file)
+            await anyio.to_thread.run_sync(
+                run_repository_mutation, repo_resolver, ctx, index_file, abandon_on_cancel=False
+            )
             return _json_text_response(
                 {
                     "path": str(target_path),
@@ -1285,7 +1290,9 @@ async def handle_reindex(
             stats["lexical_rows"] = store.rebuild_fts_code() if store else 0
             return stats
 
-        stats = run_repository_mutation(repo_resolver, ctx, index_directory)
+        stats = await anyio.to_thread.run_sync(
+            run_repository_mutation, repo_resolver, ctx, index_directory, abandon_on_cancel=False
+        )
         durable_files = stats["durable_files"]
         lexical_rows = stats["lexical_rows"]
 

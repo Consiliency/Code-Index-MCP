@@ -56,7 +56,7 @@ class GitMonitor:
         """Stop monitoring."""
         self.running = False
         if self.monitor_thread:
-            self.monitor_thread.join(timeout=5)
+            self.monitor_thread.join()
         logger.info("Git monitor stopped")
 
     def _monitor_loop(self):
@@ -536,9 +536,14 @@ class MultiRepositoryWatcher:
             self.sweeper.stop()
 
         # Stop all file watchers
-        for repo_id, observer in self.observers.items():
+        with self._watch_lock:
+            observers = list(self.observers.values())
+        for observer in observers:
             observer.stop()
-            observer.join(timeout=5)
+        for observer in observers:
+            observer.join()
+
+        self.executor.shutdown(wait=True, cancel_futures=True)
 
         self.watchers.clear()
         self.observers.clear()

@@ -152,7 +152,7 @@ class _Handler(FileSystemEventHandler):
     def stop(self) -> None:
         """Stop the debounce worker. Idempotent."""
         self._stop_event.set()
-        self._worker.join(timeout=2)
+        self._worker.join()
 
     def flush(self) -> None:
         """Force-drain all pending events immediately. For use in tests only."""
@@ -325,5 +325,5 @@ class FileWatcher:
 
     def stop(self) -> None:
         self._observer.stop()
-        self._observer.join(timeout=5)
+        self._observer.join()
         self._handler.stop()

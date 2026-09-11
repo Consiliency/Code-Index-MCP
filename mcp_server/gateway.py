@@ -629,7 +629,9 @@ async def startup_event():
                 )
                 logger.info("Using Redis cache backend")
             except Exception as e:
-                logger.warning(f"Failed to initialize Redis cache, falling back to memory: {e}")
+                logger.warning(
+                    f"Failed to initialize Redis cache, falling back to memory: {type(e).__name__}"
+                )
                 cache_manager = CacheManagerFactory.create_memory_cache()
         elif cache_backend_type == "hybrid":
             try:
@@ -641,7 +643,9 @@ async def startup_event():
                 )
                 logger.info("Using hybrid cache backend")
             except Exception as e:
-                logger.warning(f"Failed to initialize hybrid cache, falling back to memory: {e}")
+                logger.warning(
+                    f"Failed to initialize hybrid cache, falling back to memory: {type(e).__name__}"
+                )
                 cache_manager = CacheManagerFactory.create_memory_cache()
         else:
             cache_manager = CacheManagerFactory.create_memory_cache(
@@ -756,7 +760,10 @@ async def startup_event():
             _gw_self._repo_registry = _local_repo_registry
             logger.info("RepoResolver initialized")
         except Exception as _e:
-            logger.warning("RepoResolver init failed; falling back to global sqlite_store: %s", _e)
+            logger.warning(
+                "RepoResolver init failed; falling back to global sqlite_store: %s",
+                type(_e).__name__,
+            )
             repo_resolver = None
 
         profile_registry = None
@@ -772,7 +779,9 @@ async def startup_event():
                 for profile_id, profile in profile_registry.list().items()
             }
         except Exception as exc:
-            logger.warning("Failed to load semantic profile registry for hydration: %s", exc)
+            logger.warning(
+                "Failed to load semantic profile registry for hydration: %s", type(exc).__name__
+            )
 
         selected_index_path = (
             discovery.get_local_index_path() if discovery.is_index_enabled() else None
@@ -868,7 +877,7 @@ async def startup_event():
                     plugin_instances.append(plugin)
                     logger.info(f"Successfully loaded plugin for {language}")
             except Exception as e:
-                logger.error(f"Failed to load plugin for {language}: {e}")
+                logger.error(f"Failed to load plugin for {language}: {type(e).__name__}")
 
         logger.info(f"Loaded {len(plugin_instances)} plugins")
 
@@ -889,7 +898,7 @@ async def startup_event():
 
                 semantic_indexer_registry = SemanticIndexerRegistry(_local_repo_registry)
             except Exception as _sem_reg_err:
-                logger.warning("Semantic registry unavailable: %s", _sem_reg_err)
+                logger.warning("Semantic registry unavailable: %s", type(_sem_reg_err).__name__)
 
         # Create a new EnhancedDispatcher instance with the loaded plugins
         logger.info("Creating dispatcher...")
@@ -980,7 +989,7 @@ async def startup_event():
             except ImportError:
                 logger.warning("Semantic indexer not available (missing dependencies)")
             except Exception as e:
-                logger.error(f"Failed to initialize semantic indexer: {e}")
+                logger.error(f"Failed to initialize semantic indexer: {type(e).__name__}")
         else:
             logger.info(
                 "Semantic indexer disabled after preflight; lexical/bm25/fuzzy remain active"
@@ -1045,7 +1054,9 @@ async def startup_event():
                 ref_poller.start()
                 logger.info("MultiRepositoryWatcher and RefPoller started")
             except Exception as _watcher_err:
-                logger.warning("MultiRepositoryWatcher failed to start: %s", _watcher_err)
+                logger.warning(
+                    "MultiRepositoryWatcher failed to start: %s", type(_watcher_err).__name__
+                )
                 multi_watcher = None
                 ref_poller = None
 
@@ -1119,7 +1130,7 @@ async def startup_event():
             "MCP Server initialized successfully with dynamic plugin system, SQLite persistence, and file watcher"
         )
     except Exception as e:
-        logger.error(f"Failed to initialize MCP Server: {e}", exc_info=True)
+        logger.error(f"Failed to initialize MCP Server: {type(e).__name__}")
         raise
 
 
@@ -1133,21 +1144,21 @@ async def shutdown_event():
             multi_watcher.stop_watching_all()
             logger.info("MultiRepositoryWatcher stopped successfully")
         except Exception as e:
-            logger.error(f"Error stopping MultiRepositoryWatcher: {e}", exc_info=True)
+            logger.error(f"Error stopping MultiRepositoryWatcher: {type(e).__name__}")
 
     if ref_poller:
         try:
             ref_poller.stop()
             logger.info("RefPoller stopped successfully")
         except Exception as e:
-            logger.error(f"Error stopping RefPoller: {e}", exc_info=True)
+            logger.error(f"Error stopping RefPoller: {type(e).__name__}")
 
     if dispatcher:
         try:
             dispatcher.shutdown()
             logger.info("Dispatcher plugin workers stopped successfully")
         except Exception as e:
-            logger.error(f"Error stopping dispatcher plugin workers: {e}", exc_info=True)
+            logger.error(f"Error stopping dispatcher plugin workers: {type(e).__name__}")
 
     if plugin_manager:
         try:
@@ -1158,14 +1169,14 @@ async def shutdown_event():
                 logger.error(f"Plugin manager shutdown failed: {shutdown_result.error.message}")
                 logger.error(f"Shutdown error details: {shutdown_result.error.details}")
         except Exception as e:
-            logger.error(f"Error shutting down plugin manager: {e}", exc_info=True)
+            logger.error(f"Error shutting down plugin manager: {type(e).__name__}")
 
     if cache_manager:
         try:
             await cache_manager.shutdown()
             logger.info("Cache manager shutdown successfully")
         except Exception as e:
-            logger.error(f"Error shutting down cache manager: {e}", exc_info=True)
+            logger.error(f"Error shutting down cache manager: {type(e).__name__}")
 
 
 # Authentication endpoints
@@ -1198,7 +1209,7 @@ async def login(credentials: AuthCredentials) -> Dict[str, Any]:
             },
         }
     except Exception as e:
-        logger.error(f"Login failed for user '{credentials.username}': {e}")
+        logger.error(f"Login failed for user '{credentials.username}': {type(e).__name__}")
         raise HTTPException(401, "Authentication failed")
 
 
@@ -1219,7 +1230,7 @@ async def refresh_token(refresh_token: str) -> Dict[str, Any]:
             "expires_in": security_config.access_token_expire_minutes * 60,
         }
     except Exception as e:
-        logger.error(f"Token refresh failed: {e}")
+        logger.error(f"Token refresh failed: {type(e).__name__}")
         raise HTTPException(401, "Token refresh failed")
 
 
@@ -1242,7 +1253,7 @@ async def logout(
 
         return {"message": "Successfully logged out"}
     except Exception as e:
-        logger.error(f"Logout failed: {e}")
+        logger.error(f"Logout failed: {type(e).__name__}")
         raise HTTPException(500, "Logout failed")
 
 
@@ -1291,7 +1302,7 @@ async def register(
             },
         }
     except Exception as e:
-        logger.error(f"User registration failed: {e}")
+        logger.error(f"User registration failed: {type(e).__name__}")
         raise HTTPException(400, str(e))
 
 
@@ -1324,7 +1335,7 @@ async def get_security_events(
             ]
         }
     except Exception as e:
-        logger.error(f"Failed to get security events: {e}")
+        logger.error(f"Failed to get security events: {type(e).__name__}")
         raise HTTPException(500, "Failed to retrieve security events")
 
 
@@ -1358,7 +1369,7 @@ async def detailed_health_check() -> Dict[str, Any]:
             ],
         }
     except Exception as e:
-        logger.error(f"Health check failed: {e}", exc_info=True)
+        logger.error(f"Health check failed: {type(e).__name__}")
         return {
             "status": "unhealthy",
             "message": f"Health check failed: {str(e)}",
@@ -1379,7 +1390,7 @@ async def component_health_check(component: str) -> Dict[str, Any]:
             "details": result.details,
         }
     except Exception as e:
-        logger.error(f"Component health check failed for {component}: {e}", exc_info=True)
+        logger.error(f"Component health check failed for {component}: {type(e).__name__}")
         raise HTTPException(500, f"Health check failed: {str(e)}")
 
 
@@ -1451,7 +1462,7 @@ def get_prometheus_metrics() -> Response:
         metrics = prometheus_exporter.generate_metrics()
         return Response(content=metrics, media_type=prometheus_exporter.get_content_type())
     except Exception as e:
-        logger.error(f"Failed to generate Prometheus metrics: {e}", exc_info=True)
+        logger.error(f"Failed to generate Prometheus metrics: {type(e).__name__}")
         raise HTTPException(500, f"Failed to generate metrics: {str(e)}")
 
 
@@ -1470,7 +1481,7 @@ def get_metrics_json(
             "metric_families": families,
         }
     except Exception as e:
-        logger.error(f"Failed to get JSON metrics: {e}", exc_info=True)
+        logger.error(f"Failed to get JSON metrics: {type(e).__name__}")
         raise HTTPException(500, f"Failed to get metrics: {str(e)}")
 
 
@@ -1498,7 +1509,7 @@ async def symbol(
 
     start_time = time.time()
     try:
-        logger.debug(f"Looking up symbol: {symbol} for user: {current_user.username}")
+        logger.debug("Looking up symbol")
 
         # Try cache first if query cache is available
         cached_result = None
@@ -1512,7 +1523,7 @@ async def symbol(
 
         if cached_result is not None:
             _require_current_generation(ctx)
-            logger.debug(f"Found cached symbol: {symbol}")
+            logger.debug("Found cached symbol")
             duration = time.time() - start_time
             business_metrics.record_search_performed(
                 query=symbol, semantic=False, results_count=1, duration=duration
@@ -1544,9 +1555,9 @@ async def symbol(
         )
 
         if result:
-            logger.debug(f"Found symbol: {symbol}")
+            logger.debug("Found symbol")
         else:
-            logger.debug(f"Symbol not found: {symbol}")
+            logger.debug("Symbol not found")
         _require_current_generation(ctx)
         return result
     except HTTPException:
@@ -1557,7 +1568,7 @@ async def symbol(
         business_metrics.record_search_performed(
             query=symbol, semantic=False, results_count=0, duration=duration
         )
-        logger.error(f"Error looking up symbol '{symbol}': {e}", exc_info=True)
+        logger.error("Symbol lookup failed (%s)", type(e).__name__)
         raise HTTPException(500, f"Internal error during symbol lookup: {str(e)}")
 
 
@@ -1697,7 +1708,7 @@ async def search(
             cached_results = [
                 r for r in (_normalize_search_result(x) for x in cached_results) if r is not None
             ]
-            logger.debug(f"Found cached search results for: '{q}' ({len(cached_results)} results)")
+            logger.debug("Found cached search results (count=%d)", len(cached_results))
             duration = time.time() - start_time
             business_metrics.record_search_performed(
                 query=q,
@@ -1888,7 +1899,7 @@ async def search(
         business_metrics.record_search_performed(
             query=q, semantic=semantic, results_count=0, duration=duration
         )
-        logger.error(f"Error during search for '{q}': {e}", exc_info=True)
+        logger.error("Search failed (%s)", type(e).__name__)
         raise HTTPException(500, f"Internal error during search: {str(e)}")
 
 
@@ -2010,7 +2021,7 @@ async def get_status(
                     "memory_usage_mb": cache_metrics.memory_usage_mb,
                 }
             except Exception as e:
-                logger.warning(f"Failed to get cache stats: {e}")
+                logger.warning(f"Failed to get cache stats: {type(e).__name__}")
 
         from mcp_server.health.repo_status import build_health_row as _build_health_row
 
@@ -2037,7 +2048,9 @@ async def get_status(
                             _features = None
                     _repositories.append(_build_health_row(info, features=_features))
             except Exception as _repo_err:
-                logger.warning("Failed to build repository health rows: %s", _repo_err)
+                logger.warning(
+                    "Failed to build repository health rows: %s", type(_repo_err).__name__
+                )
 
         status_data = {
             "status": "operational",
@@ -2073,7 +2086,7 @@ async def get_status(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error getting server status: {e}", exc_info=True)
+        logger.error(f"Error getting server status: {type(e).__name__}")
         return {
             "status": "error",
             "plugins": 0,
@@ -2115,7 +2128,7 @@ def plugins(
         logger.debug(f"Returning {len(plugin_list)} plugins")
         return plugin_list
     except Exception as e:
-        logger.error(f"Error getting plugin list: {e}", exc_info=True)
+        logger.error(f"Error getting plugin list: {type(e).__name__}")
         raise HTTPException(500, f"Internal error getting plugins: {str(e)}")
 
 
@@ -2246,10 +2259,12 @@ async def reindex(
                             else:
                                 stats["indexed_files"] += 1
                     except (OSError, ValueError, PathTraversalError) as exc:
-                        logger.warning("Skipped unsafe reindex path %s: %s", file_path, exc)
+                        logger.warning(
+                            "Skipped unsafe reindex path %s: %s", file_path, type(exc).__name__
+                        )
                     except Exception as exc:
                         stats["failed_files"] += 1
-                        logger.warning("Failed to index %s: %s", file_path, exc)
+                        logger.warning("Failed to index %s: %s", file_path, type(exc).__name__)
                 return stats
 
             stats = run_repository_mutation(repo_resolver, ctx, index_target)
@@ -2294,7 +2309,7 @@ async def reindex(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Reindexing failed: {e}", exc_info=True)
+        logger.error(f"Reindexing failed: {type(e).__name__}")
         raise HTTPException(500, f"Reindexing failed: {str(e)}")
 
 
@@ -2321,7 +2336,7 @@ async def reload_plugin(
             "message": f"Plugin '{plugin_name}' reloaded successfully",
         }
     except Exception as e:
-        logger.error(f"Failed to reload plugin '{plugin_name}': {e}", exc_info=True)
+        logger.error(f"Failed to reload plugin '{plugin_name}': {type(e).__name__}")
         raise HTTPException(500, f"Failed to reload plugin: {str(e)}")
 
 
@@ -2353,7 +2368,7 @@ async def enable_plugin(
             "message": f"Plugin '{plugin_name}' enabled successfully",
         }
     except Exception as e:
-        logger.error(f"Failed to enable plugin '{plugin_name}': {e}", exc_info=True)
+        logger.error(f"Failed to enable plugin '{plugin_name}': {type(e).__name__}")
         raise HTTPException(500, f"Failed to enable plugin: {str(e)}")
 
 
@@ -2385,7 +2400,7 @@ async def disable_plugin(
             "message": f"Plugin '{plugin_name}' disabled successfully",
         }
     except Exception as e:
-        logger.error(f"Failed to disable plugin '{plugin_name}': {e}", exc_info=True)
+        logger.error(f"Failed to disable plugin '{plugin_name}': {type(e).__name__}")
         raise HTTPException(500, f"Failed to disable plugin: {str(e)}")
 
 
@@ -2425,7 +2440,7 @@ async def get_cache_stats(
 
         return stats
     except Exception as e:
-        logger.error(f"Failed to get cache stats: {e}")
+        logger.error(f"Failed to get cache stats: {type(e).__name__}")
         raise HTTPException(500, f"Failed to get cache statistics: {str(e)}")
 
 
@@ -2447,7 +2462,7 @@ async def clear_cache(
             "cleared_entries": count,
         }
     except Exception as e:
-        logger.error(f"Failed to clear cache: {e}")
+        logger.error(f"Failed to clear cache: {type(e).__name__}")
         raise HTTPException(500, f"Failed to clear cache: {str(e)}")
 
 
@@ -2473,7 +2488,7 @@ async def invalidate_cache_by_tags(
             "tags": tags,
         }
     except Exception as e:
-        logger.error(f"Failed to invalidate cache by tags: {e}")
+        logger.error(f"Failed to invalidate cache by tags: {type(e).__name__}")
         raise HTTPException(500, f"Failed to invalidate cache: {str(e)}")
 
 
@@ -2502,7 +2517,7 @@ async def invalidate_cache_by_files(
             "files": file_paths,
         }
     except Exception as e:
-        logger.error(f"Failed to invalidate cache by files: {e}")
+        logger.error(f"Failed to invalidate cache by files: {type(e).__name__}")
         raise HTTPException(500, f"Failed to invalidate cache by files: {str(e)}")
 
 
@@ -2526,7 +2541,7 @@ async def invalidate_semantic_cache(
             "invalidated_entries": count,
         }
     except Exception as e:
-        logger.error(f"Failed to invalidate semantic cache: {e}")
+        logger.error(f"Failed to invalidate semantic cache: {type(e).__name__}")
         raise HTTPException(500, f"Failed to invalidate semantic cache: {str(e)}")
 
 
@@ -2554,7 +2569,7 @@ async def warm_cache(
             "requested_keys": len(keys),
         }
     except Exception as e:
-        logger.error(f"Failed to warm cache: {e}")
+        logger.error(f"Failed to warm cache: {type(e).__name__}")
         raise HTTPException(500, f"Failed to warm cache: {str(e)}")
 
 
@@ -2578,7 +2593,7 @@ async def cleanup_cache(
             "cleaned_entries": count,
         }
     except Exception as e:
-        logger.error(f"Failed to cleanup cache: {e}")
+        logger.error(f"Failed to cleanup cache: {type(e).__name__}")
         raise HTTPException(500, f"Failed to cleanup cache: {str(e)}")
 
 
@@ -2651,7 +2666,7 @@ async def update_search_weights(
             },
         }
     except Exception as e:
-        logger.error(f"Failed to update search weights: {e}")
+        logger.error(f"Failed to update search weights: {type(e).__name__}")
         raise HTTPException(500, f"Failed to update weights: {str(e)}")
 
 
@@ -2688,7 +2703,7 @@ async def toggle_search_methods(
             },
         }
     except Exception as e:
-        logger.error(f"Failed to update search methods: {e}")
+        logger.error(f"Failed to update search methods: {type(e).__name__}")
         raise HTTPException(500, f"Failed to update methods: {str(e)}")
 
 
@@ -2757,7 +2772,7 @@ async def optimize_search_indexes(
             "results": results,
         }
     except Exception as e:
-        logger.error(f"Failed to optimize search indexes: {e}")
+        logger.error(f"Failed to optimize search indexes: {type(e).__name__}")
         raise HTTPException(500, f"Failed to optimize indexes: {str(e)}")
 
 
@@ -2779,7 +2794,7 @@ async def get_term_statistics(
 
         return {"term": term, "statistics": stats}
     except Exception as e:
-        logger.error(f"Failed to get term statistics: {e}")
+        logger.error(f"Failed to get term statistics: {type(e).__name__}")
         raise HTTPException(500, f"Failed to get term statistics: {str(e)}")
 
 
@@ -2813,7 +2828,9 @@ async def rebuild_search_indexes(
                             content = f.read()
                         fuzzy_indexer.add_file(file_info["path"], content)
                     except Exception as e:
-                        logger.warning(f"Failed to re-index {file_info['path']}: {e}")
+                        logger.warning(
+                            f"Failed to re-index {file_info['path']}: {type(e).__name__}"
+                        )
             results["fuzzy"] = "rebuilt"
             logger.info("Fuzzy index rebuilt")
 
@@ -2833,7 +2850,7 @@ async def rebuild_search_indexes(
             "results": results,
         }
     except Exception as e:
-        logger.error(f"Failed to rebuild search indexes: {e}")
+        logger.error(f"Failed to rebuild search indexes: {type(e).__name__}")
         raise HTTPException(500, f"Failed to rebuild indexes: {str(e)}")
 
 
@@ -2862,7 +2879,7 @@ async def get_symbol_dependencies(
             "max_depth": max_depth,
         }
     except Exception as e:
-        logger.error(f"Error getting dependencies for {symbol}: {e}")
+        logger.error("Dependency lookup failed (%s)", type(e).__name__)
         raise HTTPException(500, f"Failed to get dependencies: {str(e)}")
 
 
@@ -2888,7 +2905,7 @@ async def get_symbol_dependents(
             "max_depth": max_depth,
         }
     except Exception as e:
-        logger.error(f"Error getting dependents for {symbol}: {e}")
+        logger.error("Dependent lookup failed (%s)", type(e).__name__)
         raise HTTPException(500, f"Failed to get dependents: {str(e)}")
 
 
@@ -2912,7 +2929,7 @@ async def get_code_hotspots(
             "top_n": top_n,
         }
     except Exception as e:
-        logger.error(f"Error getting hotspots: {e}")
+        logger.error(f"Error getting hotspots: {type(e).__name__}")
         raise HTTPException(500, f"Failed to get hotspots: {str(e)}")
 
 
@@ -2974,7 +2991,7 @@ async def get_context_for_symbols(
             },
         }
     except Exception as e:
-        logger.error(f"Error getting context for symbols: {e}")
+        logger.error(f"Error getting context for symbols: {type(e).__name__}")
         raise HTTPException(500, f"Failed to get context: {str(e)}")
 
 
@@ -3022,7 +3039,7 @@ async def graph_search(
             },
         }
     except Exception as e:
-        logger.error(f"Error in graph search: {e}")
+        logger.error(f"Error in graph search: {type(e).__name__}")
         raise HTTPException(500, f"Graph search failed: {str(e)}")
 
 
@@ -3059,7 +3076,7 @@ async def get_graph_status(
 
         return status
     except Exception as e:
-        logger.error(f"Error getting graph status: {e}")
+        logger.error(f"Error getting graph status: {type(e).__name__}")
         raise HTTPException(500, f"Failed to get graph status: {str(e)}")
 
 
@@ -3106,5 +3123,5 @@ async def initialize_graph(
             "graph_initialized": health.get("graph_initialized", False),
         }
     except Exception as e:
-        logger.error(f"Error initializing graph: {e}")
+        logger.error(f"Error initializing graph: {type(e).__name__}")
         raise HTTPException(500, f"Failed to initialize graph: {str(e)}")
