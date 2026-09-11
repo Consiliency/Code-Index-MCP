@@ -756,7 +756,7 @@ class EnhancedDispatcher:
                                 logger.info(
                                     "Skipping unavailable plugin for %s: %s",
                                     lang,
-                                    type(e).__name__.state,
+                                    e.state,
                                 )
                                 self._unavailable_languages.add(lang)
                             except Exception as e:
@@ -837,7 +837,7 @@ class EnhancedDispatcher:
             return plugin
 
         except PluginUnavailableError as e:
-            logger.info("No plugin available for %s: %s", language, type(e).__name__.state)
+            logger.info("No plugin available for %s: %s", language, e.state)
             self._unavailable_languages.add(language)
             return None
         except Exception as e:

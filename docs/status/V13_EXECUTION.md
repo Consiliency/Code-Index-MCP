@@ -155,3 +155,20 @@ Normal exits took under one second; the admitted long reindex failed closed at
 the 15-second service deadline. These diagnostic results do not close SAFETY:
 the final candidate must pass all stamped commands, including updated content
 sentinels, crypto re-verification and the non-root container/restart checks.
+
+The first stamped SAFETY candidate `a23d372` is rejected, with all evidence
+preserved under `.phase-loop/runs/v13-SAFETY-20260911-a23d372/`. Its 84 focused
+tests, signing recheck, local gate, installed wheel, 140 Git manager tests and
+214 phase tests passed. The broad suite had 2,928 passes, eight failures,
+150 skips and 31 deselections. The container restart probe sent a JSON refresh
+token to the existing query-parameter endpoint and received 422 instead of
+exercising session rejection. No container acceptance was granted.
+
+The broad failures exposed two malformed structured-state logging references,
+stale argument-logging/singleton-reset expectations, a missing historical docs
+link and a metrics test leaking its replacement exporter. Those are repaired;
+177 focused tests pass. Additional privacy controls first reproduced nine
+failures covering legacy symbol search, summaries, transport logs and background
+exceptions. The repairs also remove HTTP access-query strings, preserve actual
+socket peers in the container, and cover malformed SDK input. The expanded
+installed probes and a new complete stamped run remain required.

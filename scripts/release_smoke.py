@@ -214,6 +214,20 @@ def smoke_container() -> None:
             _run(["docker", "restart", container], timeout=60)
             _poll_health(port)
             _run(["docker", "exec", container, *probe, "--mode", "http", "--restart"])
+            captured = subprocess.run(
+                ["docker", "logs", container],
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=30,
+            )
+            logs = captured.stdout + captured.stderr
+            assert "release_smoke_token" not in logs, "HTTP query content leaked into logs"
+            assert "refresh_token=" not in logs, "Refresh credential query leaked into logs"
+            assert "198.51.100.77" not in logs, "Untrusted forwarded peer reached access logs"
+            print(
+                json.dumps({"http_log_privacy": "passed", "untrusted_proxy": "ignored"}), flush=True
+            )
         except Exception:
             # This container has only synthetic inputs and no operator credentials.
             subprocess.run(["docker", "logs", "--tail", "100", container], timeout=30, check=False)

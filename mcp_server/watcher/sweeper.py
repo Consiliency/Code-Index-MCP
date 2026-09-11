@@ -127,7 +127,7 @@ class WatcherSweeper:
             try:
                 self.sweep_once()
             except Exception as e:
-                logger.warning("watcher sweep error: %s", e)
+                logger.warning("watcher sweep error: %s", type(e).__name__)
                 mcp_watcher_sweep_errors_total.inc()
 
     def sweep_once(self) -> List[str]:

@@ -24,6 +24,8 @@ the forwarded chain from the right to the first untrusted address. Untrusted,
 malformed or unconfigured forwarded headers use the actual peer. Deployments
 invoking Uvicorn directly must also set `--no-proxy-headers`; otherwise the
 middleware cannot recover a peer address already rewritten upstream.
+The production image passes an empty `--forwarded-allow-ips` to Gunicorn so
+its Uvicorn worker also preserves the socket peer for this policy.
 
 STDIO's standalone metrics listener is disabled unless `MCP_METRICS_PORT` is
 explicitly set. When enabled it binds only `127.0.0.1`; port `0` selects an
@@ -36,3 +38,6 @@ Normal request diagnostics record tool names, counts, duration and exception
 types, not tool arguments, query/symbol content or raw provider exception
 payloads. Plugin stderr is not a trusted log channel; typed IPC error envelopes
 provide diagnostics. Cooperative plugin guards are not hostile-code isolation.
+HTTP access logs omit URL query strings, including legacy query-token inputs.
+External MCP SDK diagnostics retain event location/severity without replaying
+invalid request payloads. Debug logging does not opt back into payload logging.

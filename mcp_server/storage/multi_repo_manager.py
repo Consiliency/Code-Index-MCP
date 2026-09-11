@@ -471,7 +471,7 @@ class MultiRepositoryManager:
                             repository_name=repo.name,
                             results=[],
                             search_time=0.0,
-                            error=str(e),
+                            error=type(e).__name__,
                         )
                     )
 
@@ -484,7 +484,7 @@ class MultiRepositoryManager:
         results.sort(key=lambda r: -repo_priority.get(r.repository_id, 0))
 
         logger.info(
-            f"Searched {len(repos)} repositories for '{query}' "
+            f"Searched {len(repos)} repositories (query_chars={len(query)}) "
             f"in {total_time:.2f}s, found {sum(len(r.results) for r in results)} results"
         )
 
@@ -552,7 +552,7 @@ class MultiRepositoryManager:
                 repository_name=repo_info.name,
                 results=[],
                 search_time=0.0,
-                error=str(e),
+                error=type(e).__name__,
             )
 
     async def search_code(
@@ -622,7 +622,7 @@ class MultiRepositoryManager:
                             repository_name=repo.name,
                             results=[],
                             search_time=0.0,
-                            error=str(e),
+                            error=type(e).__name__,
                         )
                     )
 
@@ -702,7 +702,7 @@ class MultiRepositoryManager:
                 repository_name=repo_info.name,
                 results=[],
                 search_time=(datetime.now() - start_time).total_seconds(),
-                error=str(e),
+                error=type(e).__name__,
             )
 
     def _update_search_stats(self, search_time: float):

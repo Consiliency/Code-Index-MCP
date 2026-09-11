@@ -208,10 +208,12 @@ async def stdio_probe(root: Path, entrypoint: str) -> None:
 
 
 def http_probe(root: Path, url: str, rebuild: bool) -> None:
-    def request(path, *, query=None, data=None, token=None):
+    def request(path, *, query=None, data=None, token=None, forwarded=None):
         if query:
             path += "?" + urlencode(query)
         headers = {"Content-Type": "application/json"}
+        if forwarded:
+            headers["X-Forwarded-For"] = forwarded
         if token:
             headers["Authorization"] = "Bearer " + token
         req = Request(
@@ -234,7 +236,9 @@ def http_probe(root: Path, url: str, rebuild: bool) -> None:
         prior = json.loads(prior_session.read_text())
         code, _ = request("/status", token=prior["access_token"])
         assert code == 401, "access session survived process restart"
-        code, _ = request("/api/v1/auth/refresh", data={"refresh_token": prior["refresh_token"]})
+        code, _ = request(
+            "/api/v1/auth/refresh", query={"refresh_token": prior["refresh_token"]}, data={}
+        )
         assert code == 401, "refresh session survived process restart"
     code, auth = request("/api/v1/auth/login", data={"username": "admin", "password": PASSWORD})
     assert code == 200, code
@@ -248,7 +252,9 @@ def http_probe(root: Path, url: str, rebuild: bool) -> None:
     if rebuild:
         code, value = request("/reindex", query={"repository": fixture}, data={}, token=token)
         assert code == 200 and value.get("status") in {"completed", "success"}, (code, value)
-    code, value = request("/search", query={"q": TOKEN, "repository": fixture}, token=token)
+    code, value = request(
+        "/search", query={"q": TOKEN, "repository": fixture}, token=token, forwarded="198.51.100.77"
+    )
     assert code == 200 and rows(value), (code, value)
     code, value = request(
         "/search", query={"q": "nonexistent_literal_739195", "repository": fixture}, token=token

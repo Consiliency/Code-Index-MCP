@@ -64,7 +64,7 @@ def _swallow_task_exception(task: asyncio.Task) -> None:
     except Exception:
         return
     if exc is not None:
-        logger.error("Background cache-invalidation task failed", exc_info=exc)
+        logger.error("Background cache-invalidation task failed (%s)", type(exc).__name__)
 
 
 class _Handler(FileSystemEventHandler):
@@ -145,8 +145,13 @@ class _Handler(FileSystemEventHandler):
                         self._remove_file_from_index(path)
                     elif action == "move" and extra is not None:
                         self._handle_file_move(path, extra)
-                except Exception:
-                    logger.exception("watcher drain failed for %s (action=%s)", path, action)
+                except Exception as exc:
+                    logger.error(
+                        "watcher drain failed for %s (action=%s, error=%s)",
+                        path,
+                        action,
+                        type(exc).__name__,
+                    )
             self._stop_event.wait(self.DRAIN_TICK_SECONDS)
 
     def stop(self) -> None:
@@ -167,8 +172,13 @@ class _Handler(FileSystemEventHandler):
                     self._remove_file_from_index(path)
                 elif action == "move" and extra is not None:
                     self._handle_file_move(path, extra)
-            except Exception:
-                logger.exception("flush drain failed for %s (action=%s)", path, action)
+            except Exception as exc:
+                logger.error(
+                    "flush drain failed for %s (action=%s, error=%s)",
+                    path,
+                    action,
+                    type(exc).__name__,
+                )
 
     # ------------------------------------------------------------------
     # Dispatcher-side actions (run on the worker thread)
@@ -180,8 +190,8 @@ class _Handler(FileSystemEventHandler):
             count = await self.query_cache.invalidate_file_queries(str(path))
             if count > 0:
                 logger.debug("Invalidated %d cache entries for %s", count, path)
-        except Exception:
-            logger.exception("Cache invalidation failed for %s", path)
+        except Exception as exc:
+            logger.error("Cache invalidation failed for %s (%s)", path, type(exc).__name__)
 
     def _kick_cache_invalidation(self, path: Path) -> None:
         if not self.query_cache:
@@ -196,8 +206,10 @@ class _Handler(FileSystemEventHandler):
                 task.add_done_callback(_swallow_task_exception)
             else:
                 asyncio.run(self._invalidate_cache_for_file(path))
-        except Exception:
-            logger.exception("Failed to schedule cache invalidation for %s", path)
+        except Exception as exc:
+            logger.error(
+                "Failed to schedule cache invalidation for %s (%s)", path, type(exc).__name__
+            )
 
     def _trigger_reindex(self, path: Path) -> None:
         if path.suffix not in self.code_extensions:
@@ -234,8 +246,8 @@ class _Handler(FileSystemEventHandler):
                 self.dispatcher.remove_file(path)
                 self.dispatcher.index_file(path)
             self._kick_cache_invalidation(path)
-        except Exception:
-            logger.exception("trigger_reindex failed for %s", path)
+        except Exception as exc:
+            logger.error("trigger_reindex failed for %s (%s)", path, type(exc).__name__)
 
     def _remove_file_from_index(self, path: Path) -> None:
         if path.suffix not in self.code_extensions:

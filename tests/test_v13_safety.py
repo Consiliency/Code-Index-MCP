@@ -179,8 +179,10 @@ async def test_stdio_normal_logs_omit_arguments_and_exception_payload(monkeypatc
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("method", ["search_code", "search_symbol"])
+@pytest.mark.parametrize("failure", [False, True])
 async def test_cross_repo_logs_omit_query_and_failed_provider_payload(
-    tmp_path, monkeypatch, caplog
+    tmp_path, monkeypatch, caplog, method, failure
 ):
     from types import SimpleNamespace
 
@@ -194,12 +196,87 @@ async def test_cross_repo_logs_omit_query_and_failed_provider_payload(
         lambda **kw: [SimpleNamespace(repository_id="fixture", name="fixture", priority=0)],
     )
     monkeypatch.setattr(
-        manager, "_search_code_in_repository", MagicMock(side_effect=RuntimeError(sentinel))
+        manager,
+        "_search_code_in_repository" if method == "search_code" else "_search_repository",
+        MagicMock(side_effect=RuntimeError(sentinel)) if failure else MagicMock(return_value=None),
     )
     with caplog.at_level("INFO"):
-        await manager.search_code(sentinel)
+        results = await getattr(manager, method)(sentinel)
     assert sentinel not in caplog.text
-    assert "RuntimeError" in caplog.text
+    assert sentinel not in repr(results)
+    if failure:
+        assert "RuntimeError" in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", [False, True])
+async def test_summary_logs_omit_symbol_and_provider_payload(
+    tmp_path, monkeypatch, caplog, failure
+):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from mcp_server.indexing.summarization import ChunkWriter
+    from mcp_server.storage.sqlite_store import SQLiteStore
+
+    sentinel = "PRIVATE_SUMMARY_CONTENT_852"
+    store = SQLiteStore(str(tmp_path / "summary.db"))
+    writer = ChunkWriter(db_path=store.db_path, qdrant_client=None)
+    writer.session = SimpleNamespace(
+        create_message=(
+            AsyncMock(side_effect=RuntimeError(sentinel))
+            if failure
+            else AsyncMock(
+                return_value=SimpleNamespace(
+                    content=SimpleNamespace(text="synthetic summary"), model="synthetic"
+                )
+            )
+        )
+    )
+    monkeypatch.setattr(writer, "can_summarize", lambda: True)
+    monkeypatch.setattr(writer, "_has_sampling_capability", lambda: True)
+    monkeypatch.setattr(writer, "_has_direct_api", lambda: False)
+    monkeypatch.setattr(writer, "_persist_summary", MagicMock())
+    monkeypatch.delenv("CEREBRAS_API_KEY", raising=False)
+    try:
+        with caplog.at_level("DEBUG"):
+            result = await writer.summarize_chunk("chunk", 1, 1, 2, sentinel, sentinel)
+        assert result is None if failure else result == "synthetic summary"
+        assert sentinel not in caplog.text
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize(
+    "name", ["uvicorn.access", "gunicorn.access", "mcp.server.lowlevel.server"]
+)
+def test_transport_log_filter_omits_external_content(monkeypatch, caplog, name):
+    import logging
+
+    from mcp_server.core.logging import configure_private_diagnostics
+
+    log = logging.getLogger(name)
+    monkeypatch.setattr(log, "filters", [])
+    configure_private_diagnostics()
+    sentinel = "PRIVATE_TRANSPORT_VALUE_833"
+    with caplog.at_level("INFO", logger=name):
+        if name.endswith("access"):
+            log.info(
+                '%s - "%s %s HTTP/%s" %d', "127.0.0.1:1", "GET", "/search?q=" + sentinel, "1.1", 200
+            )
+        else:
+            log.error("Received exception from stream: " + sentinel)
+    assert sentinel not in caplog.text
+
+
+def test_background_cache_failure_omits_exception_payload(caplog):
+    from mcp_server.watcher.file_watcher import _swallow_task_exception
+
+    task = MagicMock()
+    task.exception.return_value = RuntimeError("PRIVATE_WATCHER_VALUE_122")
+    with caplog.at_level("ERROR"):
+        _swallow_task_exception(task)
+    assert "PRIVATE_WATCHER_VALUE_122" not in caplog.text
 
 
 @pytest.mark.asyncio

@@ -52,9 +52,11 @@ class RefPoller:
             for repo in self._registry.list_all():
                 try:
                     self._poll_one(repo)
-                except Exception:
-                    logger.exception(
-                        "Unhandled error polling repo %s", getattr(repo, "repository_id", repo)
+                except Exception as exc:
+                    logger.error(
+                        "Unhandled error polling repo %s (%s)",
+                        getattr(repo, "repository_id", "unknown"),
+                        type(exc).__name__,
                     )
             self._stop_event.wait(self._interval)
 

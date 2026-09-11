@@ -72,6 +72,7 @@ EXPOSE 8000 8001
 # Production startup command with Gunicorn
 CMD ["gunicorn", "mcp_server.gateway:app", \
      "--worker-class", "uvicorn.workers.UvicornWorker", \
+     "--forwarded-allow-ips", "", \
      "--bind", "0.0.0.0:8000", \
      "--workers", "1", \
      "--worker-connections", "1000", \

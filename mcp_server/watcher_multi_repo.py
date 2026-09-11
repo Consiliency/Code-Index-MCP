@@ -65,7 +65,7 @@ class GitMonitor:
             try:
                 self._check_repositories()
             except Exception as e:
-                logger.error(f"Error in git monitor: {e}")
+                logger.error(f"Error in git monitor: {type(e).__name__}")
 
             # Sleep with interruption support
             for _ in range(self.check_interval):
@@ -100,7 +100,7 @@ class GitMonitor:
                 self.last_commits[repo_id] = current_commit
 
             except Exception as e:
-                logger.error(f"Error checking repository {repo_id}: {e}")
+                logger.error(f"Error checking repository {repo_id}: {type(e).__name__}")
 
     def _get_current_commit(self, repo_path: str) -> Optional[str]:
         """Get current git commit for a repository."""
@@ -154,7 +154,9 @@ class MultiRepositoryHandler(FileSystemEventHandler):
             self.ctx = ctx
             return True
         except Exception as exc:
-            logger.warning("Watcher context unavailable for %s: %s", self.repo_id, exc)
+            logger.warning(
+                "Watcher context unavailable for %s: %s", self.repo_id, type(exc).__name__
+            )
             return False
 
     def _get_current_branch(self) -> Optional[str]:
@@ -184,7 +186,9 @@ class MultiRepositoryHandler(FileSystemEventHandler):
                     getattr(self.parent_watcher, "repo_resolver", None), self.ctx, operation
                 )
             except Exception as exc:
-                logger.warning("Watcher mutation unavailable for %s: %s", self.repo_id, exc)
+                logger.warning(
+                    "Watcher mutation unavailable for %s: %s", self.repo_id, type(exc).__name__
+                )
                 return None
 
     def _landed_mutation(
@@ -201,7 +205,7 @@ class MultiRepositoryHandler(FileSystemEventHandler):
                 action,
                 path,
                 self.repo_id,
-                result,
+                type(result).__name__,
             )
             return False
         if result.status == success_status:
@@ -212,7 +216,7 @@ class MultiRepositoryHandler(FileSystemEventHandler):
                 action,
                 path,
                 self.repo_id,
-                result.error,
+                result.status.value,
             )
         return False
 
@@ -256,7 +260,7 @@ class MultiRepositoryHandler(FileSystemEventHandler):
                     "Pre-index remove failed for %s in repo %s: %s",
                     path,
                     self.repo_id,
-                    remove_result.error,
+                    remove_result.status.value,
                 )
                 return remove_result
             return self.parent_watcher.dispatcher.index_file_guarded(
@@ -643,7 +647,7 @@ class MultiRepositoryWatcher:
                 logger.info("Started watching repository: %s at %s", repo_id, repo_path)
 
             except Exception as e:
-                logger.error("Failed to start watcher for %s: %s", repo_id, e)
+                logger.error("Failed to start watcher for %s: %s", repo_id, type(e).__name__)
 
     def mark_repository_changed(self, repo_id: str):
         """Mark a repository as having uncommitted changes.
@@ -714,7 +718,7 @@ class MultiRepositoryWatcher:
                         logger.error(
                             "ArtifactPublisher.publish_on_reindex failed for %s: %s",
                             repo_id,
-                            pub_exc,
+                            type(pub_exc).__name__,
                         )
                         if repo_info and hasattr(self.registry, "update_artifact_state"):
                             self.registry.update_artifact_state(
@@ -732,7 +736,7 @@ class MultiRepositoryWatcher:
                     )
 
         except Exception as e:
-            logger.error(f"Failed to sync repository {repo_id}: {e}")
+            logger.error(f"Failed to sync repository {repo_id}: {type(e).__name__}")
 
     def _create_and_upload_artifact(self, repo_id: str, commit: str):
         """Create and upload artifact for commit.
@@ -780,7 +784,7 @@ class MultiRepositoryWatcher:
                     logger.info(f"Removed {removed} old artifacts for {repo_id}")
 
         except Exception as e:
-            logger.error(f"Failed to create artifact for {repo_id}: {e}")
+            logger.error(f"Failed to create artifact for {repo_id}: {type(e).__name__}")
 
     def sync_all_repositories(self):
         """Manually trigger sync for all repositories."""
@@ -801,7 +805,7 @@ class MultiRepositoryWatcher:
                 result = future.result(timeout=300)  # 5 minute timeout
                 logger.info(f"Synced {repo_id}: {result.action}")
             except Exception as e:
-                logger.error(f"Failed to sync {repo_id}: {e}")
+                logger.error(f"Failed to sync {repo_id}: {type(e).__name__}")
 
     def get_status(self) -> Dict[str, Any]:
         """Get status of all watched repositories.

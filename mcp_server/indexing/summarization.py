@@ -410,9 +410,8 @@ class ChunkWriter:
                 return await self._call_profile_api(system, prompt)
             except Exception as exc:
                 logger.warning(
-                    "Profile summarization endpoint %s failed, falling back to env API: %s",
-                    self.summarization_config["base_url"],
-                    exc,
+                    "Profile summarization endpoint failed (%s), falling back to env API",
+                    type(exc).__name__,
                 )
         if os.environ.get("CEREBRAS_API_KEY"):
             return await self._call_cerebras_api(system, prompt), None
@@ -486,8 +485,7 @@ class ChunkWriter:
         """
         if not self.can_summarize():
             logger.debug(
-                "Skipping summary for '%s': no sampling capability and no API key",
-                symbol,
+                "Skipping summary: no sampling capability and no API key",
             )
             return None
 
@@ -556,7 +554,7 @@ class ChunkWriter:
                     summary_text = str(content_block)
                 model_name = result.model or "mcp-sampling"
             except Exception as exc:
-                logger.warning("MCP sampling failed for chunk '%s': %s", symbol, exc)
+                logger.warning("MCP sampling failed (%s)", type(exc).__name__)
 
         # Path 2: BAML SummarizeChunkAlone (Cerebras, cache-friendly prompt structure)
         if summary_text is None and os.environ.get("CEREBRAS_API_KEY"):
@@ -576,9 +574,8 @@ class ChunkWriter:
                 model_name = self._get_model_name()
             except Exception as exc:
                 logger.warning(
-                    "BAML SummarizeChunkAlone failed for '%s': %s, falling back to direct API",
-                    symbol,
-                    exc,
+                    "BAML SummarizeChunkAlone failed (%s), falling back to direct API",
+                    type(exc).__name__,
                 )
 
         # Path 3: Direct API fallback (Anthropic / OpenAI raw call, or Cerebras raw)
@@ -589,7 +586,7 @@ class ChunkWriter:
                 )
                 model_name = resolved_model_name or self._get_model_name()
             except Exception as exc:
-                logger.warning("Direct API summarization failed for '%s': %s", symbol, exc)
+                logger.warning("Direct API summarization failed (%s)", type(exc).__name__)
 
         if summary_text is None:
             return None
@@ -604,7 +601,7 @@ class ChunkWriter:
             model_name=model_name or "unknown",
             is_authoritative=is_authoritative,
         )
-        logger.info("Stored summary for chunk '%s' via %s", symbol, model_name)
+        logger.info("Stored chunk summary via %s", model_name)
         return summary_text
 
 
@@ -691,7 +688,10 @@ class FileBatchSummarizer(ChunkWriter):
         retry_profile_batch: bool = True,
     ) -> Tuple[GeneratedSummary, ...]:
         logger.warning(
-            "%s for %s (%s), falling back to per-chunk path", warning_prefix, file_path, error
+            "%s for %s (%s), falling back to per-chunk path",
+            warning_prefix,
+            file_path,
+            type(error).__name__,
         )
         if retry_profile_batch and self.summarization_config.get("base_url"):
             try:
@@ -704,7 +704,7 @@ class FileBatchSummarizer(ChunkWriter):
                 logger.warning(
                     "Profile batch fallback failed for %s (%s), falling back to per-chunk path",
                     file_path,
-                    profile_exc,
+                    type(profile_exc).__name__,
                 )
         return await self._summarize_topological(
             file_id,
@@ -904,7 +904,7 @@ class FileBatchSummarizer(ChunkWriter):
                     stored_summaries[chunk_id] = summary_text
                     results.append(GeneratedSummary(chunk_id=chunk_id, summary=summary_text))
             except Exception as exc:
-                logger.error("Failed to summarize chunk %s: %s", chunk_id, exc)
+                logger.error("Failed to summarize chunk (%s)", type(exc).__name__)
 
         return tuple(results)
 
@@ -1315,7 +1315,7 @@ class ComprehensiveChunkWriter(FileBatchSummarizer):
                             blocked_call_timeout_seconds=file_result.blocked_call_timeout_seconds,
                         )
                 except Exception as exc:
-                    logger.error("Failed to summarize file %s: %s", file_path, exc)
+                    logger.error("Failed to summarize file %s: %s", file_path, type(exc).__name__)
                     missing_chunk_ids.extend(
                         [chunk["chunk_id"] for chunk in file_chunks.get(file_id, [])]
                     )

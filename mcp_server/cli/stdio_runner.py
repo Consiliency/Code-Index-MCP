@@ -1545,6 +1545,9 @@ async def call_tool(
 
 async def _serve(registry_path=None) -> None:
     """Set up and run the MCP stdio server."""
+    from mcp_server.core.logging import configure_private_diagnostics
+
+    configure_private_diagnostics()
     global _shutdown_called, _gate, _repo_resolver, _store_registry, _task_registry
     global _git_index_manager, dispatcher
 

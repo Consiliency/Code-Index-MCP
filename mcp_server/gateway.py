@@ -1660,7 +1660,7 @@ async def search(
                 effective_mode = "bm25" if repo_bm25 else "classic"
 
         logger.debug(
-            f"Searching for: '{q}' (mode={effective_mode}, limit={limit}, language={language}) for user: {current_user.username}"
+            f"Searching (query_chars={len(q)}, mode={effective_mode}, limit={limit}, language={language})"
         )
 
         # Build filters

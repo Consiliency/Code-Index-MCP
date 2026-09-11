@@ -55,3 +55,6 @@ worker module remain unsupported in default mode. Known dependency failures
 include language, required extras and remediation metadata. For example,
 Java analysis requires `uv sync --locked --extra java`; C# accepts
 `c_sharp` and `csharp`.
+
+See the [P18 upgrade notes](../operations/p18-upgrade.md) for historical
+default-on migration steps; the current capability limits above are authoritative.

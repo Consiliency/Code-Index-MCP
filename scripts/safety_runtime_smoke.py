@@ -104,6 +104,7 @@ def run(root: Path, entrypoint: str, env: dict[str, str]):
                     20,
                 )
                 assert not receive(proc, 20).get("isError")
+                send(proc, "tools/call", "PRIVATE_QUERY_SENTINEL_73051", 999)
                 send(
                     proc,
                     "tools/call",
@@ -229,8 +230,14 @@ def main():
         "runtime_probe", Path(__file__).with_name("installed_runtime_smoke.py")
     )
     probe = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(probe)
-    run(args.root, args.entrypoint, probe.environment(args.root))
+    try:
+        spec.loader.exec_module(probe)
+        run(args.root, args.entrypoint, probe.environment(args.root))
+    finally:
+        # Synthetic mounted directories must remain removable by the host fixture owner.
+        for path in args.root.rglob("*"):
+            if path.is_dir() and not path.is_symlink():
+                path.chmod(0o777)
 
 
 if __name__ == "__main__":
