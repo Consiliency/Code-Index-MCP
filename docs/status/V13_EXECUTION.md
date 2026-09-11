@@ -101,6 +101,14 @@ generation property. A shared store-based identity preserves that compatibility;
 also passes, including installed-wheel verification and 265 production/readiness
 tests. Final stamped full-suite verification is still required.
 
+The stamped `112c9e0` attempt passed the local gate and expanded phase suite but
+is not accepted: the broad run had 3,023 passes, 153 skips, 31 deselections and
+one older Cohere cache test that expected reuse without generation identity.
+The test now covers both bound and unbound candidates, retaining metadata and
+checking actual provider call counts. Its focused group passed 46 tests with
+seven skips. The original failed evidence remains preserved; all original
+stamped checks must pass on the repaired candidate before STATE closes.
+
 DATA must implement staged vector/artifact restore and semantic handle retirement.
 Until then, unsafe legacy extraction into the active directory is disabled and
 semantic cache binding changes return unavailable without closing borrowed
