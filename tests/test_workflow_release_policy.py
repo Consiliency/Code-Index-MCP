@@ -184,3 +184,40 @@ def test_release_workflow_does_not_dispatch_downstream_workflows() -> None:
     assert "gh workflow run" not in text
     assert "workflow_call:" not in text
     assert "workflow_run:" not in text
+
+
+def test_manual_index_signer_only_receives_digest_with_five_minute_cap():
+    workflow = yaml.load(
+        (WORKFLOWS / "sign-published-image.yml").read_text(), Loader=yaml.BaseLoader
+    )
+    assert set(workflow["on"]) == {"workflow_dispatch"}
+    jobs = workflow["jobs"]
+    signer = jobs["attest-local-index"]
+    assert signer["if"] == "inputs.mode == 'index-attestation'"
+    assert signer["timeout-minutes"] == "5"
+    assert signer["permissions"] == {
+        "contents": "read",
+        "id-token": "write",
+        "attestations": "write",
+    }
+    steps = signer["steps"]
+    assert len(steps) == 2
+    assert "^[0-9a-f]{64}$" in steps[0]["run"]
+    assert steps[0]["env"] == {"SUBJECT_DIGEST": "${{ inputs.subject_digest }}"}
+    action = steps[1]
+    assert action["uses"].startswith("actions/attest@")
+    assert "subject-path" not in action["with"]
+    assert action["with"]["subject-digest"] == "sha256:${{ inputs.subject_digest }}"
+    assert action["with"]["create-storage-record"] == "false"
+    assert action["with"]["push-to-registry"] == "false"
+    import json
+
+    assert json.loads(action["with"]["predicate"]) == {
+        "artifact_origin": "local",
+        "digest_origin": "operator-supplied",
+        "built_in_this_workflow": False,
+    }
+    for name, job in jobs.items():
+        if name != "attest-local-index":
+            assert "inputs.mode == 'image'" in job["if"]
+            assert "github.ref == 'refs/heads/main'" in job["if"]

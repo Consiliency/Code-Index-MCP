@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from mcp_server.artifacts.artifact_download import IndexArtifactDownloader
+from mcp_server.artifacts.attestation import AttestationError
 from mcp_server.artifacts.freshness import FreshnessVerdict
 
 
@@ -31,6 +32,30 @@ def _metadata(**overrides) -> dict:
     }
     payload.update(overrides)
     return payload
+
+
+@pytest.mark.parametrize("advertised_url", [None, "", "https://example.invalid/bundle"])
+def test_enforce_requires_attestation_before_extraction(tmp_path, monkeypatch, advertised_url):
+    monkeypatch.setenv("MCP_ATTESTATION_MODE", "enforce")
+    payload = tmp_path / "payload"
+    payload.mkdir()
+    archive = payload / "index.tar.gz"
+    source = tmp_path / "current.db"
+    source.write_bytes(b"synthetic-index")
+    with tarfile.open(archive, "w:gz") as tar:
+        tar.add(source, arcname="current.db")
+    metadata = _metadata(attestation_url=advertised_url)
+    (payload / "artifact-metadata.json").write_text(json.dumps(metadata))
+    output = tmp_path / "output"
+    output.mkdir()
+    downloader = IndexArtifactDownloader(repo="owner/repo")
+    with (
+        patch.object(downloader, "_run_integrity_gate"),
+        patch.object(downloader, "check_compatibility", return_value=(True, [])),
+        pytest.raises(AttestationError),
+    ):
+        downloader._restore_downloaded_payload(payload, output, allow_unsafe=True)
+    assert list(output.iterdir()) == []
 
 
 def test_validate_artifact_identity_rejects_wrong_repo_branch_commit_and_profile():
@@ -154,7 +179,8 @@ def test_download_selected_artifact_unsafe_override_reports_reasons(tmp_path: Pa
     assert result.validation_reasons == ["freshness verdict: stale_commit"]
 
 
-def test_download_release_artifact_restores_direct_publish_payload(tmp_path: Path):
+def test_download_release_artifact_restores_direct_publish_payload(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("MCP_ATTESTATION_MODE", "skip")
     payload_dir = tmp_path / "release-assets"
     payload_dir.mkdir()
     archive_path = payload_dir / "index-archive.tar.gz"

@@ -22,7 +22,7 @@ WORKFLOW_CENSUS = {
     "maintenance.yml": ({"pull_request", "push"}, 1),
     "mcp-index.yml": ({"workflow_dispatch"}, 2),
     "release-automation.yml": ({"workflow_dispatch"}, 7),
-    "sign-published-image.yml": ({"workflow_dispatch"}, 1),
+    "sign-published-image.yml": ({"workflow_dispatch"}, 2),
 }
 
 

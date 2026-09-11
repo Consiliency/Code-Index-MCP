@@ -15,7 +15,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, NamedTuple, Optional, Tuple
 
-from mcp_server.artifacts.attestation import Attestation
+from mcp_server.artifacts.attestation import Attestation, attest, verify_attestation
 from mcp_server.artifacts.delta_policy import DeltaPolicy
 from mcp_server.config.settings import get_settings
 from mcp_server.core.errors import record_handled_error
@@ -469,6 +469,15 @@ class IndexArtifactUploader:
         release_tag: Optional[str] = None,
         attestation: Optional[Attestation] = None,
     ) -> "ReleaseAssetBundle":
+        if attestation is None:
+            attestation = attest(archive_path, repo=self.repo)
+        else:
+            verify_attestation(archive_path, attestation, expected_repo=self.repo)
+        metadata = dict(metadata)
+        if attestation.bundle_url:
+            metadata["attestation_url"] = attestation.bundle_url
+        else:
+            metadata.pop("attestation_url", None)
         self._ensure_gh_cli()
 
         tag = str(release_tag or metadata.get("logical_artifact_id") or "index-latest")
@@ -551,11 +560,38 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--schema-version", help="Override schema version in metadata.")
     parser.add_argument("--artifact-type", choices=["full", "delta"], default="full")
     parser.add_argument("--delta-from", help="Base commit SHA for delta artifacts")
+    preparation = parser.add_mutually_exclusive_group()
+    preparation.add_argument(
+        "--prepare-only",
+        action="store_true",
+        help="Prepare archive and metadata for manual signing without upload.",
+    )
+    preparation.add_argument(
+        "--prepared-archive", help="Upload these already-prepared bytes without recompression."
+    )
+    parser.add_argument("--prepared-metadata", help="Metadata paired with --prepared-archive.")
     return parser
 
 
 def run_cli(args: argparse.Namespace) -> int:
+    if args.metadata_only and (
+        getattr(args, "prepare_only", False) or getattr(args, "prepared_archive", None)
+    ):
+        raise ValueError("--metadata-only cannot be combined with archive preparation or upload")
     uploader = IndexArtifactUploader(repo=args.repo)
+    if getattr(args, "prepared_archive", None):
+        if not args.prepared_metadata:
+            raise ValueError("--prepared-archive requires --prepared-metadata")
+        archive = Path(args.prepared_archive)
+        metadata = json.loads(Path(args.prepared_metadata).read_text(encoding="utf-8"))
+        if not isinstance(metadata, dict) or metadata.get(
+            "checksum"
+        ) != uploader._calculate_checksum(archive):
+            raise ValueError("Prepared archive checksum does not match its metadata")
+        uploader.upload_direct(archive, metadata)
+        return 0
+    if getattr(args, "prepared_metadata", None):
+        raise ValueError("--prepared-metadata requires --prepared-archive")
     index_location = Path(args.index_location) if args.index_location else Path(".mcp-index")
     index_path = Path(args.index_path) if args.index_path else index_location / "current.db"
 
@@ -603,9 +639,28 @@ def run_cli(args: argparse.Namespace) -> int:
         secure=secure,
         artifact_type=decision.strategy,
         delta_from=decision.base_artifact_id,
+        repo_id=args.repo,
+        tracked_branch=args.tracked_branch,
+        commit=args.commit,
+        schema_version=args.schema_version,
         index_location=index_location,
         index_path=index_path,
     )
+    if getattr(args, "prepare_only", False):
+        destination = Path(args.metadata_output)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+        print(
+            json.dumps(
+                {
+                    "archive": str(archive_path),
+                    "metadata": str(destination),
+                    "sha256": checksum,
+                    "uploaded": False,
+                }
+            )
+        )
+        return 0
     if args.method == "workflow":
         uploader.trigger_workflow(archive_path, metadata)
     else:

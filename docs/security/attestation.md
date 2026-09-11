@@ -1,66 +1,58 @@
-# Artifact Attestation & Signing
+# Artifact Attestation And Signing
 
-> **Beta status**: This page targets `1.2.0-rc8`. Attestation policy is part
-> of the current security posture for the `ghcr.io/consiliency/code-index-mcp`
-> release path, with operational limits documented in the deployment runbook.
+Index archives are built locally. GitHub signs an operator-supplied digest with
+a custom predicate; this is **not evidence that GitHub built or inspected the
+index**, and is not SLSA build provenance. Container image signing remains a
+separate protected-main workflow mode.
 
-## Overview
+## Prepare, Sign, Upload
 
-Artifact attestation (SL-3) uses GitHub's native SLSA attestation mechanism to sign index artifacts at publish time and verify them at download time. This document describes the flow, configuration, and error handling.
+1. Prepare once, preserving the archive and its metadata:
+   `python -m mcp_server.artifacts.artifact_upload --repo OWNER/REPO --prepare-only --output index.tar.gz --metadata-output artifact-metadata.json`.
+2. Explicitly dispatch `sign-published-image.yml` in the trusted signing
+   repository with `mode=index-attestation` and the printed SHA-256 digest.
+   The manual job is capped at five minutes. It has no checkout, index build,
+   source upload or private archive upload. Only the digest and descriptive
+   metadata are sent. Signing is never dispatched by a watcher or library.
+3. Download the bundle using `gh attestation download index.tar.gz --repo OWNER/REPO --predicate-type https://github.com/Consiliency/Code-Index-MCP/local-index-digest/v1`.
+   Rename the resulting digest-named JSONL file to
+   `index.tar.gz.attestation.jsonl`. Keep the exact prepared archive bytes.
+4. Upload with `python -m mcp_server.artifacts.artifact_upload --repo OWNER/REPO --prepared-archive index.tar.gz --prepared-metadata artifact-metadata.json`.
+   This checks the checksum and attestation without recompression. Upload
+   failure retains local bytes and partial releases for explicit recovery;
+   it does not delete diagnostic evidence or report successful publication.
 
-## Signing Flow
+The signing repository must provide the approved workflow. Its OIDC identity
+must match the expected repository and workflow used by the verifier. A local
+personal access token cannot create that workflow identity. Automatic reindex
+publication without a signed sidecar fails closed; use the explicit prepare
+and upload flow. Later preparations use unique archive names so they cannot
+overwrite an archive awaiting signature.
 
-**At publish time** (P13 SL-4 + P15 SL-3):
+## Verification Policy
 
-1. Artifact is created (`.tar.gz` or `.json` file).
-2. `gh attestation sign <artifact>` is invoked (requires `GITHUB_TOKEN` with `attestations:write` scope).
-3. GitHub Actions signs the artifact with the repo's SLSA provenance.
-4. A sidecar file `<artifact>.attestation.jsonl` is created in the same location.
-5. Both files are published to GitHub Releases.
+`MCP_ATTESTATION_MODE` accepts exactly:
 
-**At download time** (P15 SL-3):
+- `enforce` (default): missing archive/bundle, digest mismatch, invalid producer
+  or failed verification raises `AttestationError` before extraction/upload.
+- `warn`: explicit operator opt-out; logs a metadata-only warning and continues.
+- `skip`: explicit operator opt-out; no attestation verification.
 
-1. Client downloads both `<artifact>` and `<artifact>.attestation.jsonl`.
-2. `gh attestation verify <artifact>` checks the signature against GitHub's certificate.
-3. Verification either succeeds (attestation is valid) or fails (signature doesn't match or is missing).
+Unknown modes fail closed. Metadata URLs and `allow_unsafe` cannot disable the
+configured policy. Enforce mode verifies the bundle, digest, repository,
+`.github/workflows/sign-published-image.yml` identity, source ref and custom
+predicate using `gh attestation verify`; self-hosted signers are rejected.
+The default trusted source ref is `refs/heads/main`. Operator configuration
+`MCP_ATTESTATION_SOURCE_REF` and optional `MCP_ATTESTATION_SIGNER_DIGEST` can
+narrow an intentional pre-merge synthetic test to an exact branch/head. Never
+derive these trusted values from downloaded metadata.
 
-## Configuration
+`attest()` only consumes and verifies an existing sidecar. There is no local
+`gh attestation sign` call or credential-display probe. The CLI must support
+`gh attestation verify` with the configured policy flags. Calls have a bounded
+30-second wait; failures do not expose raw CLI stdout/stderr or tokens. Network
+or trust-material unavailability is a verification failure, not implicit
+permission to skip.
 
-Set the attestation mode via the `MCP_ATTESTATION_MODE` environment variable:
-
-- **`enforce`** (default, production): Raises `AttestationVerificationError` on sign or verify failure. Deployment will not start without valid attestations.
-- **`warn`**: Logs a warning on sign or verify failure but continues. Allows graceful degradation.
-- **`skip`**: No-op; attestations are not checked. Useful for air-gapped environments without GitHub connectivity.
-
-## Token Requirements
-
-`GITHUB_TOKEN` must include the `attestations:write` scope. The token is used by:
-- `gh attestation sign` (at publish time)
-- `gh attestation verify` (at download time)
-
-Verify scope by checking the token's GitHub PAT settings or via HTTP `GET /user` with header `X-OAuth-Scopes`.
-
-## GitHub CLI Requirement
-
-The `gh` CLI tool must be installed and must support the `attestation` subcommand (available in recent GitHub CLI versions, e.g., ≥2.30.0). Check with:
-
-```bash
-gh attestation --help
-```
-
-## Error Cases
-
-- **Missing attestation file**: `verify` will fail if the `.attestation.jsonl` sidecar is not present alongside the artifact.
-- **Corrupted artifact**: If the artifact is modified after signing (e.g., in transit), `verify` will reject it.
-- **Invalid signature**: If the signature doesn't match the repo or GitHub's certificate chain, `verify` fails.
-- **Offline verification**: `verify` requires network access to GitHub to check the certificate. Air-gapped environments must set `MCP_ATTESTATION_MODE=skip`.
-
-## Sidecar Convention
-
-Attestation files follow the naming convention:
-```
-<artifact>           e.g., index-abc123.tar.gz
-<artifact>.attestation.jsonl  e.g., index-abc123.tar.gz.attestation.jsonl
-```
-
-Both files must be kept together in the same directory and published to the same release.
+Primary references: [GitHub attestation action](https://github.com/actions/attest)
+and [GitHub CLI verification policy](https://cli.github.com/manual/gh_attestation_verify).

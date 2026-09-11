@@ -266,17 +266,13 @@ class IndexArtifactDownloader:
         if not compatible:
             raise ValueError("Artifact compatibility validation failed: " + "; ".join(issues))
 
-        att_url = metadata.get("attestation_url")
-        if att_url:
-            if attestation_path is None:
-                raise ValueError("Artifact attestation sidecar is required but missing")
-            att = Attestation(
-                bundle_url=att_url,
-                bundle_path=attestation_path,
-                subject_digest="",
-                signed_at=datetime.now(timezone.utc),
-            )
-            verify_attestation(archive_path, att, expected_repo=self.repo, gh_cmd="gh")
+        att = Attestation(
+            bundle_url="",
+            bundle_path=attestation_path,
+            subject_digest="",
+            signed_at=datetime.now(timezone.utc),
+        )
+        verify_attestation(archive_path, att, expected_repo=self.repo, gh_cmd="gh")
 
         print("📦 Extracting index files...")
         with tarfile.open(archive_path, "r:gz") as tar:

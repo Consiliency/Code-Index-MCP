@@ -8,9 +8,19 @@ name: Sign Published Image
 on:
   workflow_dispatch:
     inputs:
+      mode:
+        description: 'Sign a published image or attest a locally prepared index digest.'
+        required: true
+        type: choice
+        default: image
+        options: [image, index-attestation]
       version:
         description: 'Published tag to sign (e.g., v1.4.0). Must equal the current protected-main version.'
-        required: true
+        required: false
+        type: string
+      subject_digest:
+        description: 'Index SHA-256 hex digest only; never source or index contents.'
+        required: false
         type: string
 
 permissions:
@@ -24,7 +34,7 @@ jobs:
   sign-published-image:
     name: Sign an already-published container image
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
+    if: inputs.mode == 'image' && github.ref == 'refs/heads/main'
     permissions:
       contents: read
       packages: write
@@ -72,3 +82,28 @@ jobs:
           IMAGE_DIGEST=$(docker buildx imagetools inspect \
             "${IMAGE}:${REF_NAME}" --format '{{.Manifest.Digest}}')
           cosign sign --yes "${IMAGE}@${IMAGE_DIGEST}"
+
+  attest-local-index:
+    name: Attest operator-supplied local index digest
+    if: inputs.mode == 'index-attestation'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - name: Validate digest-only input
+        env:
+          SUBJECT_DIGEST: ${{ inputs.subject_digest }}
+        run: |
+          [[ "$SUBJECT_DIGEST" =~ ^[0-9a-f]{64}$ ]] || exit 1
+      - name: Attest local digest without claiming a hosted build
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-name: index-it-mcp-index.tar.gz
+          subject-digest: sha256:${{ inputs.subject_digest }}
+          predicate-type: https://github.com/Consiliency/Code-Index-MCP/local-index-digest/v1
+          predicate: '{"artifact_origin":"local","digest_origin":"operator-supplied","built_in_this_workflow":false}'
+          push-to-registry: false
+          create-storage-record: false

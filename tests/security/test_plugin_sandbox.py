@@ -36,9 +36,182 @@ from mcp_server.sandbox.supervisor import (
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
+@pytest.mark.parametrize("form", ["builtin", "pathlib", "io", "os", "bytes", "fd"])
+def test_capability_guard_rejects_outside_read_forms(tmp_path, form):
+    outside = tmp_path / "outside.txt"
+    outside.write_text("synthetic-private-content")
+    allowed = tmp_path / "allowed"
+    allowed.mkdir()
+    script = r"""
+import builtins, io, os, sys
+from pathlib import Path
+from mcp_server.sandbox.capabilities import CapabilitySet, SandboxViolation
+from mcp_server.sandbox.caps_apply import install_fs_guard
+outside, allowed, form = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
+fd = os.open(outside, os.O_RDONLY)
+install_fs_guard(CapabilitySet(fs_read=(allowed,), fs_write=(), env_allow=frozenset()))
+try:
+    if form == "builtin":
+        builtins.open(outside).close()
+    elif form == "pathlib":
+        outside.read_text()
+    elif form == "io":
+        io.open(outside).close()
+    elif form == "os":
+        os.close(os.open(outside, os.O_RDONLY))
+    elif form == "bytes":
+        builtins.open(os.fsencode(outside)).close()
+    else:
+        builtins.open(fd, closefd=False).close()
+except SandboxViolation:
+    print("denied")
+else:
+    raise AssertionError("outside read permitted")
+finally:
+    os.close(fd)
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script, str(outside), str(allowed), form],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "denied"
+
+
+@pytest.mark.parametrize("form", ["string", "path", "uri", "uri_rw", "uri_rwc"])
+def test_readonly_sqlite_forms_reject_write(tmp_path, form):
+    script = r"""
+import sqlite3, sys
+from pathlib import Path
+from mcp_server.sandbox.capabilities import CapabilitySet
+from mcp_server.sandbox.caps_apply import _patch_sqlite
+path = Path(sys.argv[1]) / "index with spaces.db"
+with sqlite3.connect(path) as conn:
+    conn.execute("CREATE TABLE marker (value TEXT)")
+caps = CapabilitySet(fs_read=(path.parent,), fs_write=(), env_allow=frozenset(), sqlite="readonly")
+_patch_sqlite(caps)
+form = sys.argv[2]
+kwargs = {}
+database = str(path) if form == "string" else path
+if form.startswith("uri"):
+    database = path.as_uri() + ("?mode=" + form[4:] if form != "uri" else "")
+    kwargs["uri"] = True
+with sqlite3.connect(database, **kwargs) as conn:
+    assert conn.execute("SELECT count(*) FROM marker").fetchone()[0] == 0
+    try:
+        conn.execute("INSERT INTO marker VALUES ('late-write')")
+    except sqlite3.OperationalError:
+        print("readonly")
+    else:
+        raise AssertionError("write permitted")
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script, str(tmp_path), form],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "readonly"
+
+
 # ---------------------------------------------------------------------------
 # protocol — envelope codec
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("operation", ["outside", "attach", "dbapi2", "bytes"])
+def test_sqlite_readonly_boundaries(tmp_path, operation):
+    script = r"""
+import os, sqlite3, sys
+from pathlib import Path
+from mcp_server.sandbox.capabilities import CapabilitySet, SandboxViolation
+from mcp_server.sandbox.caps_apply import _patch_sqlite
+root = Path(sys.argv[1])
+allowed = root / "allowed"
+allowed.mkdir()
+inside, outside = allowed / "db", root / "outside.db"
+for path in (inside, outside):
+    with sqlite3.connect(path) as conn:
+        conn.execute("CREATE TABLE marker (value TEXT)")
+_patch_sqlite(CapabilitySet(fs_read=(allowed,), fs_write=(), env_allow=frozenset(), sqlite="readonly"))
+operation = sys.argv[2]
+if operation == "outside":
+    try:
+        sqlite3.connect(outside.as_uri() + "?mode=ro", uri=True)
+    except SandboxViolation:
+        pass
+    else:
+        raise AssertionError("outside database accepted")
+else:
+    connect = sqlite3.dbapi2.connect if operation == "dbapi2" else sqlite3.connect
+    with connect(os.fsencode(inside) if operation == "bytes" else inside) as conn:
+        assert conn.execute("SELECT count(*) FROM marker").fetchone()[0] == 0
+        try:
+            if operation == "attach":
+                conn.execute("ATTACH DATABASE ? AS other", (str(outside),))
+            else:
+                conn.execute("INSERT INTO marker VALUES ('write')")
+        except sqlite3.DatabaseError:
+            pass
+        else:
+            raise AssertionError("mutation accepted")
+print("guarded")
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script, str(tmp_path), operation],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "guarded"
+
+
+def test_filesystem_allowed_forms_and_dirfd_boundary(tmp_path):
+    script = r"""
+import builtins, io, os, sys
+from pathlib import Path
+from mcp_server.sandbox.capabilities import CapabilitySet, SandboxViolation
+from mcp_server.sandbox.caps_apply import install_fs_guard
+root = Path(sys.argv[1])
+allowed = root / "allowed"
+allowed.mkdir()
+path = allowed / "sample"
+path.write_text("synthetic")
+outside = root / "outside"
+outside.write_text("private")
+directory = os.open(allowed, os.O_RDONLY)
+install_fs_guard(CapabilitySet(fs_read=(allowed,), fs_write=(allowed,), env_allow=frozenset()))
+assert path.read_text() == "synthetic"
+with io.open(os.fsencode(path)) as f:
+    assert f.read() == "synthetic"
+fd = os.open("sample", os.O_RDONLY, dir_fd=directory)
+with builtins.open(fd) as f:
+    assert f.read() == "synthetic"
+path.write_text("updated")
+try:
+    os.open("../outside", os.O_RDONLY, dir_fd=directory)
+except SandboxViolation:
+    pass
+else:
+    raise AssertionError("dir_fd escaped root")
+os.close(directory)
+print("guarded")
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script, str(tmp_path)], capture_output=True, text=True, timeout=10
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "guarded"
+
+
+@pytest.mark.parametrize("payload", ['{"sqlite":"write"}', '{"network":"false"}'])
+def test_capability_json_rejects_ambiguous_permissions(payload):
+    with pytest.raises(ValueError):
+        CapabilitySet.from_json(payload)
 
 
 def test_envelope_roundtrip():
