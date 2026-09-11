@@ -288,7 +288,9 @@
       "created_at": "2026-09-11T10:20:30.214608+00:00",
       "file": "plans/phase-plan-v13-STATE.md",
       "handoff_ref": ".dev-skills/handoffs/codex-plan-phase/latest.md",
-      "if_gates_produced": [],
+      "if_gates_produced": [
+        "IF-0-STATE-1"
+      ],
       "lanes": [
         "SL-0",
         "SL-1",
@@ -304,11 +306,28 @@
             "mode": "manual"
           },
           "transition": "executing"
+        },
+        {
+          "at": "2026-09-11T11:45:43Z",
+          "by": "codex-execute-phase",
+          "metadata": {
+            "dirty_worktree_summary": "Only phase-owned receipt/contract/status and control closeout artifacts; authorized checkpoint commit follows.",
+            "doc_delta_decision": "docs_updated",
+            "if_gates_produced": [
+              "IF-0-STATE-1"
+            ],
+            "issue_dispositions": [],
+            "issue_inventory": [],
+            "reflection_status": "written",
+            "verification_artifact_path": ".phase-loop/runs/v13-STATE-20260911-645421f/verification.json",
+            "verification_status": "passed"
+          },
+          "transition": "completed"
         }
       ],
       "owner_skill": "codex-plan-phase",
       "phase_alias": "STATE",
-      "reflection_ref": null,
+      "reflection_ref": "/home/viperjuice/.codex/skills/codex-execute-phase/reflections/448c2cf6/codex-v13-audit-remediation/20260911T114315Z-state-accepted.md",
       "roadmap_ref": {
         "file": "specs/phase-plans-v13.md",
         "slug": "phase-plans-v13",
@@ -316,10 +335,10 @@
         "type": "roadmap"
       },
       "slug": "phase-plan-v13-STATE",
-      "status": "executing",
+      "status": "completed",
       "task_summary": null,
       "type": "phase",
-      "updated_at": "2026-09-11T10:20:30Z"
+      "updated_at": "2026-09-11T11:45:43Z"
     },
     {
       "acceptance_criteria_count": 6,

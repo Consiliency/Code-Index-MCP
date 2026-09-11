@@ -1,6 +1,6 @@
 # V13 State Contract
 
-Status: implementation under verification. No IF-0-STATE-1 acceptance yet.
+Status: accepted IF-0-STATE-1 on candidate `645421f`; see the STATE receipt.
 
 ## Registry Authority
 
@@ -78,5 +78,8 @@ rebuild retained, until DATA supplies staged restore. SAFETY owns termination of
 timed-out workers before cancellation can be treated as complete.
 
 No live registry, index or private repository was migrated by these changes.
-Evidence comes from synthetic local fixtures; final acceptance will be recorded
-in `docs/validation/v13/STATE.json` after exact-candidate verification.
+Evidence comes from synthetic local fixtures. Exact-candidate acceptance is
+recorded in `docs/validation/v13/STATE.json`: all seven stamped commands, locked
+environment refresh and the 433-test expanded phase suite passed. The broad
+offline suite passed 3,025 tests, with 153 skips and 31 deselections; those
+exclusions are not passing coverage. The installed wheel passed two SDK sessions.

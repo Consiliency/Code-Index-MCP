@@ -9,7 +9,7 @@ Worktree: `/mnt/workspace/worktrees/Code-Index-MCP-v13-audit-remediation`.
 | --- | --- | --- |
 | FREEZE | Accepted; owner decisions approved | `docs/validation/v13/FREEZE.json` |
 | DIST | Accepted | `docs/validation/v13/DIST.json`; IF-0-DIST-1 |
-| STATE | Executing; focused boundaries passing | No phase acceptance claimed; full candidate verification pending |
+| STATE | Accepted | `docs/validation/v13/STATE.json`; IF-0-STATE-1 |
 | SAFETY | Not started | No implementation acceptance claimed |
 | DATA | Not started | No implementation acceptance claimed |
 | PILOT | Not started | No inference or browser acceptance claimed |
@@ -70,13 +70,13 @@ environment refresh and the 314-test phase suite. Broad offline baseline:
 and restart. Artifact hashes and exclusions are in the DIST receipt. Earlier
 failed attempts remain preserved and are not accepted evidence.
 
-Read `docs/validation/v13/DIST.json` and
+Read `docs/validation/v13/STATE.json` and
 `.dev-skills/handoffs/codex-execute-phase/latest.md` in this worktree.
-Next phase: STATE, executing its tracked lane plan manually.
-Command: `codex-execute-phase plans/phase-plan-v13-STATE.md`.
+Next phase: SAFETY, plan then execute manually.
+Command: `codex-plan-phase specs/phase-plans-v13.md SAFETY`.
 Do not restart v9 or infer v13 completion from old primary-checkout state.
 
-## STATE In Progress
+## STATE Implementation History
 
 The local implementation adds durable reload/mutate/fsync registry transactions,
 registration identities and generation publication, cross-process writer locks,
@@ -114,3 +114,18 @@ Until then, unsafe legacy extraction into the active directory is disabled and
 semantic cache binding changes return unavailable without closing borrowed
 handles. SAFETY retains ownership of timed-out worker termination. No live index,
 inference, browser, final code-panel, version bump or publication is claimed.
+
+## STATE Accepted
+
+Candidate `645421f35f4f17e38a9090b0f2d6bc408568fb22` passed all seven stamped
+commands, the locked environment refresh and 433 expanded phase tests. The
+broad offline suite passed 3,025 tests, with 153 skips and 31 deselections.
+The boundary group passed 45 tests. Local gate groups passed 51, 38, 117 and
+265 tests; the independently installed wheel completed two real SDK sessions.
+The standalone artifact validator returned `ok=true` with no findings.
+
+The accepted receipt binds the exact source/tree, plan, wheel and verification
+hashes. The prior rejected run remains intact. Only this bounded state contract
+is accepted: SAFETY/DATA/PILOT/PREP/SHIP work and their gates remain outstanding.
+Live GitHub check found no open Code-Index-MCP issues; findings remain roadmap
+items. Draft Code-Index-MCP#97 is open and has not been merged.

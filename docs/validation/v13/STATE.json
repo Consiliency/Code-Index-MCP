@@ -1,0 +1,416 @@
+{
+  "schema_version": "v13.phase-receipt.v1",
+  "phase": "STATE",
+  "execution_mode": "manual",
+  "terminal_status": "complete",
+  "verification_status": "passed",
+  "human_required": false,
+  "blocker_class": null,
+  "timestamp": "2026-09-11T11:43:15Z",
+  "source_commit": "645421f35f4f17e38a9090b0f2d6bc408568fb22",
+  "source_tree": "f1294911fd5ac5c400663d58b3f9e42be9414b4e",
+  "roadmap_sha256": "178b8328d8e7dc76ddc0804d7b72d3ccddb55e23577a3d52cb7cbd70d5fd5308",
+  "contract_sha256": "d1686bb23ca55e73ec54e8211de0269dd1332c593cef70f2e80d275f965573d8",
+  "plan_sha256": "8ebbfc748cc136567a78e8eb39cea19bafe78b9bae28e5cedc3660bb1610620d",
+  "state_contract_source_sha256": "1cdc400e93ec2243f9e8eebde533e277e9942b7806028dfc3815561b508226f7",
+  "verification_artifact_path": ".phase-loop/runs/v13-STATE-20260911-645421f/verification.json",
+  "verification_artifact_sha256": "5eb9630b00f76a84ef555efc1cdc78c3ea2462205c14f56de278baa4cfaae702",
+  "verification_log_sha256": "4e230797109e24e2abdbf30ed56df768ad3cf48f69427cf0a21def8d4d3cdd6a",
+  "verification_summary": "All seven commands, locked environment refresh and expanded phase suite exited 0; independent artifact validator ok=true. Boundary group: 45 passed. Broad offline suite: 3025 passed, 153 skipped, 31 deselected. Expanded phase suite: 433 passed.",
+  "started_at": "2026-09-11T11:33:49Z",
+  "finished_at": "2026-09-11T11:43:15Z",
+  "environment_identity": {
+    "os": "Linux",
+    "python": "3.12.12",
+    "dependency_lock": "uv.lock",
+    "inputs": "Synthetic temporary repositories/databases and spawned processes only; no live registry/index, real fleet content or inference."
+  },
+  "artifact_digests": {
+    "wheel": {
+      "name": "index_it_mcp-1.4.0-py3-none-any.whl",
+      "sha256": "9cb1c0e2445439cbb46cf17d72b8437436bd242ab0798e3f5e8e967fb92aa1cb",
+      "distribution": "Locally built and independently installed outside checkout, uid 1000; not published."
+    }
+  },
+  "per_goal_results": [
+    {
+      "goal": "EC-STATE-1",
+      "status": "passed",
+      "evidence": "Real spawned stale writers preserve deletion/pending provenance; fresh registry readers, field-scoped mutations, registration ABA, query Git refresh and write/replace/fsync failure controls pass in tests/test_v13_state.py and tests/test_registry_concurrency.py."
+    },
+    {
+      "goal": "EC-STATE-2",
+      "status": "passed",
+      "evidence": "Cross-process writer exclusion/crash release, a separate reader holding an old SQLite transaction during generation publication, publisher exit before provenance, external physical replacement, cached unregister, constructor/shutdown race and nested/interrupted pool borrows pass. Installed wheel completes two real SDK STDIO query/refusal/restart sessions."
+    },
+    {
+      "goal": "EC-STATE-3",
+      "status": "passed",
+      "evidence": "Watcher membership/context refresh, scoped mutation fences, real gateway cache transitions, shared graph identity, complete reranker content/profile/top-k keys, candidate eleven, bound/unbound cache behavior and semantic binding invalidation pass. Unready semantic bindings are refused until DATA implements safe retirement."
+    }
+  ],
+  "finding_dispositions": [
+    {
+      "id": "C01",
+      "status": "fixed",
+      "evidence": "Durable deletion with fresh reads; external watcher membership reconciliation."
+    },
+    {
+      "id": "C02",
+      "status": "fixed",
+      "evidence": "Reload/field mutation/fsync under shared process authority; registration/generation CAS and query-triggered Git refresh retain fences."
+    },
+    {
+      "id": "C03",
+      "status": "fixed",
+      "evidence": "Persistence errors and malformed registry propagate, never acknowledge ready; failed directory fsync may leave visible but unacknowledged disk revision."
+    },
+    {
+      "id": "C04",
+      "status": "fixed",
+      "evidence": "Process writer lock and unique SQLite generation paths; active sidecars/old physical files retained. Store bindings refreshed before result emission; interrupted publication stays unavailable."
+    },
+    {
+      "id": "C16",
+      "status": "fixed",
+      "evidence": "Condition-based closed-pool admission, waiter wakeup, outstanding borrower draining, constructor epoch protection and BaseException rollback."
+    },
+    {
+      "id": "R03",
+      "status": "fixed",
+      "evidence": "Query/graph/semantic/reranker bindings cover generation/profile and complete candidate content. Unbound reranker candidates cannot cache; downstream DATA owns final cross-repository admission binding."
+    },
+    {
+      "id": "R10",
+      "status": "fixed_in_scope",
+      "evidence": "Registry transaction/publication authority, shared scoped mutation admission, shared graph/query identity and pool ownership consolidated in existing repair paths; no cosmetic module split."
+    }
+  ],
+  "commands": [
+    {
+      "argv": [
+        "/home/viperjuice/.local/share/uv/tools/phase-loop-runtime/bin/python",
+        "/home/viperjuice/.codex/skills/codex-plan-phase/scripts/validate_plan_doc.py",
+        "/mnt/HC_Volume_105438154/worktrees/Code-Index-MCP-v13-audit-remediation/plans/phase-plan-v13-STATE.md"
+      ],
+      "cwd": ".",
+      "duration_s": 0.652318,
+      "exit_code": 0,
+      "log_end_offset": 581,
+      "log_offset": 164
+    },
+    {
+      "argv": [
+        "env",
+        "SEMANTIC_SEARCH_ENABLED=false",
+        "MCP_TEST_MODE=1",
+        "uv",
+        "run",
+        "--locked",
+        "--extra",
+        "dev",
+        "pytest",
+        "tests/test_v13_state.py",
+        "tests/test_registry_concurrency.py",
+        "tests/test_store_registry.py",
+        "tests/test_sqlite_pool.py",
+        "-q",
+        "--no-cov",
+        "-o",
+        "log_cli=false"
+      ],
+      "cwd": ".",
+      "duration_s": 14.174157,
+      "exit_code": 0,
+      "log_end_offset": 1787,
+      "log_offset": 581
+    },
+    {
+      "argv": [
+        "env",
+        "SEMANTIC_SEARCH_ENABLED=false",
+        "MCP_TEST_MODE=1",
+        "make",
+        "agent-gate"
+      ],
+      "cwd": ".",
+      "duration_s": 106.7403,
+      "exit_code": 0,
+      "log_end_offset": 477835,
+      "log_offset": 1787
+    },
+    {
+      "argv": [
+        "env",
+        "SEMANTIC_SEARCH_ENABLED=false",
+        "MCP_TEST_MODE=1",
+        "uv",
+        "run",
+        "--locked",
+        "--extra",
+        "dev",
+        "pytest",
+        "tests",
+        "-m",
+        "not requires_network and not benchmark",
+        "-q",
+        "--no-cov",
+        "-o",
+        "log_cli=false"
+      ],
+      "cwd": ".",
+      "duration_s": 340.427149,
+      "exit_code": 0,
+      "log_end_offset": 505007,
+      "log_offset": 477835
+    },
+    {
+      "argv": [
+        "uv",
+        "run",
+        "--locked",
+        "--extra",
+        "dev",
+        "isort",
+        "--check-only",
+        "mcp_server/cache/query_cache.py",
+        "mcp_server/cli/task_reindex.py",
+        "mcp_server/cli/tool_handlers.py",
+        "mcp_server/client.py",
+        "mcp_server/core/repo_context.py",
+        "mcp_server/core/repo_resolver.py",
+        "mcp_server/dispatcher/dispatcher_enhanced.py",
+        "mcp_server/gateway.py",
+        "mcp_server/indexer/reranker.py",
+        "mcp_server/indexing/__init__.py",
+        "mcp_server/indexing/incremental_indexer.py",
+        "mcp_server/indexing/lock_registry.py",
+        "mcp_server/storage/connection_pool.py",
+        "mcp_server/storage/git_index_manager.py",
+        "mcp_server/storage/multi_repo_manager.py",
+        "mcp_server/storage/repository_registry.py",
+        "mcp_server/storage/sqlite_store.py",
+        "mcp_server/storage/store_registry.py",
+        "mcp_server/utils/semantic_indexer_registry.py",
+        "mcp_server/watcher_multi_repo.py",
+        "tests/test_chunker_scheme_recovery.py",
+        "tests/test_dispatcher_toctou.py",
+        "tests/test_endpoint_reranker.py",
+        "tests/test_git_index_manager.py",
+        "tests/test_indexing_lock.py",
+        "tests/test_mcptasks_reindex.py",
+        "tests/test_python_client_contract.py",
+        "tests/test_python_client_search.py",
+        "tests/test_registry_concurrency.py",
+        "tests/test_reindex_resume.py",
+        "tests/test_semantic_indexer_registry.py",
+        "tests/test_sqlite_pool.py",
+        "tests/test_store_registry.py",
+        "tests/test_watcher_multi_repo.py",
+        "tests/test_v13_state.py",
+        "tests/test_reranking_metadata_preservation.py"
+      ],
+      "cwd": ".",
+      "duration_s": 0.297163,
+      "exit_code": 0,
+      "log_end_offset": 505007,
+      "log_offset": 505007
+    },
+    {
+      "argv": [
+        "uv",
+        "run",
+        "--locked",
+        "--extra",
+        "dev",
+        "black",
+        "--check",
+        "mcp_server/cache/query_cache.py",
+        "mcp_server/cli/task_reindex.py",
+        "mcp_server/cli/tool_handlers.py",
+        "mcp_server/client.py",
+        "mcp_server/core/repo_context.py",
+        "mcp_server/core/repo_resolver.py",
+        "mcp_server/dispatcher/dispatcher_enhanced.py",
+        "mcp_server/gateway.py",
+        "mcp_server/indexer/reranker.py",
+        "mcp_server/indexing/__init__.py",
+        "mcp_server/indexing/incremental_indexer.py",
+        "mcp_server/indexing/lock_registry.py",
+        "mcp_server/storage/connection_pool.py",
+        "mcp_server/storage/git_index_manager.py",
+        "mcp_server/storage/multi_repo_manager.py",
+        "mcp_server/storage/repository_registry.py",
+        "mcp_server/storage/sqlite_store.py",
+        "mcp_server/storage/store_registry.py",
+        "mcp_server/utils/semantic_indexer_registry.py",
+        "mcp_server/watcher_multi_repo.py",
+        "tests/test_chunker_scheme_recovery.py",
+        "tests/test_dispatcher_toctou.py",
+        "tests/test_endpoint_reranker.py",
+        "tests/test_git_index_manager.py",
+        "tests/test_indexing_lock.py",
+        "tests/test_mcptasks_reindex.py",
+        "tests/test_python_client_contract.py",
+        "tests/test_python_client_search.py",
+        "tests/test_registry_concurrency.py",
+        "tests/test_reindex_resume.py",
+        "tests/test_semantic_indexer_registry.py",
+        "tests/test_sqlite_pool.py",
+        "tests/test_store_registry.py",
+        "tests/test_watcher_multi_repo.py",
+        "tests/test_v13_state.py",
+        "tests/test_reranking_metadata_preservation.py"
+      ],
+      "cwd": ".",
+      "duration_s": 0.211696,
+      "exit_code": 0,
+      "log_end_offset": 505064,
+      "log_offset": 505007
+    },
+    {
+      "argv": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "cwd": ".",
+      "duration_s": 0.006562,
+      "exit_code": 0,
+      "log_end_offset": 505064,
+      "log_offset": 505064
+    }
+  ],
+  "env_refresh": {
+    "exit_code": 0,
+    "install_argv": [
+      "uv",
+      "sync",
+      "--locked",
+      "--python",
+      "3.12",
+      "--extra",
+      "dev"
+    ],
+    "log_end_offset": 164,
+    "log_offset": 107,
+    "manifests": [
+      "pyproject.toml",
+      "uv.lock"
+    ],
+    "triggered": true
+  },
+  "suite": {
+    "argv": [
+      "env",
+      "SEMANTIC_SEARCH_ENABLED=false",
+      "MCP_TEST_MODE=1",
+      "uv",
+      "run",
+      "--locked",
+      "--extra",
+      "dev",
+      "pytest",
+      "tests/test_v13_state.py",
+      "tests/test_repository_registry.py",
+      "tests/test_repository_registry_commits.py",
+      "tests/test_registry_concurrency.py",
+      "tests/test_store_registry.py",
+      "tests/test_sqlite_pool.py",
+      "tests/test_git_index_manager.py",
+      "tests/test_watcher_multi_repo.py",
+      "tests/test_repository_readiness.py",
+      "tests/test_python_client_search.py",
+      "tests/test_python_client_contract.py",
+      "tests/test_gateway.py",
+      "tests/test_tool_handlers_readiness.py",
+      "tests/test_endpoint_reranker.py",
+      "tests/test_semantic_indexer_registry.py",
+      "tests/test_mcptasks_reindex.py",
+      "tests/test_indexing_lock.py",
+      "tests/test_reindex_resume.py",
+      "tests/test_chunker_scheme_recovery.py",
+      "tests/test_dispatcher_toctou.py",
+      "tests/test_friction_search_filters.py",
+      "tests/test_history_search_filters.py",
+      "-q",
+      "--no-cov"
+    ],
+    "duration_s": 104.068728,
+    "exit_code": 0,
+    "log_end_offset": 1002249,
+    "log_offset": 505064
+  },
+  "local_gate": {
+    "mode": "local",
+    "fast_passed": 51,
+    "dist_passed": 38,
+    "state_passed": 117,
+    "production_readiness_passed": 265,
+    "installed_wheel": {
+      "schema": "passed",
+      "stdio_sessions": 2,
+      "queries": "passed"
+    }
+  },
+  "exclusions": {
+    "marker_expression": "not requires_network and not benchmark",
+    "marker_deselected": 31,
+    "reported_skips": 153,
+    "git_integration": "Included in the broad offline invocation; no isolated-suite exclusion in STATE.",
+    "interpretation": "Skips are not passing coverage. No network/provider, full language/platform matrix, real Qdrant server, signing, live inference, browser, PMCP or fleet acceptance. No coverage percentage inferred from no-cov. Container acceptance in DIST is historical, not a STATE container rebuild."
+  },
+  "downstream_requirements": [
+    "SAFETY must terminate timed-out workers and prove installed shutdown/signing/exposure policy.",
+    "DATA must preserve imported rows, stage artifact/vector generations, implement semantic lease retirement, restore the temporarily disabled unsafe active-directory artifact path safely, and complete ignore/query policy.",
+    "Semantic binding changes refuse reuse without closing borrowed handles; old SQLite generations remain retained. No eager resource reclamation or manual same-filename DB transplantation is supported.",
+    "PILOT must prove bounded local inference and real PMCP/browser workflows; PREP owes new version and exact-candidate four-seat code review; SHIP owns merge/publication acceptance."
+  ],
+  "operational_receipts": {
+    "publication": {
+      "published": false,
+      "merged": false,
+      "version_bumped": false,
+      "pr": "Consiliency/Code-Index-MCP#97",
+      "pr_state": "open draft, checked live"
+    },
+    "issues": {
+      "open_issues": 0,
+      "checked_at": "2026-09-11",
+      "note": "Findings are roadmap-only; no issue closure claimed."
+    }
+  },
+  "prior_attempts": [
+    {
+      "path": ".phase-loop/runs/v13-STATE-20260911-112c9e0/verification.json",
+      "accepted": false,
+      "reason": "Broad run had 3023 passes and one legacy Cohere cache test assuming reuse without generation identity. Repaired test now covers bound and unbound inputs, preserves metadata and verifies provider call counts. All original stamped checks rerun."
+    }
+  ],
+  "if_gates_produced": [
+    "IF-0-STATE-1"
+  ],
+  "issue_inventory": [],
+  "issue_dispositions": [],
+  "required_human_inputs": [],
+  "tool_diagnostics": [
+    "Known agent-harness#819 circular-import warning remains; structural validation reports 3 lanes/0 warnings and standalone verification validates successfully.",
+    "Broad proof node took 340 seconds including process overhead. It reports all test failures; later phase planning should partition broad groups near the five-minute proof-cost threshold."
+  ],
+  "doc_delta_decision": "docs_updated",
+  "spec_delta_closeout": {
+    "schema": "spec_delta_closeout.v1",
+    "decision": "canonical_spec_update",
+    "target_surfaces": [
+      "docs/contracts/v13-state.md",
+      "docs/status/V13_EXECUTION.md"
+    ],
+    "redaction_posture": "metadata_only",
+    "evidence_paths": [
+      "docs/validation/v13/STATE.json"
+    ]
+  },
+  "next_phase": "SAFETY",
+  "next_skill": "codex-plan-phase",
+  "next_command": "codex-plan-phase specs/phase-plans-v13.md SAFETY"
+}
