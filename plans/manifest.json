@@ -344,6 +344,32 @@
     },
     {
       "acceptance_criteria_count": 4,
+      "created_at": "2026-09-11T19:01:31Z",
+      "file": "plans/phase-plan-v13-PILOT.md",
+      "handoff_ref": ".dev-skills/handoffs/codex-plan-phase/20260911T190131Z-pilot-plan.md",
+      "if_gates_produced": [],
+      "lanes": [
+        "SL-0",
+        "SL-1"
+      ],
+      "lifecycle": [],
+      "owner_skill": "codex-plan-phase",
+      "phase_alias": "PILOT",
+      "reflection_ref": "/home/viperjuice/.codex/skills/codex-plan-phase/reflections/448c2cf6/codex-v13-audit-remediation/20260911T190131Z-pilot-plan.md",
+      "roadmap_ref": {
+        "file": "specs/phase-plans-v13.md",
+        "slug": "phase-plans-v13",
+        "status": "committed",
+        "type": "roadmap"
+      },
+      "slug": "phase-plan-v13-PILOT",
+      "status": "committed",
+      "task_summary": "Installed PMCP, browser and budgeted local inference acceptance",
+      "type": "phase",
+      "updated_at": "2026-09-11T19:01:31Z"
+    },
+    {
+      "acceptance_criteria_count": 4,
       "created_at": "2026-09-11T11:48:04Z",
       "file": "plans/phase-plan-v13-SAFETY.md",
       "handoff_ref": ".dev-skills/handoffs/codex-plan-phase/20260911T114804Z-safety-plan.md",
