@@ -10,7 +10,7 @@ Worktree: `/mnt/workspace/worktrees/Code-Index-MCP-v13-audit-remediation`.
 | FREEZE | Accepted; owner decisions approved | `docs/validation/v13/FREEZE.json` |
 | DIST | Accepted | `docs/validation/v13/DIST.json`; IF-0-DIST-1 |
 | STATE | Accepted | `docs/validation/v13/STATE.json`; IF-0-STATE-1 |
-| SAFETY | Not started | No implementation acceptance claimed |
+| SAFETY | Executing; plan validated | `plans/phase-plan-v13-SAFETY.md`; no implementation acceptance claimed |
 | DATA | Not started | No implementation acceptance claimed |
 | PILOT | Not started | No inference or browser acceptance claimed |
 | PREP | Not started | No version bump or implementation code review claimed |
@@ -72,8 +72,8 @@ failed attempts remain preserved and are not accepted evidence.
 
 Read `docs/validation/v13/STATE.json` and
 `.dev-skills/handoffs/codex-execute-phase/latest.md` in this worktree.
-Next phase: SAFETY, plan then execute manually.
-Command: `codex-plan-phase specs/phase-plans-v13.md SAFETY`.
+Next phase: SAFETY, execute the validated two-lane plan manually.
+Command: `codex-execute-phase plans/phase-plan-v13-SAFETY.md`.
 Do not restart v9 or infer v13 completion from old primary-checkout state.
 
 ## STATE Implementation History

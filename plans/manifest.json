@@ -284,6 +284,43 @@
       "updated_at": "2026-09-11T09:06:59Z"
     },
     {
+      "acceptance_criteria_count": 4,
+      "created_at": "2026-09-11T11:48:04Z",
+      "file": "plans/phase-plan-v13-SAFETY.md",
+      "handoff_ref": ".dev-skills/handoffs/codex-plan-phase/20260911T114804Z-safety-plan.md",
+      "if_gates_produced": [],
+      "lanes": [
+        "SL-0",
+        "SL-1"
+      ],
+      "lifecycle": [
+        {
+          "at": "2026-09-11T11:49:05Z",
+          "by": "codex-execute-phase",
+          "metadata": {
+            "base_commit": "45e06cc3006cedb968c2c76f4421d08a1554ca9b",
+            "issue_inventory": [],
+            "mode": "manual"
+          },
+          "transition": "executing"
+        }
+      ],
+      "owner_skill": "codex-plan-phase",
+      "phase_alias": "SAFETY",
+      "reflection_ref": "/home/viperjuice/.codex/skills/codex-plan-phase/reflections/448c2cf6/codex-v13-audit-remediation/20260911T114804Z-safety-plan.md",
+      "roadmap_ref": {
+        "file": "specs/phase-plans-v13.md",
+        "slug": "phase-plans-v13",
+        "status": "committed",
+        "type": "roadmap"
+      },
+      "slug": "phase-plan-v13-SAFETY",
+      "status": "executing",
+      "task_summary": "Trust and process lifecycle under manual v13 execution",
+      "type": "phase",
+      "updated_at": "2026-09-11T11:49:05Z"
+    },
+    {
       "acceptance_criteria_count": 3,
       "created_at": "2026-09-11T10:20:30.214608+00:00",
       "file": "plans/phase-plan-v13-STATE.md",
