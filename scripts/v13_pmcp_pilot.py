@@ -329,6 +329,7 @@ def create_fixture(root: Path, manifest: dict, *, label: str) -> dict:
             "MCP_ALLOWED_ROOTS": str(fixture),
             "MCP_DEPLOYMENT_PROFILE": "lexical_only",
             "SEMANTIC_SEARCH_ENABLED": "false",
+            "SEMANTIC_DEFAULT_PROFILE": "legacy-default",
             "MCP_AUTO_INDEX": "false",
             "MCP_SKIP_PLUGIN_PREINDEX": "true",
             "RERANKER_TYPE": "none",
@@ -802,15 +803,183 @@ async def offline(root: Path, manifest: dict) -> dict:
     return result
 
 
+async def browser_session(root: Path, manifest: dict, inspector: Path) -> dict:
+    package = json.loads((inspector.resolve().parents[3] / "package.json").read_text())
+    if (
+        package.get("name") != "@modelcontextprotocol/inspector"
+        or package.get("version") != "2.6.0"
+    ):
+        raise PilotRefused("inspector_identity_mismatch")
+    fixture = create_fixture(root, manifest, label="browser")
+    directory = fixture["root"]
+    processes = []
+    result = {
+        "source": manifest["source"],
+        "wheel_sha256": manifest["wheel_sha256"],
+        "manifest_sha256": digest_json(manifest),
+        "inspector_version": package["version"],
+        "inspector_entrypoint_sha256": digest_file(inspector),
+        "session_started": False,
+    }
+    try:
+        async with gateway(fixture, "pmcp-browser") as (client, owner):
+            tools = await discover(client)
+            await invoke(client, tools, "handshake", {"secret": fixture["secret"]})
+            for repo in ("ledger", "catalog"):
+                indexed = await invoke(
+                    client, tools, "reindex", {"repository": str(directory / "repos" / repo)}
+                )
+                if "error" in indexed:
+                    raise PilotRefused("browser_fixture_index_failed")
+            argv = owner.proc.args
+            pmcp_port = argv[argv.index("--port") + 1]
+            admin_port, inspector_port = free_port(), free_port()
+            env = dict(fixture["env"])
+            env["MCP_METRICS_PORT"] = str(free_port())
+            processes.append(
+                OwnedProcess(
+                    manifest["uvx_prefix"]
+                    + [
+                        "uvicorn",
+                        "mcp_server.gateway:app",
+                        "--host",
+                        "127.0.0.1",
+                        "--port",
+                        str(admin_port),
+                        "--log-level",
+                        "warning",
+                        "--no-access-log",
+                    ],
+                    directory,
+                    env,
+                    "admin-browser",
+                )
+            )
+            inspector_env = dict(fixture["env"])
+            inspector_env.update(
+                {
+                    "CLIENT_PORT": str(inspector_port),
+                    "MCP_SANDBOX_PORT": str(free_port()),
+                    "HOST": "127.0.0.1",
+                    "MCP_AUTO_OPEN_ENABLED": "false",
+                    "MCP_INSPECTOR_API_TOKEN": secrets.token_urlsafe(36),
+                }
+            )
+            processes.append(
+                OwnedProcess(
+                    [
+                        shutil.which("node") or "node",
+                        str(inspector),
+                        "--web",
+                        "--transport",
+                        "http",
+                        "--server-url",
+                        f"http://127.0.0.1:{pmcp_port}/mcp",
+                    ],
+                    directory,
+                    inspector_env,
+                    "inspector-browser",
+                )
+            )
+            async with httpx.AsyncClient(trust_env=False) as http:
+                for _ in range(300):
+                    if any(process.proc.poll() is not None for process in processes):
+                        raise PilotRefused("browser_surface_start_failed")
+                    try:
+                        schema = await http.get(f"http://127.0.0.1:{admin_port}/openapi.json")
+                        page = await http.get(f"http://127.0.0.1:{inspector_port}/")
+                        if schema.status_code == page.status_code == 200:
+                            break
+                    except httpx.HTTPError:
+                        pass
+                    await asyncio.sleep(0.1)
+                else:
+                    raise PilotRefused("browser_surface_start_timeout")
+                login = await http.post(
+                    f"http://127.0.0.1:{admin_port}/api/v1/auth/login",
+                    json={"username": "admin", "password": env["DEFAULT_ADMIN_PASSWORD"]},
+                )
+                if login.status_code != 200:
+                    raise PilotRefused("browser_admin_auth_failed")
+                write_json(directory / "auth.json", {"token": login.json()["access_token"]})
+                write_json(directory / "openapi.json", schema.json())
+            control = {
+                **result,
+                "pmcp_url": f"http://127.0.0.1:{pmcp_port}/mcp",
+                "admin_url": f"http://127.0.0.1:{admin_port}/docs",
+                "inspector_url": f"http://127.0.0.1:{inspector_port}/",
+                "tools": tools,
+                "root": str(directory),
+            }
+            write_json(directory / "control.json", control)
+            print(json.dumps(control), flush=True)
+            result["session_started"] = True
+            started = time.monotonic()
+            while time.monotonic() - started < 300 and not (directory / "stop").exists():
+                for process in processes + [owner]:
+                    process.observe()
+                await asyncio.sleep(0.1)
+            result["explicit_stop"] = (directory / "stop").is_file()
+    finally:
+        for process in reversed(processes):
+            await asyncio.to_thread(process.stop)
+        all_processes = processes + fixture.get("processes", [])
+        result.update(
+            {
+                "shutdown_seconds": [p.exit_seconds for p in all_processes],
+                "surviving_children": [pid for p in all_processes for pid in p.survivors],
+                "peak_rss_mib": sum(p.peak_rss_mib for p in all_processes),
+            }
+        )
+        write_json(directory / "session.json", result)
+    return result
+
+
+def verify_saved_receipt(root: Path, manifest: dict, kind: str) -> dict:
+    result = json.loads((root / f"{kind}.json").read_text())
+    validate_receipt(result, manifest, kind)
+    required_roles = {
+        "browser": {
+            "inspector_screenshot",
+            "admin_screenshot",
+            "browser_actions",
+            "browser_session",
+        },
+        "live": {"allowance_ledger", "runtime_provenance"},
+    }[kind]
+    artifacts = result.get("artifacts", [])
+    if not required_roles <= {item.get("role") for item in artifacts}:
+        raise PilotRefused("receipt_artifacts_incomplete")
+    for item in artifacts:
+        path = root / item["path"]
+        if (
+            Path(item["path"]).is_absolute()
+            or not path.resolve().is_relative_to(root.resolve())
+            or not path.is_file()
+            or digest_file(path) != item.get("sha256")
+        ):
+            raise PilotRefused("receipt_artifact_mismatch")
+    return result
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--mode",
         required=True,
-        choices=["prepare", "offline", "live", "verify-live", "verify-browser", "identity"],
+        choices=[
+            "prepare",
+            "offline",
+            "browser",
+            "live",
+            "verify-live",
+            "verify-browser",
+            "identity",
+        ],
     )
     parser.add_argument("--root", type=Path)
     parser.add_argument("--wheel", type=Path)
+    parser.add_argument("--inspector", type=Path)
     args = parser.parse_args()
     if args.mode == "identity":
         print(json.dumps(installed_identity(args.wheel)))
@@ -826,6 +995,12 @@ def main():
         result = prepare(root)
     elif args.mode == "offline":
         result = asyncio.run(offline(root, load_manifest(root)))
+    elif args.mode == "browser":
+        if args.inspector is None:
+            raise PilotRefused("inspector_entrypoint_required")
+        result = asyncio.run(browser_session(root, load_manifest(root), args.inspector.resolve()))
+    elif args.mode.startswith("verify-"):
+        result = verify_saved_receipt(root, load_manifest(root), args.mode.removeprefix("verify-"))
     else:
         raise PilotRefused("proof_not_implemented:" + args.mode)
     print(json.dumps({"mode": args.mode, "root": str(root), "source": result["source"]}))

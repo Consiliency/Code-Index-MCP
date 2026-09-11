@@ -4,7 +4,7 @@ phase: PILOT
 roadmap: specs/phase-plans-v13.md
 roadmap_sha256: 178b8328d8e7dc76ddc0804d7b72d3ccddb55e23577a3d52cb7cbd70d5fd5308
 automation:
-  suite_command: "env SEMANTIC_SEARCH_ENABLED=false MCP_TEST_MODE=1 uv run --locked --extra dev pytest tests/test_repository_readiness.py tests/test_v13_pilot_budget.py tests/test_v13_pmcp_pilot.py tests/test_semantic_profile_settings.py tests/test_summarization.py tests/test_deployment_profiles.py tests/integration/test_sigterm_shutdown.py tests/test_v13_safety.py -q --no-cov"
+  suite_command: "env SEMANTIC_SEARCH_ENABLED=false MCP_TEST_MODE=1 uv run --locked --extra dev pytest tests/test_gateway_transport_boundary.py tests/test_repository_readiness.py tests/test_v13_pilot_budget.py tests/test_v13_pmcp_pilot.py tests/test_semantic_profile_settings.py tests/test_summarization.py tests/test_deployment_profiles.py tests/integration/test_sigterm_shutdown.py tests/test_v13_safety.py -q --no-cov"
 ---
 
 # PILOT: Installed PMCP And Bounded Local Acceptance
@@ -103,7 +103,7 @@ SL-1 — Installed operational driver, browser and documentation reducer
 
 - **Scope**: Repair local admission/shutdown prerequisites and enforce cumulative pilot allowance.
 - **Depends on**: (none)
-- **Owned files**: `mcp_server/health/repository_readiness.py`, `tests/test_repository_readiness.py`, `tests/test_v13_data_reconciliation.py`, `mcp_server/config/settings.py`, `mcp_server/indexing/summarization.py`, `mcp_server/cli/stdio_runner.py`, `scripts/safety_runtime_smoke.py`, `scripts/v13_pilot_estimate.py`, `scripts/v13_pilot_budget.py`, `tests/test_semantic_profile_settings.py`, `tests/test_summarization.py`, `tests/test_deployment_profiles.py`, `tests/integration/test_sigterm_shutdown.py`, `tests/test_v13_safety.py`, `tests/test_v13_pilot_budget.py`
+- **Owned files**: `mcp_server/gateway.py`, `tests/test_gateway_transport_boundary.py`, `mcp_server/health/repository_readiness.py`, `tests/test_repository_readiness.py`, `tests/test_v13_data_reconciliation.py`, `mcp_server/config/settings.py`, `mcp_server/indexing/summarization.py`, `mcp_server/cli/stdio_runner.py`, `scripts/safety_runtime_smoke.py`, `scripts/v13_pilot_estimate.py`, `scripts/v13_pilot_budget.py`, `tests/test_semantic_profile_settings.py`, `tests/test_summarization.py`, `tests/test_deployment_profiles.py`, `tests/integration/test_sigterm_shutdown.py`, `tests/test_v13_safety.py`, `tests/test_v13_pilot_budget.py`
 - **Interfaces provided**: fresh-single-probe-readiness, complete-profile-resources, summary-policy-admission, five-second-owned-shutdown, durable-local-budget
 - **Interfaces consumed**: freeze-contract (pre-existing), accepted-data-contract (pre-existing), accepted-safety-contract (pre-existing)
 - **Parallel-safe**: no
@@ -117,7 +117,9 @@ SL-1 — Installed operational driver, browser and documentation reducer
   - impl: Add durable reservation ledger and narrow local forwarding guard; derive pure estimate from workload/envelopes.
   - test: Preserve fresh SHA-1/SHA-256 commit, branch, tracked edit and missing/detached Git refusals with real repositories, including staged/unstaged/rename/delete and untracked controls; assert one Git subprocess per classification.
   - impl: Read fresh machine-framed Git status once per classification without cross-request caches or removing query/generation fences. Recheck installed warm symbol latency before any inference.
-  - verify: Focused readiness/policy/budget/lifecycle tests and formatting pass before any live inference.
+  - test: Installed Swagger omits the existing repository selector from symbol/search/reindex forms and reports the FastAPI default version; assert schema selectors and installed package version.
+  - impl: Expose the existing optional repository query parameter and installed version in the admin schema, preserving header precedence, path/readiness checks, auth and direct-call compatibility.
+  - verify: Focused admin-schema/readiness/policy/budget/lifecycle tests and formatting pass before any live inference.
 
 ### SL-1 - Installed operational driver, browser and documentation reducer
 
@@ -140,6 +142,15 @@ SL-1 — Installed operational driver, browser and documentation reducer
   - impl: Reduce all results into PILOT receipt and provisioning/support verdict. No accepted EC or IF with a missing goal.
 
 ## Execution Notes
+
+2026-09-11 browser amendment: Inspector exercised installed PMCP symbol queries
+for both repos, ready no-match, unsupported sibling refusal, disconnect/reconnect
+and a post-reconnect query with no console errors. Admin Swagger visibly omits
+repository inputs on symbol/search/reindex and reports default version 0.1.0.
+SL-0 owns the bounded admin schema correction and tests. The first isolated admin
+launch also required explicit SEMANTIC_DEFAULT_PROFILE=legacy-default; SL-1
+owns complete fixture configuration. These are diagnostic observations, not
+PILOT acceptance. All owned browser processes stopped without survivors.
 
 2026-09-11 R07 amendment: the production-extra installed offline driver passed
 all 13 goals on bca40bc, including real metrics refusal/recovery and six lifecycle

@@ -344,6 +344,7 @@
     },
     {
       "acceptance_criteria_count": 4,
+      "admin_ui_amendment": "Expose existing repository selectors and installed version in Swagger; retain all auth/readiness boundaries",
       "created_at": "2026-09-11T19:01:31Z",
       "file": "plans/phase-plan-v13-PILOT.md",
       "handoff_ref": ".dev-skills/handoffs/codex-plan-phase/20260911T190131Z-pilot-plan.md",
@@ -379,9 +380,9 @@
       },
       "slug": "phase-plan-v13-PILOT",
       "status": "executing",
-      "task_summary": "Installed PMCP acceptance with serial R07 fresh Git probe repair",
+      "task_summary": "Installed PMCP acceptance with serial readiness/admin UI repairs",
       "type": "phase",
-      "updated_at": "2026-09-11T19:47:28.600448+00:00"
+      "updated_at": "2026-09-11T20:11:14.085971+00:00"
     },
     {
       "acceptance_criteria_count": 4,

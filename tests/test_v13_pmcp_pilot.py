@@ -1,10 +1,17 @@
 """Receipt reduction must not promote incomplete installed or live evidence."""
 
 import copy
+import json
 
 import pytest
 
-from scripts.v13_pmcp_pilot import GOALS, PilotRefused, digest_json, validate_receipt
+from scripts.v13_pmcp_pilot import (
+    GOALS,
+    PilotRefused,
+    digest_json,
+    validate_receipt,
+    verify_saved_receipt,
+)
 
 
 @pytest.fixture
@@ -101,3 +108,36 @@ def test_latency_threshold_and_missing_samples_refused(manifest, kind, value):
         result["latencies_ms"][kind] = values
         with pytest.raises(PilotRefused, match="latency"):
             validate_receipt(result, manifest, "live")
+
+
+def test_browser_goals_without_artifacts_cannot_pass(tmp_path, manifest):
+    (tmp_path / "browser.json").write_text(json.dumps(receipt(manifest, "browser")))
+    with pytest.raises(PilotRefused, match="artifacts"):
+        verify_saved_receipt(tmp_path, manifest, "browser")
+
+
+@pytest.mark.parametrize("damage", ["missing", "drift", "outside"])
+def test_browser_artifacts_are_bound_and_confined(tmp_path, manifest, damage):
+    from scripts.v13_pmcp_pilot import digest_file
+
+    result = receipt(manifest, "browser")
+    asset = tmp_path / "asset.json"
+    asset.write_text("{}")
+    result["artifacts"] = [
+        {"role": role, "path": "asset.json", "sha256": digest_file(asset)}
+        for role in (
+            "inspector_screenshot",
+            "admin_screenshot",
+            "browser_actions",
+            "browser_session",
+        )
+    ]
+    if damage == "missing":
+        asset.unlink()
+    elif damage == "drift":
+        asset.write_text("changed")
+    else:
+        result["artifacts"][0]["path"] = "../asset.json"
+    (tmp_path / "browser.json").write_text(json.dumps(result))
+    with pytest.raises(PilotRefused, match="artifact"):
+        verify_saved_receipt(tmp_path, manifest, "browser")

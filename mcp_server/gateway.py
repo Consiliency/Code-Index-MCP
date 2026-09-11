@@ -12,6 +12,7 @@ import anyio
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
+from . import __version__
 from .artifacts.semantic_profiles import SemanticProfileRegistry
 from .cache import (
     CacheManagerFactory,
@@ -187,6 +188,7 @@ def _register_security_middleware(
 app = FastAPI(
     title="MCP Server",
     description="Code Index MCP Server with Security, Metrics, and Health Checks",
+    version=__version__,
 )
 dispatcher: EnhancedDispatcher | None = None
 repo_resolver: RepoResolver | None = None
@@ -1501,7 +1503,10 @@ def _require_current_generation(ctx: RepoContext) -> None:
 
 @app.get("/symbol", response_model=SymbolDef | None)
 async def symbol(
-    request: Request, symbol: str, current_user: User = Depends(require_permission(Permission.READ))
+    request: Request,
+    symbol: str,
+    current_user: User = Depends(require_permission(Permission.READ)),
+    repository: Optional[str] = None,
 ):
     if dispatcher is None:
         logger.error("Symbol lookup attempted but dispatcher not ready")
@@ -1588,6 +1593,7 @@ async def search(
     history_repos: Optional[str] = None,
     include_source_metadata: bool = False,
     current_user: User = Depends(require_permission(Permission.READ)),
+    repository: Optional[str] = None,
 ):
     """Search with support for multiple modes including hybrid search.
 
@@ -2138,6 +2144,7 @@ async def reindex(
     request: Request,
     path: Optional[str] = None,
     current_user: User = Depends(require_permission(Permission.EXECUTE)),
+    repository: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Triggers manual reindexing of files.
 
