@@ -40,6 +40,7 @@ class RepoContext:
     tracked_branch: str
     registry_entry: RepositoryInfo
     requested_path: Path | None = None
+    staging: bool = False
 
     @property
     def generation_key(self) -> tuple:

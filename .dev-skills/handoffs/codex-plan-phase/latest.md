@@ -1,17 +1,17 @@
 ---
 from: codex-plan-phase
-timestamp: "2026-09-11T11:48:04Z"
+timestamp: "2026-09-11T13:26:53Z"
 repo: 448c2cf6
 repo_root: /mnt/HC_Volume_105438154/worktrees/Code-Index-MCP-v13-audit-remediation
 branch: codex/v13-audit-remediation
 branch_slug: codex-v13-audit-remediation
-commit: 45e06cc3006cedb968c2c76f4421d08a1554ca9b
-run_id: 20260911T114804Z-safety-plan
-artifact: /mnt/workspace/worktrees/Code-Index-MCP-v13-audit-remediation/plans/phase-plan-v13-SAFETY.md
+commit: 224ce28
+run_id: 20260911T132653Z-data-plan
+artifact: /mnt/workspace/worktrees/Code-Index-MCP-v13-audit-remediation/plans/phase-plan-v13-DATA.md
 artifact_state: staged
 next_skill: codex-execute-phase
-next_command: codex-execute-phase plans/phase-plan-v13-SAFETY.md
-next_phase: SAFETY
+next_command: codex-execute-phase plans/phase-plan-v13-DATA.md
+next_phase: DATA
 automation:
   status: complete
   verification_status: passed
@@ -20,21 +20,24 @@ automation:
   required_human_inputs: []
 ---
 
-# SAFETY Plan Ready
+# DATA Plan Ready
 
-Consumes accepted STATE receipt on source 645421f; accepted closeout 45e06cc.
-Two serial lanes: artifact trust/capabilities, then lifetime/privacy/exposure and
-documentation reduction. Structural validation: 2 lanes, 0 warnings; literal
-validation clean. Initial draft issues were corrected: lane-index separator,
-explicit falsifiers, documentation reducer and external dependency pin placement.
-The known agent-harness#819 runtime import warning remains.
+Consumes accepted STATE and SAFETY receipts. Three serial disjoint lanes:
+vector/provenance/lease foundation, retained staged storage, then query/ignore/
+reconciliation and documentation reduction. Literal validation passes;
+structural validation reports 3 lanes and 0 warnings. The initial missing
+documentation-lane label warning was corrected before staging.
 
-Manual signing-only OIDC approval is bounded to five minutes and synthetic digest
-metadata; no private index/source upload, inference, package/tag publication or
-fleet change. Actual supported signing and installed process exit are mandatory
-acceptance, not substituted by mocks. Existing image-signing protected-main guards
-remain. Artifact mode cannot be controlled by downloaded metadata.
+Required proof includes real file-backed and disposable pinned-server Qdrant,
+1000/1001 boundaries, real retained-data rebuilds and publication failures,
+per-batch drift, uniform query refusals and committed-input reconciliation.
+Existing audit and accepted receipts remain read-only. Only synthetic fixtures
+and deterministic embedding responses in DATA; PILOT owns actual inference
+under its approved budget, PMCP/browser proof and performance thresholds.
 
-Main thread serial execution. No roadmap amendment or new planning panel:
-the immutable four-seat-reviewed v13 scope is unchanged. PREP still requires a
-fresh exact-candidate four-agent code panel. No SAFETY implementation accepted.
+No new roadmap approval is claimed or required for this unchanged derived
+scope; the immutable four-seat-reviewed roadmap remains authoritative.
+No DATA implementation acceptance, version bump, final panel or publication.
+Main thread executes serially; preserve agent-harness#819 outer-loop blocker.
+
+Reflection: /home/viperjuice/.codex/skills/codex-plan-phase/reflections/448c2cf6/codex-v13-audit-remediation/20260911T132653Z-data-plan.md

@@ -210,3 +210,191 @@ class TestSemanticIndexerRegistry:
         assert held is registry._cache["repo-a"]
         mock_qdrant.close.assert_not_called()
         registry.shutdown()
+
+
+def test_lease_drains_before_eviction_closes(tmp_path):
+    from mcp_server.utils.semantic_indexer_registry import SemanticIndexerRegistry
+
+    repo_reg = _make_registry_with_repos(tmp_path)
+    with patch("mcp_server.utils.semantic_indexer.SemanticIndexer") as factory:
+        registry = SemanticIndexerRegistry(repo_reg)
+        with registry.lease("repo-a") as held:
+            assert registry.evict("repo-a")
+            held.qdrant.close.assert_not_called()
+            with pytest.raises(RuntimeError):
+                registry.get("repo-a")
+        held.qdrant.close.assert_called_once()
+        registry.shutdown()
+
+
+def test_new_generation_opens_without_closing_old_lease(tmp_path):
+    from mcp_server.utils.semantic_indexer_registry import SemanticIndexerRegistry
+
+    repo_reg = _make_registry_with_repos(tmp_path)
+    first, second = MagicMock(), MagicMock()
+    with patch(
+        "mcp_server.utils.semantic_indexer.SemanticIndexer", side_effect=[first, second]
+    ) as factory:
+        registry = SemanticIndexerRegistry(repo_reg)
+        with registry.lease("repo-a") as held:
+            info = repo_reg.get("repo-a")
+            repo_reg.publish_generation(
+                "repo-a",
+                generation="replacement",
+                index_path=info.index_path,
+                commit=info.current_commit,
+                branch="main",
+                profile=info.index_profile,
+                expected_registration_id=info.registration_id,
+                expected_generation=info.index_generation,
+            )
+            with registry.lease("repo-a") as replacement:
+                assert replacement is second
+                held.qdrant.close.assert_not_called()
+                args = [call.kwargs for call in factory.call_args_list]
+                assert args[0]["qdrant_path"] != args[1]["qdrant_path"]
+                assert args[0]["metadata_file"] != args[1]["metadata_file"]
+        first.qdrant.close.assert_called_once()
+        registry.shutdown()
+        second.qdrant.close.assert_called_once()
+
+
+def test_stage_lease_uses_supplied_store_and_unpublished_generation(tmp_path):
+    from dataclasses import replace
+
+    from mcp_server.core.repo_context import RepoContext
+    from mcp_server.storage.sqlite_store import SQLiteStore
+    from mcp_server.utils.semantic_indexer_registry import SemanticIndexerRegistry
+
+    repo_reg = _make_registry_with_repos(tmp_path)
+    active = repo_reg.get("repo-a")
+    store = SQLiteStore(str(tmp_path / "stage.db"))
+    staged = replace(active, index_path=Path(store.db_path), index_generation="unpublished")
+    try:
+        ctx = RepoContext("repo-a", store, active.path, "main", staged, staging=True)
+        with patch("mcp_server.utils.semantic_indexer.SemanticIndexer") as factory:
+            registry = SemanticIndexerRegistry(repo_reg)
+            with registry.lease("repo-a", ctx=ctx):
+                args = factory.call_args.kwargs
+                assert args["sqlite_store"] is store
+                assert "unpublished" in args["qdrant_path"]
+                assert args["lineage_id"] in args["qdrant_path"]
+                assert len(args["lineage_id"]) == 32
+                assert "unpublished" in args["metadata_file"]
+                assert repo_reg.get("repo-a").index_generation != "unpublished"
+            registry.shutdown()
+    finally:
+        store.close()
+
+
+def test_shutdown_waits_for_last_borrower_and_denies_admission(tmp_path):
+    import threading
+    import time
+    from concurrent.futures import ThreadPoolExecutor
+
+    from mcp_server.utils.semantic_indexer_registry import SemanticIndexerRegistry
+
+    with patch("mcp_server.utils.semantic_indexer.SemanticIndexer"):
+        registry = SemanticIndexerRegistry(_make_registry_with_repos(tmp_path))
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            with registry.lease("repo-a") as held:
+                future = pool.submit(registry.shutdown)
+                deadline = time.monotonic() + 5
+                while not registry._closed and time.monotonic() < deadline:
+                    threading.Event().wait(0.01)
+                assert registry._closed
+                assert not future.done()
+                held.qdrant.close.assert_not_called()
+                with pytest.raises(RuntimeError):
+                    with registry.lease("repo-a"):
+                        pytest.fail("shutdown admitted a borrower")
+            future.result(timeout=5)
+            held.qdrant.close.assert_called_once()
+
+
+def test_failed_close_retains_owner_and_refuses_reopen(tmp_path):
+    from mcp_server.utils.semantic_indexer_registry import SemanticIndexerRegistry
+
+    with patch("mcp_server.utils.semantic_indexer.SemanticIndexer") as factory:
+        registry = SemanticIndexerRegistry(_make_registry_with_repos(tmp_path))
+        with registry.lease("repo-a") as held:
+            pass
+        held.qdrant.close.side_effect = OSError("private close payload")
+        with pytest.raises(RuntimeError, match="resource close failed"):
+            registry.evict("repo-a")
+        with pytest.raises(RuntimeError, match="draining"):
+            with registry.lease("repo-a"):
+                pytest.fail("failed close lost ownership")
+        assert factory.call_count == 1
+        held.qdrant.close.side_effect = None
+        registry.shutdown()
+
+
+def test_construction_registration_race_closes_unadmitted_resource(tmp_path):
+    from mcp_server.utils.semantic_indexer_registry import SemanticIndexerRegistry
+
+    repos = _make_registry_with_repos(tmp_path)
+    held = MagicMock()
+
+    def construct(**kwargs):
+        repos.unregister("repo-a")
+        return held
+
+    with patch("mcp_server.utils.semantic_indexer.SemanticIndexer", side_effect=construct):
+        registry = SemanticIndexerRegistry(repos)
+        with pytest.raises(KeyError):
+            with registry.lease("repo-a"):
+                pytest.fail("unregistered resource was admitted")
+        held.qdrant.close.assert_called_once()
+        assert not registry._entries
+        registry.shutdown()
+
+
+def test_real_generation_clients_coexist_until_lease_drain(tmp_path, monkeypatch):
+    from qdrant_client import models
+
+    from mcp_server.utils.semantic_indexer_registry import SemanticIndexerRegistry
+    from tests.test_embedding_provenance import _FakeProvenanceProvider, _openai_response, _profile
+
+    monkeypatch.delenv("QDRANT_URL", raising=False)
+    settings = MagicMock()
+    settings.get_semantic_profiles_config.return_value = {"fixture": _profile().to_dict()}
+    settings.get_semantic_default_profile.return_value = "fixture"
+    monkeypatch.setattr("mcp_server.utils.semantic_indexer_registry.get_settings", lambda: settings)
+    monkeypatch.setattr(
+        "mcp_server.utils.semantic_indexer.create_embedding_provider",
+        lambda **kwargs: _FakeProvenanceProvider(_openai_response),
+    )
+    repos = _make_registry_with_repos(tmp_path)
+    registry = SemanticIndexerRegistry(repos)
+    try:
+        with registry.lease("repo-a") as first:
+            first._prepare_for_writes()
+            first.qdrant.upsert(
+                collection_name=first.collection,
+                points=[models.PointStruct(id=1, vector=[1.0] * 8, payload={"retained": True})],
+                wait=True,
+            )
+            original = Path(first.metadata_file).read_bytes()
+            info = repos.get("repo-a")
+            repos.publish_generation(
+                "repo-a",
+                generation="replacement",
+                index_path=info.index_path,
+                commit=info.current_commit,
+                branch="main",
+                profile=info.index_profile,
+                expected_registration_id=info.registration_id,
+                expected_generation=info.index_generation,
+            )
+            with registry.lease("repo-a") as second:
+                second._prepare_for_writes()
+                assert second.collection != first.collection
+                assert second.qdrant.count(second.collection).count == 0
+                assert first.qdrant.retrieve(first.collection, [1])[0].payload["retained"]
+                assert Path(first.metadata_file).read_bytes() == original
+        with pytest.raises(RuntimeError):
+            first.qdrant.get_collections()
+        assert second.qdrant.get_collections().collections
+    finally:
+        registry.shutdown()

@@ -183,6 +183,25 @@ substitute for installed query workflows. Record all skips and failed attempts.
 - [ ] EC-DATA-3 - proven by `tests/test_v13_data_queries.py` and installed entrypoint probes; falsified by ready results from an unsupported/stale generation or filtered results that ignore the query.
 - [ ] EC-DATA-4 - proven by `tests/test_v13_data_reconciliation.py` and `tests/test_ignore_patterns.py`; falsified by excluded/dirty input reaching embedding admission or missed committed modifications remaining stale after reconciliation.
 
+## Execution Checkpoint
+
+2026-09-11: SL-0 foundation implemented and locally verified, not whole-phase
+acceptance. The focused group passed 106 tests with 11 maintenance tests selected
+separately; an additional real-client concurrent good/drifted write test passed.
+Both explicit Qdrant smoke modes passed all 11 maintenance cases. File proof
+ran in 61.8 seconds; server proof in 6.6 seconds (client 1.17.1/server 1.17.0).
+No inference requests. Raw proof logs are retained under the allowed DATA
+scratch paths; the final DATA receipt must bind a fresh exact candidate.
+
+Fixed explicit backend ownership, paginated maintenance, per-batch/restart
+provenance, corrupt/unreadable metadata refusal, durable metadata publication,
+captured commit identity, generation/profile namespaces, draining leases and
+collection-aware acknowledged cleanup. A staged cleanup refuses old collections
+and retains mappings; a second process's file lock is never removed.
+The registry now passes actual configured profiles and stage SQLite handles.
+SL-1/SL-2 still owe retained rebuilds, actual dispatcher lease integration,
+artifact restore, query/ignore/watcher corrections and installed acceptance.
+
 ## Spec Closeout Plan
 
 - schema: `spec_delta_closeout.v1`

@@ -151,7 +151,18 @@
         "SL-1",
         "SL-2"
       ],
-      "lifecycle": [],
+      "lifecycle": [
+        {
+          "at": "2026-09-11T13:28:29Z",
+          "by": "codex-execute-phase",
+          "metadata": {
+            "base_commit": "443fca0",
+            "issue_inventory": [],
+            "mode": "manual"
+          },
+          "transition": "executing"
+        }
+      ],
       "owner_skill": "codex-plan-phase",
       "phase_alias": "DATA",
       "reflection_ref": "/home/viperjuice/.codex/skills/codex-plan-phase/reflections/448c2cf6/codex-v13-audit-remediation/20260911T132653Z-data-plan.md",
@@ -162,10 +173,10 @@
         "type": "roadmap"
       },
       "slug": "phase-plan-v13-DATA",
-      "status": "committed",
+      "status": "executing",
       "task_summary": "Coherent retained storage, vector provenance and query reconciliation",
       "type": "phase",
-      "updated_at": "2026-09-11T13:26:53Z"
+      "updated_at": "2026-09-11T13:28:29Z"
     },
     {
       "acceptance_criteria_count": 3,
