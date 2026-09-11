@@ -141,6 +141,91 @@
       "updated_at": "2026-07-10T10:22:29Z"
     },
     {
+      "acceptance_criteria_count": 3,
+      "artifact_state": "staged",
+      "created_at": "2026-09-11T05:33:57Z",
+      "execution_mode": "manual",
+      "file": "plans/phase-plan-v13-FREEZE.md",
+      "handoff_ref": ".dev-skills/handoffs/codex-plan-phase/20260911T053357Z-2af03d.md",
+      "if_gates_produced": [
+        "IF-0-FREEZE-1"
+      ],
+      "lanes": [
+        "SL-0",
+        "SL-1",
+        "SL-2"
+      ],
+      "lifecycle": [
+        {
+          "at": "2026-09-11T05:35:08Z",
+          "by": "codex-execute-phase",
+          "metadata": {
+            "execution_mode": "manual",
+            "run_id": "20260911T053357Z-2af03d"
+          },
+          "transition": "executing"
+        },
+        {
+          "at": "2026-09-11T05:35:08Z",
+          "by": "codex-execute-phase",
+          "metadata": {
+            "blocker_class": "product_decision_missing",
+            "if_gates_produced": [],
+            "issue_dispositions": [],
+            "issue_inventory": [],
+            "missing_decisions": [
+              "local_inference_budget",
+              "signing_mechanism"
+            ],
+            "run_id": "20260911T053357Z-2af03d",
+            "terminal_status": "blocked",
+            "verification_status": "blocked"
+          },
+          "transition": "failed"
+        },
+        {
+          "at": "2026-09-11T09:06:59Z",
+          "by": "codex-execute-phase",
+          "metadata": {
+            "owner_approval": "Approved, 2026-09-11",
+            "resume": true
+          },
+          "transition": "executing"
+        },
+        {
+          "at": "2026-09-11T09:06:59Z",
+          "by": "codex-execute-phase",
+          "metadata": {
+            "if_gates_produced": [
+              "IF-0-FREEZE-1"
+            ],
+            "issue_dispositions": [],
+            "issue_inventory": [],
+            "verification_artifact_path": ".phase-loop/runs/v13-FREEZE-20260911/verification.json",
+            "verification_status": "passed",
+            "verification_summary": "13 passed; structure 0; acceptance 0; refresh 0"
+          },
+          "transition": "completed"
+        }
+      ],
+      "no_git_commit_created": false,
+      "owner_skill": "codex-plan-phase",
+      "phase_alias": "FREEZE",
+      "reflection_ref": null,
+      "resume_reason": "Owner Approved on 2026-09-11; original checks rerun; history retained.",
+      "roadmap_ref": {
+        "file": "specs/phase-plans-v13.md",
+        "slug": "phase-plans-v13",
+        "status": "committed",
+        "type": "roadmap"
+      },
+      "slug": "phase-plan-v13-FREEZE",
+      "status": "completed",
+      "task_summary": null,
+      "type": "phase",
+      "updated_at": "2026-09-11T09:06:59Z"
+    },
+    {
       "acceptance_criteria_count": 6,
       "created_at": "2026-07-06T02:11:25Z",
       "file": "plans/phase-plan-v9-COVERAGE.md",
