@@ -348,7 +348,9 @@
       "created_at": "2026-09-11T19:01:31Z",
       "file": "plans/phase-plan-v13-PILOT.md",
       "handoff_ref": ".dev-skills/handoffs/codex-plan-phase/20260911T190131Z-pilot-plan.md",
-      "if_gates_produced": [],
+      "if_gates_produced": [
+        "IF-0-PILOT-1"
+      ],
       "lanes": [
         "SL-0",
         "SL-1"
@@ -366,12 +368,35 @@
             "upstream_receipt": "docs/validation/v13/DATA.json"
           },
           "transition": "executing"
+        },
+        {
+          "at": "2026-09-12T08:18:11Z",
+          "by": "codex-execute-phase",
+          "metadata": {
+            "dirty_worktree_summary": "Only authorized PILOT docs, receipt and plan/control closeout outputs; source unchanged since verification.",
+            "if_gates_produced": [
+              "IF-0-PILOT-1"
+            ],
+            "input_units": 24267,
+            "issue_dispositions": [],
+            "issue_inventory": [],
+            "live_requests": 82,
+            "live_seconds": 44.579028844833374,
+            "next_phase": "PREP",
+            "phase_tests": 558,
+            "receipt": "docs/validation/v13/PILOT.json",
+            "reflection_ref": "/home/viperjuice/.codex/skills/codex-execute-phase/reflections/448c2cf6/codex-v13-audit-remediation/20260912T081556Z-pilot-accepted.md",
+            "source_commit": "366f6bca7765d545498f41b02014ae8ba105d2e2",
+            "verification_artifact": ".phase-loop/runs/v13-PILOT-366f6bca7765/acceptance-verification/verification.json",
+            "verification_status": "passed"
+          },
+          "transition": "completed"
         }
       ],
       "owner_skill": "codex-plan-phase",
       "phase_alias": "PILOT",
-      "pilot_rehearsal_amendment": "Installed cc795c8 loopback and browser workflows passed; 3279 broad, 140 Git and 529 phase tests passed; baseline receipt rejected for immutable-audit formatting scope",
       "pilot_record_checkpoint": "Hash-valid placeholders reproduced false live-evidence acceptance; read-only ledger and raw-record reconciliation now pass 96 focused tests; fresh candidate proof required; actual allowance uninitialized",
+      "pilot_rehearsal_amendment": "Installed cc795c8 loopback and browser workflows passed; 3279 broad, 140 Git and 529 phase tests passed; baseline receipt rejected for immutable-audit formatting scope",
       "readiness_amendment": "Measured installed warm symbol latency fails 100ms; repair and recheck before live admission",
       "reflection_ref": "/home/viperjuice/.codex/skills/codex-plan-phase/reflections/448c2cf6/codex-v13-audit-remediation/20260911T190131Z-pilot-plan.md",
       "roadmap_ref": {
@@ -381,10 +406,10 @@
         "type": "roadmap"
       },
       "slug": "phase-plan-v13-PILOT",
-      "status": "executing",
+      "status": "completed",
       "task_summary": "Installed PMCP acceptance with serial readiness/admin UI repairs",
       "type": "phase",
-      "updated_at": "2026-09-12T06:30:00Z"
+      "updated_at": "2026-09-12T08:18:11Z"
     },
     {
       "acceptance_criteria_count": 4,

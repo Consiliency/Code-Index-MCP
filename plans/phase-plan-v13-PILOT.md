@@ -29,7 +29,7 @@ before spending inference allowance. Plan validation makes no endpoint requests.
 
 ## Interface Freeze Gates
 
-- [ ] IF-0-PILOT-1 - Exact-candidate PMCP provisioning, installed lifecycle, browser workflows, bounded inference provenance and frozen performance/resource evidence accepted.
+- [x] IF-0-PILOT-1 - Exact-candidate PMCP provisioning, installed lifecycle, browser workflows, bounded inference provenance and frozen performance/resource evidence accepted.
 
 ## Frozen Operational Contract
 
@@ -244,10 +244,10 @@ receipts. Final validation is read-only and makes no additional inference.
 
 ## Acceptance Criteria
 
-- [ ] EC-PILOT-1 - proven by `scripts/v13_pmcp_pilot.py --mode offline` provisioning/query controls; falsified by ambient config, checkout imports, wrong resources or incorrect readiness.
-- [ ] EC-PILOT-2 - proven by `tests/test_v13_pilot_budget.py` and `scripts/v13_pmcp_pilot.py --mode verify-live`; falsified by egress/budget/provenance violations, missing ready contention samples or threshold misses.
-- [ ] EC-PILOT-3 - proven by actual browser actions and `scripts/v13_pmcp_pilot.py --mode verify-browser`; falsified by missing tested surfaces, error/refusal controls, screenshots or console checks.
-- [ ] EC-PILOT-4 - proven by `scripts/v13_pmcp_pilot.py --mode offline` installed lifecycle and process/fence controls; falsified by over-five-second exit, survivors, stale handles or unsafe interrupted publication.
+- [x] EC-PILOT-1 - proven by `scripts/v13_pmcp_pilot.py --mode offline` provisioning/query controls; falsified by ambient config, checkout imports, wrong resources or incorrect readiness.
+- [x] EC-PILOT-2 - proven by `tests/test_v13_pilot_budget.py` and `scripts/v13_pmcp_pilot.py --mode verify-live`; falsified by egress/budget/provenance violations, missing ready contention samples or threshold misses.
+- [x] EC-PILOT-3 - proven by actual browser actions and `scripts/v13_pmcp_pilot.py --mode verify-browser`; falsified by missing tested surfaces, error/refusal controls, screenshots or console checks.
+- [x] EC-PILOT-4 - proven by `scripts/v13_pmcp_pilot.py --mode offline` installed lifecycle and process/fence controls; falsified by over-five-second exit, survivors, stale handles or unsafe interrupted publication.
 
 ## Spec Closeout Plan
 

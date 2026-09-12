@@ -12,7 +12,7 @@ Worktree: `/mnt/workspace/worktrees/Code-Index-MCP-v13-audit-remediation`.
 | STATE | Accepted | `docs/validation/v13/STATE.json`; IF-0-STATE-1 |
 | SAFETY | Accepted | `docs/validation/v13/SAFETY.json`; IF-0-SAFETY-1 |
 | DATA | Accepted | `docs/validation/v13/DATA.json`; IF-0-DATA-1 |
-| PILOT | Executing; not accepted | Installed offline/browser baseline passed; live record-validation repair precedes inference |
+| PILOT | Accepted | `docs/validation/v13/PILOT.json`; IF-0-PILOT-1 |
 | PREP | Not started | No version bump or implementation code review claimed |
 | SHIP | Not started | No merge, publication or issue closure claimed |
 
@@ -70,13 +70,47 @@ environment refresh and the 314-test phase suite. Broad offline baseline:
 and restart. Artifact hashes and exclusions are in the DIST receipt. Earlier
 failed attempts remain preserved and are not accepted evidence.
 
-Read `docs/validation/v13/DATA.json` and
+Read `docs/validation/v13/PILOT.json` and
 `.dev-skills/handoffs/codex-execute-phase/latest.md` in this worktree.
-Current phase: PILOT, finish installed provisioning and bounded operational acceptance.
-Command: `codex-execute-phase plans/phase-plan-v13-PILOT.md`.
+Next phase: PREP, version preparation and four-seat implementation review.
+Command: `codex-plan-phase specs/phase-plans-v13.md PREP`.
 Do not restart v9 or infer v13 completion from old primary-checkout state.
 
-## PILOT Checkpoint
+## PILOT Accepted
+
+Source `366f6bca7765d545498f41b02014ae8ba105d2e2` passed all 13 installed
+offline goals, eight actual Inspector/admin browser goals and ten live workflow
+checks. The bounded local run used 24267 conservative input units across 82
+requests in 44.579 seconds. Warm contention p95: symbol 74.903ms, lexical
+94.606ms, semantic 470.511ms, within the frozen 100/500ms limits. Forty samples
+per class included 26/22/26 successful cross-repository contention observations.
+Live peak RSS was 430.75MiB; shutdown was at most 2.171 seconds, with no survivors.
+
+The embedding endpoint reported Qwen/Qwen3-Embedding-8B and dimension 4096;
+local enrichment reported cyankiwi/gemma-4-26B-A4B-it-AWQ-4bit. Immutable model
+revision remains unreported. Final corpus/commit/profile/point-set provenance
+verified for both repositories. Multiple SQLite mappings may share a vector
+point; a RED regression led to recording mapping and unique-point counts
+separately before the successful fresh rehearsal and live run.
+
+The complete standalone gate passed all 15 command nodes, locked refresh and
+558 phase tests. Broad baseline: 3308 passed, 150 skipped, 31 deselected; Git
+manager: 140 passed separately; Qdrant: 19 passed per mode; actual installed
+wheel and non-root container workflows passed. An earlier attempt was
+interrupted by SIGTERM, with origin unknown. Its owned synthetic container was
+stopped, partial evidence preserved and a fresh observed gate passed in full.
+
+Post-live read-only verification passed six commands and all 558 phase tests;
+both archived and canonical ledger bytes were unchanged. Canonical allowance
+root: `.phase-loop/runs/v13-PILOT-allowance`. Never reset it or automatically
+repeat inference. Proof paths, hashes and limits are in the PILOT receipt and
+`docs/operations/v13-pmcp-pilot.md`.
+
+This is controlled-pilot acceptance, not fleet indexing, broad retrieval
+quality, publication or all-platform support. PREP/SHIP remain outstanding.
+The roadmap is unchanged, and its planning votes are not implementation votes.
+
+## PILOT Earlier Checkpoint
 
 The installed candidate `cc795c88cfe48e558a037123fb54a9beb2831dba` passed
 all 13 offline PMCP goals and the actual Inspector/admin browser workflows:
@@ -106,8 +140,9 @@ All 96 focused budget/receipt tests pass, including inconsistent-record controls
 and byte-preservation checks. A fresh candidate rehearsal and complete evidence
 run are required before PILOT acceptance.
 
-No live endpoint has been contacted and the actual allowance has never been
-initialized. Its canonical root remains `.phase-loop/runs/v13-PILOT-allowance`;
+At that earlier checkpoint no live endpoint had been contacted and the actual
+allowance had not been initialized. Its canonical root was fixed as
+`.phase-loop/runs/v13-PILOT-allowance`;
 100000 cumulative units, 900 seconds from first admission and concurrency one
 remain unchanged. No threshold change, additional signing dispatch, version
 bump, final code panel, merge, publication or fleet indexing has occurred.
