@@ -13,7 +13,7 @@ Worktree: `/mnt/workspace/worktrees/Code-Index-MCP-v13-audit-remediation`.
 | SAFETY | Accepted | `docs/validation/v13/SAFETY.json`; IF-0-SAFETY-1 |
 | DATA | Accepted | `docs/validation/v13/DATA.json`; IF-0-DATA-1 |
 | PILOT | Historical source accepted; repairs require revalidation | `docs/validation/v13/PILOT.json`; original IF-0-PILOT-1 unchanged |
-| PREP | Executing review repairs | 1.4.1 prepared; fresh candidate gates and four-seat review pending |
+| PREP | Repairs verified locally; acceptance blocked | Fresh live/signing approval and final four-seat review pending |
 | SHIP | Not started | No merge, publication or issue closure claimed |
 
 The four-seat reconciled roadmap remains unchanged at SHA-256
@@ -72,8 +72,8 @@ failed attempts remain preserved and are not accepted evidence.
 
 Read `docs/validation/v13/PILOT.json` and
 `.dev-skills/handoffs/codex-execute-phase/latest.md` in this worktree.
-Next phase: PREP, version preparation and four-seat implementation review.
-Command: `codex-execute-phase plans/phase-plan-v13-PREP.md`.
+Next phase: PREP, blocked on renewed live/signing approval before final review.
+Next command: none until the bounded allowance amendment is approved and planned.
 Do not restart v9 or infer v13 completion from old primary-checkout state.
 
 ## PREP Candidate
@@ -131,6 +131,35 @@ requested separately and remain pending approval. Never reset the expired
 original ledger or redispatch its consumed job. No real inference or new
 signing ran during these repairs. Code-Index-MCP#97 remains a draft; there were
 no open Code-Index-MCP issues at the September 12 live check. SHIP is not started.
+
+### PREP Verified Checkpoint
+
+Repaired source `f789fa183e36cd869aeda8c70462b6853cb997b3` is pushed to draft
+Code-Index-MCP#97. The fresh local gate passed all ten command nodes, locked
+refresh and 179 phase tests: 134 focused controls, 140 separate Git-manager
+tests, and 3374 broad offline passes with 150 skips and 31 deselections.
+The installed wheel and non-root container passed actual query/restart/privacy
+and six lifecycle cases. Both Qdrant modes passed 19 controls each. Installed
+PMCP provisioning/offline goals and the fake-provider rehearsal passed.
+
+All eight browser goals passed in a fresh browser2 fixture on the same source:
+admin queries, no-match, one reindex, sibling refusal, Inspector queries,
+disconnect/reconnect and post-reindex search. Only the expected admin HTTP503
+appeared in the console; Inspector had no errors or warnings. Result-only
+screenshots were inspected. All owned browser children stopped within 1.217
+seconds, with no survivors. The first diagnostic screenshot is excluded because
+Swagger's generated request displayed its temporary authorization header;
+no screenshot containing credentials is included in the accepted browser receipt.
+
+Evidence paths and SHA-256 values are in `docs/validation/v13/PREP.json`.
+Those are local verification receipts, not PREP acceptance or panel approval.
+The original live ledger was checked read-only and remains byte-identical at
+24267 input units and 82 requests. No new real inference or signing was run.
+The strict version-only comparator correctly rejects runtime drift; its refusal
+is a negative control, not a passed release gate. Final candidate review and
+four-seat cross-model reconciliation remain unrun on the repaired source.
+The current execution attempt closes as blocked on the requested additional
+allowances; the roadmap and historical phase receipts are unchanged.
 
 ## PILOT Accepted
 
