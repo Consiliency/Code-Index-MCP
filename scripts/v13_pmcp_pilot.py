@@ -12,12 +12,15 @@ import secrets
 import shutil
 import signal
 import socket
+import sqlite3
 import subprocess
 import sys
+import threading
 import time
 import zipfile
 from contextlib import asynccontextmanager
 from datetime import timedelta
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import httpx
@@ -107,6 +110,8 @@ def validate_receipt(receipt: dict, manifest: dict, kind: str) -> None:
         ):
             raise PilotRefused("operational_limits_failed")
     if kind == "live":
+        if receipt.get("rehearsal") is True:
+            raise PilotRefused("rehearsal_is_not_live_acceptance")
         budget = receipt.get("budget", {})
         if (
             not 0 < budget.get("reserved_input_units", math.inf) <= 100000
@@ -962,6 +967,539 @@ def verify_saved_receipt(root: Path, manifest: dict, kind: str) -> dict:
     return result
 
 
+def select_model(catalog: dict, preferred: str) -> str:
+    ids = {row.get("id") for row in catalog.get("data", []) if isinstance(row, dict)}
+    ids = {value for value in ids if isinstance(value, str) and value}
+    if preferred in ids:
+        return preferred
+    if len(ids) == 1:
+        return ids.pop()
+    raise PilotRefused("model_catalog_ambiguous")
+
+
+def rehearsal_provider() -> ThreadingHTTPServer:
+    """Loopback protocol fixture, never retrieval-quality or performance evidence."""
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+        def respond(self, value):
+            body = json.dumps(value).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_GET(self):
+            self.respond({"data": [{"id": "synthetic-rehearsal"}]})
+
+        def do_POST(self):
+            value = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            if self.path == "/v1/embeddings":
+                inputs = value["input"]
+                if isinstance(inputs, str):
+                    inputs = [inputs]
+                self.respond(
+                    {
+                        "object": "list",
+                        "model": "synthetic-rehearsal",
+                        "data": [
+                            {"object": "embedding", "index": i, "embedding": [1.0] + [0.0] * 7}
+                            for i in range(len(inputs))
+                        ],
+                        "usage": {"prompt_tokens": 1, "total_tokens": 1},
+                    }
+                )
+            else:
+                prompt = "\n".join(item["content"] for item in value["messages"])
+                ids = [
+                    line.removeprefix("chunk_id: ").strip()
+                    for line in prompt.splitlines()
+                    if line.startswith("chunk_id: ")
+                ]
+                content = (
+                    json.dumps(
+                        {
+                            "summaries": [
+                                {
+                                    "chunk_id": key,
+                                    "summary": "This function processes synthetic records. It returns the computed result.",
+                                }
+                                for key in ids
+                            ]
+                        }
+                    )
+                    if ids
+                    else "This function processes synthetic records. It returns the computed result."
+                )
+                self.respond(
+                    {
+                        "id": "rehearsal",
+                        "object": "chat.completion",
+                        "created": 0,
+                        "model": "synthetic-rehearsal",
+                        "choices": [
+                            {
+                                "index": 0,
+                                "message": {"role": "assistant", "content": content},
+                                "finish_reason": "stop",
+                            }
+                        ],
+                    }
+                )
+
+    return ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+
+
+async def runtime_provenance(fixture: dict, qdrant_url: str) -> list[dict]:
+    registry = json.loads((fixture["root"] / "registry.json").read_text())
+    records = []
+    async with httpx.AsyncClient(trust_env=False) as http:
+        for info in registry.values():
+            database = Path(info["index_path"])
+            if not database.resolve().is_relative_to(fixture["root"]):
+                raise PilotRefused("provenance_path_outside_fixture")
+            with sqlite3.connect(database.as_uri() + "?mode=ro", uri=True) as db:
+                points = db.execute("SELECT point_id, collection FROM semantic_points").fetchall()
+            collections = {row[1] for row in points}
+            if len(collections) != 1:
+                raise PilotRefused("provenance_points_missing")
+            collection = collections.pop()
+            response = await http.post(
+                f"{qdrant_url}/collections/{collection}/points/scroll",
+                json={"limit": 100, "with_payload": True, "with_vector": False},
+            )
+            response.raise_for_status()
+            resident = response.json()["result"]["points"]
+            sentinels = [
+                p["payload"] for p in resident if p.get("payload", {}).get("__provenance__")
+            ]
+            actual_ids = {
+                str(p["id"]) for p in resident if not p.get("payload", {}).get("__provenance__")
+            }
+            expected_ids = {str(row[0]) for row in points}
+            if len(sentinels) != 1 or actual_ids != expected_ids:
+                raise PilotRefused("provenance_point_set_mismatch")
+            sentinel = sentinels[0]
+            expected_set = hashlib.sha256("\n".join(sorted(expected_ids)).encode()).hexdigest()
+            if (
+                sentinel.get("indexed_commit") != info["last_indexed_commit"]
+                or sentinel.get("point_set_id") != expected_set
+                or not sentinel.get("profile_fingerprint")
+            ):
+                raise PilotRefused("provenance_binding_mismatch")
+            metadata_paths = list(database.with_suffix(".semantic").rglob(".index_metadata.json"))
+            profiles = [
+                json.loads(path.read_text()).get("semantic_profiles", {}).get("pilot", {})
+                for path in metadata_paths
+            ]
+            profiles = [p for p in profiles if p.get("collection_name") == collection]
+            if len(profiles) != 1 or profiles[0].get("attested") is not True:
+                raise PilotRefused("provenance_attestation_missing")
+            records.append(
+                {
+                    "repository": info["name"],
+                    "commit": info["last_indexed_commit"],
+                    "generation": info["index_generation"],
+                    "point_count": len(points),
+                    "collection_manifest": sentinel,
+                    "embedding_provenance": profiles[0].get("provenance"),
+                }
+            )
+    return records
+
+
+async def inference_pilot(root: Path, manifest: dict, *, rehearsal: bool) -> dict:
+    from v13_pilot_budget import BudgetLedger, LocalForwarder
+    from v13_pilot_estimate import REQUEST_ENVELOPES, SYNTHETIC_CORPUS
+
+    if not rehearsal:
+        validate_receipt(json.loads((root / "offline.json").read_text()), manifest, "offline")
+        verify_saved_receipt(root, manifest, "browser")
+        previous = json.loads((root / "rehearsal.json").read_text())
+        if previous.get("manifest_sha256") != digest_json(manifest) or not previous.get(
+            "workflow_completed"
+        ):
+            raise PilotRefused("rehearsal_required")
+    label = "rehearsal" if rehearsal else "live"
+    fixture = create_fixture(root, manifest, label=label)
+    directory = fixture["root"]
+    workload = {
+        "corpus": SYNTHETIC_CORPUS,
+        "request_envelopes": REQUEST_ENVELOPES,
+        "measured_queries_per_class_per_repository": 20,
+        "semantic_tool_attempt_limit": 48,
+        "max_rebuilds_per_contention_window": 3,
+        "query_texts": {
+            "ledger": "calculate available balance from credits and debits",
+            "catalog": "find a product by its code",
+        },
+        "mutation": "append a synthetic function-body comment",
+        "rename": "ledger/balance.py to ledger/bookkeeping.py",
+        "delete": "catalog/catalog.py; old ready forbidden; restore and rebuild",
+        "rehearsal": rehearsal,
+        "manifest_sha256": digest_json(manifest),
+    }
+    write_json(directory / "workload.json", workload, exclusive=True)
+    allowance = directory / "allowance" if rehearsal else root.parent / "v13-PILOT-allowance"
+    ledger = None
+    servers = []
+    threads = []
+    container = None
+    sampling = None
+    finished = asyncio.Event()
+    result = {
+        "kind": "live",
+        "source": manifest["source"],
+        "wheel_sha256": manifest["wheel_sha256"],
+        "manifest_sha256": digest_json(manifest),
+        "rehearsal": rehearsal,
+        "goals": {},
+        "samples": [],
+        "index_intervals": [],
+        "workflow_completed": False,
+    }
+    image = "qdrant/qdrant@sha256:f1c7272cdac52b38c1a0e89313922d940ba50afd90d593a1605dbbc214e66ffb"
+
+    def start_server(server):
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        servers.append(server)
+        threads.append(thread)
+        thread.start()
+
+    async def sample():
+        while not finished.is_set():
+            for process in fixture.get("processes", []):
+                process.observe()
+            await asyncio.sleep(0.05)
+
+    async def query(client, tools, repo, kind, *, measured=False):
+        arguments = {"repository": repo}
+        if kind == "symbol":
+            arguments["symbol"] = "available_balance" if repo == "ledger" else "find_product"
+            tool = "symbol_lookup"
+        else:
+            tool = "search_code"
+            arguments.update(
+                query=(
+                    workload["query_texts"][repo]
+                    if kind == "semantic"
+                    else "available_balance" if repo == "ledger" else "find_product"
+                ),
+                semantic=kind == "semantic",
+                limit=5,
+            )
+        started = time.monotonic()
+        value = await invoke(client, tools, tool, arguments)
+        ended = time.monotonic()
+        expected_file = (
+            "bookkeeping.py"
+            if (directory / "repos/ledger/bookkeeping.py").is_file() and repo == "ledger"
+            else "balance.py" if repo == "ledger" else "catalog.py"
+        )
+        valid = (
+            not isinstance(value, dict) or not value.get("error")
+        ) and expected_file in json.dumps(value)
+        if isinstance(value, dict) and value.get("code"):
+            valid = False
+        if measured:
+            result["samples"].append(
+                {
+                    "repository": repo,
+                    "kind": kind,
+                    "started": started,
+                    "ended": ended,
+                    "milliseconds": (ended - started) * 1000,
+                    "ready_success": bool(valid),
+                }
+            )
+        if not valid:
+            raise PilotRefused("retrieval_failed:" + repo + ":" + kind)
+        return value
+
+    async def rebuild(client, tools, repo):
+        started = time.monotonic()
+        value = await invoke(client, tools, "reindex", {"repository": repo})
+        result["index_intervals"].append(
+            {
+                "repository": repo,
+                "started": started,
+                "ended": time.monotonic(),
+                "success": not value.get("error"),
+            }
+        )
+        if value.get("error") or value.get("mutation_performed") is not True:
+            write_json(directory / "reindex-failure.json", value)
+            raise PilotRefused("semantic_rebuild_failed:" + repo)
+        return value
+
+    try:
+        port = free_port()
+        container = (
+            await asyncio.to_thread(
+                run_command,
+                [
+                    "docker",
+                    "run",
+                    "--rm",
+                    "-d",
+                    "-p",
+                    f"127.0.0.1:{port}:6333",
+                    "-e",
+                    "QDRANT__TELEMETRY_DISABLED=true",
+                    image,
+                ],
+                directory,
+                "qdrant-start",
+            )
+        ).strip()
+        if len(container) != 64 or any(c not in "0123456789abcdef" for c in container):
+            raise PilotRefused("qdrant_owner_identity")
+        qdrant_url = f"http://127.0.0.1:{port}"
+        async with httpx.AsyncClient(trust_env=False) as http:
+            for _ in range(100):
+                try:
+                    if (await http.get(qdrant_url + "/readyz", timeout=1)).status_code == 200:
+                        break
+                except httpx.HTTPError:
+                    pass
+                await asyncio.sleep(0.1)
+            else:
+                raise PilotRefused("qdrant_start_failed")
+        endpoints = None
+        if rehearsal:
+            fake = rehearsal_provider()
+            start_server(fake)
+            endpoints = dict.fromkeys(
+                ("embedding", "enrichment"), f"http://127.0.0.1:{fake.server_port}/v1"
+            )
+        BudgetLedger.initialize(allowance, digest_json(manifest))
+        ledger = BudgetLedger(allowance, digest_json(manifest))
+        token = secrets.token_urlsafe(36)
+        guard = LocalForwarder(ledger, endpoints).server(token)
+        start_server(guard)
+        bases = {
+            role: f"http://127.0.0.1:{guard.server_port}/{role}/v1"
+            for role in ("embedding", "enrichment")
+        }
+        models = {}
+        async with httpx.AsyncClient(
+            trust_env=False, timeout=90, headers={"Authorization": "Bearer " + token}
+        ) as http:
+            for role, preferred in (
+                ("embedding", "Qwen/Qwen3-Embedding-8B"),
+                ("enrichment", "chat"),
+            ):
+                response = await http.get(bases[role] + "/models")
+                if response.status_code != 200:
+                    raise PilotRefused("model_catalog_unavailable:" + role)
+                models[role] = select_model(response.json(), preferred)
+            response = await http.post(
+                bases["embedding"] + "/embeddings",
+                json={
+                    "model": models["embedding"],
+                    "input": ["synthetic dimension probe"],
+                    "encoding_format": "float",
+                },
+            )
+            if response.status_code != 200:
+                raise PilotRefused("dimension_probe_failed")
+            vector = response.json()["data"][0]["embedding"]
+            if (
+                not isinstance(vector, list)
+                or not vector
+                or not all(isinstance(x, (int, float)) and math.isfinite(x) for x in vector)
+            ):
+                raise PilotRefused("dimension_probe_invalid")
+        profile = {
+            "provider": "openai_compatible",
+            "model_name": models["embedding"],
+            "model_version": "unreported",
+            "vector_dimension": len(vector),
+            "distance_metric": "cosine",
+            "normalization_policy": "provider-default",
+            "chunk_schema_version": "1",
+            "chunker_version": "4.0.0",
+            "build_metadata": {
+                "embedding_api_base": bases["embedding"],
+                "openai_api_base": bases["embedding"],
+                "embedding_api_key_env": "PILOT_GUARD_KEY",
+                "openai_api_key_env": "PILOT_GUARD_KEY",
+                "enrichment_api_base": bases["enrichment"],
+                "enrichment_model_name": models["enrichment"],
+                "enrichment_api_key_env": "PILOT_GUARD_KEY",
+            },
+        }
+        fixture["env"].update(
+            SEMANTIC_PROFILES_JSON=json.dumps({"pilot": profile}),
+            SEMANTIC_DEFAULT_PROFILE="pilot",
+            SEMANTIC_SEARCH_ENABLED="true",
+            MCP_DEPLOYMENT_PROFILE="fleet_local",
+            QDRANT_URL=qdrant_url,
+            QDRANT_USE_SERVER="true",
+            PILOT_GUARD_KEY=token,
+        )
+        config_path = directory / "project/.mcp.json"
+        config = json.loads(config_path.read_text())
+        config["mcpServers"]["index-it-mcp"]["env"] = fixture["env"]
+        write_json(config_path, config)
+        write_json(
+            directory / "runtime-metadata.json",
+            {
+                "models": models,
+                "dimension": len(vector),
+                "immutable_revision": "unreported",
+                "qdrant_image": image,
+                "workload_sha256": digest_json(workload),
+            },
+        )
+        sampling = asyncio.create_task(sample())
+        async with gateway(fixture, "pmcp-inference") as (client, owner):
+            tools = await discover(client)
+            await invoke(client, tools, "handshake", {"secret": fixture["secret"]})
+            for repo in SYNTHETIC_CORPUS:
+                await rebuild(client, tools, repo)
+            for target, indexing in (("ledger", "catalog"), ("catalog", "ledger")):
+                for kind in ("symbol", "lexical", "semantic"):
+                    await query(client, tools, target, kind)
+                path = directory / "repos" / indexing / next(iter(SYNTHETIC_CORPUS[indexing]))
+                path.write_text(path.read_text() + "    # Synthetic pilot modification.\n")
+                commit_fixture(path.parent, fixture["env"])
+                queries_finished = asyncio.Event()
+
+                async def indexing_window():
+                    for _ in range(3):
+                        await rebuild(client, tools, indexing)
+                        if queries_finished.is_set():
+                            break
+
+                async with asyncio.timeout(300):
+                    task = asyncio.create_task(indexing_window())
+                    try:
+                        for _ in range(20):
+                            for kind in ("symbol", "lexical", "semantic"):
+                                await query(client, tools, target, kind, measured=True)
+                    finally:
+                        queries_finished.set()
+                        await task
+            source = directory / "repos/ledger/balance.py"
+            source.rename(source.with_name("bookkeeping.py"))
+            commit_fixture(source.parent, fixture["env"])
+            await rebuild(client, tools, "ledger")
+            renamed = await query(client, tools, "ledger", "semantic")
+            if "balance.py" in json.dumps(renamed):
+                raise PilotRefused("rename_retained_old_path")
+            result["goals"]["rename"] = True
+            await rebuild(client, tools, "ledger")
+            await query(client, tools, "ledger", "semantic")
+            result["goals"]["rebuild"] = True
+            deleted = directory / "repos/catalog/catalog.py"
+            content = deleted.read_text()
+            deleted.unlink()
+            commit_fixture(deleted.parent, fixture["env"])
+            empty = await invoke(client, tools, "reindex", {"repository": "catalog"})
+            stale = await invoke(
+                client,
+                tools,
+                "search_code",
+                {"repository": "catalog", "query": "find_product", "semantic": True},
+            )
+            if (
+                stale.get("code") != "index_unavailable"
+                or stale.get("safe_fallback") != "native_search"
+            ):
+                raise PilotRefused("delete_exposed_old_generation")
+            write_json(directory / "delete-control.json", {"reindex": empty, "query": stale})
+            deleted.write_text(content)
+            commit_fixture(deleted.parent, fixture["env"])
+            await rebuild(client, tools, "catalog")
+            await query(client, tools, "catalog", "semantic")
+            result["goals"]["delete"] = True
+        async with gateway(fixture, "pmcp-restart") as (client, owner):
+            tools = await discover(client)
+            await invoke(client, tools, "handshake", {"secret": fixture["secret"]})
+            await query(client, tools, "ledger", "semantic")
+            await query(client, tools, "catalog", "semantic")
+            result["goals"]["restart"] = True
+            provenance = await runtime_provenance(fixture, qdrant_url)
+            write_json(directory / "runtime-provenance.json", {"repositories": provenance})
+        result["goals"].update(
+            retrieval=True,
+            provenance=True,
+            synthetic_only=True,
+            local_only=True,
+            budget_enforced=True,
+        )
+        result["workflow_completed"] = True
+    finally:
+        finished.set()
+        if sampling:
+            await sampling
+        for server in reversed(servers):
+            await asyncio.to_thread(server.shutdown)
+            server.server_close()
+        for thread in threads:
+            await asyncio.to_thread(thread.join, 5)
+        if container:
+            await asyncio.to_thread(
+                run_command, ["docker", "stop", "--time", "5", container], directory, "qdrant-stop"
+            )
+        if ledger:
+            budget = ledger.snapshot()
+            budget["elapsed_seconds"] = (
+                time.time() - budget["started_wall"] if budget["started_wall"] else 0
+            )
+            result["budget"] = budget
+            write_json(directory / "budget.json", budget)
+            shutil.copyfile(allowance / "ledger.sqlite", directory / "allowance-ledger.sqlite")
+        processes = fixture.get("processes", [])
+        result.update(
+            shutdown_seconds=[p.exit_seconds for p in processes],
+            surviving_children=[pid for p in processes for pid in p.survivors],
+            peak_rss_mib=max((p.peak_rss_mib for p in processes), default=0),
+        )
+        result["latencies_ms"] = {
+            kind: [
+                s["milliseconds"]
+                for s in result["samples"]
+                if s["kind"] == kind and s["ready_success"]
+            ]
+            for kind in ("symbol", "lexical", "semantic")
+        }
+        result["contention_successes"] = {
+            kind: sum(
+                s["ready_success"]
+                and s["kind"] == kind
+                and any(
+                    i["success"]
+                    and i["repository"] != s["repository"]
+                    and i["started"] <= s["started"]
+                    and s["ended"] <= i["ended"]
+                    for i in result["index_intervals"]
+                )
+                for s in result["samples"]
+            )
+            for kind in ("symbol", "lexical", "semantic")
+        }
+        result["goals"]["contention"] = all(
+            n >= 20 for n in result["contention_successes"].values()
+        )
+        write_json(root / (label + ".partial.json"), result)
+    if not rehearsal:
+        validate_receipt(result, manifest, "live")
+    result["artifacts"] = [
+        {"role": role, "path": str(path.relative_to(root)), "sha256": digest_file(path)}
+        for role, path in (
+            ("runtime_provenance", directory / "runtime-provenance.json"),
+            ("allowance_ledger", directory / "allowance-ledger.sqlite"),
+        )
+    ]
+    write_json(root / (label + ".json"), result)
+    return result
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -972,6 +1510,7 @@ def main():
             "offline",
             "browser",
             "live",
+            "rehearsal",
             "verify-live",
             "verify-browser",
             "identity",
@@ -1002,7 +1541,9 @@ def main():
     elif args.mode.startswith("verify-"):
         result = verify_saved_receipt(root, load_manifest(root), args.mode.removeprefix("verify-"))
     else:
-        raise PilotRefused("proof_not_implemented:" + args.mode)
+        result = asyncio.run(
+            inference_pilot(root, load_manifest(root), rehearsal=args.mode == "rehearsal")
+        )
     print(json.dumps({"mode": args.mode, "root": str(root), "source": result["source"]}))
 
 

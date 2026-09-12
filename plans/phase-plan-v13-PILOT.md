@@ -67,8 +67,13 @@ sample counts in a run manifest. Exercise registration, reindex, no-match,
 sibling/wrong-branch/stale refusal, committed modify/rename/delete, rebuild,
 restart and interrupted-publication recovery. Runtime files stay untracked.
 
-Measure 20 warm symbol and 20 warm lexical queries per repository and 40 total
-semantic query attempts across isolated/contention measurements. At least 20
+Measure 20 warm queries per class per repository (40 measured semantic queries).
+Allow two semantic warmups and six lifecycle probes, at most 48 semantic tool
+attempts. Freeze request envelopes at 88084 conservative input units: eight
+summary requests, twelve document embeddings, 48 query embeddings and twenty
+metadata/attestation probes. These bounds include retries, not extra allowance.
+Run the same installed workflow against loopback synthetic providers first;
+rehearsal evidence cannot satisfy live quality or latency acceptance. At least 20
 successful ready queries per measured class overlap indexing another repo.
 Record contention intervals and refused samples separately; fast refusals are
 not successful search latency. Sample actual process-tree RSS during load.
@@ -77,6 +82,10 @@ process RSS <=2048MiB. No threshold tuning or allowance expansion.
 
 Signal/EOF controls include admitted mutation, pending-fence preservation,
 children, metrics-port reuse/contention, reconnect and repeat provisioning.
+Deleting the only indexed source file must make the old generation unavailable;
+an empty full rebuild may refuse rather than claim ready. Restore the synthetic
+file, commit and rebuild before asserting ready recovery. Do not count that
+negative control as a successful retrieval or relax the stale-generation fence.
 File substantive upstream PMCP blockers with qualified bounded reproductions;
 do not edit sister repos or waive readiness.
 
@@ -177,6 +186,12 @@ Read committed source, public installed PMCP package/CLI metadata, accepted
 receipts, frozen audit inputs and synthetic fixtures created for v13.
 Scratch read/write: `.phase-loop/runs/v13-PILOT-*/**`, `build/**`,
 `index_it_mcp.egg-info/**`. Ignored handoffs remain ignored.
+Browser-plugin output exception: read and archive only this run's generated
+`/home/viperjuice/code/Code-Index-MCP/.playwright-mcp/v13-*.png` screenshots and
+`/home/viperjuice/code/Code-Index-MCP/v13-*.png` diagnostic screenshots into owned
+PILOT scratch. No source/config/private input in the primary checkout is allowed.
+Screenshots are tool-generated outputs; retain them without staging the primary
+checkout. Hash archived copies and inspect images before accepting visual proof.
 Only credentials created for this fixture may be used; redact values from all
 logs, screenshots and receipts. No ambient env files, PMCP user config, private
 registries/indexes, raw fleet source or old private runs. Fresh browser context,

@@ -17,7 +17,7 @@ def test_pilot_estimate_is_offline_and_bounds_every_request_class():
     assert result["inference_requests_made"] == 0
     assert result["repositories"] == 2
     assert result["source_chunks"] == 2
-    assert result["input_token_upper_bound"] == 81740
+    assert result["input_token_upper_bound"] == 88084
     assert all(item["framing_input_units"] > 0 for item in result["request_envelopes"].values())
     assert result["within_approved_token_budget"] is True
     assert result["measured_quality_or_performance"] is False

@@ -141,3 +141,31 @@ def test_browser_artifacts_are_bound_and_confined(tmp_path, manifest, damage):
     (tmp_path / "browser.json").write_text(json.dumps(result))
     with pytest.raises(PilotRefused, match="artifact"):
         verify_saved_receipt(tmp_path, manifest, "browser")
+
+
+def test_rehearsal_cannot_be_live_acceptance(manifest):
+    result = receipt(manifest, "live")
+    result["rehearsal"] = True
+    with pytest.raises(PilotRefused, match="rehearsal"):
+        validate_receipt(result, manifest, "live")
+
+
+@pytest.mark.parametrize(
+    "ids,preferred,expected",
+    [
+        (["chat", "other"], "chat", "chat"),
+        (["served-alias"], "chat", "served-alias"),
+    ],
+)
+def test_model_selection_uses_reported_catalog(ids, preferred, expected):
+    from scripts.v13_pmcp_pilot import select_model
+
+    assert select_model({"data": [{"id": value} for value in ids]}, preferred) == expected
+
+
+@pytest.mark.parametrize("catalog", [{}, {"data": []}, {"data": [{"id": "a"}, {"id": "b"}]}])
+def test_ambiguous_model_catalog_refused(catalog):
+    from scripts.v13_pmcp_pilot import select_model
+
+    with pytest.raises(PilotRefused, match="model_catalog"):
+        select_model(catalog, "unreported")
