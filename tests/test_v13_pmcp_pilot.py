@@ -318,6 +318,7 @@ def live_records(tmp_path, manifest):
                 "commit": "a" * 40,
                 "generation": "b" * 32,
                 "point_count": 1,
+                "mapping_count": 1,
                 "point_ids": ["1"],
                 "attested": True,
                 "collection_manifest": {
@@ -367,6 +368,7 @@ def live_records(tmp_path, manifest):
         "provenance",
         "corpus",
         "point_ids",
+        "mapping_count",
         "model",
         "dimension",
         "revision_missing",
@@ -427,6 +429,8 @@ def test_live_record_reduction_is_consistent_and_read_only(
         ] = None
     elif damage == "point_ids":
         documents["runtime_provenance"]["repositories"][0]["point_ids"] = ["2"]
+    elif damage == "mapping_count":
+        documents["runtime_provenance"]["repositories"][0]["mapping_count"] = 0
     elif damage == "model":
         documents["runtime_provenance"]["repositories"][0]["embedding_provenance"][
             "served_model_id"
@@ -461,3 +465,67 @@ def test_live_record_reduction_is_consistent_and_read_only(
     else:
         verify_saved_receipt(tmp_path, manifest, "live")
     assert before == {path: (tmp_path / path).read_bytes() for path in paths.values()}
+
+
+@pytest.mark.asyncio
+async def test_runtime_provenance_counts_points_separately_from_mappings(tmp_path, httpx_mock):
+    import hashlib
+    import sqlite3
+
+    from scripts.v13_pmcp_pilot import runtime_provenance
+
+    repo = tmp_path / "repos/ledger"
+    repo.mkdir(parents=True)
+    (repo / "bookkeeping.py").write_text("pass\n")
+    database = tmp_path / "generation.db"
+    with sqlite3.connect(database) as db:
+        db.execute("CREATE TABLE semantic_points(point_id INTEGER, collection TEXT)")
+        db.executemany("INSERT INTO semantic_points VALUES (?,?)", [(1, "fixture"), (1, "fixture")])
+    info = {
+        "name": "ledger",
+        "index_path": str(database),
+        "index_generation": "generation",
+        "last_indexed_commit": "a" * 40,
+    }
+    (tmp_path / "registry.json").write_text(json.dumps({"repo": info}))
+    (tmp_path / "runtime-metadata.json").write_text(
+        json.dumps({"models": {"embedding": "model"}, "dimension": 8})
+    )
+    metadata_dir = database.with_suffix(".semantic")
+    metadata_dir.mkdir()
+    (metadata_dir / ".index_metadata.json").write_text(
+        json.dumps(
+            {
+                "semantic_profiles": {
+                    "pilot": {
+                        "collection_name": "fixture",
+                        "attested": True,
+                        "provenance": {
+                            "served_model_id": {"source": "reported", "value": "model"},
+                            "dimension": {"source": "reported", "value": 8},
+                        },
+                    }
+                }
+            }
+        )
+    )
+    sentinel = {
+        "__provenance__": True,
+        "indexed_commit": "a" * 40,
+        "point_set_id": hashlib.sha256(b"1").hexdigest(),
+        "corpus_sha256": hashlib.sha256(b"bookkeeping.py").hexdigest(),
+        "profile_fingerprint": "profile",
+    }
+    httpx_mock.add_response(
+        method="POST",
+        url="http://127.0.0.1:1/collections/fixture/points/scroll",
+        json={
+            "result": {
+                "points": [{"id": "sentinel", "payload": sentinel}, {"id": 1, "payload": {}}]
+            }
+        },
+    )
+    records = await runtime_provenance({"root": tmp_path}, "http://127.0.0.1:1")
+    assert records[0]["point_count"] == 1
+    assert records[0]["mapping_count"] == 2
+    assert records[0]["point_ids"] == ["1"]

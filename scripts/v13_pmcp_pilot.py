@@ -1168,6 +1168,8 @@ def _verify_live_records(root: Path, manifest: dict, result: dict, *, rehearsal=
                 or not all(isinstance(value, str) and value.isdecimal() for value in point_ids)
                 or len(set(point_ids)) != len(point_ids)
                 or len(point_ids) != record["point_count"]
+                or type(record["mapping_count"]) is not int
+                or record["mapping_count"] < record["point_count"]
                 or sentinel["indexed_commit"] != record["commit"]
                 or sentinel["point_set_id"]
                 != hashlib.sha256("\n".join(sorted(point_ids)).encode()).hexdigest()
@@ -1338,7 +1340,8 @@ async def runtime_provenance(fixture: dict, qdrant_url: str) -> list[dict]:
                     "repository": info["name"],
                     "commit": info["last_indexed_commit"],
                     "generation": info["index_generation"],
-                    "point_count": len(points),
+                    "point_count": len(expected_ids),
+                    "mapping_count": len(points),
                     "point_ids": sorted(expected_ids),
                     "attested": profiles[0]["attested"],
                     "collection_manifest": sentinel,
