@@ -54,7 +54,7 @@ class BudgetLedger:
                 CREATE TABLE requests (
                     id TEXT PRIMARY KEY, role TEXT NOT NULL, input_units INTEGER NOT NULL,
                     started_wall REAL NOT NULL, finished_wall REAL, outcome TEXT NOT NULL,
-                    http_status INTEGER
+                    http_status INTEGER, request_class TEXT
                 );
                 """)
             db.execute(
@@ -128,7 +128,14 @@ class BudgetLedger:
             raise BudgetDenied("deadline")
         return wall, mono, remaining
 
-    def reserve(self, role: str, input_units: int) -> str:
+    def reserve(
+        self,
+        role: str,
+        input_units: int,
+        *,
+        request_class: str | None = None,
+        envelope: dict | None = None,
+    ) -> str:
         if role not in ENDPOINTS or type(input_units) is not int or input_units <= 0:
             raise BudgetDenied("reservation_invalid")
         with self._transaction() as (db, state):
@@ -139,10 +146,27 @@ class BudgetLedger:
                 raise BudgetDenied("request_inflight")
             if state["reserved_input_units"] + input_units > INPUT_LIMIT:
                 raise BudgetDenied("token_limit")
+            if request_class is not None:
+                if not envelope or request_class not in {
+                    "summary",
+                    "document_embedding",
+                    "query_embedding",
+                    "provenance_probe",
+                }:
+                    raise BudgetDenied("envelope_invalid")
+                count = db.execute(
+                    "SELECT COUNT(*) FROM requests WHERE request_class=?", (request_class,)
+                ).fetchone()[0]
+                if (
+                    count >= envelope["requests"]
+                    or input_units
+                    > envelope["max_input_utf8_bytes"] + envelope["framing_input_units"]
+                ):
+                    raise BudgetDenied("request_envelope_exhausted")
             request_id = uuid.uuid4().hex
             db.execute(
-                "INSERT INTO requests(id,role,input_units,started_wall,outcome) VALUES (?,?,?,?,'inflight')",
-                (request_id, role, input_units, wall),
+                "INSERT INTO requests(id,role,input_units,started_wall,outcome,request_class) VALUES (?,?,?,?,'inflight',?)",
+                (request_id, role, input_units, wall, request_class),
             )
             db.execute(
                 "UPDATE allowance SET reserved_input_units=reserved_input_units+?, "
@@ -197,9 +221,18 @@ class BudgetLedger:
 class LocalForwarder:
     """No proxy env, redirects, commercial keys, retries or arbitrary routes."""
 
-    def __init__(self, ledger: BudgetLedger, endpoints: dict[str, str] | None = None) -> None:
+    def __init__(
+        self,
+        ledger: BudgetLedger,
+        endpoints: dict[str, str] | None = None,
+        *,
+        envelopes: dict | None = None,
+        queries: tuple[str, ...] = (),
+    ) -> None:
         self.ledger = ledger
         self._forward_lock = threading.Lock()
+        self.envelopes = envelopes
+        self.queries = queries
         self.endpoints = dict(ENDPOINTS if endpoints is None else endpoints)
         if set(self.endpoints) != set(ENDPOINTS):
             raise BudgetDenied("endpoint_refused")
@@ -260,7 +293,27 @@ class LocalForwarder:
                 raise BudgetDenied("request_invalid") from None
         # UTF-8 bytes conservatively bound input tokens, plus chat framing overhead.
         units = max(1, len(body)) + 32 * (1 + len(messages))
-        request_id = self.ledger.reserve(role, units)
+        request_class = None
+        envelope = None
+        if self.envelopes is not None:
+            inputs = payload.get("input") if method == "POST" else None
+            if method == "GET" or inputs in (
+                ["semantic-provenance-probe"],
+                ["synthetic dimension probe"],
+            ):
+                request_class = "provenance_probe"
+            elif suffix == "/chat/completions":
+                request_class = "summary"
+            elif isinstance(inputs, list) and len(inputs) == 1 and inputs[0] in self.queries:
+                request_class = "query_embedding"
+            else:
+                request_class = "document_embedding"
+            envelope = self.envelopes[request_class]
+            if len(body) > envelope["max_input_utf8_bytes"]:
+                raise BudgetDenied("request_envelope_exhausted")
+        request_id = self.ledger.reserve(
+            role, units, request_class=request_class, envelope=envelope
+        )
         try:
             status, response = asyncio.run(
                 self._request(

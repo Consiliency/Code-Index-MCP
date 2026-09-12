@@ -94,7 +94,7 @@ def validate_receipt(receipt: dict, manifest: dict, kind: str) -> None:
     goals = receipt.get("goals", {})
     if any(goals.get(name) is not True for name in GOALS[kind]):
         raise PilotRefused("receipt_goals_incomplete")
-    if kind in {"offline", "live"}:
+    if kind in {"offline", "live", "browser"}:
         durations = receipt.get("shutdown_seconds", [])
         rss = receipt.get("peak_rss_mib")
         if (
@@ -964,6 +964,42 @@ def verify_saved_receipt(root: Path, manifest: dict, kind: str) -> dict:
             or digest_file(path) != item.get("sha256")
         ):
             raise PilotRefused("receipt_artifact_mismatch")
+    if kind == "browser":
+        from PIL import Image
+
+        evidence = {}
+        for role in ("browser_session", "browser_actions"):
+            paths = [root / item["path"] for item in artifacts if item["role"] == role]
+            if len(paths) != 1:
+                raise PilotRefused("browser_artifact_ambiguous")
+            evidence[role] = json.loads(paths[0].read_text())
+            for key in ("source", "wheel_sha256", "manifest_sha256"):
+                if evidence[role].get(key) != result[key]:
+                    raise PilotRefused("browser_artifact_binding_mismatch")
+        session = evidence["browser_session"]
+        if session.get("session_started") is not True:
+            raise PilotRefused("browser_session_not_started")
+        validate_receipt({**result, **session}, manifest, "browser")
+        actions = evidence["browser_actions"].get("events", [])
+        for goal in GOALS["browser"]:
+            matching = [event for event in actions if event.get("goal") == goal]
+            if not matching or any(
+                event.get("ok") is not True or not event.get("observed") for event in matching
+            ):
+                raise PilotRefused("browser_actions_incomplete")
+        screenshot_paths = [
+            root / item["path"] for item in artifacts if item["role"].endswith("_screenshot")
+        ]
+        if len(set(screenshot_paths)) < 2:
+            raise PilotRefused("browser_screenshots_not_distinct")
+        for path in screenshot_paths:
+            try:
+                with Image.open(path) as picture:
+                    if picture.format != "PNG" or min(picture.size) < 100:
+                        raise PilotRefused("browser_screenshot_invalid")
+                    picture.verify()
+            except (OSError, ValueError):
+                raise PilotRefused("browser_screenshot_invalid") from None
     return result
 
 
@@ -1055,6 +1091,7 @@ def rehearsal_provider() -> ThreadingHTTPServer:
 
 async def runtime_provenance(fixture: dict, qdrant_url: str) -> list[dict]:
     registry = json.loads((fixture["root"] / "registry.json").read_text())
+    reported = json.loads((fixture["root"] / "runtime-metadata.json").read_text())
     records = []
     async with httpx.AsyncClient(trust_env=False) as http:
         for info in registry.values():
@@ -1084,9 +1121,14 @@ async def runtime_provenance(fixture: dict, qdrant_url: str) -> list[dict]:
                 raise PilotRefused("provenance_point_set_mismatch")
             sentinel = sentinels[0]
             expected_set = hashlib.sha256("\n".join(sorted(expected_ids)).encode()).hexdigest()
+            expected_paths = sorted(
+                path.name for path in (fixture["root"] / "repos" / info["name"]).glob("*.py")
+            )
+            expected_corpus = hashlib.sha256("\n".join(expected_paths).encode()).hexdigest()
             if (
                 sentinel.get("indexed_commit") != info["last_indexed_commit"]
                 or sentinel.get("point_set_id") != expected_set
+                or sentinel.get("corpus_sha256") != expected_corpus
                 or not sentinel.get("profile_fingerprint")
             ):
                 raise PilotRefused("provenance_binding_mismatch")
@@ -1098,6 +1140,15 @@ async def runtime_provenance(fixture: dict, qdrant_url: str) -> list[dict]:
             profiles = [p for p in profiles if p.get("collection_name") == collection]
             if len(profiles) != 1 or profiles[0].get("attested") is not True:
                 raise PilotRefused("provenance_attestation_missing")
+            derived = profiles[0].get("provenance") or {}
+            if (
+                derived.get("served_model_id", {}).get("source") != "reported"
+                or derived.get("served_model_id", {}).get("value")
+                != reported["models"]["embedding"]
+                or derived.get("dimension", {}).get("source") != "reported"
+                or derived.get("dimension", {}).get("value") != reported["dimension"]
+            ):
+                raise PilotRefused("provenance_reported_identity_mismatch")
             records.append(
                 {
                     "repository": info["name"],
@@ -1278,7 +1329,12 @@ async def inference_pilot(root: Path, manifest: dict, *, rehearsal: bool) -> dic
         BudgetLedger.initialize(allowance, digest_json(manifest))
         ledger = BudgetLedger(allowance, digest_json(manifest))
         token = secrets.token_urlsafe(36)
-        guard = LocalForwarder(ledger, endpoints).server(token)
+        guard = LocalForwarder(
+            ledger,
+            endpoints,
+            envelopes=REQUEST_ENVELOPES,
+            queries=tuple(workload["query_texts"].values()),
+        ).server(token)
         start_server(guard)
         bases = {
             role: f"http://127.0.0.1:{guard.server_port}/{role}/v1"

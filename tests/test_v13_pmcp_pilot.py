@@ -169,3 +169,55 @@ def test_ambiguous_model_catalog_refused(catalog):
 
     with pytest.raises(PilotRefused, match="model_catalog"):
         select_model(catalog, "unreported")
+
+
+@pytest.mark.parametrize("damage", [None, "binding", "unstarted", "shutdown", "actions", "image"])
+def test_browser_artifact_contents_are_verified(tmp_path, manifest, damage):
+    from PIL import Image
+
+    from scripts.v13_pmcp_pilot import digest_file
+
+    result = receipt(manifest, "browser")
+    binding = {key: result[key] for key in ("source", "wheel_sha256", "manifest_sha256")}
+    session = {
+        **binding,
+        "session_started": True,
+        "shutdown_seconds": [1],
+        "surviving_children": [],
+        "peak_rss_mib": 100,
+    }
+    actions = {
+        **binding,
+        "events": [
+            {"goal": goal, "ok": True, "observed": {"fixture": True}} for goal in GOALS["browser"]
+        ],
+    }
+    if damage == "binding":
+        session["source"] = "wrong"
+    elif damage == "unstarted":
+        session["session_started"] = False
+    elif damage == "shutdown":
+        session["shutdown_seconds"] = [6]
+    elif damage == "actions":
+        actions["events"].pop()
+    (tmp_path / "session.json").write_text(json.dumps(session))
+    (tmp_path / "actions.json").write_text(json.dumps(actions))
+    for name in ("admin", "inspector"):
+        Image.new("RGB", (100, 100), "white").save(tmp_path / (name + ".png"))
+    if damage == "image":
+        (tmp_path / "admin.png").write_bytes(b"not an image")
+    result["artifacts"] = [
+        {"role": role, "path": name, "sha256": digest_file(tmp_path / name)}
+        for role, name in (
+            ("browser_session", "session.json"),
+            ("browser_actions", "actions.json"),
+            ("admin_screenshot", "admin.png"),
+            ("inspector_screenshot", "inspector.png"),
+        )
+    ]
+    (tmp_path / "browser.json").write_text(json.dumps(result))
+    if damage:
+        with pytest.raises(PilotRefused):
+            verify_saved_receipt(tmp_path, manifest, "browser")
+    else:
+        verify_saved_receipt(tmp_path, manifest, "browser")

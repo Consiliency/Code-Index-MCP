@@ -992,9 +992,12 @@ def test_legacy_query_entrypoints_recheck_admission(runtime, monkeypatch, surfac
 @pytest.mark.parametrize(
     "failure", ["none", "missing_point", "upsert", "unacknowledged", "cleanup"]
 )
+@pytest.mark.parametrize("known_paths", [False, True])
 def test_retained_vector_copy_uses_real_generation_clients_without_active_mutation(
-    runtime, tmp_path, monkeypatch, failure
+    runtime, tmp_path, monkeypatch, failure, known_paths
 ):
+    import hashlib
+
     from qdrant_client import models
 
     from mcp_server.utils.semantic_indexer_registry import SemanticIndexerRegistry
@@ -1019,7 +1022,14 @@ def test_retained_vector_copy_uses_real_generation_clients_without_active_mutati
         with registry.lease(repo_id) as original:
             original._prepare_for_writes()
             points = [
-                models.PointStruct(id=i, vector=[float(i + 1)] + [1.0] * 7, payload={"sentinel": i})
+                models.PointStruct(
+                    id=i,
+                    vector=[float(i + 1)] + [1.0] * 7,
+                    payload={
+                        "sentinel": i,
+                        **({"relative_path": "hello.py"} if known_paths or i < 256 else {}),
+                    },
+                )
                 for i in range(257)
             ]
             original.qdrant.upsert(original.collection, points, wait=True)
@@ -1094,6 +1104,9 @@ def test_retained_vector_copy_uses_real_generation_clients_without_active_mutati
                         assert len(stage.get_pending_vector_deletions()) == 2
                     else:
                         manager._finalize_staged_vectors(repo_id, ctx)
+                        assert staged.read_collection_provenance()["corpus_sha256"] == (
+                            hashlib.sha256(b"hello.py").hexdigest() if known_paths else None
+                        )
                         assert (
                             staged.qdrant.count(staged.collection).count == 257
                         )  # Includes provenance sentinel.

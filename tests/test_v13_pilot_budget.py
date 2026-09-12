@@ -301,3 +301,32 @@ def test_http_admission_serializes_without_refund_or_deadline_extension(ledger, 
     assert not first.is_alive() and not second.is_alive()
     assert outcomes == ([200, "deadline"] if expire else [200, 200])
     assert len(observed) == ledger.snapshot()["request_count"] == (1 if expire else 2)
+
+
+def test_request_class_envelope_survives_reopen_and_failed_attempt(ledger, clock):
+    envelope = {"requests": 1, "max_input_utf8_bytes": 128, "framing_input_units": 33}
+    first = ledger.reserve("embedding", 161, request_class="provenance_probe", envelope=envelope)
+    ledger.finish(first, "http_error", 500)
+    reopened = BudgetLedger(ledger.root, "a" * 64, clock=lambda: tuple(clock))
+    with pytest.raises(BudgetDenied, match="envelope_exhausted"):
+        reopened.reserve("embedding", 1, request_class="provenance_probe", envelope=envelope)
+    assert reopened.snapshot()["reserved_input_units"] == 161
+
+
+def test_class_envelopes_are_checked_before_forwarding(ledger):
+    from scripts.v13_pilot_estimate import REQUEST_ENVELOPES
+
+    with upstream() as (endpoint, observed):
+        guard = LocalForwarder(
+            ledger,
+            dict.fromkeys(("embedding", "enrichment"), endpoint),
+            envelopes=REQUEST_ENVELOPES,
+            queries=("query",),
+        )
+        body = json.dumps({"model": "fixture", "input": ["query"]}).encode()
+        assert guard.forward("POST", "/embedding/v1/embeddings", body)[0] == 200
+        large = json.dumps({"model": "x" * 600, "input": ["query"]}).encode()
+        with pytest.raises(BudgetDenied, match="envelope_exhausted"):
+            guard.forward("POST", "/embedding/v1/embeddings", large)
+    assert len(observed) == 1
+    assert ledger.snapshot()["requests"][0]["request_class"] == "query_embedding"

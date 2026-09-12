@@ -816,18 +816,31 @@ class GitAwareIndexManager:
             if any(row["collection"] != staged.collection for row in records):
                 raise RuntimeError("Staged vectors belong to another generation")
             ids = list(dict.fromkeys(row["point_id"] for row in records))
+            relative_paths = set()
+            complete_corpus = True
             for start in range(0, len(ids), 256):
                 batch = ids[start : start + 256]
                 points = staged.qdrant.retrieve(
                     staged.collection,
                     batch,
-                    with_payload=False,
+                    with_payload=True,
                     with_vectors=False,
                 )
                 if {point.id for point in points} != set(batch):
                     raise RuntimeError("Staged vector mappings are incomplete")
+                for point in points:
+                    relative_path = (point.payload or {}).get("relative_path")
+                    if isinstance(relative_path, str) and relative_path:
+                        relative_paths.add(relative_path)
+                    else:
+                        complete_corpus = False
             if ids:
-                staged.write_collection_provenance(ids)
+                staged.write_collection_provenance(
+                    ids,
+                    corpus_sha256=(
+                        staged._compute_corpus_sha256(relative_paths) if complete_corpus else None
+                    ),
+                )
 
     def _copy_retained_vectors(self, repo_id: str, ctx: RepoContext) -> None:
         """Copy attested retained points into the stage without mutating their owner."""

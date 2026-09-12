@@ -370,6 +370,7 @@
       ],
       "owner_skill": "codex-plan-phase",
       "phase_alias": "PILOT",
+      "pilot_rehearsal_amendment": "Installed loopback rehearsal exposed automatic-sync opt-out and erased corpus hash; fixes and durable envelope/browser reducers verified by 126 tests; expanded suite pending; no live admission",
       "readiness_amendment": "Measured installed warm symbol latency fails 100ms; repair and recheck before live admission",
       "reflection_ref": "/home/viperjuice/.codex/skills/codex-plan-phase/reflections/448c2cf6/codex-v13-audit-remediation/20260911T190131Z-pilot-plan.md",
       "roadmap_ref": {
@@ -382,7 +383,7 @@
       "status": "executing",
       "task_summary": "Installed PMCP acceptance with serial readiness/admin UI repairs",
       "type": "phase",
-      "updated_at": "2026-09-11T20:11:14.085971+00:00"
+      "updated_at": "2026-09-12T06:30:00Z"
     },
     {
       "acceptance_criteria_count": 4,
