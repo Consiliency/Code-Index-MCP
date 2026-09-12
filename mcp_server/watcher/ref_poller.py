@@ -61,6 +61,8 @@ class RefPoller:
             self._stop_event.wait(self._interval)
 
     def _poll_one(self, repo_info: Any) -> None:
+        if not getattr(repo_info, "auto_sync", True) or not getattr(repo_info, "active", True):
+            return
         tracked_branch = getattr(repo_info, "tracked_branch", None)
         if not tracked_branch:
             return

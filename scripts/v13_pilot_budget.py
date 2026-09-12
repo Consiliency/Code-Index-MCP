@@ -7,6 +7,7 @@ import hmac
 import json
 import math
 import sqlite3
+import threading
 import time
 import uuid
 from contextlib import contextmanager
@@ -198,6 +199,7 @@ class LocalForwarder:
 
     def __init__(self, ledger: BudgetLedger, endpoints: dict[str, str] | None = None) -> None:
         self.ledger = ledger
+        self._forward_lock = threading.Lock()
         self.endpoints = dict(ENDPOINTS if endpoints is None else endpoints)
         if set(self.endpoints) != set(ENDPOINTS):
             raise BudgetDenied("endpoint_refused")
@@ -298,7 +300,7 @@ class LocalForwarder:
                     body = self.rfile.read(length)
                     if len(body) != length:
                         raise BudgetDenied("request_invalid")
-                    status, response = guard.forward(self.command, self.path, body)
+                    status, response = guard.forward_serialized(self.command, self.path, body)
                 except (BudgetDenied, ValueError, OSError) as exc:
                     reason = str(exc) if isinstance(exc, BudgetDenied) else "request_invalid"
                     status, response = 403, json.dumps({"error": reason}).encode()
@@ -315,3 +317,11 @@ class LocalForwarder:
             do_POST = dispatch
 
         return ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+
+    def forward_serialized(self, method: str, route: str, body: bytes) -> tuple[int, bytes]:
+        if not self._forward_lock.acquire(timeout=min(90, self.ledger.remaining_seconds())):
+            raise BudgetDenied("queue_timeout")
+        try:
+            return self.forward(method, route, body)
+        finally:
+            self._forward_lock.release()

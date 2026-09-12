@@ -266,3 +266,38 @@ def test_timeout_does_not_allow_a_retry_to_overlap_unknown_work(ledger, monkeypa
     assert b"SYNTHETIC_SOURCE_NEVER_LOG" not in body
     with pytest.raises(BudgetDenied, match="unsettled_transport"):
         guard.forward("POST", "/embedding/v1/embeddings", b'{"model":"fixture","input":["x"]}')
+
+
+@pytest.mark.parametrize("expire", [False, True])
+def test_http_admission_serializes_without_refund_or_deadline_extension(ledger, clock, expire):
+    entered, release = Event(), Event()
+    outcomes = []
+    body = b'{"model":"fixture","input":["x"]}'
+    with upstream(entered=entered, release=release) as (endpoint, observed):
+        guard = forwarder(ledger, endpoint)
+
+        def call():
+            try:
+                outcomes.append(
+                    guard.forward_serialized("POST", "/embedding/v1/embeddings", body)[0]
+                )
+            except BudgetDenied as exc:
+                outcomes.append(str(exc))
+
+        first, second = Thread(target=call), Thread(target=call)
+        first.start()
+        try:
+            assert entered.wait(5)
+            second.start()
+            assert not release.wait(0.1)
+            assert len(observed) == ledger.snapshot()["request_count"] == 1
+            if expire:
+                clock[:] = [value + 901 for value in clock]
+        finally:
+            release.set()
+            first.join(5)
+            if second.ident:
+                second.join(5)
+    assert not first.is_alive() and not second.is_alive()
+    assert outcomes == ([200, "deadline"] if expire else [200, 200])
+    assert len(observed) == ledger.snapshot()["request_count"] == (1 if expire else 2)

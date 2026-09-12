@@ -327,3 +327,26 @@ def test_stop_joins_thread_within_one_second(tmp_path):
 
     assert not poller._thread.is_alive(), "Thread should be dead after stop()"
     assert elapsed < 1.0, f"stop() took {elapsed:.2f}s, expected < 1s"
+
+
+@pytest.mark.parametrize("disabled_field", ["auto_sync", "active"])
+@pytest.mark.parametrize("indexed", [False, True])
+def test_disabled_registration_never_probes_or_indexes(
+    tmp_path, monkeypatch, disabled_field, indexed
+):
+    from mcp_server.watcher.ref_poller import RefPoller
+
+    repo = _make_git_repo(tmp_path)
+    info = _make_repo_info(repo, _head_sha(repo) if indexed else None)
+    _advance_branch(repo)
+    setattr(info, disabled_field, False)
+    manager = MagicMock()
+    poller = RefPoller(MagicMock(), manager, MagicMock(), MagicMock())
+
+    def forbidden(*args):
+        pytest.fail("disabled registration reached Git probe")
+
+    monkeypatch.setattr(poller, "_current_branch", forbidden)
+    poller._poll_one(info)
+    manager.sync_repository_index.assert_not_called()
+    manager.enqueue_full_rescan.assert_not_called()

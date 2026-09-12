@@ -56,6 +56,9 @@ denial and elapsed time cannot reset or refund the allowance. No redirects,
 ambient HTTP proxies, arbitrary target URLs or inherited commercial keys.
 
 Budget guard is an operational tool, not OS-level production egress confinement.
+HTTP admission serializes overlapping callers with a bounded wait, then durably
+reserves before forwarding. The ledger still refuses an unsettled reservation;
+queueing does not extend the global deadline or allow concurrent inference.
 Its loopback routes forward only to the frozen local endpoint roles. Never log
 request/response bodies, credentials or source. Record reported versus declared
 model/revision, dimension, request counts, reservations and hashes. Unreported
@@ -112,11 +115,13 @@ SL-1 — Installed operational driver, browser and documentation reducer
 
 - **Scope**: Repair local admission/shutdown prerequisites and enforce cumulative pilot allowance.
 - **Depends on**: (none)
-- **Owned files**: `mcp_server/gateway.py`, `tests/test_gateway_transport_boundary.py`, `mcp_server/health/repository_readiness.py`, `tests/test_repository_readiness.py`, `tests/test_v13_data_reconciliation.py`, `mcp_server/config/settings.py`, `mcp_server/indexing/summarization.py`, `mcp_server/cli/stdio_runner.py`, `scripts/safety_runtime_smoke.py`, `scripts/v13_pilot_estimate.py`, `scripts/v13_pilot_budget.py`, `tests/test_semantic_profile_settings.py`, `tests/test_summarization.py`, `tests/test_deployment_profiles.py`, `tests/integration/test_sigterm_shutdown.py`, `tests/test_v13_safety.py`, `tests/test_v13_pilot_budget.py`
+- **Owned files**: `mcp_server/gateway.py`, `tests/test_gateway_transport_boundary.py`, `mcp_server/health/repository_readiness.py`, `tests/test_repository_readiness.py`, `tests/test_v13_data_reconciliation.py`, `mcp_server/config/settings.py`, `mcp_server/indexing/summarization.py`, `mcp_server/cli/stdio_runner.py`, `scripts/safety_runtime_smoke.py`, `scripts/v13_pilot_estimate.py`, `scripts/v13_pilot_budget.py`, `tests/test_semantic_profile_settings.py`, `tests/test_summarization.py`, `tests/test_deployment_profiles.py`, `tests/integration/test_sigterm_shutdown.py`, `tests/test_v13_safety.py`, `tests/test_v13_pilot_budget.py`, `mcp_server/watcher/ref_poller.py`, `tests/test_ref_poller.py`
 - **Interfaces provided**: fresh-single-probe-readiness, complete-profile-resources, summary-policy-admission, five-second-owned-shutdown, durable-local-budget
 - **Interfaces consumed**: freeze-contract (pre-existing), accepted-data-contract (pre-existing), accepted-safety-contract (pre-existing)
 - **Parallel-safe**: no
 - **Tasks**:
+  - test: Disabled auto-sync and inactive registrations must make no Git or indexing calls, for missing indexes and changed commits; retain enabled ref-advance controls.
+  - impl: Honor registration admission flags in the tracked-ref poller before probing or dispatching indexing. Rehearsal exposed unrequested duplicate indexing despite --no-auto-sync; no live allowance has been used.
   - test: Reproduce missing JSON endpoint, missing explicit YAML fallback and local-failure commercial/sampling/BAML paths using intercepted providers and synthetic keys; zero real requests.
   - impl: Reuse deployment-policy helpers across summary paths, retaining local model roles and clear failures. No generated BAML edits or dependency upgrades.
   - test: Strengthen actual installed SIGTERM/SIGINT/EOF/repeated/partial/in-flight controls to five seconds with real children and preserved publication fence.
