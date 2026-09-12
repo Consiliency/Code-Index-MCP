@@ -27,6 +27,13 @@ import httpx
 import psutil
 
 REPO = Path(__file__).resolve().parents[1]
+QUERY_TEXTS = {
+    "ledger": "calculate available balance from credits and debits",
+    "catalog": "find a product by its code",
+}
+QDRANT_IMAGE = (
+    "qdrant/qdrant@sha256:f1c7272cdac52b38c1a0e89313922d940ba50afd90d593a1605dbbc214e66ffb"
+)
 GOALS = {
     "offline": {
         "installed_identity",
@@ -950,7 +957,7 @@ def verify_saved_receipt(root: Path, manifest: dict, kind: str) -> dict:
             "browser_actions",
             "browser_session",
         },
-        "live": {"allowance_ledger", "runtime_provenance"},
+        "live": {"allowance_ledger", "runtime_provenance", "runtime_metadata", "workload"},
     }[kind]
     artifacts = result.get("artifacts", [])
     if not required_roles <= {item.get("role") for item in artifacts}:
@@ -1000,7 +1007,184 @@ def verify_saved_receipt(root: Path, manifest: dict, kind: str) -> dict:
                     picture.verify()
             except (OSError, ValueError):
                 raise PilotRefused("browser_screenshot_invalid") from None
+    else:
+        _verify_live_records(root, manifest, result)
     return result
+
+
+def _verify_live_records(root: Path, manifest: dict, result: dict, *, rehearsal=False) -> None:
+    if __package__:
+        from .v13_pilot_budget import ENDPOINTS, BudgetDenied, BudgetLedger
+        from .v13_pilot_estimate import REQUEST_ENVELOPES, SYNTHETIC_CORPUS
+    else:
+        from v13_pilot_budget import ENDPOINTS, BudgetDenied, BudgetLedger
+        from v13_pilot_estimate import REQUEST_ENVELOPES, SYNTHETIC_CORPUS
+
+    try:
+        paths = {}
+        for role in ("allowance_ledger", "runtime_provenance", "runtime_metadata", "workload"):
+            matches = [root / item["path"] for item in result["artifacts"] if item["role"] == role]
+            if len(matches) != 1:
+                raise PilotRefused("live_artifact_ambiguous")
+            paths[role] = matches[0]
+        if len(set(paths.values())) != 4 or paths["allowance_ledger"].name != "ledger.sqlite":
+            raise PilotRefused("live_artifact_invalid")
+        ledger = BudgetLedger(
+            paths["allowance_ledger"].parent, digest_json(manifest), read_only=True
+        )
+        snapshot = ledger.snapshot()
+        recorded = {
+            key: value for key, value in result["budget"].items() if key != "elapsed_seconds"
+        }
+        if recorded != snapshot or any(
+            row["outcome"] in {"inflight", "transport_unknown"} for row in snapshot["requests"]
+        ):
+            raise PilotRefused("live_accounting_mismatch")
+        elapsed = result["budget"]["elapsed_seconds"]
+        if not snapshot["requests"] or elapsed < max(
+            snapshot["last_wall"] - snapshot["started_wall"],
+            snapshot["last_monotonic"] - snapshot["started_monotonic"],
+        ):
+            raise PilotRefused("live_accounting_incomplete")
+        for request_class, envelope in REQUEST_ENVELOPES.items():
+            rows = [row for row in snapshot["requests"] if row["request_class"] == request_class]
+            if not 0 < len(rows) <= envelope["requests"]:
+                raise PilotRefused("live_envelope_mismatch")
+            for row in rows:
+                expected_roles = (
+                    {"embedding", "enrichment"}
+                    if request_class == "provenance_probe"
+                    else {"enrichment" if request_class == "summary" else "embedding"}
+                )
+                if (
+                    row["role"] not in expected_roles
+                    or type(row["input_units"]) is not int
+                    or not 0
+                    < row["input_units"]
+                    <= envelope["max_input_utf8_bytes"] + envelope["framing_input_units"]
+                    or row["finished_wall"] is None
+                    or not snapshot["started_wall"]
+                    <= row["started_wall"]
+                    <= row["finished_wall"]
+                    <= snapshot["last_wall"]
+                ):
+                    raise PilotRefused("live_request_invalid")
+        if any(row["request_class"] not in REQUEST_ENVELOPES for row in snapshot["requests"]):
+            raise PilotRefused("live_request_class_invalid")
+
+        workload = json.loads(paths["workload"].read_text())
+        metadata = json.loads(paths["runtime_metadata"].read_text())
+        if (
+            result.get("rehearsal") is not rehearsal
+            or result.get("workflow_completed") is not True
+            or workload.get("rehearsal") is not rehearsal
+            or workload["manifest_sha256"] != digest_json(manifest)
+            or workload["corpus"] != SYNTHETIC_CORPUS
+            or workload["request_envelopes"] != REQUEST_ENVELOPES
+            or workload["query_texts"] != QUERY_TEXTS
+            or workload["measured_queries_per_class_per_repository"] != 20
+            or metadata["workload_sha256"] != digest_json(workload)
+            or metadata["qdrant_image"] != QDRANT_IMAGE
+            or (not rehearsal and metadata["endpoints"] != ENDPOINTS)
+        ):
+            raise PilotRefused("live_workload_mismatch")
+        for role in ENDPOINTS:
+            if not isinstance(metadata["models"][role], str) or not metadata["models"][role]:
+                raise PilotRefused("live_model_missing")
+        if type(metadata["dimension"]) is not int or metadata["dimension"] <= 0:
+            raise PilotRefused("live_dimension_invalid")
+
+        samples, intervals = result["samples"], result["index_intervals"]
+        if len(samples) != 120 or not intervals:
+            raise PilotRefused("live_observations_incomplete")
+        for observation in samples + intervals:
+            if (
+                observation["repository"] not in SYNTHETIC_CORPUS
+                or any(
+                    type(observation[key]) not in (int, float)
+                    or not math.isfinite(observation[key])
+                    for key in ("started", "ended")
+                )
+                or not snapshot["started_monotonic"]
+                <= observation["started"]
+                <= observation["ended"]
+                <= snapshot["started_monotonic"] + elapsed + 0.001
+            ):
+                raise PilotRefused("live_interval_invalid")
+        if any(type(interval["success"]) is not bool for interval in intervals):
+            raise PilotRefused("live_interval_invalid")
+        for sample in samples:
+            if (
+                sample["kind"] not in {"symbol", "lexical", "semantic"}
+                or sample["ready_success"] is not True
+                or not math.isclose(
+                    sample["milliseconds"],
+                    (sample["ended"] - sample["started"]) * 1000,
+                    abs_tol=0.000001,
+                )
+            ):
+                raise PilotRefused("live_sample_invalid")
+        for kind in ("symbol", "lexical", "semantic"):
+            selected = [sample for sample in samples if sample["kind"] == kind]
+            if any(
+                sum(sample["repository"] == repo for sample in selected) != 20
+                for repo in SYNTHETIC_CORPUS
+            ):
+                raise PilotRefused("live_sample_count_mismatch")
+            latencies = [sample["milliseconds"] for sample in selected]
+            contention = sum(
+                any(
+                    interval["success"]
+                    and interval["repository"] != sample["repository"]
+                    and interval["started"]
+                    <= sample["started"]
+                    <= sample["ended"]
+                    <= interval["ended"]
+                    for interval in intervals
+                )
+                for sample in selected
+            )
+            if (
+                result["latencies_ms"][kind] != latencies
+                or result["contention_successes"][kind] != contention
+            ):
+                raise PilotRefused("live_observation_summary_mismatch")
+
+        records = json.loads(paths["runtime_provenance"].read_text())["repositories"]
+        if len(records) != 2 or {record["repository"] for record in records} != set(
+            SYNTHETIC_CORPUS
+        ):
+            raise PilotRefused("live_provenance_incomplete")
+        for record in records:
+            sentinel = record["collection_manifest"]
+            provenance = record["embedding_provenance"]
+            point_ids = record["point_ids"]
+            filename = "bookkeeping.py" if record["repository"] == "ledger" else "catalog.py"
+            if (
+                record["attested"] is not True
+                or not record["generation"]
+                or not isinstance(point_ids, list)
+                or not point_ids
+                or not all(isinstance(value, str) and value.isdecimal() for value in point_ids)
+                or len(set(point_ids)) != len(point_ids)
+                or len(point_ids) != record["point_count"]
+                or sentinel["indexed_commit"] != record["commit"]
+                or sentinel["point_set_id"]
+                != hashlib.sha256("\n".join(sorted(point_ids)).encode()).hexdigest()
+                or sentinel["corpus_sha256"] != hashlib.sha256(filename.encode()).hexdigest()
+                or not sentinel["profile_fingerprint"]
+                or sentinel["provenance_version"] != "collection-provenance.v1"
+                or sentinel["provider_id"] != metadata["models"]["embedding"]
+                or provenance["served_model_id"]["source"] != "reported"
+                or provenance["served_model_id"]["value"] != metadata["models"]["embedding"]
+                or provenance["dimension"]["source"] != "reported"
+                or provenance["dimension"]["value"] != metadata["dimension"]
+                or provenance["model_revision"]["source"] not in {"reported", "declared"}
+                or provenance["model_revision"]["value"] != metadata["immutable_revision"]
+            ):
+                raise PilotRefused("live_provenance_mismatch")
+    except (BudgetDenied, sqlite3.Error, OSError, ValueError, TypeError, KeyError) as exc:
+        raise PilotRefused("live_records_invalid:" + type(exc).__name__) from None
 
 
 def select_model(catalog: dict, preferred: str) -> str:
@@ -1155,6 +1339,8 @@ async def runtime_provenance(fixture: dict, qdrant_url: str) -> list[dict]:
                     "commit": info["last_indexed_commit"],
                     "generation": info["index_generation"],
                     "point_count": len(points),
+                    "point_ids": sorted(expected_ids),
+                    "attested": profiles[0]["attested"],
                     "collection_manifest": sentinel,
                     "embedding_provenance": profiles[0].get("provenance"),
                 }
@@ -1163,7 +1349,7 @@ async def runtime_provenance(fixture: dict, qdrant_url: str) -> list[dict]:
 
 
 async def inference_pilot(root: Path, manifest: dict, *, rehearsal: bool) -> dict:
-    from v13_pilot_budget import BudgetLedger, LocalForwarder
+    from v13_pilot_budget import ENDPOINTS, BudgetLedger, LocalForwarder
     from v13_pilot_estimate import REQUEST_ENVELOPES, SYNTHETIC_CORPUS
 
     if not rehearsal:
@@ -1183,10 +1369,7 @@ async def inference_pilot(root: Path, manifest: dict, *, rehearsal: bool) -> dic
         "measured_queries_per_class_per_repository": 20,
         "semantic_tool_attempt_limit": 48,
         "max_rebuilds_per_contention_window": 3,
-        "query_texts": {
-            "ledger": "calculate available balance from credits and debits",
-            "catalog": "find a product by its code",
-        },
+        "query_texts": QUERY_TEXTS,
         "mutation": "append a synthetic function-body comment",
         "rename": "ledger/balance.py to ledger/bookkeeping.py",
         "delete": "catalog/catalog.py; old ready forbidden; restore and rebuild",
@@ -1212,7 +1395,7 @@ async def inference_pilot(root: Path, manifest: dict, *, rehearsal: bool) -> dic
         "index_intervals": [],
         "workflow_completed": False,
     }
-    image = "qdrant/qdrant@sha256:f1c7272cdac52b38c1a0e89313922d940ba50afd90d593a1605dbbc214e66ffb"
+    image = QDRANT_IMAGE
 
     def start_server(server):
         thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -1408,6 +1591,7 @@ async def inference_pilot(root: Path, manifest: dict, *, rehearsal: bool) -> dic
                 "dimension": len(vector),
                 "immutable_revision": "unreported",
                 "qdrant_image": image,
+                "endpoints": endpoints or ENDPOINTS,
                 "workload_sha256": digest_json(workload),
             },
         )
@@ -1509,7 +1693,10 @@ async def inference_pilot(root: Path, manifest: dict, *, rehearsal: bool) -> dic
             )
             result["budget"] = budget
             write_json(directory / "budget.json", budget)
-            shutil.copyfile(allowance / "ledger.sqlite", directory / "allowance-ledger.sqlite")
+            (directory / "allowance-ledger").mkdir(mode=0o700)
+            shutil.copyfile(
+                allowance / "ledger.sqlite", directory / "allowance-ledger/ledger.sqlite"
+            )
         processes = fixture.get("processes", [])
         result.update(
             shutdown_seconds=[p.exit_seconds for p in processes],
@@ -1549,9 +1736,12 @@ async def inference_pilot(root: Path, manifest: dict, *, rehearsal: bool) -> dic
         {"role": role, "path": str(path.relative_to(root)), "sha256": digest_file(path)}
         for role, path in (
             ("runtime_provenance", directory / "runtime-provenance.json"),
-            ("allowance_ledger", directory / "allowance-ledger.sqlite"),
+            ("allowance_ledger", directory / "allowance-ledger/ledger.sqlite"),
+            ("runtime_metadata", directory / "runtime-metadata.json"),
+            ("workload", directory / "workload.json"),
         )
     ]
+    _verify_live_records(root, manifest, result, rehearsal=rehearsal)
     write_json(root / (label + ".json"), result)
     return result
 

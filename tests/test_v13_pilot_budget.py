@@ -330,3 +330,17 @@ def test_class_envelopes_are_checked_before_forwarding(ledger):
             guard.forward("POST", "/embedding/v1/embeddings", large)
     assert len(observed) == 1
     assert ledger.snapshot()["requests"][0]["request_class"] == "query_embedding"
+
+
+def test_archived_ledger_snapshot_is_read_only(ledger, clock):
+    request = ledger.reserve("embedding", 100)
+    ledger.finish(request, "success", 200)
+    path = ledger.root / "ledger.sqlite"
+    before = path.read_bytes()
+    archived = BudgetLedger(ledger.root, "a" * 64, clock=lambda: tuple(clock), read_only=True)
+    assert archived.snapshot() == ledger.snapshot()
+    with pytest.raises(BudgetDenied, match="read_only"):
+        archived.reserve("embedding", 100)
+    with pytest.raises(BudgetDenied, match="read_only"):
+        archived.finish(request, "success", 200)
+    assert path.read_bytes() == before

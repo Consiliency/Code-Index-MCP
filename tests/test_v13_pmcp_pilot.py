@@ -221,3 +221,243 @@ def test_browser_artifact_contents_are_verified(tmp_path, manifest, damage):
             verify_saved_receipt(tmp_path, manifest, "browser")
     else:
         verify_saved_receipt(tmp_path, manifest, "browser")
+
+
+def test_hashes_and_goal_flags_cannot_replace_live_records(tmp_path, manifest):
+    from scripts.v13_pmcp_pilot import digest_file
+
+    (tmp_path / "not-a-ledger.json").write_text("{}")
+    result = receipt(manifest, "live")
+    result["rehearsal"] = False
+    result["artifacts"] = [
+        {
+            "role": role,
+            "path": "not-a-ledger.json",
+            "sha256": digest_file(tmp_path / "not-a-ledger.json"),
+        }
+        for role in ("allowance_ledger", "runtime_provenance")
+    ]
+    (tmp_path / "live.json").write_text(json.dumps(result))
+    with pytest.raises(PilotRefused):
+        verify_saved_receipt(tmp_path, manifest, "live")
+
+
+@pytest.fixture
+def live_records(tmp_path, manifest):
+    import hashlib
+
+    from scripts.v13_pilot_budget import ENDPOINTS, BudgetLedger
+    from scripts.v13_pilot_estimate import REQUEST_ENVELOPES, SYNTHETIC_CORPUS
+    from scripts.v13_pmcp_pilot import QDRANT_IMAGE, QUERY_TEXTS
+
+    result = receipt(manifest, "live")
+    result.update(rehearsal=False, workflow_completed=True, samples=[], index_intervals=[])
+    ledger_root = tmp_path / "ledger"
+    BudgetLedger.initialize(ledger_root, digest_json(manifest))
+    ledger = BudgetLedger(ledger_root, digest_json(manifest), clock=lambda: (1000.0, 100.0))
+    for request_class, count in (
+        ("provenance_probe", 2),
+        ("summary", 1),
+        ("document_embedding", 1),
+        ("query_embedding", 40),
+    ):
+        for _ in range(count):
+            request = ledger.reserve(
+                "enrichment" if request_class == "summary" else "embedding",
+                100,
+                request_class=request_class,
+                envelope=REQUEST_ENVELOPES[request_class],
+            )
+            ledger.finish(request, "success", 200)
+    result["budget"] = {**ledger.snapshot(), "elapsed_seconds": 20}
+    for repo_index, repo in enumerate(SYNTHETIC_CORPUS):
+        for index in range(20):
+            for kind_index, kind in enumerate(("symbol", "lexical", "semantic")):
+                started = 101 + repo_index * 3 + (index * 3 + kind_index) * 0.03
+                ended = started + 0.02
+                result["samples"].append(
+                    {
+                        "kind": kind,
+                        "repository": repo,
+                        "started": started,
+                        "ended": ended,
+                        "milliseconds": (ended - started) * 1000,
+                        "ready_success": True,
+                    }
+                )
+    result["index_intervals"] = [
+        {"repository": "catalog", "started": 100.0, "ended": 103.0, "success": True},
+        {"repository": "ledger", "started": 103.0, "ended": 107.0, "success": True},
+    ]
+    result["latencies_ms"] = {
+        kind: [sample["milliseconds"] for sample in result["samples"] if sample["kind"] == kind]
+        for kind in ("symbol", "lexical", "semantic")
+    }
+    result["contention_successes"] = dict.fromkeys(("symbol", "lexical", "semantic"), 40)
+    workload = {
+        "corpus": SYNTHETIC_CORPUS,
+        "request_envelopes": REQUEST_ENVELOPES,
+        "query_texts": QUERY_TEXTS,
+        "measured_queries_per_class_per_repository": 20,
+        "rehearsal": False,
+        "manifest_sha256": digest_json(manifest),
+    }
+    metadata = {
+        "models": {"embedding": "unit-fixture", "enrichment": "unit-chat"},
+        "dimension": 8,
+        "immutable_revision": "unreported",
+        "qdrant_image": QDRANT_IMAGE,
+        "endpoints": ENDPOINTS,
+        "workload_sha256": digest_json(workload),
+    }
+    repositories = []
+    for repo, filename in (("ledger", "bookkeeping.py"), ("catalog", "catalog.py")):
+        repositories.append(
+            {
+                "repository": repo,
+                "commit": "a" * 40,
+                "generation": "b" * 32,
+                "point_count": 1,
+                "point_ids": ["1"],
+                "attested": True,
+                "collection_manifest": {
+                    "indexed_commit": "a" * 40,
+                    "point_set_id": hashlib.sha256(b"1").hexdigest(),
+                    "corpus_sha256": hashlib.sha256(filename.encode()).hexdigest(),
+                    "profile_fingerprint": "c" * 32,
+                    "provider_id": "unit-fixture",
+                    "provenance_version": "collection-provenance.v1",
+                },
+                "embedding_provenance": {
+                    "served_model_id": {"source": "reported", "value": "unit-fixture"},
+                    "dimension": {"source": "reported", "value": 8},
+                    "model_revision": {"source": "declared", "value": "unreported"},
+                },
+            }
+        )
+    return (
+        result,
+        ledger,
+        {
+            "workload": workload,
+            "runtime_metadata": metadata,
+            "runtime_provenance": {"repositories": repositories},
+        },
+    )
+
+
+@pytest.mark.parametrize(
+    "damage",
+    [
+        None,
+        "ledger",
+        "accounting",
+        "inflight",
+        "envelope",
+        "unknown_class",
+        "samples_missing",
+        "sample_refusal",
+        "sample_timing",
+        "sample_outside_budget",
+        "sample_repository",
+        "contention_count",
+        "contention_interval",
+        "workload",
+        "endpoints",
+        "provenance",
+        "corpus",
+        "point_ids",
+        "model",
+        "dimension",
+        "revision_missing",
+        "revision_mismatch",
+        "rehearsal",
+        "incomplete",
+        "duplicate_artifact",
+    ],
+)
+def test_live_record_reduction_is_consistent_and_read_only(
+    tmp_path, manifest, live_records, damage
+):
+    import sqlite3
+
+    from scripts.v13_pmcp_pilot import digest_file
+
+    result, ledger, documents = live_records
+    ledger_path = ledger.root / "ledger.sqlite"
+    if damage == "ledger":
+        ledger_path.write_bytes(b"{}")
+    elif damage == "accounting":
+        result["budget"]["reserved_input_units"] += 1
+    elif damage in {"inflight", "envelope", "unknown_class"}:
+        with sqlite3.connect(ledger_path) as db:
+            if damage == "inflight":
+                db.execute(
+                    "UPDATE requests SET outcome='inflight',finished_wall=NULL WHERE rowid=1"
+                )
+            else:
+                db.execute(
+                    "UPDATE requests SET request_class=?",
+                    ("summary" if damage == "envelope" else "unknown",),
+                )
+        result["budget"] = {**ledger.snapshot(), "elapsed_seconds": 20}
+    elif damage == "samples_missing":
+        result["samples"].pop()
+    elif damage == "sample_refusal":
+        result["samples"][0]["ready_success"] = False
+    elif damage == "sample_timing":
+        result["samples"][0]["milliseconds"] = 0
+    elif damage == "sample_outside_budget":
+        result["samples"][0].update(started=10000, ended=10000.02)
+    elif damage == "sample_repository":
+        result["samples"][0]["repository"] = "catalog"
+    elif damage == "contention_count":
+        result["contention_successes"]["symbol"] = 39
+    elif damage == "contention_interval":
+        result["index_intervals"][0]["success"] = False
+    elif damage == "workload":
+        documents["workload"]["corpus"] = {}
+    elif damage == "endpoints":
+        documents["runtime_metadata"]["endpoints"] = {}
+    elif damage == "provenance":
+        documents["runtime_provenance"]["repositories"] = []
+    elif damage == "corpus":
+        documents["runtime_provenance"]["repositories"][0]["collection_manifest"][
+            "corpus_sha256"
+        ] = None
+    elif damage == "point_ids":
+        documents["runtime_provenance"]["repositories"][0]["point_ids"] = ["2"]
+    elif damage == "model":
+        documents["runtime_provenance"]["repositories"][0]["embedding_provenance"][
+            "served_model_id"
+        ]["value"] = "wrong"
+    elif damage == "dimension":
+        documents["runtime_metadata"]["dimension"] = 9
+    elif damage == "revision_missing":
+        del documents["runtime_provenance"]["repositories"][0]["embedding_provenance"][
+            "model_revision"
+        ]
+    elif damage == "revision_mismatch":
+        documents["runtime_metadata"]["immutable_revision"] = "invented-revision"
+    elif damage == "rehearsal":
+        documents["workload"]["rehearsal"] = True
+    elif damage == "incomplete":
+        result["workflow_completed"] = False
+    paths = {"allowance_ledger": ledger_path.relative_to(tmp_path).as_posix()}
+    for role, document in documents.items():
+        paths[role] = role + ".json"
+        (tmp_path / paths[role]).write_text(json.dumps(document))
+    result["artifacts"] = [
+        {"role": role, "path": path, "sha256": digest_file(tmp_path / path)}
+        for role, path in paths.items()
+    ]
+    if damage == "duplicate_artifact":
+        result["artifacts"].append(result["artifacts"][0])
+    (tmp_path / "live.json").write_text(json.dumps(result))
+    before = {path: (tmp_path / path).read_bytes() for path in paths.values()}
+    if damage:
+        with pytest.raises(PilotRefused):
+            verify_saved_receipt(tmp_path, manifest, "live")
+    else:
+        verify_saved_receipt(tmp_path, manifest, "live")
+    assert before == {path: (tmp_path / path).read_bytes() for path in paths.values()}

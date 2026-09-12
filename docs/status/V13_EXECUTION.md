@@ -1,6 +1,6 @@
 # V13 Manual Execution
 
-Updated 2026-09-11. Branch: `codex/v13-audit-remediation`.
+Updated 2026-09-12. Branch: `codex/v13-audit-remediation`.
 Worktree: `/mnt/workspace/worktrees/Code-Index-MCP-v13-audit-remediation`.
 
 ## Progress
@@ -12,7 +12,7 @@ Worktree: `/mnt/workspace/worktrees/Code-Index-MCP-v13-audit-remediation`.
 | STATE | Accepted | `docs/validation/v13/STATE.json`; IF-0-STATE-1 |
 | SAFETY | Accepted | `docs/validation/v13/SAFETY.json`; IF-0-SAFETY-1 |
 | DATA | Accepted | `docs/validation/v13/DATA.json`; IF-0-DATA-1 |
-| PILOT | Not started | No inference or browser acceptance claimed |
+| PILOT | Executing; not accepted | Installed offline/browser baseline passed; live record-validation repair precedes inference |
 | PREP | Not started | No version bump or implementation code review claimed |
 | SHIP | Not started | No merge, publication or issue closure claimed |
 
@@ -72,9 +72,45 @@ failed attempts remain preserved and are not accepted evidence.
 
 Read `docs/validation/v13/DATA.json` and
 `.dev-skills/handoffs/codex-execute-phase/latest.md` in this worktree.
-Next phase: PILOT, plan installed provisioning and bounded operational acceptance.
-Command: `codex-plan-phase specs/phase-plans-v13.md PILOT`.
+Current phase: PILOT, finish installed provisioning and bounded operational acceptance.
+Command: `codex-execute-phase plans/phase-plan-v13-PILOT.md`.
 Do not restart v9 or infer v13 completion from old primary-checkout state.
+
+## PILOT Checkpoint
+
+The installed candidate `cc795c88cfe48e558a037123fb54a9beb2831dba` passed
+all 13 offline PMCP goals and the actual Inspector/admin browser workflows:
+two-repository queries, ready no-match, sibling refusal, admin reindex, and
+disconnect/reconnect. Browser services stopped within 1.12 seconds with no
+surviving children; recorded peak RSS was 1821.67 MiB. The Inspector had no
+console errors before teardown; admin's expected sibling refusal produced HTTP
+503. Two console messages appeared during intentional service teardown and
+their details were not retained. These are bounded diagnostic observations,
+not fleet or live-inference acceptance.
+
+Its standalone baseline passed the local gate, non-root container, 19 Qdrant
+controls per mode, 140 Git manager tests, 3279 broad offline tests (150 skipped,
+31 deselected), and 529 phase tests. The overall artifact is rejected because
+the formatting selection incorrectly included the immutable audit-input Python
+file. That input remains unchanged; executable source/test formatting is the
+correct scope. Evidence is preserved under
+`.phase-loop/runs/v13-PILOT-cc795c88cfe4/offline-verification-resolved/`.
+
+A separate RED counterexample demonstrated that hash-valid placeholders could
+pass saved live-result validation without actual ledger/provenance records.
+The repair reopens archived SQLite read-only, compares durable accounting and
+request-class envelopes, reconstructs all 120 measured query observations and
+contention counts, and checks workload, provider/revision, corpus and point-set
+bindings. The driver archives those inputs before producing a final receipt.
+All 96 focused budget/receipt tests pass, including inconsistent-record controls
+and byte-preservation checks. A fresh candidate rehearsal and complete evidence
+run are required before PILOT acceptance.
+
+No live endpoint has been contacted and the actual allowance has never been
+initialized. Its canonical root remains `.phase-loop/runs/v13-PILOT-allowance`;
+100000 cumulative units, 900 seconds from first admission and concurrency one
+remain unchanged. No threshold change, additional signing dispatch, version
+bump, final code panel, merge, publication or fleet indexing has occurred.
 
 ## STATE Implementation History
 

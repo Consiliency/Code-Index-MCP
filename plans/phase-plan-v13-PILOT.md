@@ -92,6 +92,12 @@ negative control as a successful retrieval or relax the stale-generation fence.
 File substantive upstream PMCP blockers with qualified bounded reproductions;
 do not edit sister repos or waive readiness.
 
+Saved live proof must reopen the archived ledger read-only, compare durable
+accounting and request envelopes, reconstruct sample timings and contention,
+and verify frozen workload/provider/point-set provenance. Hash-valid placeholders
+and inconsistent records cannot satisfy acceptance. Validation makes no inference
+requests or ledger writes.
+
 Live execution is an effect, not an automatically repeatable check. Repair
 offline failures before admission. Repeat validation consumes bound receipts
 without more inference. Candidate changes invalidate candidate-dependent proof.
@@ -128,7 +134,7 @@ SL-1 — Installed operational driver, browser and documentation reducer
   - impl: Reuse deployment-policy helpers across summary paths, retaining local model roles and clear failures. No generated BAML edits or dependency upgrades.
   - test: Strengthen actual installed SIGTERM/SIGINT/EOF/repeated/partial/in-flight controls to five seconds with real children and preserved publication fence.
   - impl: Bound owned shutdown without acknowledging unfinished work or abandoning children.
-  - test: Budget exact-boundary/retry/concurrency/time/restart/corruption/route/log controls with loopback stubs.
+  - test: Budget exact-boundary/retry/concurrency/time/restart/corruption/route/log controls with loopback stubs; read-only evidence snapshots cannot mutate or admit requests.
   - test: Update the pure estimate assertion to include framing reservations; do not change DATA source/storage/query expectations or accepted receipts.
   - impl: Add durable reservation ledger and narrow local forwarding guard; derive pure estimate from workload/envelopes.
   - test: Preserve fresh SHA-1/SHA-256 commit, branch, tracked edit and missing/detached Git refusals with real repositories, including staged/unstaged/rename/delete and untracked controls; assert one Git subprocess per classification.
@@ -146,7 +152,7 @@ SL-1 — Installed operational driver, browser and documentation reducer
 - **Interfaces consumed**: fresh-single-probe-readiness, complete-profile-resources, summary-policy-admission, five-second-owned-shutdown, durable-local-budget, freeze-contract (pre-existing), accepted-data-contract (pre-existing), accepted-safety-contract (pre-existing)
 - **Parallel-safe**: no
 - **Tasks**:
-  - test: Receipt reducer rejects candidate/manifest drift, missing goals, over-budget/threshold results, absent successful contention samples and missing browser evidence.
+  - test: Receipt reducer rejects candidate/manifest drift, missing goals, over-budget/threshold results, absent successful contention samples, missing browser evidence, invalid ledgers, summary/raw-record disagreement and empty provenance.
   - impl: Build candidate wheel and install through pinned uvx/Python outside checkout; provision installed PMCP with fresh HOME/project/config/policy/lockdir and explicit resources.
   - verify: No-inference CLI/SDK/PMCP lifecycle, handshake, metrics contention, reconnect/reprovision and two-repo/sibling controls; assert actual module/interpreter and child identities.
   - impl: Prepare pinned Inspector and intended FastAPI admin UI on isolated loopback ports.
@@ -193,6 +199,13 @@ Read committed source, public installed PMCP package/CLI metadata, accepted
 receipts, frozen audit inputs and synthetic fixtures created for v13.
 Scratch read/write: `.phase-loop/runs/v13-PILOT-*/**`, `build/**`,
 `index_it_mcp.egg-info/**`. Ignored handoffs remain ignored.
+The existing Qdrant smoke helper emits new deterministic synthetic proof outputs
+under `.phase-loop/runs/v13-DATA-qdrant-*/pytest.log` and
+`.phase-loop/runs/v13-DATA-qdrant-*/junit.xml`. Only outputs newly created by this
+PILOT verification are owned/readable; do not inspect or rewrite older DATA runs.
+The two September 12 baseline outputs are explicitly retained:
+`.phase-loop/runs/v13-DATA-qdrant-0c2af116a1cd426fa04cc3edf3acf889/**` and
+`.phase-loop/runs/v13-DATA-qdrant-cd64e7b1a4704915ad421d475ac4dd2d/**`.
 Browser-plugin output exception: read and archive only this run's generated
 `/home/viperjuice/code/Code-Index-MCP/.playwright-mcp/v13-*.png` screenshots and
 `/home/viperjuice/code/Code-Index-MCP/v13-*.png` diagnostic screenshots into owned
@@ -212,7 +225,7 @@ Accepted DATA proof inputs are read-only:
 
 ## Verification
 
-- Structural plan validator, locked Python 3.12 refresh, frontmatter suite, changed-Python isort/black and git diff --check.
+- Structural plan validator, locked Python 3.12 refresh, frontmatter suite, changed-Python isort/black and git diff --check. Formatting covers executable `mcp_server/**`, `scripts/**` and `tests/**`; preserved audit-input Python remains read-only and byte-verified, not reformatted.
 - `uv run --locked --extra dev python scripts/v13_pilot_estimate.py`
 - `uv run --locked --extra dev python scripts/v13_pmcp_pilot.py --mode prepare`
 - `uv run --locked --extra dev python scripts/v13_pmcp_pilot.py --mode offline`

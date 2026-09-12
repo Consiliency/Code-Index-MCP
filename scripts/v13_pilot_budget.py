@@ -69,10 +69,12 @@ class BudgetLedger:
         manifest_sha256: str,
         *,
         clock: Callable[[], tuple[float, float]] = lambda: (time.time(), time.monotonic()),
+        read_only: bool = False,
     ) -> None:
         self.root = root
         self.manifest_sha256 = manifest_sha256
         self.clock = clock
+        self.read_only = read_only
         with self._transaction():
             pass
 
@@ -83,10 +85,11 @@ class BudgetLedger:
             path = self.root / "ledger.sqlite"
             if path.is_symlink() or not path.is_file():
                 raise BudgetDenied("ledger_invalid")
-            db = sqlite3.connect(path.resolve().as_uri() + "?mode=rw", uri=True, timeout=2)
+            mode = "ro" if self.read_only else "rw"
+            db = sqlite3.connect(path.resolve().as_uri() + "?mode=" + mode, uri=True, timeout=2)
             db.row_factory = sqlite3.Row
             db.execute("PRAGMA synchronous=FULL")
-            db.execute("BEGIN IMMEDIATE")
+            db.execute("BEGIN" if self.read_only else "BEGIN IMMEDIATE")
             if db.execute("PRAGMA quick_check").fetchone()[0] != "ok":
                 raise BudgetDenied("ledger_invalid")
             rows = db.execute("SELECT * FROM allowance").fetchall()
@@ -136,6 +139,8 @@ class BudgetLedger:
         request_class: str | None = None,
         envelope: dict | None = None,
     ) -> str:
+        if self.read_only:
+            raise BudgetDenied("ledger_read_only")
         if role not in ENDPOINTS or type(input_units) is not int or input_units <= 0:
             raise BudgetDenied("reservation_invalid")
         with self._transaction() as (db, state):
@@ -181,6 +186,8 @@ class BudgetLedger:
             return self._remaining(state)[2]
 
     def finish(self, request_id: str, outcome: str, http_status: int | None) -> None:
+        if self.read_only:
+            raise BudgetDenied("ledger_read_only")
         if outcome not in {"success", "http_error", "redirect_refused", "transport_unknown"}:
             raise BudgetDenied("outcome_invalid")
         with self._transaction() as (db, state):
@@ -213,6 +220,8 @@ class BudgetLedger:
                 "request_count": len(rows),
                 "started_wall": state["start_wall"],
                 "last_wall": state["last_wall"],
+                "started_monotonic": state["start_mono"],
+                "last_monotonic": state["last_mono"],
                 "blocked": state["blocked"],
                 "requests": rows,
             }
