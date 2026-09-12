@@ -141,6 +141,447 @@
       "updated_at": "2026-07-10T10:22:29Z"
     },
     {
+      "acceptance_criteria_count": 4,
+      "created_at": "2026-09-11T13:26:53Z",
+      "file": "plans/phase-plan-v13-DATA.md",
+      "handoff_ref": ".dev-skills/handoffs/codex-plan-phase/20260911T132653Z-data-plan.md",
+      "if_gates_produced": [],
+      "lanes": [
+        "SL-0",
+        "SL-1",
+        "SL-2"
+      ],
+      "lifecycle": [
+        {
+          "at": "2026-09-11T13:28:29Z",
+          "by": "codex-execute-phase",
+          "metadata": {
+            "base_commit": "443fca0",
+            "issue_inventory": [],
+            "mode": "manual"
+          },
+          "transition": "executing"
+        },
+        {
+          "at": "2026-09-11T18:58:19Z",
+          "by": "codex-execute-phase",
+          "metadata": {
+            "dirty_worktree": "phase-owned metadata closeout only; commit before handoff",
+            "if_gates_produced": [
+              "IF-0-DATA-1"
+            ],
+            "issue_dispositions": [],
+            "issue_inventory": [],
+            "next_phase": "PILOT",
+            "receipt": "docs/validation/v13/DATA.json",
+            "reflection_ref": "/home/viperjuice/.codex/skills/codex-execute-phase/reflections/448c2cf6/codex-v13-audit-remediation/20260911T185535Z-data-accepted.md",
+            "source_commit": "668bf754d1728d07e113c8560acb6e5cf79a9b3f",
+            "source_tree": "20a2b6cde596914a0ad06a19fdd4e8fab49af5ef",
+            "verification_artifact_path": ".phase-loop/runs/v13-DATA-20260911-668bf75/verification.json",
+            "verification_artifact_sha256": "7adb5da2297fa2e812673bb143bdadf3bec920915f70b08d49ad9d910de0b650",
+            "verification_status": "passed"
+          },
+          "transition": "completed"
+        }
+      ],
+      "owner_skill": "codex-plan-phase",
+      "phase_alias": "DATA",
+      "reflection_ref": "/home/viperjuice/.codex/skills/codex-plan-phase/reflections/448c2cf6/codex-v13-audit-remediation/20260911T132653Z-data-plan.md",
+      "roadmap_ref": {
+        "file": "specs/phase-plans-v13.md",
+        "slug": "phase-plans-v13",
+        "status": "committed",
+        "type": "roadmap"
+      },
+      "slug": "phase-plan-v13-DATA",
+      "status": "completed",
+      "task_summary": "Coherent retained storage, vector provenance and query reconciliation",
+      "type": "phase",
+      "updated_at": "2026-09-11T18:58:19Z"
+    },
+    {
+      "acceptance_criteria_count": 3,
+      "created_at": "2026-09-11T09:34:36.389431+00:00",
+      "file": "plans/phase-plan-v13-DIST.md",
+      "handoff_ref": ".dev-skills/handoffs/codex-plan-phase/latest.md",
+      "if_gates_produced": [
+        "IF-0-DIST-1"
+      ],
+      "lanes": [
+        "SL-0",
+        "SL-1",
+        "SL-2"
+      ],
+      "lifecycle": [
+        {
+          "at": "2026-09-11T09:34:36Z",
+          "by": "codex-execute-phase",
+          "metadata": {
+            "base_commit": "e73f9cf",
+            "issue_inventory": [],
+            "mode": "manual"
+          },
+          "transition": "executing"
+        },
+        {
+          "at": "2026-09-11T10:11:27Z",
+          "by": "codex-execute-phase",
+          "metadata": {
+            "dirty_worktree_summary": "Only phase-owned closeout/control artifacts; authorized checkpoint commit follows.",
+            "doc_delta_decision": "docs_updated",
+            "if_gates_produced": [
+              "IF-0-DIST-1"
+            ],
+            "issue_dispositions": [],
+            "issue_inventory": [],
+            "reflection_status": "written",
+            "verification_artifact_path": ".phase-loop/runs/v13-DIST-20260911-3e99c40/verification.json",
+            "verification_status": "passed"
+          },
+          "transition": "completed"
+        }
+      ],
+      "owner_skill": "codex-plan-phase",
+      "phase_alias": "DIST",
+      "reflection_ref": "/home/viperjuice/.codex/skills/codex-execute-phase/reflections/448c2cf6/codex-v13-audit-remediation/20260911T100545Z-dist-accepted.md",
+      "registration_note": "Manual DIST planning and execution began before ledger registration; actual prior progress retained in git diff and test evidence.",
+      "roadmap_ref": {
+        "file": "specs/phase-plans-v13.md",
+        "slug": "phase-plans-v13",
+        "status": "committed",
+        "type": "roadmap"
+      },
+      "slug": "phase-plan-v13-DIST",
+      "status": "completed",
+      "task_summary": "Repair installed distribution and verification fidelity",
+      "type": "phase",
+      "updated_at": "2026-09-11T10:11:27Z"
+    },
+    {
+      "acceptance_criteria_count": 3,
+      "artifact_state": "staged",
+      "created_at": "2026-09-11T05:33:57Z",
+      "execution_mode": "manual",
+      "file": "plans/phase-plan-v13-FREEZE.md",
+      "handoff_ref": ".dev-skills/handoffs/codex-plan-phase/20260911T053357Z-2af03d.md",
+      "if_gates_produced": [
+        "IF-0-FREEZE-1"
+      ],
+      "lanes": [
+        "SL-0",
+        "SL-1",
+        "SL-2"
+      ],
+      "lifecycle": [
+        {
+          "at": "2026-09-11T05:35:08Z",
+          "by": "codex-execute-phase",
+          "metadata": {
+            "execution_mode": "manual",
+            "run_id": "20260911T053357Z-2af03d"
+          },
+          "transition": "executing"
+        },
+        {
+          "at": "2026-09-11T05:35:08Z",
+          "by": "codex-execute-phase",
+          "metadata": {
+            "blocker_class": "product_decision_missing",
+            "if_gates_produced": [],
+            "issue_dispositions": [],
+            "issue_inventory": [],
+            "missing_decisions": [
+              "local_inference_budget",
+              "signing_mechanism"
+            ],
+            "run_id": "20260911T053357Z-2af03d",
+            "terminal_status": "blocked",
+            "verification_status": "blocked"
+          },
+          "transition": "failed"
+        },
+        {
+          "at": "2026-09-11T09:06:59Z",
+          "by": "codex-execute-phase",
+          "metadata": {
+            "owner_approval": "Approved, 2026-09-11",
+            "resume": true
+          },
+          "transition": "executing"
+        },
+        {
+          "at": "2026-09-11T09:06:59Z",
+          "by": "codex-execute-phase",
+          "metadata": {
+            "if_gates_produced": [
+              "IF-0-FREEZE-1"
+            ],
+            "issue_dispositions": [],
+            "issue_inventory": [],
+            "verification_artifact_path": ".phase-loop/runs/v13-FREEZE-20260911/verification.json",
+            "verification_status": "passed",
+            "verification_summary": "13 passed; structure 0; acceptance 0; refresh 0"
+          },
+          "transition": "completed"
+        }
+      ],
+      "no_git_commit_created": false,
+      "owner_skill": "codex-plan-phase",
+      "phase_alias": "FREEZE",
+      "reflection_ref": null,
+      "resume_reason": "Owner Approved on 2026-09-11; original checks rerun; history retained.",
+      "roadmap_ref": {
+        "file": "specs/phase-plans-v13.md",
+        "slug": "phase-plans-v13",
+        "status": "committed",
+        "type": "roadmap"
+      },
+      "slug": "phase-plan-v13-FREEZE",
+      "status": "completed",
+      "task_summary": null,
+      "type": "phase",
+      "updated_at": "2026-09-11T09:06:59Z"
+    },
+    {
+      "acceptance_criteria_count": 4,
+      "admin_ui_amendment": "Expose existing repository selectors and installed version in Swagger; retain all auth/readiness boundaries",
+      "created_at": "2026-09-11T19:01:31Z",
+      "file": "plans/phase-plan-v13-PILOT.md",
+      "handoff_ref": ".dev-skills/handoffs/codex-plan-phase/20260911T190131Z-pilot-plan.md",
+      "if_gates_produced": [
+        "IF-0-PILOT-1"
+      ],
+      "lanes": [
+        "SL-0",
+        "SL-1"
+      ],
+      "lifecycle": [
+        {
+          "at": "2026-09-11T19:03:59Z",
+          "by": "codex-execute-phase",
+          "metadata": {
+            "allowance_used": 0,
+            "base_commit": "c1bfbad73af2382037a7ed442895e63e18398bd3",
+            "inference_requests": 0,
+            "issue_inventory": [],
+            "mode": "manual",
+            "upstream_receipt": "docs/validation/v13/DATA.json"
+          },
+          "transition": "executing"
+        },
+        {
+          "at": "2026-09-12T08:18:11Z",
+          "by": "codex-execute-phase",
+          "metadata": {
+            "dirty_worktree_summary": "Only authorized PILOT docs, receipt and plan/control closeout outputs; source unchanged since verification.",
+            "if_gates_produced": [
+              "IF-0-PILOT-1"
+            ],
+            "input_units": 24267,
+            "issue_dispositions": [],
+            "issue_inventory": [],
+            "live_requests": 82,
+            "live_seconds": 44.579028844833374,
+            "next_phase": "PREP",
+            "phase_tests": 558,
+            "receipt": "docs/validation/v13/PILOT.json",
+            "reflection_ref": "/home/viperjuice/.codex/skills/codex-execute-phase/reflections/448c2cf6/codex-v13-audit-remediation/20260912T081556Z-pilot-accepted.md",
+            "source_commit": "366f6bca7765d545498f41b02014ae8ba105d2e2",
+            "verification_artifact": ".phase-loop/runs/v13-PILOT-366f6bca7765/acceptance-verification/verification.json",
+            "verification_status": "passed"
+          },
+          "transition": "completed"
+        }
+      ],
+      "owner_skill": "codex-plan-phase",
+      "phase_alias": "PILOT",
+      "pilot_record_checkpoint": "Hash-valid placeholders reproduced false live-evidence acceptance; read-only ledger and raw-record reconciliation now pass 96 focused tests; fresh candidate proof required; actual allowance uninitialized",
+      "pilot_rehearsal_amendment": "Installed cc795c8 loopback and browser workflows passed; 3279 broad, 140 Git and 529 phase tests passed; baseline receipt rejected for immutable-audit formatting scope",
+      "readiness_amendment": "Measured installed warm symbol latency fails 100ms; repair and recheck before live admission",
+      "reflection_ref": "/home/viperjuice/.codex/skills/codex-plan-phase/reflections/448c2cf6/codex-v13-audit-remediation/20260911T190131Z-pilot-plan.md",
+      "roadmap_ref": {
+        "file": "specs/phase-plans-v13.md",
+        "slug": "phase-plans-v13",
+        "status": "committed",
+        "type": "roadmap"
+      },
+      "slug": "phase-plan-v13-PILOT",
+      "status": "completed",
+      "task_summary": "Installed PMCP acceptance with serial readiness/admin UI repairs",
+      "type": "phase",
+      "updated_at": "2026-09-12T08:18:11Z"
+    },
+    {
+      "acceptance_criteria_count": 3,
+      "created_at": "2026-09-12T08:31:28Z",
+      "file": "plans/phase-plan-v13-PREP.md",
+      "handoff_ref": ".dev-skills/handoffs/codex-execute-phase/20260912T1033Z-prep-checkpoint.md",
+      "if_gates_produced": [],
+      "lanes": [
+        "SL-0",
+        "SL-1"
+      ],
+      "lifecycle": [
+        {
+          "at": "2026-09-12T08:32:17Z",
+          "by": "codex-execute-phase",
+          "metadata": {
+            "execution_mode": "manual",
+            "issue_dispositions": [],
+            "issue_inventory": []
+          },
+          "transition": "executing"
+        },
+        {
+          "at": "2026-09-12T10:34:42Z",
+          "by": "codex-execute-phase",
+          "metadata": {
+            "blocker_class": "product_decision_missing",
+            "blocker_summary": "Renewed bounded live inference and metadata signing approval required; final four-seat review pending",
+            "dirty_worktree_summary": "Only phase-owned checkpoint documentation and manifest control outputs",
+            "human_required": true,
+            "if_gates_produced": [],
+            "issue_dispositions": [],
+            "issue_inventory": [],
+            "local_verification_status": "passed",
+            "reflection_ref": "/home/viperjuice/.codex/skills/codex-execute-phase/reflections/448c2cf6/codex-v13-audit-remediation/20260912T0953Z-prep-repairs.md",
+            "run_id": "20260912T1033Z-prep-checkpoint",
+            "verification_path": ".phase-loop/runs/v13-PREP-f789fa183e36/local-verification/verification.json",
+            "verification_status": "blocked",
+            "verified_source": "f789fa183e36cd869aeda8c70462b6853cb997b3"
+          },
+          "transition": "failed"
+        }
+      ],
+      "owner_skill": "codex-plan-phase",
+      "phase_alias": "PREP",
+      "reflection_ref": "/home/viperjuice/.codex/skills/codex-execute-phase/reflections/448c2cf6/codex-v13-audit-remediation/20260912T0953Z-prep-repairs.md",
+      "roadmap_ref": {
+        "file": "specs/phase-plans-v13.md",
+        "slug": "phase-plans-v13",
+        "status": "committed",
+        "type": "roadmap"
+      },
+      "slug": "phase-plan-v13-PREP",
+      "status": "failed",
+      "task_summary": "Repaired source locally verified; acceptance blocked on renewed live/signing approval and final four-seat review. No PREP gate or publication.",
+      "type": "phase",
+      "updated_at": "2026-09-12T10:34:42Z"
+    },
+    {
+      "acceptance_criteria_count": 4,
+      "created_at": "2026-09-11T11:48:04Z",
+      "file": "plans/phase-plan-v13-SAFETY.md",
+      "handoff_ref": ".dev-skills/handoffs/codex-plan-phase/20260911T114804Z-safety-plan.md",
+      "if_gates_produced": [
+        "IF-0-SAFETY-1"
+      ],
+      "lanes": [
+        "SL-0",
+        "SL-1"
+      ],
+      "lifecycle": [
+        {
+          "at": "2026-09-11T11:49:05Z",
+          "by": "codex-execute-phase",
+          "metadata": {
+            "base_commit": "45e06cc3006cedb968c2c76f4421d08a1554ca9b",
+            "issue_inventory": [],
+            "mode": "manual"
+          },
+          "transition": "executing"
+        },
+        {
+          "at": "2026-09-11T13:26:01Z",
+          "by": "codex-execute-phase",
+          "metadata": {
+            "dirty_worktree_summary": "Only accepted-source closeout outputs; candidate unchanged",
+            "if_gates_produced": [
+              "IF-0-SAFETY-1"
+            ],
+            "issue_dispositions": [],
+            "issue_inventory": [],
+            "reflection_ref": "/home/viperjuice/.codex/skills/codex-execute-phase/reflections/448c2cf6/codex-v13-audit-remediation/20260911T132243Z-safety-accepted.md",
+            "source_commit": "b99e754f8890cc631589e36b1beef151a98d195c",
+            "verification_artifact_path": ".phase-loop/runs/v13-SAFETY-20260911-b99e754/verification.json",
+            "verification_status": "passed"
+          },
+          "transition": "completed"
+        }
+      ],
+      "owner_skill": "codex-plan-phase",
+      "phase_alias": "SAFETY",
+      "reflection_ref": "/home/viperjuice/.codex/skills/codex-plan-phase/reflections/448c2cf6/codex-v13-audit-remediation/20260911T114804Z-safety-plan.md",
+      "roadmap_ref": {
+        "file": "specs/phase-plans-v13.md",
+        "slug": "phase-plans-v13",
+        "status": "committed",
+        "type": "roadmap"
+      },
+      "slug": "phase-plan-v13-SAFETY",
+      "status": "completed",
+      "task_summary": "Trust and process lifecycle under manual v13 execution",
+      "type": "phase",
+      "updated_at": "2026-09-11T13:26:01Z"
+    },
+    {
+      "acceptance_criteria_count": 3,
+      "created_at": "2026-09-11T10:20:30.214608+00:00",
+      "file": "plans/phase-plan-v13-STATE.md",
+      "handoff_ref": ".dev-skills/handoffs/codex-plan-phase/latest.md",
+      "if_gates_produced": [
+        "IF-0-STATE-1"
+      ],
+      "lanes": [
+        "SL-0",
+        "SL-1",
+        "SL-2"
+      ],
+      "lifecycle": [
+        {
+          "at": "2026-09-11T10:20:30Z",
+          "by": "codex-execute-phase",
+          "metadata": {
+            "base_commit": "5d1a41f",
+            "issue_inventory": [],
+            "mode": "manual"
+          },
+          "transition": "executing"
+        },
+        {
+          "at": "2026-09-11T11:45:43Z",
+          "by": "codex-execute-phase",
+          "metadata": {
+            "dirty_worktree_summary": "Only phase-owned receipt/contract/status and control closeout artifacts; authorized checkpoint commit follows.",
+            "doc_delta_decision": "docs_updated",
+            "if_gates_produced": [
+              "IF-0-STATE-1"
+            ],
+            "issue_dispositions": [],
+            "issue_inventory": [],
+            "reflection_status": "written",
+            "verification_artifact_path": ".phase-loop/runs/v13-STATE-20260911-645421f/verification.json",
+            "verification_status": "passed"
+          },
+          "transition": "completed"
+        }
+      ],
+      "owner_skill": "codex-plan-phase",
+      "phase_alias": "STATE",
+      "reflection_ref": "/home/viperjuice/.codex/skills/codex-execute-phase/reflections/448c2cf6/codex-v13-audit-remediation/20260911T114315Z-state-accepted.md",
+      "roadmap_ref": {
+        "file": "specs/phase-plans-v13.md",
+        "slug": "phase-plans-v13",
+        "status": "committed",
+        "type": "roadmap"
+      },
+      "slug": "phase-plan-v13-STATE",
+      "status": "completed",
+      "task_summary": null,
+      "type": "phase",
+      "updated_at": "2026-09-11T11:45:43Z"
+    },
+    {
       "acceptance_criteria_count": 6,
       "created_at": "2026-07-06T02:11:25Z",
       "file": "plans/phase-plan-v9-COVERAGE.md",

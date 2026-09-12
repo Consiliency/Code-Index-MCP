@@ -113,9 +113,7 @@ class IncrementalIndexer:
             if not chunk_ids:
                 return []
 
-            like_clauses = " OR ".join(
-                ["chunk_id LIKE ? ESCAPE '\\'"] * len(chunk_ids)
-            )
+            like_clauses = " OR ".join(["chunk_id LIKE ? ESCAPE '\\'"] * len(chunk_ids))
             params = [f"{_escape_like(chunk_id)}:part:%" for chunk_id in chunk_ids]
             cursor = conn.execute(
                 f"SELECT chunk_id FROM semantic_points WHERE {like_clauses}",
@@ -256,6 +254,10 @@ class IncrementalIndexer:
         Returns:
             IncrementalStats with operation results
         """
+        with lock_registry.acquire(self._get_repository_id(), repo_path=self.repo_path):
+            return self._update_from_changes_locked(changes)
+
+    def _update_from_changes_locked(self, changes: List[FileChange]) -> IncrementalStats:
         stats = IncrementalStats(start_time=datetime.now())
 
         # Group changes by type for efficient processing
@@ -299,7 +301,7 @@ class IncrementalIndexer:
         """Index add/modified files with checkpoint-resume under per-repo lock."""
         repo_id = self._get_repository_id()
 
-        with lock_registry.acquire(repo_id):
+        with lock_registry.acquire(repo_id, repo_path=self.repo_path):
             # Determine resume point from existing checkpoint
             ckpt = _load_ckpt(self.repo_path)
             all_paths = [c.path for c in changes]

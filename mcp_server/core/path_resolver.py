@@ -22,6 +22,7 @@ class PathResolver:
         repository_root: Optional[Path] = None,
         index_storage_path: Optional[Path] = None,
         storage_strategy: str = "centralized",
+        source_root: Optional[Path] = None,
     ):
         """
         Initialize the path resolver.
@@ -32,6 +33,7 @@ class PathResolver:
             storage_strategy: Storage strategy - "centralized", "portable", or "inline"
         """
         self.repository_root = repository_root or self._detect_repository_root()
+        self.source_root = source_root
         self.index_storage_path = index_storage_path or self._get_default_index_path()
         self.storage_strategy = storage_strategy
         logger.info(f"PathResolver initialized with root: {self.repository_root}")
@@ -50,6 +52,8 @@ class PathResolver:
             ValueError: If path is outside repository
         """
         path = Path(absolute_path).resolve()
+        if self.source_root is not None and path.is_relative_to(self.source_root):
+            return path.relative_to(self.source_root).as_posix()
         try:
             relative = path.relative_to(self.repository_root)
             return str(relative).replace("\\", "/")  # Normalize to forward slashes

@@ -31,6 +31,41 @@ def test_public_client_exports_are_available_from_mcp_server():
     assert IndexUnavailable is not None
 
 
+def test_client_close_retires_only_services_it_bootstrapped(monkeypatch):
+    stores, resolver, dispatcher = MagicMock(), MagicMock(), MagicMock()
+    monkeypatch.setattr(
+        "mcp_server.client.initialize_stateless_services",
+        lambda **kwargs: (stores, resolver, dispatcher, MagicMock(), MagicMock()),
+    )
+    client = IndexItClient()
+    assert client.dispatcher is dispatcher
+    client.close()
+    client.close()
+    dispatcher.shutdown.assert_called_once()
+    stores.shutdown.assert_called_once()
+    borrowed = IndexItClient()
+    borrowed._dispatcher, borrowed._repo_resolver = dispatcher, resolver
+    borrowed.close()
+    dispatcher.shutdown.assert_called_once()
+
+
+def test_failed_client_close_retains_owner_for_retry(monkeypatch):
+    stores, resolver, dispatcher = MagicMock(), MagicMock(), MagicMock()
+    monkeypatch.setattr(
+        "mcp_server.client.initialize_stateless_services",
+        lambda **kwargs: (stores, resolver, dispatcher, MagicMock(), MagicMock()),
+    )
+    client = IndexItClient()
+    assert client.dispatcher is dispatcher
+    dispatcher.shutdown.side_effect = RuntimeError("borrower retirement failed")
+    with pytest.raises(RuntimeError):
+        client.close()
+    assert client._dispatcher is dispatcher
+    dispatcher.shutdown.side_effect = None
+    client.close()
+    assert client._dispatcher is None
+
+
 def test_client_search_options_freeze_source_filters():
     options = ClientSearchOptions(
         query="todo",
@@ -83,12 +118,13 @@ def test_search_ready_transition_does_not_open_store_or_dispatch():
     )
     dispatcher = MagicMock()
 
-    with pytest.raises(RuntimeError, match="could not be resolved"):
-        execute_search_service(
-            dispatcher=dispatcher,
-            repo_resolver=resolver,
-            options=ClientSearchOptions(query="demo", repository="repo"),
-        )
+    result = execute_search_service(
+        dispatcher=dispatcher,
+        repo_resolver=resolver,
+        options=ClientSearchOptions(query="demo", repository="repo"),
+    )
+    assert result.index_unavailable is not None
+    assert result.safe_fallback == "native_search"
 
     resolver._store_registry.get.assert_not_called()
     dispatcher.search.assert_not_called()

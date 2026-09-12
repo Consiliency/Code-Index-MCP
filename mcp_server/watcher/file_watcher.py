@@ -4,7 +4,7 @@ import threading
 import time
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
@@ -13,6 +13,9 @@ from ..core.path_resolver import PathResolver
 from ..core.repo_context import RepoContext
 from ..dispatcher.dispatcher_enhanced import EnhancedDispatcher
 from ..plugins.language_registry import get_all_extensions
+
+if TYPE_CHECKING:
+    from ..storage.git_index_manager import GitAwareIndexManager
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +67,7 @@ def _swallow_task_exception(task: asyncio.Task) -> None:
     except Exception:
         return
     if exc is not None:
-        logger.error("Background cache-invalidation task failed", exc_info=exc)
+        logger.error("Background cache-invalidation task failed (%s)", type(exc).__name__)
 
 
 class _Handler(FileSystemEventHandler):
@@ -84,8 +87,10 @@ class _Handler(FileSystemEventHandler):
         query_cache=None,
         path_resolver: Optional[PathResolver] = None,
         ctx: Optional[RepoContext] = None,
+        index_manager: Optional["GitAwareIndexManager"] = None,
     ):
         self.dispatcher = dispatcher
+        self.index_manager = index_manager
         self.query_cache = query_cache
         self.path_resolver = path_resolver or PathResolver()
         workspace_root = getattr(self.path_resolver, "repository_root", None) or Path.cwd()
@@ -145,14 +150,19 @@ class _Handler(FileSystemEventHandler):
                         self._remove_file_from_index(path)
                     elif action == "move" and extra is not None:
                         self._handle_file_move(path, extra)
-                except Exception:
-                    logger.exception("watcher drain failed for %s (action=%s)", path, action)
+                except Exception as exc:
+                    logger.error(
+                        "watcher drain failed for %s (action=%s, error=%s)",
+                        path,
+                        action,
+                        type(exc).__name__,
+                    )
             self._stop_event.wait(self.DRAIN_TICK_SECONDS)
 
     def stop(self) -> None:
         """Stop the debounce worker. Idempotent."""
         self._stop_event.set()
-        self._worker.join(timeout=2)
+        self._worker.join()
 
     def flush(self) -> None:
         """Force-drain all pending events immediately. For use in tests only."""
@@ -167,8 +177,13 @@ class _Handler(FileSystemEventHandler):
                     self._remove_file_from_index(path)
                 elif action == "move" and extra is not None:
                     self._handle_file_move(path, extra)
-            except Exception:
-                logger.exception("flush drain failed for %s (action=%s)", path, action)
+            except Exception as exc:
+                logger.error(
+                    "flush drain failed for %s (action=%s, error=%s)",
+                    path,
+                    action,
+                    type(exc).__name__,
+                )
 
     # ------------------------------------------------------------------
     # Dispatcher-side actions (run on the worker thread)
@@ -180,8 +195,8 @@ class _Handler(FileSystemEventHandler):
             count = await self.query_cache.invalidate_file_queries(str(path))
             if count > 0:
                 logger.debug("Invalidated %d cache entries for %s", count, path)
-        except Exception:
-            logger.exception("Cache invalidation failed for %s", path)
+        except Exception as exc:
+            logger.error("Cache invalidation failed for %s (%s)", path, type(exc).__name__)
 
     def _kick_cache_invalidation(self, path: Path) -> None:
         if not self.query_cache:
@@ -196,10 +211,28 @@ class _Handler(FileSystemEventHandler):
                 task.add_done_callback(_swallow_task_exception)
             else:
                 asyncio.run(self._invalidate_cache_for_file(path))
-        except Exception:
-            logger.exception("Failed to schedule cache invalidation for %s", path)
+        except Exception as exc:
+            logger.error(
+                "Failed to schedule cache invalidation for %s (%s)", path, type(exc).__name__
+            )
+
+    def _reconcile_if_managed(self, path: Path) -> bool:
+        if not isinstance(self.dispatcher, EnhancedDispatcher):
+            return False
+        if self.index_manager is None:
+            logger.warning("Watcher mutation unavailable without a generation owner")
+            return True
+        ctx = self.index_manager._resolve_ctx(self.ctx.repo_id)
+        if ctx is not None:
+            self.ctx = ctx
+            result = self.index_manager.sync_repository_index(ctx.repo_id)
+            if result.action in {"full_index", "incremental_update"}:
+                self._kick_cache_invalidation(path)
+        return True
 
     def _trigger_reindex(self, path: Path) -> None:
+        if self._reconcile_if_managed(path):
+            return
         if path.suffix not in self.code_extensions:
             return
         if not path.exists():
@@ -219,6 +252,8 @@ class _Handler(FileSystemEventHandler):
 
     def trigger_reindex(self, path: Path) -> None:
         """Public test/integration entrypoint — skips the existence check."""
+        if self._reconcile_if_managed(path):
+            return
         if path.suffix not in self.code_extensions:
             return
         logger.info("Re-indexing %s", path)
@@ -234,10 +269,12 @@ class _Handler(FileSystemEventHandler):
                 self.dispatcher.remove_file(path)
                 self.dispatcher.index_file(path)
             self._kick_cache_invalidation(path)
-        except Exception:
-            logger.exception("trigger_reindex failed for %s", path)
+        except Exception as exc:
+            logger.error("trigger_reindex failed for %s (%s)", path, type(exc).__name__)
 
     def _remove_file_from_index(self, path: Path) -> None:
+        if self._reconcile_if_managed(path):
+            return
         if path.suffix not in self.code_extensions:
             return
         logger.info("Removing from index: %s", path)
@@ -253,6 +290,8 @@ class _Handler(FileSystemEventHandler):
         self._remove_file_from_index(path)
 
     def _handle_file_move(self, old_path: Path, new_path: Path) -> None:
+        if self._reconcile_if_managed(new_path):
+            return
         if (
             old_path.suffix not in self.code_extensions
             or new_path.suffix not in self.code_extensions
@@ -303,6 +342,7 @@ class FileWatcher:
         query_cache=None,
         path_resolver: Optional[PathResolver] = None,
         ctx: Optional[RepoContext] = None,
+        index_manager: Optional["GitAwareIndexManager"] = None,
     ):
         self._observer = Observer()
         handler_ctx = ctx or RepoContext(
@@ -317,7 +357,9 @@ class FileWatcher:
                 name=root.name,
             ),
         )
-        self._handler = _Handler(dispatcher, query_cache, path_resolver, ctx=handler_ctx)
+        self._handler = _Handler(
+            dispatcher, query_cache, path_resolver, ctx=handler_ctx, index_manager=index_manager
+        )
         self._observer.schedule(self._handler, str(root), recursive=True)
 
     def start(self) -> None:
@@ -325,5 +367,5 @@ class FileWatcher:
 
     def stop(self) -> None:
         self._observer.stop()
-        self._observer.join(timeout=5)
+        self._observer.join()
         self._handler.stop()

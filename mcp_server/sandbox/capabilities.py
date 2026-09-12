@@ -52,6 +52,10 @@ class CapabilitySet:
     @classmethod
     def from_json(cls, s: str) -> "CapabilitySet":
         d = json.loads(s)
+        if not isinstance(d, dict) or d.get("sqlite", "none") not in {"none", "readonly"}:
+            raise ValueError("Invalid sandbox SQLite capability")
+        if not isinstance(d.get("network", False), bool):
+            raise ValueError("Sandbox network capability must be boolean")
         return cls(
             fs_read=tuple(Path(p) for p in d.get("fs_read", ())),
             fs_write=tuple(Path(p) for p in d.get("fs_write", ())),

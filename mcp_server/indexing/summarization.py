@@ -12,6 +12,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, cast
 
 import mcp.types as types
 
+from ..config.settings import commercial_egress_allowed, learned_models_allowed
 from ..setup.semantic_preflight import EnrichmentModelResolution, resolve_enrichment_model
 from ..storage.sqlite_store import SQLiteStore, assert_chunk_scheme_readable
 
@@ -286,7 +287,7 @@ class ChunkWriter:
 
     def _has_sampling_capability(self) -> bool:
         """Return True if the connected MCP client supports sampling/createMessage."""
-        if self.session is None:
+        if self.session is None or not commercial_egress_allowed():
             return False
         try:
             params = getattr(self.session, "client_params", None)
@@ -297,9 +298,11 @@ class ChunkWriter:
 
     def _has_direct_api(self) -> bool:
         """Return True if any direct LLM API key or profile endpoint is configured."""
+        if not learned_models_allowed():
+            return False
         if self.summarization_config.get("base_url"):
             return True
-        return bool(
+        return commercial_egress_allowed() and bool(
             os.environ.get("CEREBRAS_API_KEY")
             or os.environ.get("ANTHROPIC_API_KEY")
             or os.environ.get("OPENAI_API_KEY")
@@ -374,6 +377,8 @@ class ChunkWriter:
         self, system: str, prompt: str, *, max_tokens: int = 150
     ) -> tuple[str, str]:
         """Call the profile-configured OpenAI-compatible endpoint."""
+        if not learned_models_allowed():
+            raise RuntimeError("Deployment policy forbids learned summarization")
         from openai import AsyncOpenAI
 
         cfg = self.summarization_config
@@ -405,15 +410,18 @@ class ChunkWriter:
         self, system: str, prompt: str
     ) -> tuple[Optional[str], Optional[str]]:
         """Try profile endpoint first, then Cerebras, Anthropic, OpenAI."""
+        if not learned_models_allowed():
+            return None, None
         if self.summarization_config.get("base_url"):
             try:
                 return await self._call_profile_api(system, prompt)
             except Exception as exc:
                 logger.warning(
-                    "Profile summarization endpoint %s failed, falling back to env API: %s",
-                    self.summarization_config["base_url"],
-                    exc,
+                    "Profile summarization endpoint failed (%s)",
+                    type(exc).__name__,
                 )
+        if not commercial_egress_allowed():
+            return None, None
         if os.environ.get("CEREBRAS_API_KEY"):
             return await self._call_cerebras_api(system, prompt), None
         elif os.environ.get("ANTHROPIC_API_KEY"):
@@ -486,8 +494,7 @@ class ChunkWriter:
         """
         if not self.can_summarize():
             logger.debug(
-                "Skipping summary for '%s': no sampling capability and no API key",
-                symbol,
+                "Skipping summary: no sampling capability and no API key",
             )
             return None
 
@@ -556,10 +563,14 @@ class ChunkWriter:
                     summary_text = str(content_block)
                 model_name = result.model or "mcp-sampling"
             except Exception as exc:
-                logger.warning("MCP sampling failed for chunk '%s': %s", symbol, exc)
+                logger.warning("MCP sampling failed (%s)", type(exc).__name__)
 
         # Path 2: BAML SummarizeChunkAlone (Cerebras, cache-friendly prompt structure)
-        if summary_text is None and os.environ.get("CEREBRAS_API_KEY"):
+        if (
+            summary_text is None
+            and commercial_egress_allowed()
+            and os.environ.get("CEREBRAS_API_KEY")
+        ):
             try:
                 from mcp_server.indexing.baml_client.baml_client.async_client import b
 
@@ -576,9 +587,8 @@ class ChunkWriter:
                 model_name = self._get_model_name()
             except Exception as exc:
                 logger.warning(
-                    "BAML SummarizeChunkAlone failed for '%s': %s, falling back to direct API",
-                    symbol,
-                    exc,
+                    "BAML SummarizeChunkAlone failed (%s), falling back to direct API",
+                    type(exc).__name__,
                 )
 
         # Path 3: Direct API fallback (Anthropic / OpenAI raw call, or Cerebras raw)
@@ -589,7 +599,7 @@ class ChunkWriter:
                 )
                 model_name = resolved_model_name or self._get_model_name()
             except Exception as exc:
-                logger.warning("Direct API summarization failed for '%s': %s", symbol, exc)
+                logger.warning("Direct API summarization failed (%s)", type(exc).__name__)
 
         if summary_text is None:
             return None
@@ -604,7 +614,7 @@ class ChunkWriter:
             model_name=model_name or "unknown",
             is_authoritative=is_authoritative,
         )
-        logger.info("Stored summary for chunk '%s' via %s", symbol, model_name)
+        logger.info("Stored chunk summary via %s", model_name)
         return summary_text
 
 
@@ -691,7 +701,10 @@ class FileBatchSummarizer(ChunkWriter):
         retry_profile_batch: bool = True,
     ) -> Tuple[GeneratedSummary, ...]:
         logger.warning(
-            "%s for %s (%s), falling back to per-chunk path", warning_prefix, file_path, error
+            "%s for %s (%s), falling back to per-chunk path",
+            warning_prefix,
+            file_path,
+            type(error).__name__,
         )
         if retry_profile_batch and self.summarization_config.get("base_url"):
             try:
@@ -704,7 +717,7 @@ class FileBatchSummarizer(ChunkWriter):
                 logger.warning(
                     "Profile batch fallback failed for %s (%s), falling back to per-chunk path",
                     file_path,
-                    profile_exc,
+                    type(profile_exc).__name__,
                 )
         return await self._summarize_topological(
             file_id,
@@ -825,6 +838,8 @@ class FileBatchSummarizer(ChunkWriter):
         Raises ``FileTooLargeError`` when *file_content* exceeds the threshold
         so callers can switch to the per-chunk fallback.
         """
+        if not commercial_egress_allowed():
+            raise RuntimeError("Deployment policy forbids commercial summarization")
         if len(file_content) > _BATCH_FILE_SIZE_THRESHOLD:
             raise FileTooLargeError(
                 f"{file_path} ({len(file_content):,} chars) exceeds batch threshold "
@@ -904,7 +919,7 @@ class FileBatchSummarizer(ChunkWriter):
                     stored_summaries[chunk_id] = summary_text
                     results.append(GeneratedSummary(chunk_id=chunk_id, summary=summary_text))
             except Exception as exc:
-                logger.error("Failed to summarize chunk %s: %s", chunk_id, exc)
+                logger.error("Failed to summarize chunk (%s)", type(exc).__name__)
 
         return tuple(results)
 
@@ -953,6 +968,17 @@ class FileBatchSummarizer(ChunkWriter):
             )
         active_chunks = to_summarize[:max_chunks] if max_chunks is not None else to_summarize
         existing_authoritative = len(chunks) - len(to_summarize)
+
+        if not learned_models_allowed() or (
+            not self.summarization_config.get("base_url") and not commercial_egress_allowed()
+        ):
+            return self._blocked_call_result(
+                reason="deployment_policy",
+                file_path=file_path,
+                selected_chunks=active_chunks,
+                remaining_chunks=to_summarize,
+                existing_authoritative=existing_authoritative,
+            )
 
         try:
             summary_call: Any
@@ -1315,7 +1341,7 @@ class ComprehensiveChunkWriter(FileBatchSummarizer):
                             blocked_call_timeout_seconds=file_result.blocked_call_timeout_seconds,
                         )
                 except Exception as exc:
-                    logger.error("Failed to summarize file %s: %s", file_path, exc)
+                    logger.error("Failed to summarize file %s: %s", file_path, type(exc).__name__)
                     missing_chunk_ids.extend(
                         [chunk["chunk_id"] for chunk in file_chunks.get(file_id, [])]
                     )
@@ -1383,6 +1409,16 @@ class LazyChunkWriter(ChunkWriter):
         if self._task is None:
             self._task = asyncio.create_task(self._worker())
 
+    async def stop(self) -> None:
+        """Cancel and await the owned background task before closing its storage."""
+        if self._task is not None:
+            task, self._task = self._task, None
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        if self._sqlite_store is not None:
+            self._sqlite_store.close()
+            self._sqlite_store = None
+
     def update_session(self, session: Any) -> None:
         """Refresh the MCP session reference used for sampling.
 
@@ -1397,7 +1433,7 @@ class LazyChunkWriter(ChunkWriter):
             try:
                 await self.summarize_chunk(**chunk)
             except Exception as exc:
-                logger.error("Error summarizing chunk: %s", exc)
+                logger.error("Error summarizing chunk (%s)", type(exc).__name__)
             finally:
                 self.queue.task_done()
 

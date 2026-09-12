@@ -3,6 +3,7 @@
 import ast
 import asyncio
 import hashlib
+import inspect
 import json
 import logging
 import os
@@ -10,8 +11,11 @@ import re
 import sqlite3
 import threading
 import time
+from contextlib import ExitStack, contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from enum import Enum
+from functools import wraps
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, Union
 
@@ -23,7 +27,7 @@ from ..core.ignore_patterns import EXCLUDED_DIR_PARTS as _INDEX_EXCLUDED_DIRS
 from ..core.ignore_patterns import (
     build_walker_filter,
 )
-from ..core.repo_context import RepoContext
+from ..core.repo_context import RepoContext, index_generation_key
 from ..graph import (
     CHUNKER_AVAILABLE,
     ContextSelector,
@@ -63,6 +67,26 @@ from .result_aggregator import (
 )
 
 logger = logging.getLogger(__name__)
+_semantic_borrower = ContextVar("dispatcher_semantic_borrower", default=None)
+
+
+def _semantic_operation(method):
+    """Keep nested operations and lazy iterators inside one generation lease."""
+    if inspect.isgeneratorfunction(method):
+
+        @wraps(method)
+        def generate(self, ctx, *args, **kwargs):
+            with self._semantic_lease(ctx):
+                yield from method(self, ctx, *args, **kwargs)
+
+        return generate
+
+    @wraps(method)
+    def call(self, ctx, *args, **kwargs):
+        with self._semantic_lease(ctx):
+            return method(self, ctx, *args, **kwargs)
+
+    return call
 
 
 class SemanticSearchFailure(RuntimeError):
@@ -278,6 +302,7 @@ def _active_profile_permits_commercial() -> bool:
         return False
     return bool(getattr(contract, "commercial_egress", False))
 
+
 # Path segment penalties for lexical (BM25/fuzzy) results.
 # FTS5 scores are negative; adding a positive penalty degrades rank.
 _PATH_PENALTY_RULES: List[Tuple[str, float]] = [
@@ -343,7 +368,7 @@ def _run_coro_blocking(coro: Any) -> Any:
 
 
 def _run_blocking_with_timeout(func: Any, *, timeout_seconds: float) -> Any:
-    """Run a blocking callable on a daemon thread with a hard timeout."""
+    """Report deadline failure only after the worker releases mutation ownership."""
     result: dict[str, Any] = {}
     error: dict[str, BaseException] = {}
 
@@ -357,7 +382,10 @@ def _run_blocking_with_timeout(func: Any, *, timeout_seconds: float) -> Any:
     thread.start()
     thread.join(timeout_seconds)
     if thread.is_alive():
-        raise TimeoutError(f"Operation timed out after {timeout_seconds:.0f} seconds")
+        # Python cannot cancel a running thread. Keep the caller's writer fence
+        # until it settles; STDIO's shutdown watchdog bounds service termination.
+        thread.join()
+        raise TimeoutError(f"Operation exceeded {timeout_seconds:.0f} seconds; worker drained")
     if "value" in error:
         raise error["value"]
     return result.get("value")
@@ -443,6 +471,7 @@ class _SyncDictEndpointReranker:
                 match_type=c.get("match_type", "endpoint"),
                 score=float(c.get("score", 0.0) or 0.0),
                 context=c.get("context"),
+                generation_key=c.get("_rerank_generation"),
             )
             for c in candidates
         ]
@@ -520,6 +549,7 @@ class EnhancedDispatcher:
         plugin_set_registry: Optional[PluginSetRegistry] = None,
         semantic_indexer_registry: Optional[SemanticIndexerRegistry] = None,
         endpoint_rerank_transport: Optional[Callable[[Dict[str, Any]], Dict[str, Any]]] = None,
+        registry_path: Optional[Path] = None,
     ):
         """Initialize the enhanced dispatcher.
 
@@ -545,9 +575,6 @@ class EnhancedDispatcher:
             multi_repo_enabled = os.getenv("MCP_ENABLE_MULTI_REPO", "false").lower() == "true"
 
         if multi_repo_enabled:
-            default_storage_path = Path.home() / ".mcp" / "indexes"
-            storage_path = os.getenv("MCP_INDEX_STORAGE_PATH", str(default_storage_path))
-            registry_path = Path(storage_path) / "repository_registry.json"
             self._multi_repo_manager = MultiRepositoryManager(central_index_path=registry_path)
             self._cross_repo_coordinator = CrossRepositorySearchCoordinator(
                 self._multi_repo_manager
@@ -593,45 +620,6 @@ class EnhancedDispatcher:
         self._semantic_registry: Optional[SemanticIndexerRegistry] = semantic_indexer_registry
         # Fallback process-global semantic indexer for repos not tracked by the registry.
         self._semantic_indexer_fallback: Optional[SemanticIndexer] = None
-        self._registered_semantic_indexers: Dict[str, SemanticIndexer] = {}
-        self._registered_semantic_indexer_lock = threading.RLock()
-        if self._semantic_enabled and semantic_indexer_registry is None:
-            try:
-                settings = reload_settings()
-                profile_registry = SemanticProfileRegistry.from_raw(
-                    settings.get_semantic_profiles_config(),
-                    settings.get_semantic_default_profile(),
-                    tool_version=settings.app_version,
-                )
-                semantic_profile_id = settings.get_semantic_default_profile()
-                semantic_profile = profile_registry.get(semantic_profile_id)
-                if semantic_profile is None:
-                    raise RuntimeError(
-                        f"Semantic default profile '{semantic_profile_id}' is not available"
-                    )
-
-                qdrant_path = os.getenv("QDRANT_PATH", "vector_index.qdrant")
-                collection_name = _get_profile_collection_name(
-                    semantic_profile, settings.semantic_collection_name
-                )
-
-                if Path(qdrant_path).exists():
-                    self._semantic_indexer_fallback = SemanticIndexer(
-                        qdrant_path=qdrant_path,
-                        collection=collection_name,
-                        profile_registry=profile_registry,
-                        semantic_profile=semantic_profile_id,
-                    )
-                    logger.info(
-                        "Semantic search initialized: %s at %s (profile=%s)",
-                        collection_name,
-                        qdrant_path,
-                        semantic_profile_id,
-                    )
-                else:
-                    logger.warning(f"Qdrant path not found: {qdrant_path}")
-            except Exception as e:
-                logger.warning(f"Failed to initialize semantic search: {e}")
 
         # Initialize reranker
         self._reranker = None  # type: Optional[Any]
@@ -646,15 +634,13 @@ class EnhancedDispatcher:
                     reranker_type, endpoint_rerank_transport=endpoint_rerank_transport
                 )
             except Exception as e:
-                logger.warning(f"Failed to initialize reranker: {e}")
+                logger.warning(f"Failed to initialize reranker: {type(e).__name__}")
         # Skip text/lexical rerankers on the pure-vector semantic path. Expressed
         # as an explicit capability contract (see _reranker_skips_semantic_path):
         # a reranker may declare `skips_semantic_path`; otherwise the text-only
         # type set decides. The endpoint (rerank.v1) path is embedding-consistent
         # and does not skip; VoyageReranker ("voyage") is Voyage-consistent too.
-        self._reranker_skips_semantic = _reranker_skips_semantic_path(
-            reranker_type, self._reranker
-        )
+        self._reranker_skips_semantic = _reranker_skips_semantic_path(reranker_type, self._reranker)
 
         # Initialize legacy plugin list (backward compatibility for callers injecting plugins)
         if plugins:
@@ -757,7 +743,7 @@ class EnhancedDispatcher:
                                 )
                                 self._unavailable_languages.add(lang)
                             except Exception as e:
-                                logger.error(f"Failed to load {lang} plugin: {e}")
+                                logger.error(f"Failed to load {lang} plugin: {type(e).__name__}")
                 else:
                     all_plugins = PluginFactory.create_all_plugins(
                         sqlite_store=None,
@@ -778,11 +764,11 @@ class EnhancedDispatcher:
                 )
 
         except TimeoutError as e:
-            logger.warning(f"Plugin loading timeout: {e}")
+            logger.warning(f"Plugin loading timeout: {type(e).__name__}")
             self._legacy_plugins = []
             self._loaded_languages = set()
         except Exception as e:
-            logger.error(f"Plugin loading failed: {e}")
+            logger.error(f"Plugin loading failed: {type(e).__name__}")
             self._legacy_plugins = []
             self._loaded_languages = set()
 
@@ -834,15 +820,11 @@ class EnhancedDispatcher:
             return plugin
 
         except PluginUnavailableError as e:
-            logger.info(
-                "No plugin available for %s: %s",
-                language,
-                e.state,
-            )
+            logger.info("No plugin available for %s: %s", language, e.state)
             self._unavailable_languages.add(language)
             return None
         except Exception as e:
-            logger.error(f"Unexpected plugin load failure for {language}: {e}")
+            logger.error(f"Unexpected plugin load failure for {language}: {type(e).__name__}")
             self._loaded_languages.add(language)  # Mark as attempted
             return None
 
@@ -972,7 +954,7 @@ class EnhancedDispatcher:
                 if isinstance(count, int):
                     return count
             except Exception as exc:
-                logger.warning("Per-repo plugin count failed: %s", exc)
+                logger.warning("Per-repo plugin count failed: %s", type(exc).__name__)
         snapshot_fn = getattr(self._plugin_set_registry, "resource_snapshot", None)
         if callable(snapshot_fn):
             try:
@@ -980,20 +962,24 @@ class EnhancedDispatcher:
                 if isinstance(reserved, int):
                     return reserved
             except Exception as exc:
-                logger.warning("Plugin resource snapshot failed: %s", exc)
+                logger.warning("Plugin resource snapshot failed: %s", type(exc).__name__)
         return len(self._plugin_set_registry.plugins_for(repo_id))
 
     def shutdown(self) -> None:
         """Close managed plugin workers and any explicitly injected adapters."""
+        if self._semantic_registry is not None:
+            self._semantic_registry.shutdown()
         if hasattr(self._plugin_set_registry, "shutdown"):
             self._plugin_set_registry.shutdown()
+        if self._multi_repo_manager is not None:
+            self._multi_repo_manager.close()
         for plugin in self._legacy_plugins:
             close = getattr(plugin, "close", None)
             if callable(close):
                 try:
                     close()
                 except Exception as exc:
-                    logger.warning("Legacy plugin close failed: %s", exc)
+                    logger.warning("Legacy plugin close failed: %s", type(exc).__name__)
         self._legacy_plugins.clear()
         self._lang_cache.clear()
 
@@ -1013,8 +999,14 @@ class EnhancedDispatcher:
         """Compute SHA-256 hash of raw file bytes (used for TOCTOU guard)."""
         return hashlib.sha256(path.read_bytes()).hexdigest()
 
-    def _should_reindex(self, path: Path, content: str) -> bool:
+    def _should_reindex(
+        self, path: Path, content: str, store: Optional[SQLiteStore] = None
+    ) -> bool:
         """Return True if the file needs to be (re-)indexed."""
+        if isinstance(store, SQLiteStore):
+            persisted = store.get_file(path)
+            if not persisted or persisted.get("content_hash") != self._get_file_hash(content):
+                return True
         key = str(path)
         with self._file_cache_lock:
             if key not in self._file_cache:
@@ -1095,7 +1087,8 @@ class EnhancedDispatcher:
                     # First try symbols table for exact matches
                     cursor.execute(
                         """
-                        SELECT s.name, s.kind, s.line_start, s.signature, s.documentation, f.path
+                        SELECT s.name, s.kind, s.line_start, s.line_end,
+                               s.signature, s.documentation, f.path, f.language
                         FROM symbols s
                         JOIN files f ON s.file_id = f.id
                         WHERE s.name = ? OR s.name LIKE ?
@@ -1107,18 +1100,20 @@ class EnhancedDispatcher:
 
                     row = cursor.fetchone()
                     if row:
-                        name, kind, line, signature, doc, filepath = row
+                        name, kind, line, end_line, signature, doc, filepath, language = row
                         conn.close()
 
                         # Return proper SymbolDef dict
                         return {
                             "symbol": name,
                             "kind": kind,
-                            "language": "unknown",  # Not stored in symbols table
+                            "language": language or "unknown",
                             "signature": signature or f"{kind} {name}",
                             "doc": doc,
                             "defined_in": filepath,
                             "line": line or 1,
+                            "start_line": line or 1,
+                            "end_line": end_line or line or 1,
                             "span": (0, len(name)),
                         }
 
@@ -1166,6 +1161,8 @@ class EnhancedDispatcher:
                                     "doc": None,
                                     "defined_in": filepath,
                                     "line": 1,
+                                    "start_line": 1,
+                                    "end_line": 1,
                                     "span": (0, len(symbol)),
                                 }
                     except sqlite3.OperationalError:
@@ -1174,7 +1171,7 @@ class EnhancedDispatcher:
 
                     conn.close()
                 except Exception as e:
-                    logger.error(f"Error in direct symbol lookup: {e}")
+                    logger.error(f"Error in direct symbol lookup: {type(e).__name__}")
 
             repo_plugins = self._plugin_set_registry.plugins_for(ctx.repo_id)
 
@@ -1219,7 +1216,7 @@ class EnhancedDispatcher:
             return result
 
         except Exception as e:
-            logger.error(f"Error in symbol lookup for {symbol}: {e}", exc_info=True)
+            logger.error("Symbol lookup failed (%s)", type(e).__name__)
             return None
         finally:
             try:
@@ -1458,7 +1455,7 @@ class EnhancedDispatcher:
                 )
             return results
         except Exception as e:
-            logger.warning(f"Symbol route failed for '{name}': {e}")
+            logger.warning("Symbol route failed (%s)", type(e).__name__)
             return []
 
     @classmethod
@@ -1591,6 +1588,10 @@ class EnhancedDispatcher:
         if not filtered:
             filtered = candidates
         for c in filtered:
+            if sqlite_store is not None and sqlite_store.registry_binding is not None:
+                c["_rerank_generation"] = hashlib.sha256(
+                    json.dumps(sqlite_store.registry_binding, sort_keys=True, default=str).encode()
+                ).hexdigest()
             if not c.get("_rerank_doc"):
                 c["_rerank_doc"] = self._get_chunk_content_for_reranking(
                     sqlite_store, c.get("file", "")
@@ -1607,7 +1608,7 @@ class EnhancedDispatcher:
             duration_ms = (_time.perf_counter() - _start) * 1000.0
             logger.warning(
                 "_apply_reranker failed, returning original order: %s",
-                _redact_secrets(str(e)),
+                _redact_secrets(str(type(e).__name__)),
             )
             self._record_rerank_diagnostics(
                 RerankDiagnostics(
@@ -1679,84 +1680,53 @@ class EnhancedDispatcher:
             return False
         return isinstance(getattr(entry, "path", None), (str, Path))
 
+    @staticmethod
+    def _input_path(ctx: RepoContext, path: Union[str, Path]) -> Path:
+        path = Path(path).absolute()
+        if ctx.staging:
+            canonical_root = Path(ctx.registry_entry.path).resolve()
+            if path.is_relative_to(canonical_root) and not path.is_relative_to(ctx.workspace_root):
+                path = ctx.workspace_root / path.relative_to(canonical_root)
+        return path
+
     def _get_semantic_indexer(self, ctx: RepoContext) -> Optional[SemanticIndexer]:
-        """Return the SemanticIndexer for ctx.repo_id, or local fallback for legacy contexts."""
+        """Return the resource borrowed by this operation, never an unscoped owner."""
+        borrowed = _semantic_borrower.get()
+        if borrowed is not None and borrowed[:2] == (id(self), id(ctx)):
+            return borrowed[2]
         if not getattr(self, "_semantic_enabled", True):
             return None
-        if self._semantic_registry is not None:
-            try:
-                return self._semantic_registry.get(ctx.repo_id)
-            except (KeyError, Exception):
-                return None
-        if self._is_registered_context(ctx):
-            return self._get_or_build_registered_semantic_indexer(ctx)
+        if self._semantic_registry is not None or self._is_registered_context(ctx):
+            raise RuntimeError("Semantic access requires a scoped generation lease")
         return self._semantic_indexer_fallback
 
-    def _get_or_build_registered_semantic_indexer(
-        self, ctx: RepoContext
-    ) -> Optional[SemanticIndexer]:
-        """Lazily build a repo-scoped semantic indexer for registered contexts.
-
-        Some CLI paths construct ``EnhancedDispatcher`` without injecting a
-        ``SemanticIndexerRegistry``. Registered repositories should still be
-        able to execute strict semantic rebuilds in those flows.
-        """
-        cache_key = self._graph_key(ctx)
-        with self._registered_semantic_indexer_lock:
-            cached = self._registered_semantic_indexers.get(cache_key)
-            if cached is not None:
-                return cached
-
-        repo_info = getattr(ctx, "registry_entry", None)
-        repo_path = getattr(repo_info, "path", None)
-        index_location = getattr(repo_info, "index_location", None)
-        if not isinstance(repo_path, (str, Path)) or not isinstance(index_location, (str, Path)):
-            return None
-
-        try:
-            settings = reload_settings()
-            profile_registry = SemanticProfileRegistry.from_raw(
-                settings.get_semantic_profiles_config(),
-                settings.get_semantic_default_profile(),
-                tool_version=settings.app_version,
-            )
-            semantic_profile_id = settings.get_semantic_default_profile()
-            semantic_profile = profile_registry.get(semantic_profile_id)
-            if semantic_profile is None:
-                return None
-
-            repo_identifier = ctx.repo_id
-            branch = (
-                getattr(repo_info, "tracked_branch", None)
-                or getattr(repo_info, "current_branch", None)
-                or ctx.tracked_branch
-                or "unknown"
-            )
-            qdrant_path = Path(index_location) / "semantic_qdrant"
-            collection_name = _get_profile_collection_name(
-                semantic_profile,
-                settings.semantic_collection_name,
-            )
-            indexer = SemanticIndexer(
-                qdrant_path=str(qdrant_path),
-                profile_registry=profile_registry,
-                semantic_profile=semantic_profile_id,
-                repo_identifier=repo_identifier,
-                branch=branch,
-                commit=getattr(repo_info, "current_commit", None),
-                collection=collection_name,
-            )
-        except Exception as exc:
-            logger.warning(
-                "Failed to initialize registered semantic indexer for %s: %s",
-                ctx.repo_id,
-                exc,
-            )
-            return None
-
-        with self._registered_semantic_indexer_lock:
-            self._registered_semantic_indexers.setdefault(cache_key, indexer)
-            return self._registered_semantic_indexers[cache_key]
+    @contextmanager
+    def _semantic_lease(self, ctx: RepoContext):
+        borrowed = _semantic_borrower.get()
+        if borrowed is not None and borrowed[:2] == (id(self), id(ctx)):
+            yield borrowed[2]
+            return
+        with ExitStack() as resources:
+            indexer = None
+            if getattr(self, "_semantic_enabled", False):
+                try:
+                    if self._semantic_registry is not None:
+                        indexer = resources.enter_context(
+                            self._semantic_registry.lease(ctx.repo_id, ctx=ctx)
+                        )
+                    elif self._is_registered_context(ctx):
+                        raise RuntimeError("Registered semantic generation owner is unavailable")
+                    else:
+                        indexer = self._semantic_indexer_fallback
+                except Exception as exc:
+                    if getattr(ctx, "staging", False):
+                        raise
+                    logger.warning("Semantic generation unavailable (%s)", type(exc).__name__)
+            token = _semantic_borrower.set((id(self), id(ctx), indexer))
+            try:
+                yield indexer
+            finally:
+                _semantic_borrower.reset(token)
 
     def _sqlite_repository_id(self, ctx: RepoContext) -> int:
         repo_info = ctx.registry_entry
@@ -1770,8 +1740,16 @@ class EnhancedDispatcher:
 
     def _graph_key(self, ctx: RepoContext) -> str:
         root = Path(ctx.workspace_root).expanduser().resolve()
-        return f"{ctx.repo_id}:{root}"
+        generation = hashlib.sha256(
+            json.dumps(
+                index_generation_key(ctx.sqlite_store, ctx.registry_entry),
+                sort_keys=True,
+                default=str,
+            ).encode()
+        ).hexdigest()
+        return f"{ctx.repo_id}:{root}:{generation}"
 
+    @_semantic_operation
     def get_runtime_feature_status(self, ctx: RepoContext) -> Dict[str, Dict[str, Any]]:
         semantic_reason = None
         semantic_available = False
@@ -1830,14 +1808,12 @@ class EnhancedDispatcher:
                 self._plugin_set_registry.evict(repo_id)
                 evicted["plugins"] = 1
             except Exception as exc:
-                logger.warning("Plugin eviction failed for %s: %s", repo_id, exc)
+                logger.warning("Plugin eviction failed for %s: %s", repo_id, type(exc).__name__)
         if self._semantic_registry is not None and hasattr(self._semantic_registry, "evict"):
-            try:
-                evicted["semantic"] = 1 if self._semantic_registry.evict(repo_id) else 0
-            except Exception as exc:
-                logger.warning("Semantic eviction failed for %s: %s", repo_id, exc)
+            evicted["semantic"] = 1 if self._semantic_registry.evict(repo_id) else 0
         return evicted
 
+    @_semantic_operation
     def search(
         self,
         ctx: RepoContext,
@@ -1870,15 +1846,49 @@ class EnhancedDispatcher:
             if sqlite_store and (
                 effective_source_type or friction_categories or history_labels or history_repos
             ):
-                filtered_results = sqlite_store.search_chunks_by_source_metadata(
-                    source_type=effective_source_type or "friction",
-                    friction_categories=friction_categories,
-                    history_labels=history_labels,
-                    history_repos=history_repos,
-                    limit=limit,
-                )
-                for item in filtered_results:
-                    yield item
+                try:
+                    if semantic and _semantic_indexer is None:
+                        raise SemanticSearchFailure("Filtered semantic indexer is unavailable")
+                    filtered_results = sqlite_store.search_chunks_by_source_metadata(
+                        query=None if semantic else query,
+                        source_type=effective_source_type or "friction",
+                        friction_categories=friction_categories,
+                        history_labels=history_labels,
+                        history_repos=history_repos,
+                        limit=None if semantic else limit,
+                        include_chunk_id=semantic,
+                    )
+                    if semantic:
+                        # Restrict Qdrant before top-k, retaining every derived subchunk
+                        # through its source identity instead of one mapped point ID.
+                        chunks = {item["chunk_id"]: item for item in filtered_results}
+                        ranked = _semantic_indexer.search(
+                            query=query, limit=limit, source_chunk_ids=list(chunks)
+                        )
+                        filtered_results = []
+                        for result in ranked:
+                            identity = result.get("source_chunk_id") or result.get("chunk_id")
+                            if identity not in chunks:
+                                raise SemanticSearchFailure("Vector result escaped source filter")
+                            item = {k: v for k, v in chunks[identity].items() if k != "chunk_id"}
+                            item.update(
+                                {
+                                    "score": result.get("score", 0.0),
+                                    "semantic_source": result.get("semantic_source", "semantic"),
+                                    "semantic_profile_id": result.get("semantic_profile_id"),
+                                    "semantic_collection_name": result.get(
+                                        "semantic_collection_name"
+                                    ),
+                                }
+                            )
+                            filtered_results.append(item)
+                except Exception as exc:
+                    if semantic:
+                        raise SemanticSearchFailure(
+                            f"Filtered semantic search failed: {type(exc).__name__}"
+                        ) from exc
+                    raise
+                yield from filtered_results
                 self._operation_stats["searches"] += 1
                 self._operation_stats["total_time"] += time.time() - start_time
                 return
@@ -1920,7 +1930,7 @@ class EnhancedDispatcher:
                     self._operation_stats["total_time"] += time.time() - start_time
                     return
                 except Exception as e:
-                    logger.warning(f"Fuzzy search failed: {e}")
+                    logger.warning(f"Fuzzy search failed: {type(e).__name__}")
 
             # Prefer direct SQLite lexical search for non-semantic queries so the
             # server remains useful even when plugin in-memory indexes are cold.
@@ -1933,9 +1943,8 @@ class EnhancedDispatcher:
                     sym_results = self._symbol_route(sqlite_store, sym_name, kind_hint, limit)
                     if sym_results:
                         logger.info(
-                            "Symbol route hit (query_chars=%d, symbol=%r, results=%d)",
+                            "Symbol route hit (query_chars=%d, results=%d)",
                             len(query or ""),
-                            sym_name,
                             len(sym_results),
                         )
                         yield from sym_results
@@ -2031,15 +2040,21 @@ class EnhancedDispatcher:
                                             )
                                             if source_metadata is not None:
                                                 item = {**item, "source_metadata": source_metadata}
-                                    yield {k: v for k, v in item.items() if k != "_rerank_doc"}
+                                    yield {
+                                        k: v
+                                        for k, v in item.items()
+                                        if k not in {"_rerank_doc", "_rerank_generation"}
+                                    }
                                 self._operation_stats["searches"] += 1
                                 self._operation_stats["total_time"] += time.time() - start_time
                                 return
                         except Exception as e:
-                            logger.debug(f"Lexical search in table '{table}' failed: {e}")
+                            logger.debug(
+                                f"Lexical search in table '{table}' failed: {type(e).__name__}"
+                            )
                             continue
                 except Exception as e:
-                    logger.warning(f"Direct lexical search failed: {e}")
+                    logger.warning(f"Direct lexical search failed: {type(e).__name__}")
 
             # Semantic queries go directly to the vector index — plugins explicitly
             # return [] for semantic=True, so bypassing them is correct.
@@ -2095,7 +2110,11 @@ class EnhancedDispatcher:
                         sqlite_store, query, candidates, limit, semantic_source=True
                     )
                     for item in candidates:
-                        yield {k: v for k, v in item.items() if k != "_rerank_doc"}
+                        yield {
+                            k: v
+                            for k, v in item.items()
+                            if k not in {"_rerank_doc", "_rerank_generation"}
+                        }
                     self._operation_stats["searches"] += 1
                     self._operation_stats["total_time"] += time.time() - start_time
                     return
@@ -2108,7 +2127,9 @@ class EnhancedDispatcher:
                             ),
                             collection_name=getattr(_semantic_indexer, "collection", None),
                         ) from e
-                    logger.warning(f"Semantic indexer search failed, falling back to plugins: {e}")
+                    logger.warning(
+                        f"Semantic indexer search failed, falling back to plugins: {type(e).__name__}"
+                    )
 
             # If still no plugins, try hybrid or BM25 search directly
             if len(repo_plugins) == 0 and sqlite_store:
@@ -2152,7 +2173,7 @@ class EnhancedDispatcher:
                                 ),
                                 collection_name=getattr(_semantic_indexer, "collection", None),
                             ) from e
-                        logger.error(f"Error in semantic search: {e}")
+                        logger.error(f"Error in semantic search: {type(e).__name__}")
                         # Fall back to BM25
 
                 # Fall back to BM25-only search
@@ -2202,7 +2223,7 @@ class EnhancedDispatcher:
 
                     conn.close()
                 except Exception as e:
-                    logger.error(f"Error in direct BM25 search: {e}")
+                    logger.error(f"Error in direct BM25 search: {type(e).__name__}")
 
             # Detect if this is a document query
             is_doc_query = self._is_document_query(query)
@@ -2238,7 +2259,7 @@ class EnhancedDispatcher:
                                 all_results_by_plugin[plugin].extend(results)
                         except Exception as e:
                             logger.warning(
-                                f"Plugin {plugin.lang} failed to search for {search_query}: {e}"
+                                "Plugin %s search failed (%s)", plugin.lang, type(e).__name__
                             )
 
                 # Deduplicate results per plugin (handle both dict results and SearchResult objects)
@@ -2341,9 +2362,7 @@ class EnhancedDispatcher:
                             for result in p.search(search_query, opts):
                                 all_results.append(result)
                         except Exception as e:
-                            logger.warning(
-                                f"Plugin {p.lang} failed to search for {search_query}: {e}"
-                            )
+                            logger.warning("Plugin %s search failed (%s)", p.lang, type(e).__name__)
 
                 # Attempt gated symbol-definition fallback for the query as a symbol name.
                 # source_ext is derived from the first BM25 filepath hit, or None.
@@ -2440,9 +2459,7 @@ class EnhancedDispatcher:
             raise
         except Exception as e:
             logger.error(
-                "Error in search (query_chars=%d): %s",
-                len(query or ""),
-                _redact_secrets(str(e)),
+                "Search failed (query_chars=%d, error_type=%s)", len(query or ""), type(e).__name__
             )
         finally:
             try:
@@ -2455,8 +2472,14 @@ class EnhancedDispatcher:
                 record_handled_error(__name__, exc)
                 pass
 
+    @_semantic_operation
     def index_file(self, ctx: RepoContext, path: Path, do_semantic: bool = True) -> IndexResult:
         """Index a single file if it has changed."""
+        path = self._input_path(ctx, path)
+        if build_walker_filter(ctx.workspace_root)(path):
+            return IndexResult(
+                IndexResultStatus.ERROR, path, None, None, "Path excluded by repository policy"
+            )
         path = path.resolve()
 
         if not path.exists():
@@ -2477,7 +2500,7 @@ class EnhancedDispatcher:
                 try:
                     content = path.read_text(encoding="latin-1")
                 except Exception as e:
-                    logger.error(f"Failed to read {path}: {e}")
+                    logger.error(f"Failed to read {path}: {type(e).__name__}")
                     return IndexResult(
                         status=IndexResultStatus.ERROR,
                         path=path,
@@ -2487,7 +2510,7 @@ class EnhancedDispatcher:
                     )
 
             # Skip if file hasn't changed since last index
-            if not self._should_reindex(path, content):
+            if not self._should_reindex(path, content, ctx.sqlite_store):
                 logger.debug(f"Skipping {path} (unchanged)")
                 return IndexResult(
                     status=IndexResultStatus.SKIPPED_UNCHANGED,
@@ -2527,7 +2550,7 @@ class EnhancedDispatcher:
             else:
                 # Find the appropriate plugin
                 plugin = self._match_plugin(ctx, path)
-                plugin_language = plugin.language
+                plugin_language = get_language_by_extension(path.suffix.lower()) or plugin.language
                 plugin_lang = plugin.lang
 
             # Index the file
@@ -2543,7 +2566,7 @@ class EnhancedDispatcher:
             try:
                 self._persist_index_shard(ctx, path, content, plugin_language, shard)
             except Exception as e:
-                logger.error(f"Failed to persist index shard for {path}: {e}", exc_info=True)
+                logger.error(f"Failed to persist index shard for {path}: {type(e).__name__}")
                 return IndexResult(
                     status=IndexResultStatus.ERROR,
                     path=path,
@@ -2590,7 +2613,8 @@ class EnhancedDispatcher:
                 try:
                     semantic_stats = self.rebuild_semantic_for_paths(ctx, [path])
                 except Exception as e:
-                    logger.warning(f"Semantic indexing failed for {path}: {e}")
+                    logger.warning(f"Semantic indexing failed for {path}: {type(e).__name__}")
+                    raise RuntimeError("Semantic indexing did not complete") from e
 
             return IndexResult(
                 status=IndexResultStatus.INDEXED,
@@ -2602,7 +2626,7 @@ class EnhancedDispatcher:
 
         except RuntimeError as e:
             # No plugin found for this file type
-            logger.debug(f"No plugin for {path}: {e}")
+            logger.debug(f"No plugin for {path}: {type(e).__name__}")
             return IndexResult(
                 status=IndexResultStatus.ERROR,
                 path=path,
@@ -2611,7 +2635,7 @@ class EnhancedDispatcher:
                 error=str(e),
             )
         except Exception as e:
-            logger.error(f"Error indexing {path}: {e}", exc_info=True)
+            logger.error(f"Error indexing {path}: {type(e).__name__}")
             return IndexResult(
                 status=IndexResultStatus.ERROR,
                 path=path,
@@ -2760,12 +2784,22 @@ class EnhancedDispatcher:
             },
         }
 
+    @_semantic_operation
     def index_file_guarded(self, ctx: RepoContext, path: Path, expected_hash: str) -> IndexResult:
         """TOCTOU-guarded index: re-hashes immediately before plugin write.
 
         If the file hash at dispatch time differs from expected_hash, the file
         was modified between watcher observation and dispatch; skip indexing.
         """
+        path = self._input_path(ctx, path)
+        if build_walker_filter(ctx.workspace_root)(path):
+            return IndexResult(
+                IndexResultStatus.ERROR,
+                path,
+                expected_hash,
+                None,
+                "Path excluded by repository policy",
+            )
         path = path.resolve()
 
         if not path.exists():
@@ -2814,7 +2848,7 @@ class EnhancedDispatcher:
                     error=str(e),
                 )
 
-        if not self._should_reindex(path, content):
+        if not self._should_reindex(path, content, ctx.sqlite_store):
             return IndexResult(
                 status=IndexResultStatus.SKIPPED_UNCHANGED,
                 path=path,
@@ -2838,7 +2872,8 @@ class EnhancedDispatcher:
             logger.info(f"Indexing {path} with {plugin.lang} plugin (guarded)")
             shard = plugin.indexFile(path, content)
             try:
-                self._persist_index_shard(ctx, path, content, plugin.language, shard)
+                language = get_language_by_extension(path.suffix.lower()) or plugin.language
+                self._persist_index_shard(ctx, path, content, language, shard)
             except Exception as e:
                 return IndexResult(
                     status=IndexResultStatus.ERROR,
@@ -2871,7 +2906,8 @@ class EnhancedDispatcher:
                 try:
                     semantic_stats = self.rebuild_semantic_for_paths(ctx, [path])
                 except Exception as e:
-                    logger.warning(f"Semantic indexing failed for {path}: {e}")
+                    logger.warning(f"Semantic indexing failed for {path}: {type(e).__name__}")
+                    raise RuntimeError("Semantic indexing did not complete") from e
 
             return IndexResult(
                 status=IndexResultStatus.INDEXED,
@@ -2881,7 +2917,7 @@ class EnhancedDispatcher:
                 semantic=semantic_stats,
             )
         except Exception as e:
-            logger.error(f"Error in guarded indexing of {path}: {e}", exc_info=True)
+            logger.error(f"Error in guarded indexing of {path}: {type(e).__name__}")
             return IndexResult(
                 status=IndexResultStatus.ERROR,
                 path=path,
@@ -2913,6 +2949,7 @@ class EnhancedDispatcher:
             "prompt_fingerprint": writer._prompt_fingerprint(),
         }
 
+    @_semantic_operation
     def rebuild_semantic_for_paths(
         self,
         ctx: RepoContext,
@@ -3175,10 +3212,24 @@ class EnhancedDispatcher:
             )
             return stats
 
-        semantic_preflight = run_semantic_preflight(
-            settings=settings,
-            strict=False,
-        ).to_dict()
+        if ctx.staging:
+            _sem._prepare_for_writes()
+            semantic_preflight = {
+                "can_write_semantic_vectors": True,
+                "blocker": None,
+                "effective_config": {
+                    "selected_profile": _sem.semantic_profile.profile_id,
+                    "collection_name": _sem.collection,
+                    "normalized_collection_name": _sem.collection,
+                    "vector_dimension": _sem.embedding_dimension,
+                    "distance_metric": _sem.distance_metric,
+                },
+            }
+        else:
+            semantic_preflight = run_semantic_preflight(
+                settings=settings,
+                strict=False,
+            ).to_dict()
         collection_bootstrap = summarize_collection_bootstrap(semantic_preflight)
         if not semantic_preflight.get("can_write_semantic_vectors", True):
             blocker = semantic_preflight.get("blocker") or {}
@@ -3310,6 +3361,8 @@ class EnhancedDispatcher:
         except ValueError:
             relative_path = sqlite_store.path_resolver.normalize_path(path)
         content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        previous = sqlite_store.get_file_by_path(path, repository_row)
+        preserve_summaries = bool(previous and previous.get("content_hash") == content_hash)
 
         file_id = sqlite_store.store_file(
             repository_id=repository_row,
@@ -3327,7 +3380,9 @@ class EnhancedDispatcher:
             # check before any delete/insert. Stamps an empty index; raises
             # ChunkSchemeMismatchError (refusing the write) on a scheme mismatch.
             sqlite_store._assert_chunk_scheme_writable(conn, chunk_type="code")
-            self._clear_file_index_rows(sqlite_store, file_id, conn=conn)
+            self._clear_file_index_rows(
+                sqlite_store, file_id, conn=conn, preserve_summaries=preserve_summaries
+            )
 
             for symbol in shard.get("symbols", []) if isinstance(shard, dict) else []:
                 if not isinstance(symbol, dict):
@@ -3373,8 +3428,41 @@ class EnhancedDispatcher:
 
                     shard_chunks = [chunk.__dict__ for chunk in chunk_text(content, language)]
                 except Exception as exc:
-                    logger.debug("Host chunk derivation failed for %s: %s", path, exc)
+                    logger.debug(
+                        "Host chunk derivation failed for %s: %s", path, type(exc).__name__
+                    )
                     shard_chunks = []
+
+            if ctx.staging:
+                from chunker.types import compute_definition_id, compute_file_id, compute_node_id
+
+                shard_chunks = [dict(chunk) for chunk in shard_chunks if isinstance(chunk, dict)]
+                identities = {}
+                for chunk in shard_chunks:
+                    route = (
+                        chunk.get("qualified_route")
+                        or chunk.get("parent_route")
+                        or [
+                            f"{chunk.get('node_type') or 'chunk'}@L{chunk.get('start_line') or chunk.get('line_start') or 1}"
+                        ]
+                    )
+                    node_id = compute_node_id(
+                        relative_path,
+                        language,
+                        route,
+                        int(chunk.get("byte_start") or chunk.get("content_start") or 0),
+                        str(chunk.get("content") or ""),
+                    )
+                    identities[chunk.get("node_id") or chunk.get("chunk_id")] = node_id
+                    chunk.update(
+                        chunk_id=node_id,
+                        node_id=node_id,
+                        file_id=compute_file_id(relative_path),
+                        definition_id=compute_definition_id(relative_path, language, route),
+                    )
+                for chunk in shard_chunks:
+                    if chunk.get("parent_chunk_id"):
+                        chunk["parent_chunk_id"] = identities.get(chunk["parent_chunk_id"])
 
             for index, chunk in enumerate(shard_chunks):
                 if not isinstance(chunk, dict):
@@ -3454,7 +3542,7 @@ class EnhancedDispatcher:
                     ),
                 )
 
-            conn.execute("DELETE FROM fts_code WHERE file_id = ?", (str(file_id),))
+            conn.execute("DELETE FROM fts_code WHERE CAST(file_id AS TEXT) = ?", (str(file_id),))
             conn.execute(
                 "INSERT INTO fts_code (content, file_id) VALUES (?, ?)", (content, file_id)
             )
@@ -3464,19 +3552,41 @@ class EnhancedDispatcher:
         sqlite_store: SQLiteStore,
         file_id: int,
         conn: Optional[sqlite3.Connection] = None,
+        preserve_summaries: bool = False,
     ) -> None:
         if conn is None:
             with sqlite_store._get_connection() as owned_conn:
-                self._clear_file_index_rows(sqlite_store, file_id, conn=owned_conn)
+                self._clear_file_index_rows(
+                    sqlite_store, file_id, conn=owned_conn, preserve_summaries=preserve_summaries
+                )
                 return
-        conn.execute(
-            "DELETE FROM symbol_trigrams WHERE symbol_id IN "
-            "(SELECT id FROM symbols WHERE file_id = ?)",
-            (file_id,),
+        sqlite_store.delete_chunks_for_file(
+            file_id, preserve_imported=True, preserve_summaries=preserve_summaries
         )
-        conn.execute("DELETE FROM symbols WHERE file_id = ?", (file_id,))
-        conn.execute("DELETE FROM code_chunks WHERE file_id = ?", (file_id,))
-        conn.execute("DELETE FROM fts_code WHERE file_id = ?", (str(file_id),))
+        derived = [
+            row[0]
+            for row in conn.execute(
+                "SELECT id FROM symbols s WHERE file_id=? AND NOT EXISTS "
+                "(SELECT 1 FROM code_chunks c WHERE c.symbol_id=s.id AND "
+                "(c.chunk_type='document' OR c.chunk_id LIKE 'history:%'))",
+                (file_id,),
+            ).fetchall()
+        ]
+        tables = {
+            row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
+        for start in range(0, len(derived), 500):
+            batch = derived[start : start + 500]
+            placeholders = ",".join("?" for _ in batch)
+            for table in ("symbol_trigrams", "symbol_references", "bm25_symbols"):
+                if table in tables:
+                    conn.execute(f"DELETE FROM {table} WHERE symbol_id IN ({placeholders})", batch)
+            conn.execute(f"DELETE FROM symbols WHERE id IN ({placeholders})", batch)
+        conn.execute(
+            "DELETE FROM fts_code WHERE CAST(file_id AS TEXT)=? OR file_id IN "
+            "(SELECT path FROM files WHERE id=? UNION SELECT relative_path FROM files WHERE id=?)",
+            (str(file_id), file_id, file_id),
+        )
 
     def get_statistics(self, ctx: RepoContext) -> Dict[str, Any]:
         """Get statistics about indexed files and languages."""
@@ -3497,6 +3607,7 @@ class EnhancedDispatcher:
             record_handled_error(__name__, exc)
             return {"total": 0, "by_language": {}}
 
+    @_semantic_operation
     def _drain_pending_vector_deletions(self, ctx: RepoContext) -> None:
         """Best-effort recovery drain of the remote-vector crash-ledger (I4).
 
@@ -3512,6 +3623,8 @@ class EnhancedDispatcher:
         the reindex it is hooked into.
         """
         store = getattr(ctx, "sqlite_store", None)
+        if ctx.staging:
+            return
         if store is None or not hasattr(store, "drain_pending_vector_deletions"):
             return
         try:
@@ -3527,17 +3640,17 @@ class EnhancedDispatcher:
                 )
             )
         except Exception as exc:  # store method is fail-safe, but never crash reindex
-            logger.warning("Pending-vector-deletion drain skipped: %s", exc)
+            logger.warning("Pending-vector-deletion drain skipped: %s", type(exc).__name__)
             return
         if result.get("rows_drained") or result.get("groups_failed"):
             logger.info(
-                "Pending-vector-deletion drain: %s drained, %s remaining, "
-                "%s group(s) deferred",
+                "Pending-vector-deletion drain: %s drained, %s remaining, " "%s group(s) deferred",
                 result.get("rows_drained"),
                 result.get("rows_remaining"),
                 result.get("groups_failed"),
             )
 
+    @_semantic_operation
     def index_directory(
         self,
         ctx: RepoContext,
@@ -3547,6 +3660,7 @@ class EnhancedDispatcher:
         cancel_check: Optional[Callable[[], bool]] = None,
     ) -> Dict[str, Any]:
         """Index all files in a directory, respecting ignore patterns."""
+        directory = self._input_path(ctx, directory)
         logger.info(f"Indexing directory: {directory} (recursive={recursive})")
 
         # Recovery point (I4): finish any deferred remote-vector deletions left by
@@ -3554,10 +3668,6 @@ class EnhancedDispatcher:
         # the store and a semantic (Qdrant) client are available; best-effort so a
         # recovery failure can never block the reindex.
         self._drain_pending_vector_deletions(ctx)
-
-        # Note: We don't use ignore patterns during indexing
-        # ALL files are indexed for local search capability
-        # Filtering happens only during export/sharing
 
         # Get all supported extensions
         supported_extensions = get_all_extensions()
@@ -3762,7 +3872,7 @@ class EnhancedDispatcher:
                     stats["by_language"][language] = stats["by_language"].get(language, 0) + 1
 
             except TimeoutError as exc:
-                logger.error("Lexical indexing timed out for %s: %s", path, exc)
+                logger.error("Lexical indexing timed out for %s: %s", path, type(exc).__name__)
                 stats["failed_files"] += 1
                 self._record_low_level_blocker(
                     ctx,
@@ -3775,7 +3885,9 @@ class EnhancedDispatcher:
                 emit_progress("blocked_file_timeout", "lexical", "lexical_mutation")
                 break
             except sqlite3.OperationalError as exc:
-                logger.error("SQLite operational error while indexing %s: %s", path, exc)
+                logger.error(
+                    "SQLite operational error while indexing %s: %s", path, type(exc).__name__
+                )
                 stats["failed_files"] += 1
                 self._record_low_level_blocker(
                     ctx,
@@ -3788,7 +3900,7 @@ class EnhancedDispatcher:
                 emit_progress("blocked_storage_error", "lexical", "lexical_mutation")
                 break
             except Exception as e:
-                logger.error(f"Failed to index {path}: {e}")
+                logger.error(f"Failed to index {path}: {type(e).__name__}")
                 stats["failed_files"] += 1
 
             if stats["low_level_blocker"] is not None:
@@ -3827,7 +3939,7 @@ class EnhancedDispatcher:
                     )
                 )
             except Exception as e:
-                logger.error(f"Batch semantic indexing failed: {e}", exc_info=True)
+                logger.error(f"Batch semantic indexing failed: {type(e).__name__}")
                 storage_failure = self._classify_storage_closeout_failure(ctx, e)
                 if storage_failure is not None:
                     stats["semantic_stage"] = "blocked_storage_error"
@@ -4063,9 +4175,10 @@ class EnhancedDispatcher:
 
         return health
 
+    @_semantic_operation
     def remove_file(self, ctx: RepoContext, path: Union[Path, str]) -> IndexResult:
         """Remove a file from all per-repo indexes."""
-        path = Path(path).resolve()
+        path = self._input_path(ctx, path).resolve()
         logger.info(f"Removing file from index: {path}")
 
         # Evict from skip cache so a subsequent index_file() call is not skipped
@@ -4119,7 +4232,7 @@ class EnhancedDispatcher:
                             sqlite_store=ctx.sqlite_store,
                         )
                 except Exception as e:
-                    logger.error(f"Error removing from SQLite: {e}")
+                    logger.error(f"Error removing from SQLite: {type(e).__name__}")
                     primary_result = IndexResult(
                         status=IndexResultStatus.ERROR,
                         path=path,
@@ -4134,7 +4247,7 @@ class EnhancedDispatcher:
                 if plugin and hasattr(plugin, "_indexer") and plugin._indexer:
                     plugin._indexer.remove_file(path)
             except Exception as e:
-                logger.warning(f"Error removing from plugin index: {e}")
+                logger.warning(f"Error removing from plugin index: {type(e).__name__}")
 
             # Update statistics
             if primary_result.status == IndexResultStatus.DELETED:
@@ -4143,7 +4256,7 @@ class EnhancedDispatcher:
             return primary_result
 
         except Exception as e:
-            logger.error(f"Error removing file {path}: {e}", exc_info=True)
+            logger.error(f"Error removing file {path}: {type(e).__name__}")
             return IndexResult(
                 status=IndexResultStatus.ERROR,
                 path=path,
@@ -4152,6 +4265,7 @@ class EnhancedDispatcher:
                 error=str(e),
             )
 
+    @_semantic_operation
     def move_file(
         self,
         ctx: RepoContext,
@@ -4168,8 +4282,8 @@ class EnhancedDispatcher:
         lock_registry.acquire(repo_id); the reentrant RLock makes any re-acquire here
         a no-op.  Callers outside the watcher loop must acquire the lock themselves.
         """
-        old_path = Path(old_path).resolve()
-        new_path = Path(new_path).resolve()
+        old_path = self._input_path(ctx, old_path).resolve()
+        new_path = self._input_path(ctx, new_path).resolve()
         logger.info(f"Moving file in index: {old_path} -> {new_path}")
 
         if not ctx.sqlite_store:
@@ -4191,7 +4305,9 @@ class EnhancedDispatcher:
             old_relative = path_resolver.normalize_path(old_path)
             new_relative = path_resolver.normalize_path(new_path)
         except Exception as e:
-            logger.error(f"Error normalizing paths for move {old_path} -> {new_path}: {e}")
+            logger.error(
+                f"Error normalizing paths for move {old_path} -> {new_path}: {type(e).__name__}"
+            )
             return IndexResult(
                 status=IndexResultStatus.ERROR,
                 path=new_path,
@@ -4202,8 +4318,10 @@ class EnhancedDispatcher:
 
         store = ctx.sqlite_store
         repository_id = self._sqlite_repository_id(ctx)
-        semantic_contract = self.get_semantic_summary_contract(ctx) or {}
         _sem = self._get_semantic_indexer(ctx)
+        semantic_contract = (
+            (self.get_semantic_summary_contract(ctx) or {}) if _sem is not None else {}
+        )
         invalidation = store.plan_semantic_invalidation(
             old_relative,
             repository_id=repository_id,
@@ -4215,6 +4333,19 @@ class EnhancedDispatcher:
         )
 
         def _sqlite_primary() -> Tuple[str, str]:
+            nonlocal content_hash
+            if content_hash is None:
+                content_hash = self._hash_file_bytes(new_path)
+            if ctx.staging:
+                previous = store.get_file_by_path(old_relative, repository_id)
+                if previous is None:
+                    raise FileNotFoundError(old_relative)
+                self._clear_file_index_rows(store, previous["id"])
+                with store._get_connection() as conn:
+                    conn.execute(
+                        "UPDATE files SET hash=NULL, content_hash=NULL WHERE id=?",
+                        (previous["id"],),
+                    )
             moved = store.move_file(
                 old_relative,
                 new_relative,
@@ -4243,7 +4374,7 @@ class EnhancedDispatcher:
                 )
                 logger.info("Rolled back SQLite rename %s -> %s", new_relative, old_relative)
             except Exception as rb_exc:
-                logger.error("Rollback failed for %s: %s", old_relative, rb_exc)
+                logger.error("Rollback failed for %s: %s", old_relative, type(rb_exc).__name__)
 
         try:
             two_phase_commit(
@@ -4251,6 +4382,13 @@ class EnhancedDispatcher:
                 shadow_op=_semantic_shadow,
                 rollback=_sqlite_rollback,
             )
+            if ctx.staging:
+                with self._file_cache_lock:
+                    self._file_cache.pop(str(old_path), None)
+                    self._file_cache.pop(str(new_path), None)
+                indexed = self.index_file(ctx, new_path, do_semantic=False)
+                if indexed.status != IndexResultStatus.INDEXED:
+                    raise RuntimeError("Renamed committed content was not reindexed")
             semantic_stats = None
             if _sem is not None:
                 semantic_stats = self.rebuild_semantic_for_paths(ctx, [new_path])
@@ -4275,7 +4413,7 @@ class EnhancedDispatcher:
             record_handled_error(__name__, err)
             raise err from exc
         except Exception as e:
-            logger.error(f"Error moving file {old_path} -> {new_path}: {e}", exc_info=True)
+            logger.error(f"Error moving file {old_path} -> {new_path}: {type(e).__name__}")
             return IndexResult(
                 status=IndexResultStatus.ERROR,
                 path=new_path,
@@ -4306,7 +4444,21 @@ class EnhancedDispatcher:
         )
 
         try:
+            if not contexts or not all(
+                self._multi_repo_manager._query_ready(
+                    ctx.repo_id, ctx.sqlite_store.registry_binding
+                )
+                for ctx in contexts
+            ):
+                raise RuntimeError("Cross-repository context is no longer current")
             result = await self._cross_repo_coordinator.search_symbol(symbol, scope)
+            if not all(
+                self._multi_repo_manager._query_ready(
+                    ctx.repo_id, ctx.sqlite_store.registry_binding
+                )
+                for ctx in contexts
+            ):
+                raise RuntimeError("Cross-repository context changed during query")
             return {
                 "query": result.query,
                 "total_results": result.total_results,
@@ -4315,9 +4467,18 @@ class EnhancedDispatcher:
                 "results": result.results,
                 "repository_stats": result.repository_stats,
                 "deduplication_stats": result.deduplication_stats,
+                **(
+                    {
+                        "code": result.code,
+                        "safe_fallback": result.safe_fallback,
+                        "repository_errors": result.repository_errors,
+                    }
+                    if result.code
+                    else {}
+                ),
             }
         except Exception as e:
-            logger.error(f"Cross-repository symbol search failed: {e}")
+            logger.error(f"Cross-repository symbol search failed: {type(e).__name__}")
             return {
                 "query": symbol,
                 "total_results": 0,
@@ -4326,7 +4487,9 @@ class EnhancedDispatcher:
                 "results": [],
                 "repository_stats": {},
                 "deduplication_stats": {},
-                "error": str(e),
+                "error": "Cross-repository query unavailable",
+                "code": "index_unavailable",
+                "safe_fallback": "native_search",
             }
 
     async def cross_repo_code_search(
@@ -4352,7 +4515,21 @@ class EnhancedDispatcher:
         )
 
         try:
+            if not contexts or not all(
+                self._multi_repo_manager._query_ready(
+                    ctx.repo_id, ctx.sqlite_store.registry_binding
+                )
+                for ctx in contexts
+            ):
+                raise RuntimeError("Cross-repository context is no longer current")
             result = await self._cross_repo_coordinator.search_code(query, scope, semantic)
+            if not all(
+                self._multi_repo_manager._query_ready(
+                    ctx.repo_id, ctx.sqlite_store.registry_binding
+                )
+                for ctx in contexts
+            ):
+                raise RuntimeError("Cross-repository context changed during query")
 
             # Convert to dictionary format for MCP tools
             return {
@@ -4363,9 +4540,18 @@ class EnhancedDispatcher:
                 "results": result.results,
                 "repository_stats": result.repository_stats,
                 "deduplication_stats": result.deduplication_stats,
+                **(
+                    {
+                        "code": result.code,
+                        "safe_fallback": result.safe_fallback,
+                        "repository_errors": result.repository_errors,
+                    }
+                    if result.code
+                    else {}
+                ),
             }
         except Exception as e:
-            logger.error(f"Cross-repository code search failed: {e}")
+            logger.error(f"Cross-repository code search failed: {type(e).__name__}")
             return {
                 "query": query,
                 "total_results": 0,
@@ -4374,7 +4560,9 @@ class EnhancedDispatcher:
                 "results": [],
                 "repository_stats": {},
                 "deduplication_stats": {},
-                "error": str(e),
+                "error": "Cross-repository query unavailable",
+                "code": "index_unavailable",
+                "safe_fallback": "native_search",
             }
 
     async def get_cross_repo_statistics(self, contexts: List[RepoContext]) -> Dict[str, Any]:
@@ -4390,7 +4578,7 @@ class EnhancedDispatcher:
             stats["enabled"] = True
             return stats
         except Exception as e:
-            logger.error(f"Failed to get cross-repository statistics: {e}")
+            logger.error(f"Failed to get cross-repository statistics: {type(e).__name__}")
             return {
                 "enabled": True,
                 "error": str(e),
@@ -4449,7 +4637,7 @@ class EnhancedDispatcher:
                 return False
 
         except Exception as e:
-            logger.error(f"Failed to initialize graph: {e}", exc_info=True)
+            logger.error(f"Failed to initialize graph: {type(e).__name__}")
             return False
 
     def graph_search(
@@ -4490,7 +4678,7 @@ class EnhancedDispatcher:
                             "context": True,
                         }
             except Exception as e:
-                logger.error(f"Error expanding search with graph: {e}")
+                logger.error(f"Error expanding search with graph: {type(e).__name__}")
 
         # Yield original results
         for result in search_results:
@@ -4529,7 +4717,7 @@ class EnhancedDispatcher:
                     seed_nodes.append(node.id)
 
             if not seed_nodes:
-                logger.warning(f"No graph nodes found for symbols: {symbols}")
+                logger.warning("No graph nodes found for requested symbols")
                 return None
 
             # Select context
@@ -4540,7 +4728,7 @@ class EnhancedDispatcher:
             return result
 
         except Exception as e:
-            logger.error(f"Error getting context for symbols: {e}", exc_info=True)
+            logger.error(f"Error getting context for symbols: {type(e).__name__}")
             return None
 
     def find_symbol_dependencies(
@@ -4565,7 +4753,7 @@ class EnhancedDispatcher:
                     break
 
             if not node_id:
-                logger.warning(f"Symbol not found in graph: {symbol}")
+                logger.warning("Requested symbol not found in graph")
                 return []
 
             # Get dependencies
@@ -4584,7 +4772,7 @@ class EnhancedDispatcher:
             ]
 
         except Exception as e:
-            logger.error(f"Error finding dependencies for {symbol}: {e}")
+            logger.error("Dependency lookup failed (%s)", type(e).__name__)
             return []
 
     def find_symbol_dependents(
@@ -4605,7 +4793,7 @@ class EnhancedDispatcher:
                     break
 
             if not node_id:
-                logger.warning(f"Symbol not found in graph: {symbol}")
+                logger.warning("Requested symbol not found in graph")
                 return []
 
             # Get dependents
@@ -4624,7 +4812,7 @@ class EnhancedDispatcher:
             ]
 
         except Exception as e:
-            logger.error(f"Error finding dependents for {symbol}: {e}")
+            logger.error("Dependent lookup failed (%s)", type(e).__name__)
             return []
 
     def get_code_hotspots(self, ctx: RepoContext, top_n: int = 10) -> List[Dict[str, Any]]:
@@ -4654,5 +4842,5 @@ class EnhancedDispatcher:
             ]
 
         except Exception as e:
-            logger.error(f"Error getting hotspots: {e}")
+            logger.error(f"Error getting hotspots: {type(e).__name__}")
             return []

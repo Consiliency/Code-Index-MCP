@@ -56,6 +56,9 @@ class RepositoryInfo:
     git_common_dir: Optional[str] = None  # str for JSON-safety; __post_init__ coerces Path→str
     staleness_reason: Optional[str] = None
     last_sync_error: Optional[str] = None
+    registration_id: Optional[str] = None
+    index_generation: Optional[str] = None
+    index_profile: Optional[str] = None
 
     def __post_init__(self) -> None:
         """Normalize paths and derived fields."""
@@ -92,6 +95,8 @@ class CrossRepoSearchResult:
     results: List[Dict[str, Any]]
     search_time: float
     error: Optional[str] = None
+    code: Optional[str] = None
+    safe_fallback: Optional[str] = None
 
 
 class MultiRepositoryManager:
@@ -236,7 +241,7 @@ class MultiRepositoryManager:
             conn.close()
 
         except Exception as e:
-            logger.error(f"Error analyzing repository: {e}")
+            logger.error(f"Error analyzing repository: {type(e).__name__}")
 
         return stats
 
@@ -348,16 +353,11 @@ class MultiRepositoryManager:
 
     def get_ready_repositories(self) -> List[RepositoryInfo]:
         """Return repositories ready for local search/reconcile use."""
-        ready = []
-        for repo in self.list_repositories(active_only=True):
-            health = repo.artifact_health or ""
-            if health in {
-                "ready",
-                "prepared",
-                "published",
-            } or self.has_local_runtime_state(repo.repository_id):
-                ready.append(repo)
-        return ready
+        return [
+            repo
+            for repo in self.list_repositories(active_only=True)
+            if self._query_ready(repo.repository_id)
+        ]
 
     def get_stale_repositories(self) -> List[RepositoryInfo]:
         """Return repositories whose local/runtime state appears stale or missing."""
@@ -383,7 +383,7 @@ class MultiRepositoryManager:
         try:
             return self._store_registry.get(repository_id)
         except (KeyError, Exception) as e:
-            logger.error(f"Failed to connect to repository {repository_id}: {e}")
+            logger.error(f"Failed to connect to repository {repository_id}: {type(e).__name__}")
             return None
 
     def _normalize_symbol_result(self, result: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -405,6 +405,31 @@ class MultiRepositoryManager:
             "file": file_path,
             "line": line_number,
         }
+
+    def _query_ready(self, repository_id: str, binding: Optional[tuple] = None) -> bool:
+        from mcp_server.health.repository_readiness import ReadinessClassifier
+
+        repo = self.registry.get(repository_id)
+        return bool(
+            repo
+            and self.is_repo_authorized(repository_id)
+            and (binding is None or StoreRegistry.binding(repo) == binding)
+            and ReadinessClassifier.classify_registered(repo).ready
+        )
+
+    @staticmethod
+    def _query_unavailable(
+        repository_id: str, repo: Optional[RepositoryInfo]
+    ) -> CrossRepoSearchResult:
+        return CrossRepoSearchResult(
+            repository_id=repository_id,
+            repository_name=repo.name if repo else repository_id,
+            results=[],
+            search_time=0.0,
+            error="index_unavailable",
+            code="index_unavailable",
+            safe_fallback="native_search",
+        )
 
     async def search_symbol(
         self,
@@ -461,14 +486,14 @@ class MultiRepositoryManager:
                     if result:
                         results.append(result)
                 except Exception as e:
-                    logger.error(f"Search failed for {repo.name}: {e}")
+                    logger.error(f"Search failed for {repo.name}: {type(e).__name__}")
                     results.append(
                         CrossRepoSearchResult(
                             repository_id=repo.repository_id,
                             repository_name=repo.name,
                             results=[],
                             search_time=0.0,
-                            error=str(e),
+                            error=type(e).__name__,
                         )
                     )
 
@@ -481,7 +506,7 @@ class MultiRepositoryManager:
         results.sort(key=lambda r: -repo_priority.get(r.repository_id, 0))
 
         logger.info(
-            f"Searched {len(repos)} repositories for '{query}' "
+            f"Searched {len(repos)} repositories (query_chars={len(query)}) "
             f"in {total_time:.2f}s, found {sum(len(r.results) for r in results)} results"
         )
 
@@ -492,19 +517,18 @@ class MultiRepositoryManager:
     ) -> Optional[CrossRepoSearchResult]:
         """Search a single repository."""
         start_time = datetime.now()
+        repo_info = self.registry.get(repository_id)
+        if not self._query_ready(repository_id):
+            return self._query_unavailable(repository_id, repo_info)
+        binding = StoreRegistry.binding(repo_info)
 
         # Get connection
         try:
             store = self._get_connection(repository_id)
         except Exception as e:
-            logger.error(f"Failed to get connection for {repository_id}: {e}")
+            logger.error(f"Failed to get connection for {repository_id}: {type(e).__name__}")
             return None
         if not store:
-            return None
-
-        # Get repository info
-        repo_info = self.registry.get(repository_id)
-        if not repo_info:
             return None
 
         try:
@@ -535,6 +559,8 @@ class MultiRepositoryManager:
 
             search_time = (datetime.now() - start_time).total_seconds()
 
+            if not self._query_ready(repository_id, binding):
+                return self._query_unavailable(repository_id, repo_info)
             return CrossRepoSearchResult(
                 repository_id=repository_id,
                 repository_name=repo_info.name,
@@ -543,13 +569,13 @@ class MultiRepositoryManager:
             )
 
         except Exception as e:
-            logger.error(f"Error searching repository {repository_id}: {e}")
+            logger.error(f"Error searching repository {repository_id}: {type(e).__name__}")
             return CrossRepoSearchResult(
                 repository_id=repository_id,
                 repository_name=repo_info.name,
                 results=[],
                 search_time=0.0,
-                error=str(e),
+                error=type(e).__name__,
             )
 
     async def search_code(
@@ -558,6 +584,7 @@ class MultiRepositoryManager:
         repository_ids: Optional[List[str]] = None,
         file_pattern: Optional[str] = None,
         limit: int = 50,
+        languages: Optional[List[str]] = None,
     ) -> List[CrossRepoSearchResult]:
         """
         Search for code content across repositories using BM25.
@@ -584,7 +611,7 @@ class MultiRepositoryManager:
             logger.warning("No repositories to search")
             return []
 
-        logger.info(f"Code search for '{query}' across {len(repos)} repositories")
+        logger.info("Code search across %d repositories (query_chars=%d)", len(repos), len(query))
 
         # Update statistics
         self._search_stats["total_searches"] += 1
@@ -600,6 +627,7 @@ class MultiRepositoryManager:
                     query,
                     file_pattern,
                     limit,
+                    **({"languages": languages} if languages else {}),
                 ): repo
                 for repo in repos
             }
@@ -612,14 +640,14 @@ class MultiRepositoryManager:
                     if result:
                         results.append(result)
                 except Exception as e:
-                    logger.error(f"Search failed in {repo.name}: {e}")
+                    logger.error(f"Search failed in {repo.name}: {type(e).__name__}")
                     results.append(
                         CrossRepoSearchResult(
                             repository_id=repo.repository_id,
                             repository_name=repo.name,
                             results=[],
                             search_time=0.0,
-                            error=str(e),
+                            error=type(e).__name__,
                         )
                     )
 
@@ -638,34 +666,32 @@ class MultiRepositoryManager:
         return results
 
     def _search_code_in_repository(
-        self, repository_id: str, query: str, file_pattern: Optional[str], limit: int
+        self,
+        repository_id: str,
+        query: str,
+        file_pattern: Optional[str],
+        limit: int,
+        languages: Optional[List[str]] = None,
     ) -> Optional[CrossRepoSearchResult]:
         """Search code content in a single repository using BM25."""
         start_time = datetime.now()
+        repo_info = self.registry.get(repository_id)
+        if not self._query_ready(repository_id):
+            return self._query_unavailable(repository_id, repo_info)
+        binding = StoreRegistry.binding(repo_info)
 
         store = self._get_connection(repository_id)
         if not store:
             return None
 
-        repo_info = self.registry.get(repository_id)
-        if not repo_info:
-            return None
-
         try:
-            # Use BM25 search on the appropriate table
-            # Try both bm25_content and fts_code tables
-            bm25_results = []
-
-            # First try bm25_content table
-            try:
-                bm25_results = store.search_bm25(query, table="bm25_content", limit=limit)
-            except Exception as e:
-                logger.debug(f"bm25_content search failed, trying fts_code: {e}")
-                # Fall back to fts_code table
-                try:
-                    bm25_results = store.search_bm25(query, table="fts_code", limit=limit)
-                except Exception as e2:
-                    logger.warning(f"Both BM25 tables failed for {repository_id}: {e2}")
+            bm25_results = store.search_bm25(
+                query,
+                table="fts_code",
+                limit=limit,
+                file_pattern=file_pattern,
+                **({"languages": languages} if languages else {}),
+            )
 
             # Format results
             formatted_results = []
@@ -673,9 +699,12 @@ class MultiRepositoryManager:
                 formatted_results.append(
                     {
                         "file": result.get("filepath", result.get("file_path", "")),
+                        "file_path": result.get("filepath", result.get("file_path", "")),
+                        "content": result.get("content", result.get("snippet", "")),
                         "line": result.get("line", 0),
+                        "language": result.get("language"),
                         "snippet": result.get("snippet", ""),
-                        "score": result.get("score", 0.0),
+                        "score": -float(result.get("score", 0.0)),
                         "repository": repo_info.name,
                         "repository_id": repository_id,
                     }
@@ -683,6 +712,8 @@ class MultiRepositoryManager:
 
             search_time = (datetime.now() - start_time).total_seconds()
 
+            if not self._query_ready(repository_id, binding):
+                return self._query_unavailable(repository_id, repo_info)
             return CrossRepoSearchResult(
                 repository_id=repository_id,
                 repository_name=repo_info.name,
@@ -691,13 +722,13 @@ class MultiRepositoryManager:
             )
 
         except Exception as e:
-            logger.error(f"BM25 search failed in {repository_id}: {e}")
+            logger.error(f"BM25 search failed in {repository_id}: {type(e).__name__}")
             return CrossRepoSearchResult(
                 repository_id=repository_id,
                 repository_name=repo_info.name,
                 results=[],
                 search_time=(datetime.now() - start_time).total_seconds(),
-                error=str(e),
+                error=type(e).__name__,
             )
 
     def _update_search_stats(self, search_time: float):
@@ -801,7 +832,7 @@ class MultiRepositoryManager:
                 logger.info(f"Optimized index for {repo.name}")
 
             except Exception as e:
-                logger.error(f"Failed to optimize {repo.name}: {e}")
+                logger.error(f"Failed to optimize {repo.name}: {type(e).__name__}")
 
         logger.info(f"Optimized {optimized} repository indexes")
 

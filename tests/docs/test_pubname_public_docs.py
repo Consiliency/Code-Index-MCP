@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from tests.test_release_metadata import EXPECTED_VERSION
+
 REPO = Path(__file__).resolve().parents[2]
 
 
@@ -23,10 +25,11 @@ def test_public_install_docs_use_source_or_local_wheel_proof():
 
     readme = _read("README.md")
     getting_started = _read("docs/GETTING_STARTED.md")
-    assert "dist/index_it_mcp-1.4.0-py3-none-any.whl" in readme
-    assert "dist/index_it_mcp-1.4.0-py3-none-any.whl" in getting_started
-    assert "July 10, 2026" in readme
-    assert "July 10, 2026" in getting_started
+    for text in (readme, getting_started):
+        assert f"dist/index_it_mcp-{EXPECTED_VERSION}-py3-none-any.whl" in text
+        assert "prepared candidate" in text
+        assert "Published `1.4.0`" in text
+        assert "operations/v13-release.md" in text
 
 
 def test_public_docs_do_not_treat_code_index_mcp_as_python_install_name():

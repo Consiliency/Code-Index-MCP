@@ -330,6 +330,18 @@ agent-fast-local: alpha-dependency-sync coverage-artifact-guard
 		-q --no-cov
 
 agent-gate-local: agent-fast-local
+	$(UV_RUN) --extra dev pytest \
+		tests/test_sqlite_migrations.py tests/test_baml_contract.py \
+		tests/test_tool_schema_handler_parity.py \
+		tests/test_dispatcher.py::TestEnhancedDispatcherProtocolConformance::test_direct_symbol_response_satisfies_http_contract \
+		tests/test_dispatcher.py::TestEnhancedDispatcherProtocolConformance::test_skip_cache_does_not_suppress_writes_to_another_store \
+		tests/docs/test_p8_historical_sweep.py tests/test_workflow_action_pins.py \
+		-q --no-cov
+	SEMANTIC_SEARCH_ENABLED=false $(UV_RUN) --extra dev pytest \
+		tests/test_v13_state.py tests/test_registry_concurrency.py \
+		tests/test_sqlite_pool.py tests/test_store_registry.py tests/test_indexing_lock.py \
+		tests/test_python_client_search.py tests/test_watcher_multi_repo.py \
+		tests/test_endpoint_reranker.py -q --no-cov
 	$(MAKE) release-smoke
 	SEMANTIC_SEARCH_ENABLED=false $(UV_RUN) --extra dev pytest \
 		tests/test_multi_repo_production_matrix.py \

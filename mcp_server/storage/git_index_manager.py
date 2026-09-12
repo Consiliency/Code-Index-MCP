@@ -4,19 +4,23 @@ This module provides index management that's synchronized with git commits,
 supporting incremental updates and artifact management.
 """
 
+import hashlib
 import json
 import logging
+import math
 import os
 import shutil
 import sqlite3
 import subprocess
 import tempfile
-from dataclasses import dataclass
+import uuid
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from ..artifacts.commit_artifacts import CommitArtifactManager
+from ..config.env_vars import get_max_file_size_bytes
 from ..core.ignore_patterns import EXCLUDED_DIR_PARTS
 from ..core.path_resolver import PathResolver
 from ..core.repo_context import RepoContext
@@ -176,7 +180,13 @@ class GitAwareIndexManager:
         self.registry = registry
         self.dispatcher = dispatcher
         self.repo_resolver = repo_resolver
+        if isinstance(repo_resolver, RepoResolver):
+            repo_resolver._index_manager = self
         self.store_registry = store_registry
+        if isinstance(dispatcher, EnhancedDispatcher) and dispatcher._semantic_registry is None:
+            from ..utils.semantic_indexer_registry import SemanticIndexerRegistry
+
+            dispatcher._semantic_registry = SemanticIndexerRegistry(registry)
         self.artifact_manager = CommitArtifactManager()
         # Wired post-construction by MultiRepositoryWatcher to avoid circular import.
         # Signature: (repo_id: str, current_branch: str, tracked_branch: str) -> None
@@ -186,7 +196,8 @@ class GitAwareIndexManager:
         self, repo_id: str, force_full: bool = False, bypass_branch_guard: bool = False
     ) -> IndexSyncResult:
         """Serialize repository synchronization through the shared per-repo lock."""
-        with lock_registry.acquire(repo_id):
+        repo = self.registry.get_repository(repo_id)
+        with lock_registry.acquire(repo_id, repo_path=repo.path if repo else None):
             return self._sync_repository_index_locked(
                 repo_id,
                 force_full=force_full,
@@ -285,322 +296,209 @@ class GitAwareIndexManager:
             )
 
         # Check if already up to date
-        if current_commit == last_indexed_commit and not force_full:
+        if (
+            current_commit == last_indexed_commit
+            and not force_full
+            and not repo_info.staleness_reason
+            and index_exists_before_mutation
+            and self._git_source_unchanged(repo_path, current_commit, current_branch)
+        ):
             return IndexSyncResult(
                 action="up_to_date",
                 commit=current_commit,
                 duration_seconds=(datetime.now() - start_time).total_seconds(),
             )
 
-        # Check for remote index artifact
         if repo_info.artifact_enabled and not force_full:
             if self._has_remote_artifact(repo_id, current_commit):
-                # Download existing index for this commit
                 if self._download_commit_index(repo_id, current_commit):
-                    if self._index_exists(repo_info) and self.registry.update_indexed_commit(
-                        repo_id, current_commit, branch=current_branch
-                    ):
-                        repo_info.last_indexed_commit = current_commit
-                        return IndexSyncResult(
-                            action="downloaded",
-                            commit=current_commit,
-                            duration_seconds=(datetime.now() - start_time).total_seconds(),
-                        )
-
-        ctx = self._resolve_ctx(repo_id)
-        if ctx is None:
-            return IndexSyncResult(
-                action="failed",
-                commit=current_commit,
-                error=f"Failed to resolve repository context: {repo_id}",
-                duration_seconds=(datetime.now() - start_time).total_seconds(),
-            )
-
-        # Determine what changed since last index
-        if last_indexed_commit and not force_full:
-            try:
-                changed_files = self._get_changed_files(
-                    repo_path, last_indexed_commit, current_commit
-                )
-                if not changed_files.is_empty():
-                    if self._should_full_reindex(repo_path, changed_files):
-                        logger.info(
-                            "Large change set detected for %s (%d files), using full reindex",
-                            repo_id,
-                            changed_files.total_changes(),
-                        )
-                    elif not index_exists_before_mutation:
-                        logger.warning(
-                            "No existing durable index for %s; using full reindex",
-                            repo_id,
-                        )
-                    else:
-                        # Incremental update - only reindex changed files
-                        result = self._incremental_index_update(repo_id, ctx, changed_files)
-                        if not result.clean:
-                            self.registry.update_staleness_reason(repo_id, "partial_index_failure")
-                            self.registry.update_last_sync_error(
-                                repo_id,
-                                "; ".join(result.errors) or "Incremental index update failed",
-                            )
-                            return IndexSyncResult(
-                                action="failed",
-                                commit=current_commit,
-                                files_processed=result.files_processed,
-                                error="; ".join(result.errors) or "Incremental index update failed",
-                                duration_seconds=(datetime.now() - start_time).total_seconds(),
-                                semantic=result.semantic,
-                            )
-                        if self._index_exists(repo_info) and self.registry.update_indexed_commit(
-                            repo_id, current_commit, branch=current_branch
-                        ):
-                            repo_info.last_indexed_commit = current_commit
-                            return IndexSyncResult(
-                                action="incremental_update",
-                                commit=current_commit,
-                                files_processed=result.files_processed,
-                                duration_seconds=(datetime.now() - start_time).total_seconds(),
-                            )
-            except Exception as e:
-                logger.warning(f"Incremental update failed, falling back to full index: {e}")
-
-        # Full index needed
-        runtime_snapshot = self._snapshot_active_runtime(repo_info)
-        if force_full:
-            self._write_force_full_exit_trace(
-                repo_info,
-                {
-                    "status": "running",
-                    "stage": "force_full_started",
-                    "stage_family": "lexical",
-                    "current_commit": current_commit,
-                    "indexed_commit_before": last_indexed_commit,
-                    "last_progress_path": None,
-                    "in_flight_path": None,
-                    "summary_call_timed_out": False,
-                    "summary_call_file_path": None,
-                    "summary_call_chunk_ids": [],
-                    "summary_call_timeout_seconds": None,
-                    "blocker_source": "lexical_mutation",
-                },
-            )
-        progress_callback = None
-        if force_full:
-            progress_callback = self._make_force_full_progress_callback(
-                repo_info=repo_info,
-                current_commit=current_commit,
-                indexed_commit_before=last_indexed_commit,
-            )
-        try:
-            full_index_value = self._full_index(
-                repo_id,
-                ctx,
-                progress_callback=progress_callback,
-            )
-        except TypeError as exc:
-            if progress_callback is not None and "progress_callback" in str(exc):
-                try:
-                    full_index_value = self._full_index(repo_id, ctx)
-                except BaseException:
-                    if force_full:
-                        self._finalize_running_force_full_trace_as_interrupted(
-                            repo_info=repo_info,
-                            current_commit=current_commit,
-                            indexed_commit_before=last_indexed_commit,
-                        )
-                    raise
-            else:
-                raise
-        except BaseException:
-            if force_full:
-                self._finalize_running_force_full_trace_as_interrupted(
-                    repo_info=repo_info,
-                    current_commit=current_commit,
-                    indexed_commit_before=last_indexed_commit,
-                )
-            raise
-        result = self._normalize_update_result(full_index_value)
-        restore_result = self._restore_zero_summary_runtime_if_needed(
-            repo_id,
-            repo_info,
-            ctx,
-            result,
-            runtime_snapshot,
-        )
-        if restore_result is not None:
-            self._write_force_full_exit_trace(
-                repo_info,
-                {
-                    "status": "completed",
-                    "stage": "runtime_restore_completed",
-                    "stage_family": "final_closeout",
-                    "current_commit": current_commit,
-                    "indexed_commit_before": last_indexed_commit,
-                    "last_progress_path": (result.low_level or {}).get("last_progress_path")
-                    or (result.semantic or {}).get("summary_call_file_path"),
-                    "in_flight_path": (result.low_level or {}).get("in_flight_path"),
-                    "summary_call_timed_out": (result.semantic or {}).get(
-                        "summary_call_timed_out", False
-                    ),
-                    "summary_call_file_path": (result.semantic or {}).get("summary_call_file_path"),
-                    "summary_call_chunk_ids": (result.semantic or {}).get(
-                        "summary_call_chunk_ids", []
-                    ),
-                    "summary_call_timeout_seconds": (result.semantic or {}).get(
-                        "summary_call_timeout_seconds"
-                    ),
-                    "blocker_source": self._trace_blocker_source(result),
-                    "storage_failure_family": (result.semantic or {}).get("storage_failure_family"),
-                    "storage_failure_reason": (result.semantic or {}).get("storage_failure_reason"),
-                    "storage_failure_message": (result.semantic or {}).get(
-                        "storage_failure_message"
-                    ),
-                    "storage_diagnostics": (result.semantic or {}).get("storage_diagnostics"),
-                    "runtime_restore_performed": True,
-                    "runtime_restore_mode": restore_result.mode,
-                    "runtime_restore_declined_reason": None,
-                },
-            )
-        if not result.clean:
-            self.registry.update_staleness_reason(repo_id, "partial_index_failure")
-            error_detail = self._format_sync_error_with_restore_context(
-                "; ".join(result.errors) or "Full index failed",
-                restore_result,
-            )
-            if force_full and restore_result is None:
-                self._write_force_full_exit_trace(
-                    repo_info,
-                    {
-                        "status": "completed",
-                        "stage": "force_full_failed",
-                        "stage_family": "final_closeout",
-                        "current_commit": current_commit,
-                        "indexed_commit_before": last_indexed_commit,
-                        "last_progress_path": (result.low_level or {}).get("last_progress_path")
-                        or (result.semantic or {}).get("summary_call_file_path"),
-                        "in_flight_path": (result.low_level or {}).get("in_flight_path"),
-                        "summary_call_timed_out": (result.semantic or {}).get(
-                            "summary_call_timed_out", False
-                        ),
-                        "summary_call_file_path": (result.semantic or {}).get(
-                            "summary_call_file_path"
-                        ),
-                        "summary_call_chunk_ids": (result.semantic or {}).get(
-                            "summary_call_chunk_ids", []
-                        ),
-                        "summary_call_timeout_seconds": (result.semantic or {}).get(
-                            "summary_call_timeout_seconds"
-                        ),
-                        "blocker_source": self._trace_blocker_source(result),
-                        "storage_failure_family": (result.semantic or {}).get(
-                            "storage_failure_family"
-                        ),
-                        "storage_failure_reason": (result.semantic or {}).get(
-                            "storage_failure_reason"
-                        ),
-                        "storage_failure_message": (result.semantic or {}).get(
-                            "storage_failure_message"
-                        ),
-                        "storage_diagnostics": (result.semantic or {}).get("storage_diagnostics"),
-                        "runtime_restore_performed": False,
-                        "runtime_restore_mode": None,
-                        "runtime_restore_declined_reason": (result.semantic or {}).get(
-                            "runtime_restore_declined_reason"
-                        ),
-                    },
-                )
-            self.registry.update_last_sync_error(
-                repo_id,
-                error_detail,
-            )
-            return IndexSyncResult(
-                action="failed",
-                commit=current_commit,
-                files_processed=result.files_processed,
-                error=error_detail,
-                duration_seconds=(datetime.now() - start_time).total_seconds(),
-                semantic=result.semantic,
-            )
-        if not self._index_has_durable_rows(repo_info):
-            self.registry.update_staleness_reason(repo_id, "index_empty")
-            self.registry.update_last_sync_error(
-                repo_id,
-                "Full index completed without durable SQLite file rows",
-            )
-            return IndexSyncResult(
-                action="failed",
-                commit=current_commit,
-                files_processed=result.files_processed,
-                error="Full index completed without durable SQLite file rows",
-                duration_seconds=(datetime.now() - start_time).total_seconds(),
-                semantic=result.semantic,
-            )
-        if self._index_exists(repo_info) and self.registry.update_indexed_commit(
-            repo_id, current_commit, branch=current_branch
+                    return IndexSyncResult(
+                        action="downloaded",
+                        commit=current_commit,
+                        duration_seconds=(datetime.now() - start_time).total_seconds(),
+                    )
+        changes = None
+        if (
+            last_indexed_commit
+            and not force_full
+            and index_exists_before_mutation
+            and repo_info.staleness_reason
+            not in {"index_publication_pending", "partial_index_failure"}
         ):
-            repo_info.last_indexed_commit = current_commit
-            self.registry.update_last_sync_error(repo_id, None)
-            if force_full:
-                self._write_force_full_exit_trace(
-                    repo_info,
-                    {
-                        "status": "completed",
-                        "stage": "force_full_completed",
-                        "stage_family": "final_closeout",
-                        "current_commit": current_commit,
-                        "indexed_commit_before": last_indexed_commit,
-                        "last_progress_path": (result.low_level or {}).get("last_progress_path")
-                        or (result.semantic or {}).get("summary_call_file_path"),
-                        "in_flight_path": None,
-                        "summary_call_timed_out": (result.semantic or {}).get(
-                            "summary_call_timed_out", False
-                        ),
-                        "summary_call_file_path": (result.semantic or {}).get(
-                            "summary_call_file_path"
-                        ),
-                        "summary_call_chunk_ids": (result.semantic or {}).get(
-                            "summary_call_chunk_ids", []
-                        ),
-                        "summary_call_timeout_seconds": (result.semantic or {}).get(
-                            "summary_call_timeout_seconds"
-                        ),
-                        "blocker_source": "final_closeout",
-                    },
-                )
-        elif not self._index_exists(repo_info):
-            self.registry.update_last_sync_error(
-                repo_id,
-                "Full index did not create a durable SQLite index",
-            )
-            return IndexSyncResult(
-                action="failed",
-                commit=current_commit,
-                files_processed=result.files_processed,
-                error="Full index did not create a durable SQLite index",
-                duration_seconds=(datetime.now() - start_time).total_seconds(),
-                semantic=result.semantic,
-            )
-
-        return IndexSyncResult(
-            action="full_index",
-            commit=current_commit,
-            files_processed=result.indexed,
-            duration_seconds=(datetime.now() - start_time).total_seconds(),
-            semantic=result.semantic,
+            try:
+                candidate = self._get_changed_files(repo_path, last_indexed_commit, current_commit)
+                policy_paths = candidate.added + candidate.modified + candidate.deleted
+                policy_paths += [path for pair in candidate.renamed for path in pair]
+                if not any(
+                    Path(path).name in {".gitignore", ".mcp-index-ignore"} for path in policy_paths
+                ):
+                    if not self._should_full_reindex(repo_path, candidate):
+                        changes = candidate
+            except (OSError, subprocess.SubprocessError):
+                logger.info("Change inventory unavailable; staging a full rebuild")
+        return self._rebuild_repository_index_locked(
+            repo_id, changes=changes, force_full=force_full
         )
 
     def rebuild_repository_index(self, repo_id: str) -> IndexSyncResult:
         """Build a full sibling index and publish it atomically for one repository."""
-        with lock_registry.acquire(repo_id):
+        repo = self.registry.get_repository(repo_id)
+        with lock_registry.acquire(repo_id, repo_path=repo.path if repo else None):
             return self._rebuild_repository_index_locked(repo_id)
 
-    def _rebuild_repository_index_locked(self, repo_id: str) -> IndexSyncResult:
+    def restore_verified_artifact(
+        self, repo_id: str, extracted: Path, *, expected_commit: str
+    ) -> IndexSyncResult:
+        """Admit an integrity/identity/signature-verified archive through generation publication."""
+        repo = self.registry.get_repository(repo_id)
+        if repo is None:
+            raise KeyError(repo_id)
+        database = extracted / "current.db"
+        if not database.is_file():
+            raise ValueError("Artifact has no portable current.db generation")
+
+        def restore(ctx):
+            if ctx.registry_entry.current_commit != expected_commit:
+                raise ValueError("Artifact commit changed before staging")
+            mappings = ctx.sqlite_store.import_artifact_rows(database, ctx.workspace_root)
+            if mappings:
+                self._restore_artifact_vectors(ctx, extracted, mappings)
+            with ctx.sqlite_store._get_connection() as connection:
+                count = connection.execute("SELECT COUNT(*) FROM files").fetchone()[0]
+            return UpdateResult(indexed=count)
+
+        with lock_registry.acquire(repo_id, repo_path=repo.path):
+            return self._rebuild_repository_index_locked(
+                repo_id, stage_operation=restore, replace_derived=True
+            )
+
+    def _restore_artifact_vectors(
+        self, ctx: RepoContext, extracted: Path, mappings: List[Dict]
+    ) -> None:
+        from qdrant_client import models
+
+        if getattr(self.dispatcher, "_semantic_enabled", False) is not True:
+            raise RuntimeError("Semantic artifact restore requires its configured profile")
+        metadata = json.loads((extracted / ".index_metadata.json").read_text(encoding="utf-8"))
+        manifest = metadata.get("vector_export", {})
+        if (
+            manifest.get("format") != "semantic-vectors.v1"
+            or manifest.get("file") != "semantic-vectors.jsonl"
+        ):
+            raise ValueError("Artifact vector format requires a new portable export")
+        ids = {row["point_id"] for row in mappings}
+        with ctx.sqlite_store._get_connection() as connection:
+            chunk_paths = {
+                row[0]: row[1]
+                for row in connection.execute(
+                    "SELECT c.chunk_id, f.relative_path FROM code_chunks c JOIN files f ON f.id=c.file_id"
+                )
+            }
+        mapped_chunks, mapped_paths = {}, {}
+        for row in mappings:
+            chunk_id = row["chunk_id"]
+            relative = (
+                chunk_id[: -len(":file-summary")]
+                if chunk_id.endswith(":file-summary")
+                else chunk_paths.get(chunk_id.split(":part:")[0])
+            )
+            if relative is None:
+                raise ValueError("Artifact mapping has no source record")
+            mapped_chunks.setdefault(row["point_id"], set()).add(chunk_id)
+            mapped_paths.setdefault(row["point_id"], set()).add(relative)
+        seen = set()
+        with self.dispatcher._semantic_registry.lease(ctx.repo_id, ctx=ctx) as indexer:
+            profile = indexer.semantic_profile.profile_id
+            record = metadata.get("semantic_profiles", {}).get(profile, {})
+            if not record.get("attested") or any(
+                row["profile_id"] != profile or row["collection"] != manifest.get("collection")
+                for row in mappings
+            ):
+                raise ValueError("Artifact vectors lack an attested profile owner")
+            indexer._prepare_for_writes()
+            indexer._check_indexed_profile(indexer._attestation, record=record)
+            batch = []
+
+            def flush():
+                if not batch:
+                    return
+                result = indexer.qdrant.upsert(indexer.collection, batch, wait=True)
+                if getattr(result, "status", None) not in {
+                    "completed",
+                    models.UpdateStatus.COMPLETED,
+                }:
+                    raise RuntimeError("Artifact vector upsert was not acknowledged")
+                batch.clear()
+
+            with (extracted / "semantic-vectors.jsonl").open(encoding="utf-8") as source:
+                for line in source:
+                    point = models.PointStruct.model_validate_json(line)
+                    if point.id not in ids:
+                        continue  # Locally retained imported rows take precedence.
+                    if point.id in seen:
+                        raise ValueError("Artifact contains duplicate vector identities")
+                    if (
+                        not isinstance(point.vector, list)
+                        or len(point.vector) != indexer.embedding_dimension
+                        or not all(math.isfinite(value) for value in point.vector)
+                    ):
+                        raise ValueError("Artifact vector dimensions do not match provenance")
+                    payload = dict(point.payload or {})
+                    relative = payload.get("relative_path")
+                    if (
+                        not isinstance(relative, str)
+                        or Path(relative).is_absolute()
+                        or ".." in Path(relative).parts
+                    ):
+                        raise ValueError("Artifact vector source path is invalid")
+                    if relative not in mapped_paths[point.id]:
+                        raise ValueError("Artifact vector points at a different source file")
+                    expected_chunks = mapped_chunks[point.id]
+                    if (
+                        payload.get("chunk_id") not in expected_chunks
+                        and payload.get("source_chunk_id") not in expected_chunks
+                    ):
+                        raise ValueError(
+                            "Artifact vector payload does not match its storage mapping"
+                        )
+                    payload["file"] = str(indexer.path_resolver.resolve_path(relative))
+                    batch.append(
+                        models.PointStruct(id=point.id, vector=point.vector, payload=payload)
+                    )
+                    seen.add(point.id)
+                    if len(batch) == 256:
+                        flush()
+                flush()
+            if seen != ids:
+                raise ValueError("Artifact vector mappings are incomplete")
+            with ctx.sqlite_store._get_connection() as connection:
+                for row in mappings:
+                    connection.execute(
+                        "UPDATE semantic_points SET collection=? WHERE profile_id=? AND chunk_id=?",
+                        (indexer.collection, profile, row["chunk_id"]),
+                    )
+                all_ids = [
+                    row[0]
+                    for row in connection.execute(
+                        "SELECT DISTINCT point_id FROM semantic_points WHERE profile_id=?",
+                        (profile,),
+                    )
+                ]
+            indexer.write_collection_provenance(all_ids)
+
+    def _rebuild_repository_index_locked(
+        self,
+        repo_id: str,
+        *,
+        changes: Optional[ChangeSet] = None,
+        force_full: bool = False,
+        stage_operation=None,
+        replace_derived: bool = False,
+    ) -> IndexSyncResult:
         start_time = datetime.now()
         repo_info = self.registry.get_repository(repo_id)
         if repo_info is None:
-            return IndexSyncResult(
-                action="failed", commit="", error=f"Repository not found: {repo_id}"
-            )
+            return IndexSyncResult(action="failed", commit="", error="Repository not found")
 
         git_state = self.registry.update_git_state(repo_id)
         current_commit = git_state.get("commit") if git_state else None
@@ -610,8 +508,23 @@ class GitAwareIndexManager:
         repo_info.current_commit = current_commit
         if current_branch:
             repo_info.current_branch = current_branch
-
         readiness = ReadinessClassifier.classify_registered(repo_info)
+        repo_path = Path(repo_info.path).resolve()
+        if readiness.state in _RECOVERABLE_REBUILD_STATES and not self._git_source_unchanged(
+            repo_path, current_commit, current_branch
+        ):
+            readiness = replace(
+                readiness,
+                state=RepositoryReadinessState.STALE_COMMIT,
+                remediation="Commit or discard tracked edits before rebuilding the index.",
+            )
+            return IndexSyncResult(
+                action="refused",
+                commit=current_commit,
+                code=readiness.state.value,
+                readiness=readiness.to_dict(),
+                error=readiness.remediation,
+            )
         if readiness.state not in _RECOVERABLE_REBUILD_STATES:
             return IndexSyncResult(
                 action="refused",
@@ -622,87 +535,180 @@ class GitAwareIndexManager:
                 duration_seconds=(datetime.now() - start_time).total_seconds(),
             )
 
-        repo_path = Path(repo_info.path).resolve(strict=False)
-        active_path = Path(repo_info.index_path).resolve(strict=False)
-        active_path.parent.mkdir(parents=True, exist_ok=True)
-        stage_dir = Path(
-            tempfile.mkdtemp(prefix=f".{active_path.name}.staging-", dir=active_path.parent)
-        )
-        stage_path = stage_dir / active_path.name
-        stage_store: Optional[SQLiteStore] = None
+        active_path = Path(repo_info.index_path).resolve()
+        index_root = Path(repo_info.index_location).resolve()
+        generation = uuid.uuid4().hex
+        generation_dir = index_root / "generations"
+        generation_path = generation_dir / f"{generation}.db"
+        stage_dir = None
+        stage_store = None
         publication_started = False
+        result = UpdateResult()
+        indexed_before = repo_info.last_indexed_commit
+        full_call_started = False
+        full_call_completed = False
 
         try:
+            self.registry.begin_generation_mutation(
+                repo_id,
+                expected_registration_id=repo_info.registration_id,
+                expected_generation=repo_info.index_generation,
+            )
+            publication_started = True
+            if force_full:
+                self._write_force_full_exit_trace(
+                    repo_info,
+                    {
+                        "status": "running",
+                        "stage": "force_full_started",
+                        "stage_family": "lexical",
+                        "current_commit": current_commit,
+                        "indexed_commit_before": indexed_before,
+                        "last_progress_path": None,
+                        "in_flight_path": None,
+                        "summary_call_timed_out": False,
+                        "summary_call_file_path": None,
+                        "summary_call_chunk_ids": [],
+                        "summary_call_timeout_seconds": None,
+                        "blocker_source": "lexical_mutation",
+                        "process_id": os.getpid(),
+                    },
+                )
+            generation_dir.mkdir(parents=True, exist_ok=True)
+            stage_dir = Path(tempfile.mkdtemp(prefix=".current.db.staging-", dir=index_root))
+            source_root = stage_dir / "source"
+            source_root.mkdir()
+            hashes = self._snapshot_committed_inputs(repo_path, current_commit, source_root)
+            if active_path.exists() and readiness.state != RepositoryReadinessState.CORRUPT_SQLITE:
+                SQLiteStore.snapshot_database(active_path, generation_path)
             stage_store = SQLiteStore(
-                str(stage_path),
-                path_resolver=PathResolver(repo_path),
+                str(generation_path), path_resolver=PathResolver(repo_path, source_root=source_root)
+            )
+            from ..config.settings import get_settings
+
+            settings = get_settings()
+            profile = (
+                settings.get_semantic_default_profile()
+                if getattr(self.dispatcher, "_semantic_enabled", False) is True
+                else settings.semantic_default_profile
+            )
+            if replace_derived or (changes is None and stage_operation is None):
+                stage_store.prepare_generation(hashes, profile)
+            else:
+                with stage_store._get_connection() as connection:
+                    connection.execute("DELETE FROM query_cache")
+                    connection.execute("DELETE FROM parse_cache")
+            stage_info = replace(
+                repo_info,
+                index_path=generation_path,
+                index_generation=generation,
+                current_commit=current_commit,
+                last_indexed_commit=current_commit,
+                current_branch=current_branch,
+                last_indexed_branch=current_branch,
+                staleness_reason=None,
             )
             stage_ctx = RepoContext(
                 repo_id=repo_id,
                 sqlite_store=stage_store,
-                workspace_root=repo_path,
-                tracked_branch=getattr(repo_info, "tracked_branch", "") or "",
-                registry_entry=repo_info,
+                workspace_root=source_root,
+                tracked_branch=repo_info.tracked_branch or "",
+                registry_entry=stage_info,
+                staging=True,
             )
-            result = self._normalize_update_result(self._full_index(repo_id, stage_ctx))
+            self._rebuild_checkpoint("stage_created")
+            if getattr(self.dispatcher, "_semantic_enabled", False) is True:
+                if not callable(getattr(self.dispatcher, "_semantic_lease", None)):
+                    raise RuntimeError("Staged semantic integration unavailable")
+                self._copy_retained_vectors(repo_id, stage_ctx)
+            if stage_operation is not None:
+                result = stage_operation(stage_ctx)
+            elif changes is None:
+                full_call_started = True
+                if force_full:
+                    callback = self._make_force_full_progress_callback(
+                        repo_info=repo_info,
+                        current_commit=current_commit,
+                        indexed_commit_before=indexed_before,
+                    )
+                    try:
+                        value = self._full_index(repo_id, stage_ctx, progress_callback=callback)
+                    except TypeError as exc:
+                        if "progress_callback" not in str(exc):
+                            raise
+                        value = self._full_index(repo_id, stage_ctx)
+                    result = self._normalize_update_result(value)
+                else:
+                    result = self._normalize_update_result(self._full_index(repo_id, stage_ctx))
+                full_call_completed = True
+            else:
+                result = self._incremental_index_update(repo_id, stage_ctx, changes)
             if not result.clean:
-                error = "; ".join(result.errors) or "Staged full index failed"
-                self.registry.update_last_sync_error(repo_id, error)
-                return IndexSyncResult(
-                    action="failed",
-                    commit=current_commit,
-                    files_processed=result.files_processed,
-                    error=error,
-                    semantic=result.semantic,
-                    duration_seconds=(datetime.now() - start_time).total_seconds(),
+                raise RuntimeError("Staged full index did not complete cleanly")
+            if getattr(self.dispatcher, "_semantic_enabled", False) is True:
+                self._finalize_staged_vectors(repo_id, stage_ctx)
+            stage_store.rebuild_generation_indexes()
+            # Parser inputs are disposable; all published paths remain canonical.
+            with stage_store._get_connection() as connection:
+                for file_id, path in connection.execute("SELECT id, path FROM files").fetchall():
+                    source = Path(path)
+                    if source.is_relative_to(source_root):
+                        canonical = str(repo_path / source.relative_to(source_root))
+                        connection.execute(
+                            "UPDATE files SET path=? WHERE id=?", (canonical, file_id)
+                        )
+                        connection.execute(
+                            "UPDATE fts_code SET file_id=? WHERE file_id=?", (canonical, path)
+                        )
+                stage_store._set_config(
+                    connection, "index_generation", generation, "Durable generation"
                 )
-            if not self._index_path_has_durable_rows(stage_path):
-                error = "Staged full index completed without durable SQLite file rows"
-                self.registry.update_last_sync_error(repo_id, error)
-                return IndexSyncResult(
-                    action="failed",
-                    commit=current_commit,
-                    files_processed=result.files_processed,
-                    error=error,
-                    semantic=result.semantic,
-                    duration_seconds=(datetime.now() - start_time).total_seconds(),
-                )
+            if not self._index_path_has_durable_rows(generation_path):
+                raise RuntimeError("Staged index has no durable rows")
 
             self._rebuild_checkpoint("before_replacement")
-            stage_store.close()
+            self._release_runtime_handles(repo_id, repo_info, stage_ctx)
             stage_store = None
-            self._release_runtime_handles(repo_id, repo_info, None)
             quarantine_path = None
             if readiness.state in _QUARANTINE_REBUILD_STATES:
                 quarantine_path = self._quarantine_active_index(active_path, readiness.state)
-
-            if not self.registry.update_staleness_reason(repo_id, "index_publication_pending"):
-                raise RuntimeError("Index publication could not be marked pending")
-            publication_started = True
-            for suffix in ("-wal", "-shm"):
-                sidecar = Path(f"{active_path}{suffix}")
-                if sidecar.exists():
-                    sidecar.unlink()
-            os.replace(stage_path, active_path)
-            ReadinessClassifier.clear_index_inspection_cache()
+            self._fsync_generation(generation_path)
             self._rebuild_checkpoint("after_replacement")
-            if not self._index_path_has_durable_rows(active_path):
-                raise RuntimeError("Published index failed durable-row validation")
             self._rebuild_checkpoint("before_provenance")
-            persisted_commit = self.registry.update_indexed_commit(
+            if not self._git_source_unchanged(repo_path, current_commit, current_branch):
+                raise RuntimeError("Repository changed while the generation was building")
+            self.registry.publish_generation(
                 repo_id,
-                current_commit,
-                branch=current_branch,
-            )
-            if persisted_commit != current_commit:
-                raise RuntimeError("Published index provenance could not be recorded")
-            repo_info.last_indexed_commit = current_commit
-            repo_info.staleness_reason = None
-            self.registry.update_last_sync_error(repo_id, None)
-            return IndexSyncResult(
-                action="full_index",
+                generation=generation,
+                index_path=generation_path,
                 commit=current_commit,
-                files_processed=result.indexed,
+                branch=current_branch or repo_info.tracked_branch,
+                profile=repo_info.index_profile,
+                expected_registration_id=repo_info.registration_id,
+                expected_generation=repo_info.index_generation,
+            )
+            repo_info.index_path = generation_path
+            repo_info.index_generation = generation
+            repo_info.last_indexed_commit = current_commit
+            repo_info.last_indexed_branch = current_branch
+            repo_info.staleness_reason = None
+            ReadinessClassifier.clear_index_inspection_cache()
+            if force_full:
+                self._write_force_full_exit_trace(
+                    repo_info,
+                    {
+                        **(result.semantic or {}),
+                        "status": "completed",
+                        "stage": "force_full_completed",
+                        "stage_family": "final_closeout",
+                        "in_flight_path": None,
+                        "blocker_source": "final_closeout",
+                    },
+                )
+            return IndexSyncResult(
+                action="full_index" if changes is None else "incremental_update",
+                commit=current_commit,
+                files_processed=result.files_processed,
                 readiness={
                     "previous_state": readiness.state.value,
                     "quarantine_path": str(quarantine_path) if quarantine_path else None,
@@ -711,20 +717,282 @@ class GitAwareIndexManager:
                 duration_seconds=(datetime.now() - start_time).total_seconds(),
             )
         except Exception as exc:
-            error = f"Staged rebuild failed: {exc}"
+            error = f"Staged rebuild failed ({type(exc).__name__})"
             if publication_started:
                 self.registry.update_staleness_reason(repo_id, "partial_index_failure")
             self.registry.update_last_sync_error(repo_id, error)
+            if force_full and full_call_started and not full_call_completed:
+                raise
+            if force_full:
+                self._write_force_full_exit_trace(
+                    repo_info,
+                    {
+                        **(result.semantic or {}),
+                        **(result.low_level or {}),
+                        "status": "completed",
+                        "stage": "force_full_failed",
+                        "stage_family": "final_closeout",
+                        "blocker_source": self._trace_blocker_source(result),
+                        "runtime_restore_performed": False,
+                        "runtime_restore_declined_reason": "old_generation_retained",
+                    },
+                )
             return IndexSyncResult(
                 action="failed",
                 commit=current_commit,
                 error=error,
+                files_processed=result.files_processed,
+                semantic=result.semantic,
                 duration_seconds=(datetime.now() - start_time).total_seconds(),
             )
         finally:
+            if force_full:
+                self._finalize_running_force_full_trace_as_interrupted(
+                    repo_info=repo_info,
+                    current_commit=current_commit,
+                    indexed_commit_before=indexed_before,
+                )
             if stage_store is not None:
-                stage_store.close()
-            shutil.rmtree(stage_dir, ignore_errors=True)
+                try:
+                    self._release_runtime_handles(repo_id, repo_info, None)
+                except Exception as exc:
+                    logger.warning(
+                        "Failed-stage retirement remains pending: %s", type(exc).__name__
+                    )
+                finally:
+                    stage_store.close()
+            if stage_dir is not None:
+                shutil.rmtree(stage_dir, ignore_errors=True)
+
+    @staticmethod
+    def _git_source_unchanged(repo_path: Path, commit: str, branch: Optional[str]) -> bool:
+        try:
+            head = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=repo_path,
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=10,
+            ).stdout.strip()
+            ref = subprocess.run(
+                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                cwd=repo_path,
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=10,
+            ).stdout.strip()
+            dirty = subprocess.run(
+                ["git", "diff", "--quiet", "--no-ext-diff", "HEAD", "--"],
+                cwd=repo_path,
+                capture_output=True,
+                timeout=10,
+            ).returncode
+            return head == commit and ref == branch and dirty == 0
+        except (OSError, subprocess.SubprocessError):
+            return False
+
+    def _finalize_staged_vectors(self, repo_id: str, ctx: RepoContext) -> None:
+        """Drain only this unpublished owner and verify its live point mappings."""
+        if not ctx.staging:
+            raise RuntimeError("Vector publication requires an unpublished generation")
+        with self.dispatcher._semantic_registry.lease(repo_id, ctx=ctx) as staged:
+            drained = ctx.sqlite_store.drain_pending_vector_deletions(
+                lambda collection, ids: staged.delete_remote_points(ids, collection=collection),
+                only_collection=staged.collection,
+            )
+            if drained["groups_failed"]:
+                raise RuntimeError("Staged vector cleanup did not complete")
+            with ctx.sqlite_store._get_connection() as connection:
+                records = connection.execute(
+                    "SELECT point_id, collection FROM semantic_points WHERE profile_id=?",
+                    (staged.semantic_profile.profile_id,),
+                ).fetchall()
+            if records:
+                record = staged._indexed_profile_record()
+                if not record or not record.get("attested"):
+                    raise RuntimeError("Staged vectors lack attested provenance")
+            if any(row["collection"] != staged.collection for row in records):
+                raise RuntimeError("Staged vectors belong to another generation")
+            ids = list(dict.fromkeys(row["point_id"] for row in records))
+            relative_paths = set()
+            complete_corpus = True
+            for start in range(0, len(ids), 256):
+                batch = ids[start : start + 256]
+                points = staged.qdrant.retrieve(
+                    staged.collection,
+                    batch,
+                    with_payload=True,
+                    with_vectors=False,
+                )
+                if {point.id for point in points} != set(batch):
+                    raise RuntimeError("Staged vector mappings are incomplete")
+                for point in points:
+                    relative_path = (point.payload or {}).get("relative_path")
+                    if isinstance(relative_path, str) and relative_path:
+                        relative_paths.add(relative_path)
+                    else:
+                        complete_corpus = False
+            if ids:
+                staged.write_collection_provenance(
+                    ids,
+                    corpus_sha256=(
+                        staged._compute_corpus_sha256(relative_paths) if complete_corpus else None
+                    ),
+                )
+
+    def _copy_retained_vectors(self, repo_id: str, ctx: RepoContext) -> None:
+        """Copy attested retained points into the stage without mutating their owner."""
+        from qdrant_client import models
+
+        from ..config.settings import get_settings
+
+        profile = get_settings().get_semantic_default_profile()
+        with ctx.sqlite_store._get_connection() as connection:
+            records = connection.execute(
+                "SELECT chunk_id, point_id, collection FROM semantic_points WHERE profile_id=?",
+                (profile,),
+            ).fetchall()
+        if not records:
+            return
+        registry = self.dispatcher._semantic_registry
+        if registry is None:
+            raise RuntimeError("Semantic generation owner is unavailable")
+        with registry.lease(repo_id) as original:
+            with registry.lease(repo_id, ctx=ctx) as staged:
+                if any(row["collection"] != original.collection for row in records):
+                    raise RuntimeError("Retained vectors have no matching generation owner")
+                attested = original._indexed_profile_record()
+                if not attested or not attested.get("attested"):
+                    raise RuntimeError("Retained vectors lack attested provenance")
+                staged._prepare_for_writes()
+                original._check_indexed_profile(staged._attestation)
+                for start in range(0, len(records), 256):
+                    batch = records[start : start + 256]
+                    ids = list(dict.fromkeys(row["point_id"] for row in batch))
+                    points = original.qdrant.retrieve(
+                        collection_name=original.collection,
+                        ids=ids,
+                        with_payload=True,
+                        with_vectors=True,
+                    )
+                    if {point.id for point in points} != set(ids):
+                        raise RuntimeError("Retained vector mappings are incomplete")
+                    acknowledged = staged.qdrant.upsert(
+                        collection_name=staged.collection,
+                        points=[
+                            models.PointStruct(
+                                id=point.id,
+                                vector=point.vector,
+                                payload=point.payload,
+                            )
+                            for point in points
+                        ],
+                        wait=True,
+                    )
+                    if acknowledged.status not in {"completed", models.UpdateStatus.COMPLETED}:
+                        raise RuntimeError("Retained vector copy was not acknowledged")
+                    with ctx.sqlite_store._get_connection() as connection:
+                        connection.executemany(
+                            "UPDATE semantic_points SET collection=? WHERE profile_id=? AND chunk_id=?",
+                            [(staged.collection, profile, row["chunk_id"]) for row in batch],
+                        )
+
+    @staticmethod
+    def _snapshot_committed_inputs(
+        repo_path: Path, commit: str, destination: Path
+    ) -> Dict[str, str]:
+        from ..core.ignore_patterns import build_walker_filter
+        from ..plugins.generic_treesitter_plugin import GenericTreeSitterPlugin
+
+        listing = subprocess.run(
+            ["git", "ls-tree", "-r", "-l", "-z", commit],
+            cwd=repo_path,
+            capture_output=True,
+            check=True,
+            timeout=30,
+        ).stdout
+        entries = []
+        for record in listing.split(b"\0"):
+            if not record:
+                continue
+            metadata, encoded_path = record.split(b"\t", 1)
+            mode, kind, oid, size = metadata.split()
+            relative = Path(os.fsdecode(encoded_path))
+            if relative.is_absolute() or ".." in relative.parts:
+                raise RuntimeError("Invalid committed source path")
+            policy = relative.name == ".gitignore" or relative == Path(".mcp-index-ignore")
+            if policy and mode not in {b"100644", b"100755"}:
+                raise ValueError("Committed ignore policy must be a regular file")
+            if kind != b"blob" or mode not in {b"100644", b"100755"}:
+                continue
+            bounded = GenericTreeSitterPlugin.uses_exact_bounded_json_path(
+                relative
+            ) or GenericTreeSitterPlugin.uses_exact_bounded_jsonl_path(relative)
+            if int(size) > get_max_file_size_bytes() and not bounded:
+                if policy:
+                    raise ValueError("Committed ignore policy exceeds the input limit")
+                continue
+            entries.append((relative, oid.decode("ascii"), policy))
+
+        hashes = {}
+        resolver = PathResolver(repo_path)
+
+        def copy_blob(entry):
+            relative, oid, _policy = entry
+            target = destination / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with target.open("xb") as output:
+                subprocess.run(
+                    ["git", "cat-file", "blob", oid],
+                    cwd=repo_path,
+                    stdout=output,
+                    stderr=subprocess.PIPE,
+                    check=True,
+                    timeout=30,
+                )
+            hashes[relative.as_posix()] = resolver.compute_content_hash(target)
+
+        # Load committed policies from parents first, before reading ordinary blobs.
+        policies = sorted(
+            (entry for entry in entries if entry[2]), key=lambda entry: len(entry[0].parts)
+        )
+        for entry in policies:
+            if len(entry[0].parts) == 1 or not build_walker_filter(destination)(
+                destination / entry[0]
+            ):
+                copy_blob(entry)
+        excluded = build_walker_filter(destination)
+        for entry in entries:
+            relative = entry[0]
+            if relative.as_posix() in hashes or entry[2] or excluded(destination / relative):
+                continue
+            copy_blob(entry)
+        return hashes
+
+    @staticmethod
+    def _fsync_generation(database: Path) -> None:
+        paths = [database]
+        semantic = database.parent / (database.stem + ".semantic")
+        directories = [database.parent, database.parent.parent]
+        if semantic.exists():
+            for root, _dirs, files in os.walk(semantic):
+                directory = Path(root)
+                directories.append(directory)
+                paths.extend(directory / name for name in files)
+        for path in paths:
+            with path.open("rb") as handle:
+                os.fsync(handle.fileno())
+        if os.name != "nt":
+            for directory in sorted(
+                set(directories), key=lambda path: len(path.parts), reverse=True
+            ):
+                fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+                try:
+                    os.fsync(fd)
+                finally:
+                    os.close(fd)
 
     def _rebuild_checkpoint(self, stage: str) -> None:
         """Failure-injection seam used by publication boundary tests."""
@@ -767,9 +1035,7 @@ class GitAwareIndexManager:
             if self.store_registry is not None:
                 store = self.store_registry.get(repo_id)
             else:
-                registry_get = getattr(self.registry, "get", None)
-                registered_info = registry_get(repo_id) if callable(registry_get) else None
-                if registered_info is repo_info:
+                if isinstance(self.registry, RepositoryRegistry):
                     self.store_registry = StoreRegistry.for_registry(self.registry)
                     store = self.store_registry.get(repo_id)
                 else:
@@ -893,7 +1159,7 @@ class GitAwareIndexManager:
 
         # Use dispatcher if available, otherwise direct SQLite operations
         if self.dispatcher:
-            repo_path = Path(repo_info.path)
+            repo_path = ctx.workspace_root
 
             # Handle deletions first
             for path in changes.deleted:
@@ -1000,6 +1266,12 @@ class GitAwareIndexManager:
         action_label: str,
     ) -> None:
         self._merge_semantic_result(result, mutation.semantic)
+        if mutation.semantic and (
+            mutation.semantic.get("semantic_failed") or mutation.semantic.get("semantic_blocked")
+        ):
+            result.failed += 1
+            result.errors.append("Required semantic mutation did not complete")
+            return
         if mutation.status == success_status:
             setattr(result, success_counter, getattr(result, success_counter) + 1)
             return
@@ -1156,7 +1428,7 @@ class GitAwareIndexManager:
             result.errors.append("No dispatcher available for indexing")
             return result
 
-        repo_path = Path(repo_info.path)
+        repo_path = ctx.workspace_root
 
         # Ensure index directory exists
         index_dir = Path(repo_info.index_location)
@@ -1264,13 +1536,10 @@ class GitAwareIndexManager:
         Returns:
             True if successful
         """
-        repo_info = self.registry.get_repository(repo_id)
-        if not repo_info:
-            return False
-
-        target = Path(repo_info.index_location)
-        target.mkdir(parents=True, exist_ok=True)
-        return self.artifact_manager.extract_commit_artifact(repo_id, commit, target)
+        # Legacy extraction replaces live SQLite/Qdrant files. Until artifacts use
+        # staged generation publication, build locally instead of admitting it.
+        logger.info("Artifact restore requires staged generation publication for %s", repo_id)
+        return False
 
     def create_commit_artifact(self, repo_id: str) -> Optional[Path]:
         """Create index artifact for current commit.
@@ -1298,7 +1567,7 @@ class GitAwareIndexManager:
 
     def _runtime_paths(self, repo_info: Any) -> Tuple[Path, Path]:
         index_location = Path(repo_info.index_location)
-        return index_location / "current.db", index_location / "semantic_qdrant"
+        return Path(repo_info.index_path), index_location / "semantic_qdrant"
 
     def _snapshot_active_runtime(self, repo_info: Any) -> RuntimeSnapshot:
         db_path, qdrant_path = self._runtime_paths(repo_info)
@@ -1351,53 +1620,19 @@ class GitAwareIndexManager:
             self._cleanup_runtime_snapshot(snapshot)
             return None
 
-        self._release_runtime_handles(repo_id, repo_info, ctx)
-        try:
-            restore_mode = self._restore_runtime_snapshot(snapshot)
-        finally:
-            counts_after = self._read_runtime_counts(snapshot.db_path)
-            self._cleanup_runtime_snapshot(snapshot)
-
-        semantic["runtime_restore_performed"] = True
-        semantic["runtime_restore_mode"] = restore_mode
-        semantic["runtime_counts_before"] = dict(snapshot.counts_before)
-        semantic["runtime_counts_after"] = dict(counts_after)
-        result.semantic = semantic
-        return RuntimeRestoreResult(
-            restored=True,
-            mode=restore_mode,
-            counts_before=dict(snapshot.counts_before),
-            counts_after=dict(counts_after),
+        # Other processes can still hold this database or vector store. Copying
+        # over their files cannot provide a coherent rollback; retain the fence.
+        semantic["runtime_restore_performed"] = False
+        semantic["runtime_restore_mode"] = None
+        semantic["runtime_restore_declined_reason"] = (
+            "Live runtime handles may exist; staged generation rebuild required"
         )
-
-    def _restore_runtime_snapshot(self, snapshot: RuntimeSnapshot) -> str:
-        for suffix in ("", "-wal", "-shm"):
-            runtime_file = Path(f"{snapshot.db_path}{suffix}")
-            if runtime_file.exists():
-                runtime_file.unlink()
-        if snapshot.qdrant_path.exists():
-            shutil.rmtree(snapshot.qdrant_path)
-
-        mode_parts: List[str] = []
-        backup_db = snapshot.backup_dir / "current.db"
-        backup_qdrant = snapshot.backup_dir / "semantic_qdrant"
-        if snapshot.db_existed and backup_db.exists():
-            snapshot.db_path.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(backup_db, snapshot.db_path)
-            for suffix in snapshot.sqlite_sidecars:
-                backup_sidecar = snapshot.backup_dir / f"{snapshot.db_path.name}{suffix}"
-                if backup_sidecar.exists():
-                    shutil.copy2(backup_sidecar, Path(f"{snapshot.db_path}{suffix}"))
-            mode_parts.append("sqlite_restored")
-        else:
-            mode_parts.append("sqlite_preserved_empty")
-
-        if snapshot.qdrant_existed and backup_qdrant.exists():
-            shutil.copytree(backup_qdrant, snapshot.qdrant_path)
-            mode_parts.append("qdrant_restored")
-        else:
-            mode_parts.append("qdrant_preserved_empty")
-        return "+".join(mode_parts)
+        semantic["runtime_counts_before"] = dict(snapshot.counts_before)
+        semantic["runtime_counts_after"] = self._read_runtime_counts(snapshot.db_path)
+        result.semantic = semantic
+        self.registry.update_staleness_reason(repo_id, "partial_index_failure")
+        self._cleanup_runtime_snapshot(snapshot)
+        return None
 
     def _release_runtime_handles(
         self,
@@ -1409,10 +1644,7 @@ class GitAwareIndexManager:
             self.store_registry.close(repo_id)
         sqlite_store = getattr(ctx, "sqlite_store", None) if ctx is not None else None
         if sqlite_store is not None:
-            try:
-                sqlite_store.close()
-            except Exception:
-                pass
+            sqlite_store.close()
         if self.dispatcher is not None and hasattr(self.dispatcher, "evict_repository_state"):
             self.dispatcher.evict_repository_state(repo_id, repo_info.path)
 

@@ -58,7 +58,7 @@ def _read(relative_path: str) -> str:
 def test_release_smoke_entrypoints_exist():
     script = REPO / "scripts/release_smoke.py"
     assert script.exists(), "scripts/release_smoke.py is required"
-    text = script.read_text(encoding="utf-8")
+    text = script.read_text(encoding="utf-8") + _read("scripts/installed_runtime_smoke.py")
     for mode in ("--wheel", "--stdio", "--container", "--all"):
         assert mode in text
     for contract in ("get_status", "index_unavailable", "safe_fallback", "native_search"):
@@ -67,6 +67,11 @@ def test_release_smoke_entrypoints_exist():
     for entrypoint in ('"mcp-index"', '"index-it-mcp"'):
         assert entrypoint in text
     assert '"code-index-mcp"' in text
+    assert "boot_test_server" not in text
+    assert "sys.path.insert" not in text
+    assert "ClientSession" in text
+    assert "site-packages" in text
+    assert 'docker", "restart' in text
 
     makefile = _read("Makefile")
     assert re.search(r"^release-smoke:", makefile, re.MULTILINE)
@@ -86,6 +91,7 @@ def test_pyproject_has_console_script_and_build_dependency():
 
     dev_deps = data["project"]["optional-dependencies"]["dev"]
     assert any(dep.startswith("build>=") for dep in dev_deps)
+    assert "storage/migrations/*.sql" in data["tool"]["setuptools"]["package-data"]["mcp_server"]
 
 
 def test_workflows_reuse_shared_release_smoke_commands():

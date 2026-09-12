@@ -7,8 +7,11 @@ index artifacts using GitHub Actions Artifacts storage.
 
 import json
 import subprocess
+import tempfile
+from contextlib import closing
 from pathlib import Path
 from typing import List, Optional, cast
+from uuid import uuid4
 
 import click
 
@@ -21,6 +24,7 @@ from mcp_server.artifacts.multi_repo_artifact_coordinator import (
     MultiRepoArtifactCoordinator,
 )
 from mcp_server.artifacts.semantic_profiles import extract_semantic_profile_metadata
+from mcp_server.config.settings import get_settings
 from mcp_server.dispatcher.dispatcher_enhanced import EnhancedDispatcher
 from mcp_server.indexing.change_detector import ChangeDetector, FileChange
 from mcp_server.indexing.incremental_indexer import IncrementalIndexer
@@ -45,12 +49,18 @@ def _canonical_index_path(repo_info: RepositoryInfo | None = None) -> Path:
 
 
 def _resolve_repository(repository: Optional[str]) -> RepositoryInfo | None:
+    manager = MultiRepositoryManager()
+    try:
+        for repo in manager.list_repositories(active_only=True):
+            if repository:
+                if repo.repository_id == repository or repo.name == repository:
+                    return repo
+            elif repo.path.resolve() == Path.cwd().resolve():
+                return repo
+    finally:
+        manager.close()
     if not repository:
         return None
-    manager = MultiRepositoryManager()
-    for repo in manager.list_repositories(active_only=True):
-        if repo.repository_id == repository or repo.name == repository:
-            return repo
     raise click.ClickException(f"Registered repository not found: {repository}")
 
 
@@ -193,44 +203,44 @@ def _get_local_drift() -> tuple[ChangeDetector, List[FileChange]]:
 def _run_incremental_reconcile(
     changes: List[FileChange], repo_info: RepositoryInfo | None = None
 ) -> bool:
-    """Apply local drift incrementally against the restored artifact baseline."""
-    if not changes:
+    """Reconcile committed changes through the registered generation writer."""
+    if not changes and repo_info is None:
         return True
+    from mcp_server.storage.git_index_manager import GitAwareIndexManager
 
-    store = SQLiteStore(str(_canonical_index_path(repo_info)))
-    plugins = []
-    loaded_languages = set()
-    for change in changes:
-        suffix = Path(change.path).suffix
-        language = get_language_by_extension(suffix)
-        if language is None or language in loaded_languages:
-            continue
-
-        if language == "python":
-            plugin = PythonPlugin(sqlite_store=store, preindex=False)
-        else:
-            plugin = PluginFactory.create_plugin(
-                language, sqlite_store=store, enable_semantic=False
+    with closing(MultiRepositoryManager()) as owner:
+        if repo_info is None:
+            repo_info = next(
+                (
+                    repo
+                    for repo in owner.list_repositories(active_only=True)
+                    if repo.path.resolve() == Path.cwd().resolve()
+                ),
+                None,
             )
-
-        plugins.append(plugin)
-        loaded_languages.add(language)
-
-    dispatcher = EnhancedDispatcher(
-        plugins=plugins,
-        sqlite_store=store,
-        use_plugin_factory=False,
-        lazy_load=False,
-        semantic_search_enabled=False,
-    )
-    indexer = IncrementalIndexer(store=store, dispatcher=dispatcher, repo_path=Path.cwd())
-    stats = indexer.update_from_changes(changes)
-    click.echo(
-        "✅ Incremental reconcile complete: "
-        f"indexed={stats.files_indexed}, removed={stats.files_removed}, "
-        f"moved={stats.files_moved}, skipped={stats.files_skipped}, errors={stats.errors}"
-    )
-    return bool(stats.errors == 0)
+        if repo_info is None:
+            raise click.ClickException(
+                "Register this repository before reconciling its committed index"
+            )
+        dispatcher = EnhancedDispatcher(
+            enable_advanced_features=False,
+            use_plugin_factory=True,
+            semantic_search_enabled=get_settings().semantic_search_enabled,
+            memory_aware=False,
+            multi_repo_enabled=False,
+        )
+        manager = None
+        try:
+            manager = GitAwareIndexManager(owner.registry, dispatcher)
+            result = manager.sync_repository_index(repo_info.repository_id)
+            click.echo(f"Committed reconcile: {result.action}; files={result.files_processed}")
+            return result.action in {"full_index", "incremental_update", "up_to_date"}
+        finally:
+            try:
+                dispatcher.shutdown()
+            finally:
+                if manager is not None and manager.store_registry is not None:
+                    manager.store_registry.shutdown()
 
 
 def _print_reconcile_guidance() -> None:
@@ -283,63 +293,87 @@ def artifact():
 @click.option("--validate", is_flag=True, help="Validate indexes before upload")
 @click.option("--compress-only", is_flag=True, help="Only compress, do not upload")
 @click.option("--no-secure", is_flag=True, help="Disable secure export (include all files)")
+@click.option("--repository", help="Registered repository id or name")
 @click.option(
     "--skip-if-current",
     is_flag=True,
     default=False,
-    help="No-op if .index_metadata.json git_commit matches HEAD",
+    help="No-op if this registered commit was already published",
 )
-def push(validate: bool, compress_only: bool, no_secure: bool, skip_if_current: bool):
+def push(
+    validate: bool,
+    compress_only: bool,
+    no_secure: bool,
+    skip_if_current: bool,
+    repository: Optional[str],
+):
     """Upload local indexes to GitHub Actions Artifacts."""
     try:
-        if skip_if_current:
-            meta_path = Path(".index_metadata.json")
-            if meta_path.exists():
-                try:
-                    meta = json.loads(meta_path.read_text(encoding="utf-8"))
-                    head = subprocess.run(
-                        ["git", "rev-parse", "HEAD"],
-                        capture_output=True,
-                        text=True,
-                        env=get_full_env(),
-                    ).stdout.strip()
-                    if meta.get("git_commit") == head:
-                        click.echo("Index is current. Skipping upload.")
-                        return
-                except Exception:
-                    pass
+        repo_info = _resolve_repository(repository)
+        index_path = _canonical_index_path(repo_info)
+        index_location = _canonical_index_location(repo_info)
+        if not index_path.exists():
+            raise click.ClickException("No index generation found. Run indexing first.")
+        if repo_info is not None:
+            from mcp_server.health.repository_readiness import ReadinessClassifier
 
-        # Check if indexes exist
-        if not _canonical_index_path().exists():
-            click.echo("❌ No .mcp-index/current.db found. Run indexing first.")
+            readiness = ReadinessClassifier.classify_registered(repo_info)
+            if not readiness.ready:
+                raise click.ClickException(f"Index is unavailable: {readiness.code}")
+        if (
+            skip_if_current
+            and repo_info is not None
+            and repo_info.artifact_health == "published"
+            and repo_info.last_published_commit == repo_info.last_indexed_commit
+        ):
+            click.echo("This indexed commit was already published. Skipping upload.")
             return
 
-        uploader = IndexArtifactUploader()
+        uploader = IndexArtifactUploader(repo_path=repo_info.path if repo_info else None)
 
         if validate:
-            click.echo("🔍 Validating indexes...")
+            import sqlite3
+
+            with closing(
+                sqlite3.connect(index_path.resolve().as_uri() + "?mode=ro", uri=True)
+            ) as conn:
+                if (
+                    conn.execute("PRAGMA quick_check").fetchall() != [("ok",)]
+                    or conn.execute("PRAGMA foreign_key_check").fetchone()
+                ):
+                    raise click.ClickException("Index integrity validation failed")
             click.echo("✅ Validation passed")
 
         secure = not no_secure
-        method = "direct" if compress_only else "workflow"
         archive_path, checksum, size = uploader.compress_indexes(
-            Path("index-archive.tar.gz"),
+            index_location / f"index-archive-{uuid4().hex}.tar.gz",
             secure=secure,
-            index_location=_canonical_index_location(),
-            index_path=_canonical_index_path(),
+            repo_path=repo_info.path if repo_info else Path.cwd(),
+            index_location=index_location,
+            index_path=index_path,
         )
+        if compress_only:
+            click.echo(f"Prepared archive: {archive_path}; no upload requested")
+            return
         metadata = uploader.create_metadata(
             checksum,
             size,
             secure=secure,
-            index_location=_canonical_index_location(),
-            index_path=_canonical_index_path(),
+            repo_id=repo_info.repository_id if repo_info else None,
+            commit=repo_info.last_indexed_commit if repo_info else None,
+            tracked_branch=repo_info.tracked_branch if repo_info else None,
+            index_location=index_location,
+            index_path=index_path,
         )
-
-        if method == "workflow":
-            uploader.trigger_workflow(archive_path, metadata)
-        else:
-            uploader.upload_direct(archive_path, metadata)
+        uploader.upload_direct(archive_path, metadata)
+        if repo_info is not None:
+            with closing(MultiRepositoryManager()) as owner:
+                owner.registry.update_artifact_state(
+                    repo_info.repository_id,
+                    last_published_commit=repo_info.last_indexed_commit,
+                    artifact_backend="github_release",
+                    artifact_health="published",
+                )
 
     except Exception as e:
         click.echo(f"❌ Error: {e}", err=True)
@@ -370,9 +404,9 @@ def pull(
             return
 
         repo_info = _resolve_repository(repository)
-        downloader = IndexArtifactDownloader()
-        output_dir = Path("artifact_download")
-        output_dir.mkdir(exist_ok=True)
+        downloader = IndexArtifactDownloader(repo_path=repo_info.path if repo_info else None)
+        download_workspace = tempfile.TemporaryDirectory(prefix="mcp-artifact-")
+        output_dir = Path(download_workspace.name)
         try:
             if latest:
                 result = downloader.download_latest(
@@ -380,6 +414,7 @@ def pull(
                     backup=not no_backup,
                     allow_unsafe=unsafe_allow_mismatched_artifact,
                     repo_id=repo_info.repository_id if repo_info else None,
+                    repo_path=repo_info.path if repo_info else None,
                     tracked_branch=repo_info.tracked_branch if repo_info else None,
                     target_commit=repo_info.current_commit if repo_info else None,
                     index_location=_canonical_index_location(repo_info),
@@ -397,21 +432,27 @@ def pull(
                     backup=not no_backup,
                     allow_unsafe=unsafe_allow_mismatched_artifact,
                     repo_id=repo_info.repository_id if repo_info else None,
+                    repo_path=repo_info.path if repo_info else None,
                     tracked_branch=repo_info.tracked_branch if repo_info else None,
                     target_commit=repo_info.current_commit if repo_info else None,
                     index_location=_canonical_index_location(repo_info),
                     index_path=_canonical_index_path(repo_info),
                 )
         finally:
-            import shutil
+            download_workspace.cleanup()
 
-            shutil.rmtree(output_dir, ignore_errors=True)
-
-        if not _verify_local_index_restored():
+        installed = getattr(result, "installed_items", None)
+        if repo_info is not None and not installed:
+            raise click.ClickException("No registered artifact generation was restored")
+        if repo_info is None and not _verify_local_index_restored():
             click.echo("❌ Download completed but no local index files were restored", err=True)
             raise click.Abort()
 
-        restored = ", ".join(path.name for path in _get_restored_index_paths())
+        restored = (
+            ", ".join(Path(path).name for path in installed)
+            if installed
+            else ", ".join(path.name for path in _get_restored_index_paths())
+        )
         click.echo(f"✅ Local index files restored: {restored}")
         if result.validation_reasons:
             click.echo("⚠️  Unsafe artifact install accepted:")
@@ -442,10 +483,26 @@ def list_artifacts(filter: Optional[str]):
 
 
 @artifact.command()
-def sync():
+@click.option("--repository", help="Registered repository id or name")
+def sync(repository: Optional[str]):
     """Sync indexes with GitHub (pull if needed, push if local is newer)."""
     try:
         click.echo("🔄 Checking index synchronization status...")
+        repo_info = _resolve_repository(repository)
+        if repo_info is not None:
+            if not repo_info.index_path.exists():
+                click.get_current_context().invoke(
+                    pull,
+                    latest=True,
+                    artifact_id=None,
+                    repository=repo_info.repository_id,
+                    unsafe_allow_mismatched_artifact=False,
+                    no_backup=False,
+                )
+            if not _run_incremental_reconcile([], repo_info):
+                raise click.ClickException("Registered generation could not be synchronized")
+            click.echo("Registered committed generation synchronized.")
+            return
 
         # Check if we have local indexes
         has_local = _canonical_index_path().exists()
@@ -453,8 +510,8 @@ def sync():
         if not has_local:
             click.echo("📥 No local indexes found. Pulling latest...")
             downloader = IndexArtifactDownloader()
-            output_dir = Path("artifact_download")
-            output_dir.mkdir(exist_ok=True)
+            download_workspace = tempfile.TemporaryDirectory(prefix="mcp-artifact-")
+            output_dir = Path(download_workspace.name)
             try:
                 downloader.download_latest(
                     output_dir=output_dir,
@@ -463,9 +520,7 @@ def sync():
                     index_path=_canonical_index_path(),
                 )
             finally:
-                import shutil
-
-                shutil.rmtree(output_dir, ignore_errors=True)
+                download_workspace.cleanup()
 
             if not _verify_local_index_restored():
                 click.echo(
@@ -604,9 +659,9 @@ def recover(
             raise click.Abort()
 
         repo_info = _resolve_repository(repository)
-        downloader = IndexArtifactDownloader()
-        output_dir = Path("artifact_recovery")
-        output_dir.mkdir(exist_ok=True)
+        downloader = IndexArtifactDownloader(repo_path=repo_info.path if repo_info else None)
+        download_workspace = tempfile.TemporaryDirectory(prefix="mcp-artifact-")
+        output_dir = Path(download_workspace.name)
         try:
             result = downloader.recover(
                 branch=branch,
@@ -615,21 +670,27 @@ def recover(
                 backup=not no_backup,
                 allow_unsafe=unsafe_allow_mismatched_artifact,
                 repo_id=repo_info.repository_id if repo_info else None,
+                repo_path=repo_info.path if repo_info else None,
                 tracked_branch=repo_info.tracked_branch if repo_info else branch,
                 target_commit=repo_info.current_commit if repo_info else commit,
                 index_location=_canonical_index_location(repo_info),
                 index_path=_canonical_index_path(repo_info),
             )
         finally:
-            import shutil
+            download_workspace.cleanup()
 
-            shutil.rmtree(output_dir, ignore_errors=True)
-
-        if not _verify_local_index_restored():
+        installed = getattr(result, "installed_items", None)
+        if repo_info is not None and not installed:
+            raise click.ClickException("No registered artifact generation was restored")
+        if repo_info is None and not _verify_local_index_restored():
             click.echo("❌ Recovery completed but no local index files were restored", err=True)
             raise click.Abort()
 
-        restored = ", ".join(path.name for path in _get_restored_index_paths())
+        restored = (
+            ", ".join(Path(path).name for path in installed)
+            if installed
+            else ", ".join(path.name for path in _get_restored_index_paths())
+        )
         click.echo(f"✅ Local index files restored: {restored}")
         if result.validation_reasons:
             click.echo("⚠️  Unsafe artifact install accepted:")

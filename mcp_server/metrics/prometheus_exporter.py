@@ -4,6 +4,7 @@ Provides detailed metrics for monitoring and alerting.
 """
 
 import logging
+import threading
 from typing import Any, Callable, Dict, Optional
 
 try:
@@ -354,13 +355,18 @@ class PrometheusExporter:
                 )
             return
         try:
-            result = start_http_server(port, registry=self.registry)
+            result = start_http_server(port, addr="127.0.0.1", registry=self.registry)
             if isinstance(result, tuple) and len(result) == 2:
                 self._server, self._server_thread = result
-            self._started_port = port
-            logger.info("PrometheusExporter HTTP server started on port %d", port)
+            if self._server is None:
+                raise RuntimeError("Metrics server did not return an owned HTTP listener")
+            self._started_port = self._server.server_address[1]
+            logger.info("PrometheusExporter HTTP server started on port %d", self._started_port)
         except OSError as exc:
-            logger.warning("PrometheusExporter could not bind port %d: %s", port, exc)
+            logger.warning(
+                "PrometheusExporter could not bind port %d (%s)", port, type(exc).__name__
+            )
+            raise
 
     def stop(self) -> None:
         """Stop the Prometheus HTTP metrics server (best-effort)."""
@@ -372,6 +378,7 @@ class PrometheusExporter:
         try:
             if self._server is not None:
                 self._server.shutdown()
+                self._server.server_close()
             if self._server_thread is not None:
                 self._server_thread.join(timeout=5)
         except Exception as exc:  # pragma: no cover
@@ -518,11 +525,13 @@ class PrometheusCollector:
 
 # Global exporter instance
 _exporter = None
+_exporter_lock = threading.Lock()
 
 
 def get_prometheus_exporter() -> PrometheusExporter:
     """Get the global Prometheus exporter instance."""
     global _exporter
-    if _exporter is None:
-        _exporter = PrometheusExporter(registry=_EXPORTER_REGISTRY)
+    with _exporter_lock:
+        if _exporter is None:
+            _exporter = PrometheusExporter(registry=_EXPORTER_REGISTRY)
     return _exporter

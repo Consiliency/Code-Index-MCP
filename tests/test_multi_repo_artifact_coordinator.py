@@ -3,6 +3,7 @@ import os
 from datetime import datetime
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
 
 from mcp_server.artifacts.manifest_v2 import WorkspaceArtifactManifest
@@ -135,6 +136,7 @@ def test_coordinator_fetch_updates_registry(monkeypatch, tmp_path: Path):
             (),
             {
                 "artifact": {"head_sha": "recover123", "id": 17, "name": "repo-artifact"},
+                "installed_items": [str(repo_info.index_path)],
                 "validation_reasons": [],
             },
         )()
@@ -145,7 +147,7 @@ def test_coordinator_fetch_updates_registry(monkeypatch, tmp_path: Path):
     )
     monkeypatch.setattr(
         "mcp_server.artifacts.multi_repo_artifact_coordinator.IndexArtifactDownloader._detect_repository",
-        lambda self: "owner/repo",
+        lambda self, repo_path=None: "owner/repo",
     )
 
     coordinator = MultiRepoArtifactCoordinator(manager)
@@ -154,7 +156,7 @@ def test_coordinator_fetch_updates_registry(monkeypatch, tmp_path: Path):
     assert results[0].success is True
     stored = manager.get_repository_info("repo-1")
     assert stored is not None
-    assert stored.last_recovered_commit == "recover123"
+    assert stored.last_recovered_commit == repo_info.last_indexed_commit
     assert stored.available_semantic_profiles == ["commercial_high", "oss_high"]
     assert stored.artifact_health == "ready"
     assert results[0].details["validation_status"] == "passed"
@@ -193,7 +195,8 @@ def test_reconcile_workspace_marks_missing_or_ready(tmp_path: Path):
     assert results[0].details["validation_status"] == "passed"
 
 
-def test_publish_workspace_uses_local_first_wording(monkeypatch, tmp_path: Path):
+@pytest.mark.parametrize("upload_fails", [False, True])
+def test_publish_workspace_records_actual_upload_outcome(monkeypatch, tmp_path: Path, upload_fails):
     manager = MultiRepositoryManager(central_index_path=tmp_path / "registry.json")
     repo_path = tmp_path / "repo"
     repo_path.mkdir()
@@ -222,21 +225,37 @@ def test_publish_workspace_uses_local_first_wording(monkeypatch, tmp_path: Path)
             "semantic_profile_hash": "a" * 64,
         },
     )
+
+    def upload(self, archive_path, metadata):
+        if upload_fails:
+            raise RuntimeError("synthetic-private-upload-error")
+
     monkeypatch.setattr(
         "mcp_server.artifacts.multi_repo_artifact_coordinator.IndexArtifactUploader.upload_direct",
-        lambda self, archive_path, metadata: None,
+        upload,
     )
     monkeypatch.setattr(
         "mcp_server.artifacts.multi_repo_artifact_coordinator.IndexArtifactUploader._detect_repository",
-        lambda self: "owner/repo",
+        lambda self, repo_path=None: "owner/repo",
     )
 
     results = MultiRepoArtifactCoordinator(manager).publish_workspace(["repo-1"])
+    stored = manager.registry.get_repository("repo-1")
+    if upload_fails:
+        assert results[0].success is False
+        assert stored.artifact_health == "publish_failed"
+        assert stored.last_published_commit is None
+        assert "synthetic-private-upload-error" not in results[0].error
+        manager.close()
+        return
     assert results[0].success is True
-    assert results[0].details["artifact_backend"] == "local_workspace"
-    assert results[0].details["artifact_health"] == "prepared"
-    assert results[0].details["prepared_archive"] == "index-archive.tar.gz"
+    assert results[0].details["artifact_backend"] == "github_release"
+    assert results[0].details["artifact_health"] == "published"
+    assert results[0].details["prepared_archive"].startswith("index-archive-")
+    assert stored.last_published_commit == repo_info.last_indexed_commit
+    assert stored.artifact_health == "published"
     assert results[0].details["validation"]["schema_version"] == "2"
+    manager.close()
 
 
 def test_workspace_publish_and_fetch_do_not_chdir(monkeypatch, tmp_path: Path):
@@ -261,17 +280,23 @@ def test_workspace_publish_and_fetch_do_not_chdir(monkeypatch, tmp_path: Path):
     )
     monkeypatch.setattr(
         "mcp_server.artifacts.multi_repo_artifact_coordinator.IndexArtifactUploader._detect_repository",
-        lambda self: "owner/repo",
+        lambda self, repo_path=None: "owner/repo",
     )
     monkeypatch.setattr(
         "mcp_server.artifacts.multi_repo_artifact_coordinator.IndexArtifactDownloader.download_latest",
         lambda self, output_dir, backup=True, full_only=False, **kwargs: type(
-            "Result", (), {"artifact": {"head_sha": "recover123"}, "validation_reasons": []}
+            "Result",
+            (),
+            {
+                "artifact": {"head_sha": "recover123"},
+                "validation_reasons": [],
+                "installed_items": [str(repo_info.index_path)],
+            },
         )(),
     )
     monkeypatch.setattr(
         "mcp_server.artifacts.multi_repo_artifact_coordinator.IndexArtifactDownloader._detect_repository",
-        lambda self: "owner/repo",
+        lambda self, repo_path=None: "owner/repo",
     )
 
     coordinator = MultiRepoArtifactCoordinator(manager)

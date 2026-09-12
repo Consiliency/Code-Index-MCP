@@ -47,34 +47,31 @@ class ArtifactDownloadResult:
 class IndexArtifactDownloader:
     """Handle downloading index files from GitHub Actions Artifacts."""
 
-    def __init__(self, repo: Optional[str] = None, token: Optional[str] = None):
-        self.repo = repo or self._detect_repository()
+    def __init__(
+        self,
+        repo: Optional[str] = None,
+        token: Optional[str] = None,
+        *,
+        index_manager=None,
+        registry=None,
+        repo_path: Path | str | None = None,
+    ):
+        self.repo = repo or (
+            self._detect_repository(repo_path)
+            if repo_path is not None
+            else self._detect_repository()
+        )
         self.token = token or os.environ.get("GITHUB_TOKEN", "")
         self.api_base = f"https://api.github.com/repos/{self.repo}"
+        self._index_manager = index_manager
+        self._registry = registry
         if not self.token:
             print("⚠️  No GitHub token found. Using gh CLI for authentication.")
 
-    def _detect_repository(self) -> str:
-        try:
-            result = subprocess.run(
-                ["git", "remote", "get-url", "origin"],
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            url = result.stdout.strip()
-            if "github.com" not in url:
-                raise ValueError(f"Not a GitHub repository: {url}")
-            if url.startswith("git@"):
-                parts = url.split(":", 1)[1]
-            else:
-                parts = url.split("github.com/", 1)[1]
-            return parts.rstrip(".git")
-        except Exception as exc:
-            raise RuntimeError(
-                "Failed to detect repository. Pass --repo owner/name or run inside a "
-                f"git clone with origin configured: {exc}"
-            ) from exc
+    def _detect_repository(self, repo_path: Path | str | None = None) -> str:
+        from .artifact_upload import IndexArtifactUploader
+
+        return IndexArtifactUploader._detect_repository(self, repo_path)
 
     def list_artifacts(self, name_filter: Optional[str] = None) -> List[Dict[str, Any]]:
         print("🔍 Fetching available artifacts...")
@@ -227,7 +224,16 @@ class IndexArtifactDownloader:
             self._locate_download_payload(payload_dir)
         )
 
-        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        att = Attestation(
+            bundle_url="",
+            bundle_path=attestation_path,
+            subject_digest="",
+            signed_at=datetime.now(timezone.utc),
+        )
+        # The signed metadata binds identity and the archive checksum together.
+        verify_attestation(metadata_path, att, expected_repo=self.repo, gh_cmd="gh")
+        metadata_bytes = metadata_path.read_bytes()
+        metadata = json.loads(metadata_bytes)
         delta_base = metadata.get("delta_from")
         if delta_base:
             probe = subprocess.run(
@@ -266,28 +272,25 @@ class IndexArtifactDownloader:
         if not compatible:
             raise ValueError("Artifact compatibility validation failed: " + "; ".join(issues))
 
-        att_url = metadata.get("attestation_url")
-        if att_url:
-            if attestation_path is None:
-                raise ValueError("Artifact attestation sidecar is required but missing")
-            att = Attestation(
-                bundle_url=att_url,
-                bundle_path=attestation_path,
-                subject_digest="",
-                signed_at=datetime.now(timezone.utc),
-            )
-            verify_attestation(archive_path, att, expected_repo=self.repo, gh_cmd="gh")
-
         print("📦 Extracting index files...")
+        if output_dir.is_symlink():
+            raise ValueError("Artifact output must not be a symbolic link")
+        output_dir.mkdir(parents=True, exist_ok=True)
+        extracted = Path(tempfile.mkdtemp(prefix="verified-", dir=output_dir))
         with tarfile.open(archive_path, "r:gz") as tar:
             members = tar.getmembers()
             for member in members:
-                if not self._validate_tar_member(member, output_dir):
+                if not self._validate_tar_member(member, extracted) or Path(member.name).parts == (
+                    "artifact-metadata.json",
+                ):
                     raise ValueError(f"Unsafe archive member blocked: {member.name}")
-            tar.extractall(output_dir, members=members)  # nosec B202 - members validated above
+            tar.extractall(
+                extracted, members=members
+            )  # nosec B202 - fresh directory, regular members only
 
-        shutil.copy2(metadata_path, output_dir / "artifact-metadata.json")
-        return output_dir
+        with (extracted / "artifact-metadata.json").open("xb") as handle:
+            handle.write(metadata_bytes)
+        return extracted
 
     def _calculate_checksum(self, file_path: Path) -> str:
         sha256 = hashlib.sha256()
@@ -362,7 +365,7 @@ class IndexArtifactDownloader:
                             )
             except Exception as exc:
                 record_handled_error(__name__, exc)
-                pass
+                issues.append("Local semantic profile configuration is unavailable")
         elif artifact_model:
             try:
                 current_model = get_settings().semantic_embedding_model
@@ -372,7 +375,7 @@ class IndexArtifactDownloader:
                     )
             except Exception as exc:
                 record_handled_error(__name__, exc)
-                pass
+                issues.append("Local embedding model configuration is unavailable")
 
         return len(issues) == 0, issues
 
@@ -534,20 +537,12 @@ class IndexArtifactDownloader:
             return False
 
     def _validate_tar_member(self, member: tarfile.TarInfo, extraction_dir: Path) -> bool:
+        if not (member.isfile() or member.isdir()) or Path(member.name).is_absolute():
+            return False
         target_path = extraction_dir / member.name
         if not self._is_within_directory(extraction_dir, target_path):
             return False
-        if member.issym():
-            if not member.linkname:
-                return False
-            if not self._is_within_directory(extraction_dir, target_path.parent / member.linkname):
-                return False
-        if member.islnk():
-            if not member.linkname:
-                return False
-            if not self._is_within_directory(extraction_dir, extraction_dir / member.linkname):
-                return False
-        return not member.isdev()
+        return True
 
     def install_indexes(
         self,
@@ -556,28 +551,13 @@ class IndexArtifactDownloader:
         index_path: Path | str | None = None,
         backup: bool = True,
     ) -> List[str]:
-        print("\n📝 Installing indexes...")
+        """Hydrate a fresh staging destination; never replace a live generation.
+
+        The legacy backup argument is retained for caller compatibility. Existing
+        resources require generation publication, not an in-place backup/restore.
+        """
         index_root = Path(index_location) if index_location is not None else Path(".mcp-index")
         target_db = Path(index_path) if index_path is not None else index_root / "current.db"
-        index_root.mkdir(parents=True, exist_ok=True)
-        if backup:
-            backup_dir = index_root / f"index_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-            backup_dir.mkdir(exist_ok=True)
-            for src in [
-                target_db,
-                index_root / "vector_index.qdrant",
-                index_root / ".index_metadata.json",
-            ]:
-                if not src.exists():
-                    continue
-                print(f"  Backing up {src.name}...")
-                if src.is_dir():
-                    shutil.copytree(src, backup_dir / src.name)
-                else:
-                    shutil.copy2(src, backup_dir / src.name)
-            print(f"  ✅ Backup created in {backup_dir}")
-
-        installed_items: List[str] = []
         install_map = {
             "current.db": target_db,
             "code_index.db": target_db,
@@ -585,38 +565,34 @@ class IndexArtifactDownloader:
             "artifact-metadata.json": index_root / "artifact-metadata.json",
             "vector_index.qdrant": index_root / "vector_index.qdrant",
         }
-        for item in source_dir.iterdir():
-            dest = install_map.get(item.name)
-            if dest is None:
-                continue
-            if dest.exists():
-                if dest.is_dir():
-                    shutil.rmtree(dest)
-                else:
-                    dest.unlink()
-            print(f"  Installing {item.name}...")
+        sources = [item for item in source_dir.iterdir() if item.name in install_map]
+        databases = [item for item in sources if item.name in {"current.db", "code_index.db"}]
+        if len(databases) != 1 or not databases[0].is_file():
+            raise ValueError("Artifact staging requires exactly one SQLite database")
+        destinations = set(install_map.values()) | {
+            Path(f"{target_db}-wal"),
+            Path(f"{target_db}-shm"),
+        }
+        if any(path.exists() or path.is_symlink() for path in destinations):
+            raise FileExistsError("Artifact installation requires an unused staging destination")
+        for item in sources:
+            if item.is_symlink() or (
+                item.is_dir() and any(child.is_symlink() for child in item.rglob("*"))
+            ):
+                raise ValueError("Artifact staging does not accept symbolic links")
+
+        installed_items = []
+        for item in sources:
+            dest = install_map[item.name]
             dest.parent.mkdir(parents=True, exist_ok=True)
             if item.is_dir():
                 shutil.copytree(item, dest)
             else:
-                shutil.copy2(item, dest)
+                with item.open("rb") as reader, dest.open("xb") as writer:
+                    shutil.copyfileobj(reader, writer)
+                    writer.flush()
+                    os.fsync(writer.fileno())
             installed_items.append(str(dest))
-
-        print("✅ Indexes installed successfully!")
-        if installed_items:
-            print(f"📦 Restored items: {', '.join(installed_items)}")
-        metadata_path = index_root / "artifact-metadata.json"
-        if metadata_path.exists():
-            try:
-                metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-                commit = metadata.get("commit")
-                branch = metadata.get("tracked_branch") or metadata.get("branch")
-                if commit:
-                    label = f"{commit} ({branch})" if branch else commit
-                    print(f"🔖 Restored artifact commit: {label}")
-            except Exception as exc:
-                record_handled_error(__name__, exc)
-                pass
         return installed_items
 
     def download_selected_artifact(
@@ -634,6 +610,10 @@ class IndexArtifactDownloader:
         semantic_profile_hash: Optional[str] = None,
         allow_unsafe: bool = False,
     ) -> ArtifactDownloadResult:
+        if allow_unsafe and repo_id is not None:
+            raise ValueError(
+                "Registered generations require artifact identity and freshness verification"
+            )
         try:
             extracted_dir = self.download_artifact(
                 artifact["id"],
@@ -665,7 +645,7 @@ class IndexArtifactDownloader:
         head_commit = artifact.get("workflow_run", {}).get("head_sha", "HEAD")
         if target_commit:
             head_commit = target_commit
-        verdict = verify_artifact_freshness(meta, head_commit, max_age_days)
+        verdict = verify_artifact_freshness(meta, head_commit, max_age_days, repo_path=repo_path)
         rejected_reasons: List[str] = []
         if verdict is not FreshnessVerdict.FRESH:
             rejected_reasons.append(f"freshness verdict: {verdict.value}")
@@ -678,17 +658,65 @@ class IndexArtifactDownloader:
                 "; ".join(rejected_reasons),
             )
 
-        installed_items = self.install_indexes(
-            extracted_dir,
-            index_location=index_location,
-            index_path=index_path,
-            backup=backup,
-        )
+        if repo_id is not None:
+            if rejected_reasons:
+                raise ValueError(
+                    "Mismatched artifacts cannot be admitted as registered generations"
+                )
+            installed_items = self._install_verified_generation(
+                repo_id, extracted_dir, head_commit, repo_path
+            )
+        else:
+            installed_items = self.install_indexes(
+                extracted_dir,
+                index_location=index_location,
+                index_path=index_path,
+                backup=backup,
+            )
         return ArtifactDownloadResult(
             artifact=artifact,
             installed_items=installed_items,
             validation_reasons=rejected_reasons,
         )
+
+    def _install_verified_generation(
+        self, repo_id: str, extracted: Path, commit: str, repo_path
+    ) -> List[str]:
+        from mcp_server.dispatcher.dispatcher_enhanced import EnhancedDispatcher
+        from mcp_server.storage.git_index_manager import GitAwareIndexManager
+        from mcp_server.storage.repository_registry import RepositoryRegistry
+
+        manager = self._index_manager
+        owned = manager is None
+        dispatcher = None
+        try:
+            if owned:
+                registry = self._registry if self._registry is not None else RepositoryRegistry()
+                dispatcher = EnhancedDispatcher(
+                    enable_advanced_features=False,
+                    use_plugin_factory=True,
+                    semantic_search_enabled=get_settings().semantic_search_enabled,
+                    memory_aware=False,
+                    multi_repo_enabled=False,
+                )
+                manager = GitAwareIndexManager(registry, dispatcher)
+            info = manager.registry.get(repo_id)
+            if info is None or (
+                repo_path is not None and Path(info.path).resolve() != Path(repo_path).resolve()
+            ):
+                raise ValueError("Artifact destination is not the registered repository")
+            result = manager.restore_verified_artifact(repo_id, extracted, expected_commit=commit)
+            if result.action != "full_index":
+                raise ValueError(result.error or "Artifact generation was not admitted")
+            return [str(manager.registry.get(repo_id).index_path)]
+        finally:
+            if owned:
+                try:
+                    if dispatcher is not None:
+                        dispatcher.shutdown()
+                finally:
+                    if manager is not None and manager.store_registry is not None:
+                        manager.store_registry.shutdown()
 
     def download_latest(
         self,

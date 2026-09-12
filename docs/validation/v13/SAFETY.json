@@ -1,0 +1,661 @@
+{
+  "schema_version": "v13.phase-receipt.v1",
+  "phase": "SAFETY",
+  "execution_mode": "manual",
+  "terminal_status": "complete",
+  "verification_status": "passed",
+  "human_required": false,
+  "blocker_class": null,
+  "timestamp": "2026-09-11T13:22:43Z",
+  "source_commit": "b99e754f8890cc631589e36b1beef151a98d195c",
+  "source_tree": "853d8f974ec9e81652ad636b9cebce958a853c63",
+  "roadmap_sha256": "178b8328d8e7dc76ddc0804d7b72d3ccddb55e23577a3d52cb7cbd70d5fd5308",
+  "contract_sha256": "d1686bb23ca55e73ec54e8211de0269dd1332c593cef70f2e80d275f965573d8",
+  "plan_sha256": "8e5d7066a84dd70024cf3b54a4ae5d986d621a2affe346b663b3f879edd99927",
+  "safety_contract_source_sha256": "d737fc64daae100ad77aae1f3289b84bb0eaf82849533f62426b00bd7f62d144",
+  "verification_artifact_path": ".phase-loop/runs/v13-SAFETY-20260911-b99e754/verification.json",
+  "verification_artifact_sha256": "f0617300aba2e0fb09fa2c99336d9ced7c83297c7d50bd54df0fa5abe8e52572",
+  "verification_log_sha256": "85702c7a3f3c39e9396dc143e50d00a3e8b1503a6613733a037751dcd49c5c2c",
+  "verification_summary": "All ten commands, locked environment refresh and phase suite exited 0; independent validator ok=true, no findings. Focused: 93 passed. Git manager: 140 passed. Broad offline: 2944 passed, 150 skipped, 31 deselected. Phase: 223 passed.",
+  "started_at": "2026-09-11T13:10:39Z",
+  "finished_at": "2026-09-11T13:22:43Z",
+  "environment_identity": {
+    "os": "Linux",
+    "python": "3.12.12",
+    "dependency_lock": "uv.lock",
+    "inputs": "Synthetic temporary repositories/databases, spawned processes and one digest-only signing proof. No live fleet registry/index, real source corpus or inference."
+  },
+  "artifact_digests": {
+    "wheel": {
+      "wheel": "index_it_mcp-1.4.0-py3-none-any.whl",
+      "sha256": "d552c0ad045e802437eb6ed20ee88f2d42cbee1f17138d284bc0f3c345bfa88e"
+    },
+    "container": {
+      "image": "ghcr.io/consiliency/code-index-mcp:local-smoke",
+      "image_id": "sha256:f6c3f92ea8f297c215486aee58474abcdd5ec5eb350752bbae4f873f0ce2d6af"
+    },
+    "signing_receipt": {
+      "path": "docs/validation/v13/SAFETY-signing.json",
+      "sha256": "d4b5120abce5d1d3d1bb3144c7ae05d66a4c7d482dfaeb2a5fbd0bc2ebcf087c"
+    }
+  },
+  "per_goal_results": [
+    {
+      "goal": "EC-SAFETY-1",
+      "status": "passed",
+      "evidence": "Enforce rejects missing, invalid, tampered and wrong-producer attestations before extraction/publication. Exact synthetic producer verified via real gh CLI plus seven negative controls; one seven-second OIDC job, image job skipped. Prepared archive bytes preserved."
+    },
+    {
+      "goal": "EC-SAFETY-2",
+      "status": "passed",
+      "evidence": "35 capability cases cover builtins/io/pathlib/os/bytes/FD forms and SQLite readonly URI/aliases/ATTACH/root restrictions. Documented cooperative-only limits, no hostile-plugin OS containment claim."
+    },
+    {
+      "goal": "EC-SAFETY-3",
+      "status": "passed",
+      "evidence": "Actual independently installed wheel and uid-999 production container each pass SIGTERM, SIGINT, EOF, repeated signals, partial input and admitted inflight mutation; one real plugin child observed in each case, zero live survivors. Ports reusable, matching query and malformed SDK payload absent from logs. Two-process metrics contention and registry ownership tests pass."
+    },
+    {
+      "goal": "EC-SAFETY-4",
+      "status": "passed",
+      "evidence": "Configured non-root HTTP startup/restart rejects old access and refresh credentials, ignores untrusted forwarded identity and omits query/credential strings from access logs. Direct auth/proxy/loopback unit and process controls pass."
+    }
+  ],
+  "finding_dispositions": [
+    {
+      "id": "C09",
+      "status": "fixed",
+      "evidence": "Trusted enforcement before extraction/upload; artifact metadata cannot waive policy."
+    },
+    {
+      "id": "C13",
+      "status": "fixed",
+      "evidence": "Supported manual OIDC bundle consumption and cryptographic verification replace unsupported local signing/token-display."
+    },
+    {
+      "id": "C14",
+      "status": "fixed_in_scope",
+      "evidence": "Supported capability forms enforced; sandbox contract explicitly cooperative, not hostile-code containment."
+    },
+    {
+      "id": "C15",
+      "status": "fixed",
+      "evidence": "Awaited service lifetime, cancellable transport, drained mutation owners and bounded whole-service failure with retained publication fence."
+    },
+    {
+      "id": "C19",
+      "status": "fixed_in_scope",
+      "evidence": "Normal tool/query/symbol/summary/watcher/transport paths omit content and raw exception payload; synthetic sentinels cover success and failure."
+    },
+    {
+      "id": "C20",
+      "status": "fixed",
+      "evidence": "Explicit disabled/loopback metrics, shared process counter owner, port contention and release checks."
+    },
+    {
+      "id": "R04",
+      "status": "fixed_in_scope",
+      "evidence": "HTTP remains ephemeral local administration; actual restart invalidates both token types. No shared durable identity claim."
+    },
+    {
+      "id": "R05",
+      "status": "fixed",
+      "evidence": "Only configured trusted proxies supply forwarded identity; CLI and container disable implicit Uvicorn rewriting."
+    }
+  ],
+  "commands": [
+    {
+      "argv": [
+        "/home/viperjuice/.local/share/uv/tools/phase-loop-runtime/bin/python",
+        "/home/viperjuice/.codex/skills/codex-plan-phase/scripts/validate_plan_doc.py",
+        "/mnt/HC_Volume_105438154/worktrees/Code-Index-MCP-v13-audit-remediation/plans/phase-plan-v13-SAFETY.md"
+      ],
+      "cwd": ".",
+      "duration_s": 0.468133,
+      "exit_code": 0,
+      "log_end_offset": 581,
+      "log_offset": 164
+    },
+    {
+      "argv": [
+        "env",
+        "SEMANTIC_SEARCH_ENABLED=false",
+        "MCP_TEST_MODE=1",
+        "uv",
+        "run",
+        "--locked",
+        "--extra",
+        "dev",
+        "pytest",
+        "tests/test_v13_safety.py",
+        "tests/test_artifact_attestation.py",
+        "tests/security/test_plugin_sandbox.py",
+        "tests/integration/test_sigterm_shutdown.py",
+        "-q",
+        "--no-cov",
+        "-o",
+        "log_cli=false"
+      ],
+      "cwd": ".",
+      "duration_s": 18.256615,
+      "exit_code": 0,
+      "log_end_offset": 1867,
+      "log_offset": 581
+    },
+    {
+      "argv": [
+        "uv",
+        "run",
+        "--locked",
+        "--extra",
+        "dev",
+        "python",
+        ".phase-loop/runs/v13-SAFETY-signing-7251903/verify.py",
+        "--check"
+      ],
+      "cwd": ".",
+      "duration_s": 24.812457,
+      "exit_code": 0,
+      "log_end_offset": 2187,
+      "log_offset": 1867
+    },
+    {
+      "argv": [
+        "env",
+        "SEMANTIC_SEARCH_ENABLED=false",
+        "MCP_TEST_MODE=1",
+        "make",
+        "agent-gate"
+      ],
+      "cwd": ".",
+      "duration_s": 144.021235,
+      "exit_code": 0,
+      "log_end_offset": 478905,
+      "log_offset": 2187
+    },
+    {
+      "argv": [
+        "env",
+        "SEMANTIC_SEARCH_ENABLED=false",
+        "MCP_TEST_MODE=1",
+        "make",
+        "release-smoke-container"
+      ],
+      "cwd": ".",
+      "duration_s": 174.939743,
+      "exit_code": 0,
+      "log_end_offset": 484524,
+      "log_offset": 478905
+    },
+    {
+      "argv": [
+        "env",
+        "SEMANTIC_SEARCH_ENABLED=false",
+        "MCP_TEST_MODE=1",
+        "uv",
+        "run",
+        "--locked",
+        "--extra",
+        "dev",
+        "pytest",
+        "tests/test_git_index_manager.py",
+        "-m",
+        "not requires_network and not benchmark",
+        "-q",
+        "--no-cov",
+        "-o",
+        "log_cli=false"
+      ],
+      "cwd": ".",
+      "duration_s": 28.238722,
+      "exit_code": 0,
+      "log_end_offset": 485651,
+      "log_offset": 484524
+    },
+    {
+      "argv": [
+        "env",
+        "SEMANTIC_SEARCH_ENABLED=false",
+        "MCP_TEST_MODE=1",
+        "uv",
+        "run",
+        "--locked",
+        "--extra",
+        "dev",
+        "pytest",
+        "tests",
+        "--ignore=tests/test_git_index_manager.py",
+        "-m",
+        "not requires_network and not benchmark",
+        "-q",
+        "--no-cov",
+        "-o",
+        "log_cli=false"
+      ],
+      "cwd": ".",
+      "duration_s": 300.922723,
+      "exit_code": 0,
+      "log_end_offset": 512743,
+      "log_offset": 485651
+    },
+    {
+      "argv": [
+        "uv",
+        "run",
+        "--locked",
+        "--extra",
+        "dev",
+        "isort",
+        "--check-only",
+        "mcp_server/artifacts/artifact_download.py",
+        "mcp_server/artifacts/artifact_upload.py",
+        "mcp_server/artifacts/attestation.py",
+        "mcp_server/artifacts/publisher.py",
+        "mcp_server/cli/bootstrap.py",
+        "mcp_server/cli/server_commands.py",
+        "mcp_server/cli/stdio_runner.py",
+        "mcp_server/cli/task_reindex.py",
+        "mcp_server/cli/tool_handlers.py",
+        "mcp_server/core/logging.py",
+        "mcp_server/dispatcher/dispatcher_enhanced.py",
+        "mcp_server/gateway.py",
+        "mcp_server/indexing/summarization.py",
+        "mcp_server/metrics/prometheus_exporter.py",
+        "mcp_server/sandbox/capabilities.py",
+        "mcp_server/sandbox/caps_apply.py",
+        "mcp_server/sandbox/supervisor.py",
+        "mcp_server/security/security_middleware.py",
+        "mcp_server/storage/multi_repo_manager.py",
+        "mcp_server/watcher/file_watcher.py",
+        "mcp_server/watcher/ref_poller.py",
+        "mcp_server/watcher/sweeper.py",
+        "mcp_server/watcher_multi_repo.py",
+        "scripts/installed_runtime_smoke.py",
+        "scripts/release_smoke.py",
+        "scripts/safety_runtime_smoke.py",
+        "tests/integration/test_sigterm_shutdown.py",
+        "tests/security/test_artifact_attestation.py",
+        "tests/security/test_plugin_sandbox.py",
+        "tests/test_artifact_attestation.py",
+        "tests/test_artifact_download.py",
+        "tests/test_artifact_publish_rollback.py",
+        "tests/test_artifact_upload.py",
+        "tests/test_attestation_probe.py",
+        "tests/test_mcpauth_stdio_contract.py",
+        "tests/test_p16_vocabulary.py",
+        "tests/test_rate_limit_retry_after.py",
+        "tests/test_server_commands.py",
+        "tests/test_singleton_reset.py",
+        "tests/test_structured_errors.py",
+        "tests/test_v13_safety.py",
+        "tests/test_workflow_action_pins.py",
+        "tests/test_workflow_release_policy.py"
+      ],
+      "cwd": ".",
+      "duration_s": 0.290275,
+      "exit_code": 0,
+      "log_end_offset": 512743,
+      "log_offset": 512743
+    },
+    {
+      "argv": [
+        "uv",
+        "run",
+        "--locked",
+        "--extra",
+        "dev",
+        "black",
+        "--check",
+        "mcp_server/artifacts/artifact_download.py",
+        "mcp_server/artifacts/artifact_upload.py",
+        "mcp_server/artifacts/attestation.py",
+        "mcp_server/artifacts/publisher.py",
+        "mcp_server/cli/bootstrap.py",
+        "mcp_server/cli/server_commands.py",
+        "mcp_server/cli/stdio_runner.py",
+        "mcp_server/cli/task_reindex.py",
+        "mcp_server/cli/tool_handlers.py",
+        "mcp_server/core/logging.py",
+        "mcp_server/dispatcher/dispatcher_enhanced.py",
+        "mcp_server/gateway.py",
+        "mcp_server/indexing/summarization.py",
+        "mcp_server/metrics/prometheus_exporter.py",
+        "mcp_server/sandbox/capabilities.py",
+        "mcp_server/sandbox/caps_apply.py",
+        "mcp_server/sandbox/supervisor.py",
+        "mcp_server/security/security_middleware.py",
+        "mcp_server/storage/multi_repo_manager.py",
+        "mcp_server/watcher/file_watcher.py",
+        "mcp_server/watcher/ref_poller.py",
+        "mcp_server/watcher/sweeper.py",
+        "mcp_server/watcher_multi_repo.py",
+        "scripts/installed_runtime_smoke.py",
+        "scripts/release_smoke.py",
+        "scripts/safety_runtime_smoke.py",
+        "tests/integration/test_sigterm_shutdown.py",
+        "tests/security/test_artifact_attestation.py",
+        "tests/security/test_plugin_sandbox.py",
+        "tests/test_artifact_attestation.py",
+        "tests/test_artifact_download.py",
+        "tests/test_artifact_publish_rollback.py",
+        "tests/test_artifact_upload.py",
+        "tests/test_attestation_probe.py",
+        "tests/test_mcpauth_stdio_contract.py",
+        "tests/test_p16_vocabulary.py",
+        "tests/test_rate_limit_retry_after.py",
+        "tests/test_server_commands.py",
+        "tests/test_singleton_reset.py",
+        "tests/test_structured_errors.py",
+        "tests/test_v13_safety.py",
+        "tests/test_workflow_action_pins.py",
+        "tests/test_workflow_release_policy.py"
+      ],
+      "cwd": ".",
+      "duration_s": 0.220857,
+      "exit_code": 0,
+      "log_end_offset": 512800,
+      "log_offset": 512743
+    },
+    {
+      "argv": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "cwd": ".",
+      "duration_s": 0.007634,
+      "exit_code": 0,
+      "log_end_offset": 512800,
+      "log_offset": 512800
+    }
+  ],
+  "env_refresh": {
+    "exit_code": 0,
+    "install_argv": [
+      "uv",
+      "sync",
+      "--locked",
+      "--python",
+      "3.12",
+      "--extra",
+      "dev"
+    ],
+    "log_end_offset": 164,
+    "log_offset": 107,
+    "manifests": [
+      "pyproject.toml",
+      "uv.lock"
+    ],
+    "triggered": true
+  },
+  "suite": {
+    "argv": [
+      "env",
+      "SEMANTIC_SEARCH_ENABLED=false",
+      "MCP_TEST_MODE=1",
+      "uv",
+      "run",
+      "--locked",
+      "--extra",
+      "dev",
+      "pytest",
+      "tests/test_v13_safety.py",
+      "tests/test_artifact_attestation.py",
+      "tests/test_attestation_probe.py",
+      "tests/test_artifact_download.py",
+      "tests/test_artifact_upload.py",
+      "tests/test_artifact_lifecycle.py",
+      "tests/security/test_plugin_sandbox.py",
+      "tests/security/test_p24_sandbox_degradation.py",
+      "tests/test_sandbox_default_on.py",
+      "tests/integration/test_sigterm_shutdown.py",
+      "tests/test_mcptasks_reindex.py",
+      "tests/test_secret_redaction.py",
+      "tests/test_server_commands.py",
+      "tests/test_security.py",
+      "tests/security/test_auth_boundary.py",
+      "tests/security/test_auth_startup_wiring.py",
+      "tests/test_gateway_auth_boundary.py",
+      "tests/test_workflow_action_pins.py",
+      "tests/test_workflow_release_policy.py",
+      "-q",
+      "--no-cov"
+    ],
+    "duration_s": 31.913109,
+    "exit_code": 0,
+    "log_end_offset": 572721,
+    "log_offset": 512800
+  },
+  "local_gate": {
+    "mode": "local",
+    "fast_passed": 51,
+    "dist_passed": 38,
+    "state_passed": 117,
+    "production_readiness_passed": 268,
+    "installed_wheel_sdk_sessions": 2
+  },
+  "operational_receipts": {
+    "installed_runtime": [
+      {
+        "stdio_session": 1,
+        "queries": "passed"
+      },
+      {
+        "stdio_session": 2,
+        "queries": "passed"
+      },
+      {
+        "installed_lifecycle": "passed",
+        "uid": 1000,
+        "cases": [
+          {
+            "mode": "sigterm",
+            "exit_code": 0,
+            "exit_seconds": 1.016,
+            "owned_children_observed": 1,
+            "surviving_children": [],
+            "metrics_ports": [],
+            "inflight_admitted": false
+          },
+          {
+            "mode": "sigint",
+            "exit_code": 0,
+            "exit_seconds": 1.016,
+            "owned_children_observed": 1,
+            "surviving_children": [],
+            "metrics_ports": [],
+            "inflight_admitted": false
+          },
+          {
+            "mode": "eof",
+            "exit_code": 0,
+            "exit_seconds": 0.966,
+            "owned_children_observed": 1,
+            "surviving_children": [],
+            "metrics_ports": [],
+            "inflight_admitted": false
+          },
+          {
+            "mode": "repeated",
+            "exit_code": 0,
+            "exit_seconds": 0.776,
+            "owned_children_observed": 1,
+            "surviving_children": [],
+            "metrics_ports": [],
+            "inflight_admitted": false
+          },
+          {
+            "mode": "partial_input",
+            "exit_code": 0,
+            "exit_seconds": 0.916,
+            "owned_children_observed": 1,
+            "surviving_children": [],
+            "metrics_ports": [],
+            "inflight_admitted": false
+          },
+          {
+            "mode": "inflight",
+            "exit_code": 1,
+            "exit_seconds": 15.054,
+            "owned_children_observed": 1,
+            "surviving_children": [],
+            "metrics_ports": [],
+            "inflight_admitted": true
+          }
+        ]
+      },
+      {
+        "http_log_privacy": "passed",
+        "untrusted_proxy": "ignored"
+      },
+      {
+        "installed_lifecycle": "passed",
+        "uid": 999,
+        "cases": [
+          {
+            "mode": "sigterm",
+            "exit_code": 0,
+            "exit_seconds": 1.769,
+            "owned_children_observed": 1,
+            "surviving_children": [],
+            "metrics_ports": [
+              43493
+            ],
+            "inflight_admitted": false
+          },
+          {
+            "mode": "sigint",
+            "exit_code": 0,
+            "exit_seconds": 1.819,
+            "owned_children_observed": 1,
+            "surviving_children": [],
+            "metrics_ports": [
+              38469
+            ],
+            "inflight_admitted": false
+          },
+          {
+            "mode": "eof",
+            "exit_code": 0,
+            "exit_seconds": 1.868,
+            "owned_children_observed": 1,
+            "surviving_children": [],
+            "metrics_ports": [
+              36029
+            ],
+            "inflight_admitted": false
+          },
+          {
+            "mode": "repeated",
+            "exit_code": 0,
+            "exit_seconds": 1.829,
+            "owned_children_observed": 1,
+            "surviving_children": [],
+            "metrics_ports": [
+              33717
+            ],
+            "inflight_admitted": false
+          },
+          {
+            "mode": "partial_input",
+            "exit_code": 0,
+            "exit_seconds": 1.818,
+            "owned_children_observed": 1,
+            "surviving_children": [],
+            "metrics_ports": [
+              34737
+            ],
+            "inflight_admitted": false
+          },
+          {
+            "mode": "inflight",
+            "exit_code": 1,
+            "exit_seconds": 15.059,
+            "owned_children_observed": 1,
+            "surviving_children": [],
+            "metrics_ports": [
+              38551
+            ],
+            "inflight_admitted": true
+          }
+        ]
+      }
+    ],
+    "signing": {
+      "workflow_run": "https://github.com/Consiliency/Code-Index-MCP/actions/runs/34597512666",
+      "duration_seconds": 7,
+      "signer_commit": "7251903f9f046ab8c5218439603658321b113429",
+      "archive_uploaded": false,
+      "signing_jobs_dispatched": 1,
+      "verification_controls": 8
+    },
+    "publication": {
+      "published": false,
+      "merged": false,
+      "version_bumped": false,
+      "pr": "Consiliency/Code-Index-MCP#97",
+      "pr_state": "OPEN DRAFT, live checked on source head"
+    },
+    "issues": {
+      "open_issues": 0,
+      "checked_at": "2026-09-11T13:18:00Z",
+      "note": "Roadmap-only findings; no issue closure claimed."
+    }
+  },
+  "exclusions": {
+    "marker_expression": "not requires_network and not benchmark",
+    "marker_deselected": 31,
+    "reported_skips": 150,
+    "git_integration": "140 tests run separately and passed; explicitly excluded only from the broad invocation.",
+    "interpretation": "Skips are not passes. No live inference, real Qdrant server, browser, PMCP, full platform/language matrix, coverage percentage or fleet acceptance. Core wheel lacks optional Prometheus dependency; container and dev process tests prove metrics listener behavior."
+  },
+  "limits": [
+    "Linux/Python 3.12 installed evidence only; other OS lifecycle not certified.",
+    "Normal installed exits were below two seconds. Admitted uncooperative reindex exited unsuccessfully at approximately 15 seconds, preserved pending fence and requires restart/reindex; not successful indexing.",
+    "PILOT must separately evaluate its frozen five-second shutdown target and runtime workload. SAFETY's bounded fail-stop does not waive that performance target.",
+    "Artifact trust is verified; DATA still owns coherent extraction/staging and vector generation publication.",
+    "One signature proves signer/digest, not local build or index correctness. Enforce mode remains default; production signer ref remains main."
+  ],
+  "prior_attempts": [
+    {
+      "path": ".phase-loop/runs/v13-SAFETY-20260911-a23d372/verification.json",
+      "sha256": "a7022e697eb900467818ed5bbf7eba104d44e9c555f4cc090d67a0d0553afd00",
+      "accepted": false,
+      "reason": "Container refresh probe used wrong request shape and broad suite had eight failures. Repaired structured-state logging, stale tests/docs, shared exporter fixture and additional privacy controls; every stamped check rerun."
+    },
+    {
+      "kind": "diagnostic_container",
+      "accepted": false,
+      "reason": "All runtime controls passed but container-created __pycache__ prevented host fixture cleanup; safety probe now releases permissions on synthetic directories. Full diagnostic and exact-head container commands subsequently exited 0."
+    }
+  ],
+  "if_gates_produced": [
+    "IF-0-SAFETY-1"
+  ],
+  "issue_inventory": [],
+  "issue_dispositions": [],
+  "required_human_inputs": [],
+  "tool_diagnostics": [
+    "Known agent-harness#819 import warning persists; standalone structural and verification validators pass.",
+    "Broad proof completed in 295.57 pytest seconds / 300.92 process seconds and reports all failures; no reduced gate."
+  ],
+  "doc_delta_decision": "docs_updated",
+  "spec_delta_closeout": {
+    "schema": "spec_delta_closeout.v1",
+    "decision": "canonical_spec_update",
+    "target_surfaces": [
+      "docs/security/attestation.md",
+      "docs/security/sandbox.md",
+      "docs/security/auth-boundary.md",
+      "docs/contracts/v13-safety.md"
+    ],
+    "evidence_paths": [
+      "docs/validation/v13/SAFETY.json",
+      "docs/validation/v13/SAFETY-signing.json"
+    ],
+    "redaction_posture": "metadata_only"
+  },
+  "next_phase": "DATA",
+  "next_skill": "codex-plan-phase",
+  "next_command": "codex-plan-phase specs/phase-plans-v13.md DATA"
+}

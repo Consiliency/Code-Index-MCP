@@ -54,16 +54,9 @@ class TestPublisherDeltaIntegration:
         publisher._patcher = patcher  # type: ignore[attr-defined]
         publisher._run = MagicMock(return_value=MagicMock(returncode=0, stdout="", stderr=""))
 
-        from mcp_server.artifacts.attestation import Attestation
-
         attest_patcher = patch(
-            "mcp_server.artifacts.publisher.attest",
-            return_value=Attestation(
-                bundle_url="",
-                bundle_path=Path(""),
-                subject_digest="",
-                signed_at=__import__("datetime").datetime.now(__import__("datetime").timezone.utc),
-            ),
+            "mcp_server.artifacts.publisher._attestation_mode",
+            return_value="skip",
         )
         attest_patcher.start()
         publisher._attest_patcher = attest_patcher  # type: ignore[attr-defined]

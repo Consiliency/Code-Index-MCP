@@ -1,5 +1,6 @@
 from datetime import datetime
 from pathlib import Path
+from unittest.mock import Mock
 
 from click.testing import CliRunner
 
@@ -46,6 +47,64 @@ def _write_ready_index(repo_info: RepositoryInfo) -> None:
     store.close()
 
 
+def test_compress_only_never_uploads_and_uses_registered_generation(monkeypatch, tmp_path):
+    repo = _repo_info("repo-1", tmp_path)
+    _write_ready_index(repo)
+    uploader = Mock()
+    uploader.compress_indexes.return_value = (tmp_path / "prepared.tar.gz", "digest", 100)
+    monkeypatch.setattr("mcp_server.cli.artifact_commands._resolve_repository", lambda value: repo)
+    monkeypatch.setattr(
+        "mcp_server.cli.artifact_commands.IndexArtifactUploader", lambda **kwargs: uploader
+    )
+    result = CliRunner().invoke(artifact, ["push", "--compress-only"])
+    assert result.exit_code == 0, result.output
+    assert uploader.compress_indexes.call_args.kwargs["index_path"] == repo.index_path
+    assert uploader.compress_indexes.call_args.kwargs["repo_path"] == repo.path
+    uploader.upload_direct.assert_not_called()
+    uploader.trigger_workflow.assert_not_called()
+
+
+def test_implicit_repository_resolution_finds_registered_cwd(monkeypatch, tmp_path):
+    from mcp_server.cli.artifact_commands import _resolve_repository
+
+    owner = MultiRepositoryManager(central_index_path=tmp_path / "registry.json")
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    repo_id = owner.registry.register_repository(str(repo_path))
+    monkeypatch.chdir(repo_path)
+    monkeypatch.setattr("mcp_server.cli.artifact_commands.MultiRepositoryManager", lambda: owner)
+    resolved = _resolve_repository(None)
+    assert resolved is not None
+    assert resolved.repository_id == repo_id
+
+
+def test_push_records_uploaded_commit_and_next_skip_does_not_upload(monkeypatch, tmp_path):
+    owner = MultiRepositoryManager(central_index_path=tmp_path / "registry.json")
+    repo = _repo_info("repo-1", tmp_path)
+    _write_ready_index(repo)
+    owner.registry.register(repo)
+    uploader = Mock()
+    uploader.compress_indexes.return_value = (tmp_path / "prepared.tar.gz", "digest", 100)
+    monkeypatch.setattr("mcp_server.cli.artifact_commands.MultiRepositoryManager", lambda: owner)
+    monkeypatch.setattr(
+        "mcp_server.cli.artifact_commands._resolve_repository",
+        lambda value: owner.registry.get("repo-1"),
+    )
+    monkeypatch.setattr(
+        "mcp_server.cli.artifact_commands.IndexArtifactUploader", lambda **kwargs: uploader
+    )
+    runner = CliRunner()
+    first = runner.invoke(artifact, ["push", "--repository", "repo-1", "--validate"])
+    assert first.exit_code == 0, first.output
+    stored = owner.registry.get("repo-1")
+    assert stored.artifact_health == "published"
+    assert stored.last_published_commit == repo.last_indexed_commit
+    second = runner.invoke(artifact, ["push", "--repository", "repo-1", "--skip-if-current"])
+    assert second.exit_code == 0, second.output
+    uploader.upload_direct.assert_called_once()
+    owner.close()
+
+
 def test_artifact_pull_confirms_local_restore(monkeypatch, tmp_path):
     runner = CliRunner()
 
@@ -60,7 +119,7 @@ def test_artifact_pull_confirms_local_restore(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(
         "mcp_server.cli.artifact_commands.IndexArtifactDownloader._detect_repository",
-        lambda self: "owner/repo",
+        lambda self, repo_path=None: "owner/repo",
     )
     monkeypatch.setattr(
         "mcp_server.cli.artifact_commands._print_reconcile_guidance",
@@ -85,7 +144,7 @@ def test_artifact_pull_fails_when_no_index_restored(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(
         "mcp_server.cli.artifact_commands.IndexArtifactDownloader._detect_repository",
-        lambda self: "owner/repo",
+        lambda self, repo_path=None: "owner/repo",
     )
     monkeypatch.setattr(
         "mcp_server.cli.artifact_commands._print_reconcile_guidance",
@@ -113,7 +172,7 @@ def test_artifact_recover_confirms_local_restore(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(
         "mcp_server.cli.artifact_commands.IndexArtifactDownloader._detect_repository",
-        lambda self: "owner/repo",
+        lambda self, repo_path=None: "owner/repo",
     )
 
     with runner.isolated_filesystem(temp_dir=str(tmp_path)):
@@ -138,7 +197,7 @@ def test_artifact_sync_bootstraps_local_indexes(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(
         "mcp_server.cli.artifact_commands.IndexArtifactDownloader._detect_repository",
-        lambda self: "owner/repo",
+        lambda self, repo_path=None: "owner/repo",
     )
     monkeypatch.setattr(
         "mcp_server.cli.artifact_commands._print_reconcile_guidance",
@@ -185,54 +244,33 @@ def test_artifact_sync_reports_existing_local_drift(monkeypatch, tmp_path):
     assert "too large for automatic incremental sync" in result.output.lower()
 
 
-def test_incremental_reconcile_uses_python_plugin_without_preindex(monkeypatch, tmp_path):
-    calls = []
+def test_incremental_reconcile_requires_committed_registered_generation(monkeypatch, tmp_path):
+    import subprocess
 
-    class FakePythonPlugin:
-        lang = "python"
+    from tests.test_git_index_manager import _make_git_repo
 
-        def __init__(self, sqlite_store=None, preindex=True):
-            calls.append(preindex)
-
-        def supports(self, path):
-            return True
-
-        def indexFile(self, path, content):
-            return {"file": str(path), "symbols": [], "language": "python"}
-
-    monkeypatch.chdir(tmp_path)
-    Path(".mcp-index").mkdir(exist_ok=True)
-    Path(".mcp-index/current.db").write_text("placeholder", encoding="utf-8")
-    monkeypatch.setattr("mcp_server.cli.artifact_commands.SQLiteStore", lambda path: object())
-    monkeypatch.setattr("mcp_server.cli.artifact_commands.PythonPlugin", FakePythonPlugin)
-    monkeypatch.setattr(
-        "mcp_server.cli.artifact_commands.EnhancedDispatcher",
-        lambda **kwargs: object(),
-    )
-
-    class FakeIndexer:
-        def __init__(self, store, dispatcher, repo_path):
-            pass
-
-        def update_from_changes(self, changes):
-            return type(
-                "Stats",
-                (),
-                {
-                    "files_indexed": 1,
-                    "files_removed": 0,
-                    "files_moved": 0,
-                    "files_skipped": 0,
-                    "errors": 0,
-                },
-            )()
-
-    monkeypatch.setattr("mcp_server.cli.artifact_commands.IncrementalIndexer", FakeIndexer)
-
-    result = _run_incremental_reconcile([FileChange("mcp_server/example.py", "modified")])
-
-    assert result is True
-    assert calls == [False]
+    repo = _make_git_repo(tmp_path)
+    owner = MultiRepositoryManager(central_index_path=tmp_path / "registry.json")
+    repo_id = owner.registry.register_repository(str(repo))
+    monkeypatch.chdir(repo)
+    monkeypatch.setattr("mcp_server.cli.artifact_commands.MultiRepositoryManager", lambda: owner)
+    change = FileChange("hello.py", "modified")
+    assert _run_incremental_reconcile([change])
+    first = owner.registry.get(repo_id).index_path
+    (repo / "hello.py").write_text("print('committed replacement')\n")
+    assert not _run_incremental_reconcile([change])
+    assert owner.registry.get(repo_id).index_path == first
+    subprocess.run(["git", "add", "hello.py"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "Synthetic committed drift"], cwd=repo, check=True)
+    assert _run_incremental_reconcile([change])
+    current = owner.registry.get(repo_id).index_path
+    assert current != first
+    store = SQLiteStore(str(current))
+    try:
+        assert store.search_code_fts("replacement")
+    finally:
+        store.close()
+        owner.close()
 
 
 def test_workspace_fetch_cli_prints_validation_truth(monkeypatch, tmp_path):
@@ -262,18 +300,19 @@ def test_workspace_fetch_cli_prints_validation_truth(monkeypatch, tmp_path):
             (),
             {
                 "artifact": {"head_sha": "recover123", "id": 23, "name": "repo-artifact"},
+                "installed_items": [str(repo_info.index_path)],
                 "validation_reasons": [],
             },
         )(),
     )
     monkeypatch.setattr(
         "mcp_server.artifacts.multi_repo_artifact_coordinator.IndexArtifactDownloader._detect_repository",
-        lambda self: "owner/repo",
+        lambda self, repo_path=None: "owner/repo",
     )
 
     result = runner.invoke(artifact, ["fetch-workspace", "--repository", "repo-1"])
 
     assert result.exit_code == 0
     assert "validation_status: passed" in result.output
-    assert "last_recovered_commit: recover123" in result.output
+    assert "last_recovered_commit: current-commit" in result.output
     assert "schema_version" in result.output

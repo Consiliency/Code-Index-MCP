@@ -5,6 +5,7 @@ This module coordinates search operations across multiple repositories,
 providing intelligent result ranking, deduplication, and aggregation.
 """
 
+import fnmatch
 import hashlib
 import logging
 import re
@@ -14,11 +15,11 @@ from concurrent.futures import (  # noqa: F401  (patched by tests; looked up via
     ThreadPoolExecutor,
     as_completed,
 )
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
-from mcp_server.core.errors import record_handled_error
+from mcp_server.core.errors import MCPError, record_handled_error
 from mcp_server.dependency_graph.aggregator import DependencyGraphAnalyzer
 from mcp_server.health.repository_readiness import ReadinessClassifier
 from mcp_server.indexer.reranker import IReranker as Reranker
@@ -32,6 +33,7 @@ from mcp_server.storage.multi_repo_manager import (
 from mcp_server.storage.sqlite_store import (  # noqa: F401  (patched by tests; looked up via globals())
     SQLiteStore,
 )
+from mcp_server.storage.store_registry import StoreRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +54,32 @@ def _redact_secrets(text: Optional[str]) -> Optional[str]:
     if not text:
         return text
     return _SECRET_REDACTION_PATTERN.sub("[REDACTED]", str(text))
+
+
+def _merge_scope_results(results: List[CrossRepoSearchResult]) -> List[CrossRepoSearchResult]:
+    """Union overlapping scopes without hiding a failed repository query."""
+    merged = {}
+    seen = defaultdict(set)
+    for result in results:
+        repo_id = result.repository_id
+        if repo_id not in merged or result.error:
+            merged[repo_id] = replace(result, results=[])
+        current = merged[repo_id]
+        if current.error:
+            continue
+        for row in result.results:
+            key = (
+                row.get("file_path", row.get("file")),
+                row.get("line_number", row.get("line")),
+                row.get("symbol"),
+                row.get("type"),
+                row.get("language"),
+                row.get("content", row.get("snippet")),
+            )
+            if key not in seen[repo_id]:
+                current.results.append(row)
+                seen[repo_id].add(key)
+    return list(merged.values())
 
 
 @dataclass
@@ -80,6 +108,9 @@ class AggregatedResult:
     primary_repository: str  # Best match repository
     occurrences: int
     metadata: Dict[str, Any] = field(default_factory=dict)
+
+
+_RankedRepositoryResult = AggregatedResult
 
 
 @dataclass
@@ -178,6 +209,11 @@ class CrossRepositoryCoordinator:
             List of aggregated results
         """
         start_time = datetime.now()
+        bindings = {
+            repo.repository_id: StoreRegistry.binding(repo)
+            for repo in self.multi_repo_manager.list_repositories(active_only=True)
+            if context.repositories is None or repo.repository_id in context.repositories
+        }
         logger.info(
             "Starting cross-repository search (query_chars=%d, type=%s)",
             len(context.query or ""),
@@ -189,6 +225,12 @@ class CrossRepositoryCoordinator:
 
         # Perform base search
         raw_results = await self._execute_search(context)
+        if any(result.error for result in raw_results) or (
+            context.repositories and set(context.repositories) - bindings.keys()
+        ):
+            raise MCPError(
+                "Index unavailable", {"code": "index_unavailable", "safe_fallback": "native_search"}
+            )
 
         # Apply strategy filter
         if strategy.filter:
@@ -227,31 +269,45 @@ class CrossRepositoryCoordinator:
             f"{len(raw_results)} raw -> {len(limited)} final results"
         )
 
+        if any(
+            not self.multi_repo_manager._query_ready(repo_id, binding)
+            for repo_id, binding in bindings.items()
+        ):
+            raise MCPError(
+                "Index unavailable", {"code": "index_unavailable", "safe_fallback": "native_search"}
+            )
         return limited
 
     async def _execute_search(self, context: SearchContext) -> List[CrossRepoSearchResult]:
         """Execute search across repositories."""
+        results = []
         if context.search_type == "symbol":
-            return await self.multi_repo_manager.search_symbol(
-                query=context.query,
-                repository_ids=context.repositories,
-                language=context.languages[0] if context.languages else None,
-                limit=context.max_results * 2,  # Get extra for filtering
-            )
+            for language in dict.fromkeys(context.languages or [None]):
+                results.extend(
+                    await self.multi_repo_manager.search_symbol(
+                        query=context.query,
+                        repository_ids=context.repositories,
+                        language=language,
+                        limit=context.max_results * 2,
+                    )
+                )
         elif context.search_type == "code":
-            return await self.multi_repo_manager.search_code(
-                query=context.query,
-                repository_ids=context.repositories,
-                file_pattern=context.file_patterns[0] if context.file_patterns else None,
-                limit=context.max_results * 2,
-            )
+            for pattern in dict.fromkeys(context.file_patterns or [None]):
+                results.extend(
+                    await self.multi_repo_manager.search_code(
+                        query=context.query,
+                        repository_ids=context.repositories,
+                        file_pattern=pattern,
+                        limit=context.max_results * 2,
+                        **({"languages": context.languages} if context.languages else {}),
+                    )
+                )
         else:
-            # Semantic search would go here
-            return await self.multi_repo_manager.search_symbol(
-                query=context.query,
-                repository_ids=context.repositories,
-                limit=context.max_results * 2,
+            raise MCPError(
+                "Cross-repository semantic backend is unavailable",
+                {"code": "index_unavailable", "safe_fallback": "native_search"},
             )
+        return _merge_scope_results(results)
 
     def _apply_filter(
         self, results: List[CrossRepoSearchResult], filter_func: Callable, context: SearchContext
@@ -306,7 +362,7 @@ class CrossRepositoryCoordinator:
             # Get all repository IDs
             repo_ids = [repo_id for _, repo_id, _ in occurrences]
 
-            aggregated_result = AggregatedResult(
+            aggregated_result = _RankedRepositoryResult(
                 content=primary_item,
                 score=0.0,  # Will be set by scorer
                 repositories=repo_ids,
@@ -329,7 +385,7 @@ class CrossRepositoryCoordinator:
                 continue
 
             for item in repo_result.results:
-                aggregated_result = AggregatedResult(
+                aggregated_result = _RankedRepositoryResult(
                     content=item,
                     score=0.0,
                     repositories=[repo_result.repository_id],
@@ -414,7 +470,9 @@ class CrossRepositoryCoordinator:
         # carried as the reranker snippet text.
         candidates = [
             RerankSearchResult(
-                file_path=str(result.content.get("file", "") if isinstance(result.content, dict) else ""),
+                file_path=str(
+                    result.content.get("file", "") if isinstance(result.content, dict) else ""
+                ),
                 start_line=0,
                 end_line=0,
                 column=0,
@@ -504,7 +562,7 @@ class CrossRepositoryCoordinator:
             )
         elif search_type == "code":
             return (
-                f"{result.get('code', '')} "
+                f"{result.get('content', result.get('code', ''))} "
                 f"in {result.get('file', '')} "
                 f"line {result.get('line', '')}"
             )
@@ -547,7 +605,7 @@ class CrossRepositoryCoordinator:
         query_lower = context.query.lower()
 
         # Code content matching
-        code = result.get("code", "").lower()
+        code = result.get("content", result.get("code", "")).lower()
         matches = code.count(query_lower)
         score += matches * 2.0
 
@@ -588,9 +646,7 @@ class CrossRepositoryCoordinator:
 
     def _match_pattern(self, file_path: str, pattern: str) -> bool:
         """Match file path against pattern."""
-        # Convert glob to regex
-        pattern = pattern.replace("*", ".*").replace("?", ".")
-        return bool(re.match(pattern, file_path))
+        return fnmatch.fnmatchcase(file_path, pattern)
 
     def _post_process_semantic(self, results: List[AggregatedResult]) -> List[AggregatedResult]:
         """Post-process semantic search results."""
@@ -608,7 +664,7 @@ class CrossRepositoryCoordinator:
         Returns:
             Results including dependencies
         """
-        if not context.include_dependencies:
+        if not context.include_dependencies or context.repositories is None:
             return await self.search(context)
 
         # Get dependency repositories
@@ -618,11 +674,8 @@ class CrossRepositoryCoordinator:
             deps = await self._get_repository_dependencies(repo_id)
             all_repos.update(deps)
 
-        # Update context with all repositories
-        context.repositories = list(all_repos)
-
         # Perform search
-        results = await self.search(context)
+        results = await self.search(replace(context, repositories=sorted(all_repos)))
 
         # Mark results from dependencies
         for result in results:
@@ -636,12 +689,12 @@ class CrossRepositoryCoordinator:
         if repository_id in self._repo_dependencies:
             return self._repo_dependencies[repository_id]
 
-        if self._multi_repo_manager is None:
+        if self.multi_repo_manager is None:
             self._repo_dependencies[repository_id] = set()
             return set()
 
         if not hasattr(self, "_dep_analyzer"):
-            self._dep_analyzer = DependencyGraphAnalyzer(self._multi_repo_manager)
+            self._dep_analyzer = DependencyGraphAnalyzer(self.multi_repo_manager)
 
         deps = await self._dep_analyzer.analyze(repository_id)
         self._repo_dependencies[repository_id] = deps
@@ -746,6 +799,9 @@ class _CrossRepoAggregatedResult:
     results: List[Dict[str, Any]]
     repository_stats: Dict[str, int]
     deduplication_stats: Dict[str, int]
+    code: Optional[str] = None
+    safe_fallback: Optional[str] = None
+    repository_errors: Dict[str, str] = field(default_factory=dict)
 
 
 AggregatedResult = _CrossRepoAggregatedResult
@@ -783,9 +839,7 @@ class CrossRepositorySearchCoordinator:
             id_set = set(scope.repositories)
             all_repos = [r for r in all_repos if r.repository_id in id_set]
 
-        if scope.languages is not None:
-            lang_set = set(scope.languages)
-            all_repos = [r for r in all_repos if lang_set & set(r.language_stats.keys())]
+        # Registry language statistics can lag indexing; filter authoritative rows instead.
 
         if scope.priority_order:
             all_repos.sort(key=lambda r: r.priority, reverse=True)
@@ -804,8 +858,8 @@ class CrossRepositorySearchCoordinator:
         """Content-agnostic signature for symbol dedup across repos."""
         key = (
             f"{result.get('symbol', '')}:"
-            f"{self._relative_suffix(result.get('file_path', ''))}:"
-            f"{result.get('line_number', '')}"
+            f"{self._relative_suffix(result.get('file_path', result.get('file', '')))}:"
+            f"{result.get('line_number', result.get('line', ''))}"
         )
         return hashlib.md5(key.encode(), usedforsecurity=False).hexdigest()
 
@@ -817,76 +871,73 @@ class CrossRepositorySearchCoordinator:
         return hashlib.md5(key.encode(), usedforsecurity=False).hexdigest()
 
     def _search_symbol_in_repository(
-        self,
-        query: str,
-        repo: "Any",
-        scope: SearchScope,
+        self, query: str, repo: Any, scope: SearchScope
     ) -> CrossRepoSearchResult:
-        """Synchronously search one repository for symbols.  Opens a SQLiteStore
-        against ``repo.index_path`` and calls ``search_symbols`` on it.
-        """
-        # Resolve the module attribute dynamically so tests patching
-        # ``mcp_server.dispatcher.cross_repo_coordinator.SQLiteStore`` take effect.
-        store_cls = globals()["SQLiteStore"]
-        started = time.time()
-        try:
-            store = store_cls(str(repo.index_path))
-            results = store.search_symbols(query)
-            return CrossRepoSearchResult(
-                repository_id=repo.repository_id,
-                repository_name=repo.name,
-                results=list(results or []),
-                search_time=time.time() - started,
+        results = []
+        for language in dict.fromkeys(scope.languages or [None]):
+            result = self.multi_repo_manager._search_repository(
+                repo.repository_id,
+                query,
+                language,
+                self.default_result_limit,
             )
-        except Exception as exc:
-            record_handled_error(__name__, exc)
-            return CrossRepoSearchResult(
-                repository_id=repo.repository_id,
-                repository_name=repo.name,
-                results=[],
-                search_time=time.time() - started,
-                error=str(exc),
-            )
+            if result is None or result.error:
+                return result or self.multi_repo_manager._query_unavailable(
+                    repo.repository_id, repo
+                )
+            results.append(result)
+        result = _merge_scope_results(results)[0]
+        result.results = result.results[: self.default_result_limit]
+        return result
 
     def _search_code_in_repository(
         self,
         query: str,
-        repo: "Any",
+        repo: Any,
         scope: SearchScope,
         semantic: bool = False,
         limit: Optional[int] = None,
     ) -> CrossRepoSearchResult:
-        """Synchronously search one repository for code.  Honours
-        ``scope.file_types`` as a post-filter on ``file_path`` suffix.
-        """
-        store_cls = globals()["SQLiteStore"]
         started = time.time()
-        try:
-            store = store_cls(str(repo.index_path))
-            raw = (
-                store.search_content(query, limit=limit)
-                if limit is not None
-                else store.search_content(query)
-            )
-            items = list(raw or [])
-            if scope.file_types:
-                exts = tuple(scope.file_types)
-                items = [r for r in items if str(r.get("file_path", "")).endswith(exts)]
+        if semantic:
             return CrossRepoSearchResult(
-                repository_id=repo.repository_id,
-                repository_name=repo.name,
-                results=items,
-                search_time=time.time() - started,
+                repo.repository_id,
+                repo.name,
+                [],
+                0.0,
+                "Cross-repository semantic backend is unavailable",
+                "index_unavailable",
+                "native_search",
             )
-        except Exception as exc:
-            record_handled_error(__name__, exc)
-            return CrossRepoSearchResult(
-                repository_id=repo.repository_id,
-                repository_name=repo.name,
-                results=[],
-                search_time=time.time() - started,
-                error=str(exc),
+        results = []
+        for extension in dict.fromkeys(scope.file_types or [None]):
+            result = self.multi_repo_manager._search_code_in_repository(
+                repo.repository_id,
+                query,
+                f"*{extension}" if extension else None,
+                limit or self.default_result_limit,
+                **({"languages": scope.languages} if scope.languages else {}),
             )
+            if result is None or result.error:
+                return result or self.multi_repo_manager._query_unavailable(
+                    repo.repository_id, repo
+                )
+            results.extend(result.results)
+        if not self.multi_repo_manager._query_ready(
+            repo.repository_id, StoreRegistry.binding(repo)
+        ):
+            return self.multi_repo_manager._query_unavailable(repo.repository_id, repo)
+        unique = {
+            (row.get("file_path"), row.get("line"), row.get("content", row.get("snippet"))): row
+            for row in results
+        }
+        ordered = sorted(unique.values(), key=lambda row: row.get("score", 0), reverse=True)
+        return CrossRepoSearchResult(
+            repo.repository_id,
+            repo.name,
+            ordered[: limit or self.default_result_limit],
+            time.time() - started,
+        )
 
     async def _aggregate_symbol_results(
         self,
@@ -895,6 +946,22 @@ class CrossRepositorySearchCoordinator:
         start_time: float,
     ) -> "_CrossRepoAggregatedResult":
         """Dedup + aggregate per-repo symbol search results."""
+        failures = {
+            r.repository_id: r.code or "index_unavailable" for r in search_results if r.error
+        }
+        if failures:
+            return _CrossRepoAggregatedResult(
+                query,
+                0,
+                len(search_results),
+                time.time() - start_time,
+                [],
+                {},
+                {},
+                "index_unavailable",
+                "native_search",
+                failures,
+            )
         seen: Dict[str, Dict[str, Any]] = {}
         repo_stats: Dict[str, int] = {}
         original_count = 0
@@ -933,6 +1000,22 @@ class CrossRepositorySearchCoordinator:
         limit: Optional[int] = None,
     ) -> "_CrossRepoAggregatedResult":
         """Dedup + score-sort + limit per-repo code search results."""
+        failures = {
+            r.repository_id: r.code or "index_unavailable" for r in search_results if r.error
+        }
+        if failures:
+            return _CrossRepoAggregatedResult(
+                query,
+                0,
+                len(search_results),
+                time.time() - start_time,
+                [],
+                {},
+                {},
+                "index_unavailable",
+                "native_search",
+                failures,
+            )
         seen: Dict[str, Dict[str, Any]] = {}
         repo_stats: Dict[str, int] = {}
         original_count = 0
@@ -981,12 +1064,31 @@ class CrossRepositorySearchCoordinator:
         as_completed_fn = globals()["as_completed"]
         results: List[CrossRepoSearchResult] = []
         with executor_cls(max_workers=self.max_workers) as executor:
-            futures = [executor.submit(worker, repo) for repo in repos]
+            futures = {executor.submit(worker, repo): repo for repo in repos}
             for fut in as_completed_fn(futures):
                 try:
                     results.append(fut.result())
                 except Exception as exc:
                     record_handled_error(__name__, exc)
+                    repo = futures[fut]
+                    results.append(
+                        self.multi_repo_manager._query_unavailable(repo.repository_id, repo)
+                    )
+        stale = {
+            repo.repository_id
+            for repo in repos
+            if not self.multi_repo_manager._query_ready(
+                repo.repository_id, StoreRegistry.binding(repo)
+            )
+        }
+        results = [
+            result for result in results if result is not None and result.repository_id not in stale
+        ]
+        results.extend(
+            self.multi_repo_manager._query_unavailable(repo.repository_id, repo)
+            for repo in repos
+            if repo.repository_id in stale
+        )
         return results
 
     async def search_symbol(
@@ -995,7 +1097,9 @@ class CrossRepositorySearchCoordinator:
         scope = scope or SearchScope()
         start = time.time()
         repos = await self._get_target_repositories(scope)
-        if not repos:
+        if not repos or (
+            scope.repositories and set(scope.repositories) - {repo.repository_id for repo in repos}
+        ):
             return _CrossRepoAggregatedResult(
                 query=symbol,
                 total_results=0,
@@ -1004,6 +1108,8 @@ class CrossRepositorySearchCoordinator:
                 results=[],
                 repository_stats={},
                 deduplication_stats={},
+                code="index_unavailable" if scope.repositories else None,
+                safe_fallback="native_search" if scope.repositories else None,
             )
         per_repo = self._run_parallel(
             repos, lambda r: self._search_symbol_in_repository(symbol, r, scope)
@@ -1021,7 +1127,9 @@ class CrossRepositorySearchCoordinator:
         limit = limit or self.default_result_limit
         start = time.time()
         repos = await self._get_target_repositories(scope)
-        if not repos:
+        if not repos or (
+            scope.repositories and set(scope.repositories) - {repo.repository_id for repo in repos}
+        ):
             return _CrossRepoAggregatedResult(
                 query=query,
                 total_results=0,
@@ -1030,6 +1138,8 @@ class CrossRepositorySearchCoordinator:
                 results=[],
                 repository_stats={},
                 deduplication_stats={},
+                code="index_unavailable" if scope.repositories else None,
+                safe_fallback="native_search" if scope.repositories else None,
             )
         per_repo = self._run_parallel(
             repos,

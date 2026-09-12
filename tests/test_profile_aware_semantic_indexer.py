@@ -31,8 +31,9 @@ class _FakeQdrantClient:
         self.upserts = []
         self.collections = {}
 
-    def upsert(self, *, collection_name, points):
+    def upsert(self, *, collection_name, points, wait=False):
         self.upserts.append((collection_name, list(points)))
+        return SimpleNamespace(status="completed")
 
     def get_collections(self):
         return SimpleNamespace(

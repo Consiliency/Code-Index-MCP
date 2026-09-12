@@ -12,8 +12,8 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Configuration
-MCP_VERSION="${MCP_VERSION:-v1.4.0}"
-MCP_VARIANT="${MCP_VARIANT:-v1.4.0}"
+MCP_VERSION="${MCP_VERSION:-v1.4.1}"
+MCP_VARIANT="${MCP_VARIANT:-v1.4.1}"
 DOCKER_REGISTRY="${DOCKER_REGISTRY:-ghcr.io}"
 MCP_IMAGE="${DOCKER_REGISTRY}/consiliency/code-index-mcp"
 
@@ -115,7 +115,7 @@ install_docker() {
 choose_variant() {
     echo
     echo "Choose MCP Index variant:"
-    echo "1) v1.4.0      - Published release image (default)"
+    echo "1) v1.4.1      - Versioned release image (requires publication)"
     echo "2) local-smoke - Locally built via make release-smoke-container"
     echo "3) latest      - Stable channel (published)"
     echo
@@ -133,8 +133,8 @@ choose_variant() {
             print_info "Selected: latest"
             ;;
         *)
-            MCP_VARIANT="v1.4.0"
-            print_info "Selected: v1.4.0"
+            MCP_VARIANT="v1.4.1"
+            print_info "Selected: v1.4.1"
             ;;
     esac
 }
@@ -163,7 +163,7 @@ create_launcher() {
 # MCP Index Docker Launcher
 
 # Default settings
-MCP_VARIANT="${MCP_VARIANT:-v1.4.0}"
+MCP_VARIANT="${MCP_VARIANT:-v1.4.1}"
 MCP_IMAGE="${MCP_IMAGE:-ghcr.io/consiliency/code-index-mcp}"
 WORKSPACE="${WORKSPACE:-$(pwd)}"
 

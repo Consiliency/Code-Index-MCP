@@ -1,0 +1,38 @@
+{
+  "phase": "SAFETY",
+  "kind": "synthetic_signing_roundtrip",
+  "verified_at": "2026-09-11T12:12:45.206534+00:00",
+  "signer_commit": "7251903f9f046ab8c5218439603658321b113429",
+  "trusted_source_ref_for_this_test_only": "refs/heads/codex/v13-audit-remediation",
+  "production_default_ref": "refs/heads/main",
+  "workflow": ".github/workflows/sign-published-image.yml",
+  "repository": "Consiliency/Code-Index-MCP",
+  "predicate_type": "https://github.com/Consiliency/Code-Index-MCP/local-index-digest/v1",
+  "run_id": 34597512666,
+  "run_url": "https://github.com/Consiliency/Code-Index-MCP/actions/runs/34597512666",
+  "job_duration_seconds": 7,
+  "job_timeout_minutes": 5,
+  "image_signing_job": "skipped",
+  "initial_local_verifier_attempt": "rejected incompatible CLI option combination before verification",
+  "repair": "Removed signer-workflow flag; retained exact certificate workflow/ref identity plus source and signer digest checks",
+  "artifact_origin": "local_synthetic",
+  "source_or_index_uploaded": false,
+  "routine_ci_added": false,
+  "archive_sha256": "4804f0a434f1e5440cdd86f9ff2277d3af838c89c7a956a78b4b0973c6ab0190",
+  "bundle_sha256": "8dca99fbe3fb22a8f3bd6d3dd90042c6d3842d2e3611cde6cbc67818e37b70aa",
+  "scratch_path": ".phase-loop/runs/v13-SAFETY-signing-7251903",
+  "controls": {
+    "valid_exact_producer": "passed",
+    "wrong_repository": "rejected",
+    "default_main_rejects_feature_signer": "rejected",
+    "wrong_signer_head": "rejected",
+    "wrong_workflow": "rejected",
+    "cryptographic_tamper": "rejected",
+    "missing_bundle": "rejected",
+    "invalid_bundle": "rejected"
+  },
+  "limitations": [
+    "Digest identity proof, not build provenance or index correctness",
+    "Feature signer trusted only by explicit exact-head test configuration"
+  ]
+}

@@ -28,21 +28,18 @@ _SYNTHETIC_ATTESTATION = Attestation(
 
 @pytest.fixture(autouse=True)
 def _stub_attest(monkeypatch):
-    """Patch mcp_server.artifacts.publisher.attest so publish tests don't shell out."""
-    monkeypatch.setattr(
-        "mcp_server.artifacts.publisher.attest",
-        MagicMock(return_value=_SYNTHETIC_ATTESTATION),
-    )
+    """Exercise mocked publication orchestration under explicit test-only opt-out."""
+    monkeypatch.setenv("MCP_ATTESTATION_MODE", "skip")
 
 
 SHORT_SHA = COMMIT[:7]
-TAG = f"index-my-repo-main-{SHORT_SHA}"
+TAG = f"index-my-repo-main-{COMMIT}"
 RELEASE_URL = f"https://github.com/{REPO}/releases/tag/{TAG}"
 LATEST_URL = f"https://github.com/{REPO}/releases/tag/index-latest"
 
 
 def _canonical_tag(repo_id: str, commit: str, tracked_branch: str = "main") -> str:
-    return f"index-{repo_id.replace('/', '_').replace(':', '_')}-{tracked_branch}-{commit[:7]}"
+    return f"index-{repo_id.replace('/', '_').replace(':', '_')}-{tracked_branch}-{commit}"
 
 
 def _make_uploader() -> IndexArtifactUploader:
@@ -364,7 +361,7 @@ class TestCallOrder:
         upload_call = uploader.upload_direct.call_args
         assert upload_call is not None
         assert upload_call.kwargs["release_tag"] == _canonical_tag("repo", COMMIT)
-        assert upload_call.kwargs["attestation"].bundle_url == _SYNTHETIC_ATTESTATION.bundle_url
+        assert "attestation" not in upload_call.kwargs
 
         # SHA-keyed create must precede index-latest edit
         sha_create_idx = next(

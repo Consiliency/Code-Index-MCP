@@ -15,21 +15,24 @@ ORDERING CONTRACT (matters for correctness):
      imports the target plugin module AFTER this function returns, and Python
      opens ``.py``/``.pyc`` files as part of import. Only after the plugin
      module is loaded should :func:`install_fs_guard` be called to lock
-     ``builtins.open`` to paths within ``caps.fs_read`` ∪ ``caps.fs_write``.
+     builtins/io/pathlib/os opens to the declared capability roots.
 
 Subprocess is deliberately NOT blanket-blocked: the Go plugin imports
 ``subprocess`` at module load, and several plugins shell out to language
-toolchains. The network guard is the real isolation property here.
+toolchains. These are cooperative Python API guards, not OS-enforced containment
+of hostile plugins, native extensions or child executables.
 """
 
 from __future__ import annotations
 
 import builtins
+import io
 import logging
 import os
 import tempfile
 from pathlib import Path
 from typing import Callable, Optional
+from urllib.parse import parse_qsl, unquote, urlencode, urlsplit
 
 from mcp_server.sandbox.capabilities import CapabilitySet, SandboxViolation
 
@@ -38,6 +41,7 @@ logger = logging.getLogger(__name__)
 
 _ORIGINAL_OPEN: Optional[Callable] = None
 _FS_GUARD_INSTALLED: bool = False
+_SCRATCH_DIR: Optional[Path] = None
 
 
 def _close_inherited_fds() -> None:
@@ -142,20 +146,42 @@ def _patch_sqlite(caps: CapabilitySet) -> None:
         def _denied_connect(*args, **kwargs):
             raise SandboxViolation("sqlite disabled by CapabilitySet")
 
-        sqlite3.connect = _denied_connect  # type: ignore[assignment]
+        sqlite3.connect = sqlite3.dbapi2.connect = _denied_connect
         return
 
     if caps.sqlite == "readonly":
         orig_connect = sqlite3.connect
 
         def _readonly_connect(database, *args, **kwargs):  # type: ignore[no-redef]
-            uri = kwargs.get("uri", False)
-            if not uri and isinstance(database, str) and not database.startswith("file:"):
-                database = f"file:{database}?mode=ro"
+            name = os.fsdecode(database)
+            options = {}
+            if name.startswith("file:"):
+                parsed = urlsplit(name)
+                if parsed.netloc not in ("", "localhost") or parsed.fragment:
+                    raise SandboxViolation("unsupported SQLite URI")
+                name = unquote(parsed.path)
+                options = dict(parse_qsl(parsed.query, keep_blank_values=True))
+            if name in ("", ":memory:") or options.get("mode") == "memory":
+                raise SandboxViolation("readonly SQLite requires an allowed file")
+            path = Path(name).resolve()
+            if not _within_allowed(path, caps.fs_read):
+                raise SandboxViolation("SQLite read outside capability roots")
+            options["mode"] = "ro"
+            database = path.as_uri() + "?" + urlencode(options)
+            if len(args) >= 7:
+                args = (*args[:6], True, *args[7:])
+                kwargs.pop("uri", None)
+            else:
                 kwargs["uri"] = True
-            return orig_connect(database, *args, **kwargs)
+            conn = orig_connect(database, *args, **kwargs)
+            conn.set_authorizer(
+                lambda action, *_: (
+                    sqlite3.SQLITE_DENY if action == sqlite3.SQLITE_ATTACH else sqlite3.SQLITE_OK
+                )
+            )
+            return conn
 
-        sqlite3.connect = _readonly_connect  # type: ignore[assignment]
+        sqlite3.connect = sqlite3.dbapi2.connect = _readonly_connect
 
 
 def _within_allowed(path: str, roots: tuple) -> bool:
@@ -163,7 +189,7 @@ def _within_allowed(path: str, roots: tuple) -> bool:
     if not roots:
         return False
     try:
-        resolved = Path(path).resolve(strict=False)
+        resolved = Path(os.fsdecode(path)).resolve(strict=False)
     except (OSError, RuntimeError):
         return False
     for r in roots:
@@ -176,15 +202,15 @@ def _within_allowed(path: str, roots: tuple) -> bool:
 
 
 def install_fs_guard(caps: CapabilitySet) -> None:
-    """Install a ``builtins.open`` wrapper that enforces caps.fs_read/fs_write.
+    """Guard supported Python open APIs using caps.fs_read/fs_write.
 
     Must be called AFTER the plugin module is imported — otherwise Python's
     own import machinery (which calls ``open`` on ``.py``/``.pyc``) would
     trip the guard.
 
     Paths are allowed iff they resolve inside ``fs_read`` (for read modes)
-    or ``fs_write`` (for any write mode). Numeric FDs and paths inside the
-    scratch sandbox temp dir always pass (the worker lives there).
+    and/or ``fs_write`` as required by the mode. Resolvable non-stdio descriptors
+    follow the same roots. Only this worker's own scratch directory is implicit.
     """
     global _ORIGINAL_OPEN, _FS_GUARD_INSTALLED
     if _FS_GUARD_INSTALLED:
@@ -192,25 +218,52 @@ def install_fs_guard(caps: CapabilitySet) -> None:
     _FS_GUARD_INSTALLED = True
     _ORIGINAL_OPEN = builtins.open
 
-    read_roots = tuple(caps.fs_read) + (Path(tempfile.gettempdir()),)
-    write_roots = tuple(caps.fs_write)
+    scratch = (_SCRATCH_DIR,) if _SCRATCH_DIR is not None else ()
+    read_roots = tuple(caps.fs_read) + scratch
+    write_roots = tuple(caps.fs_write) + scratch
+    original_io_open = io.open
+    original_os_open = os.open
+
+    def check(file, *, read, write, dir_fd=None):
+        if isinstance(file, int):
+            if file in (0, 1, 2):
+                return
+            try:
+                file = os.readlink(f"/proc/self/fd/{file}")
+            except OSError as exc:
+                raise SandboxViolation("unresolvable file descriptor") from exc
+        path = Path(os.fsdecode(file))
+        if dir_fd is not None and not path.is_absolute():
+            try:
+                path = Path(os.readlink(f"/proc/self/fd/{dir_fd}")) / path
+            except OSError as exc:
+                raise SandboxViolation("unresolvable directory descriptor") from exc
+        if read and not _within_allowed(path, read_roots):
+            raise SandboxViolation("fs_read denied by capability roots")
+        if write and not _within_allowed(path, write_roots):
+            raise SandboxViolation("fs_write denied by capability roots")
 
     def _guarded_open(file, mode="r", *args, **kwargs):
-        # Integer FD — already open, no new path check.
-        if isinstance(file, int):
-            return _ORIGINAL_OPEN(file, mode, *args, **kwargs)
-
-        p = os.fspath(file)
-        is_write = any(ch in mode for ch in ("w", "a", "x", "+"))
-        if is_write:
-            if not _within_allowed(p, write_roots):
-                raise SandboxViolation(f"fs_write denied: {p!r}")
-        else:
-            if not _within_allowed(p, read_roots):
-                raise SandboxViolation(f"fs_read denied: {p!r}")
+        check(file, read="r" in mode or "+" in mode, write=any(ch in mode for ch in "wax+"))
         return _ORIGINAL_OPEN(file, mode, *args, **kwargs)
 
+    def _guarded_io_open(file, mode="r", *args, **kwargs):
+        check(file, read="r" in mode or "+" in mode, write=any(ch in mode for ch in "wax+"))
+        return original_io_open(file, mode, *args, **kwargs)
+
+    def _guarded_os_open(path, flags, mode=0o777, *, dir_fd=None):
+        access = flags & os.O_ACCMODE
+        check(
+            path,
+            read=access != os.O_WRONLY,
+            write=access != os.O_RDONLY or bool(flags & (os.O_CREAT | os.O_TRUNC | os.O_APPEND)),
+            dir_fd=dir_fd,
+        )
+        return original_os_open(path, flags, mode, dir_fd=dir_fd)
+
     builtins.open = _guarded_open  # type: ignore[assignment]
+    io.open = _guarded_io_open
+    os.open = _guarded_os_open
 
 
 def apply(caps: CapabilitySet) -> None:
@@ -219,8 +272,10 @@ def apply(caps: CapabilitySet) -> None:
     Must run BEFORE the plugin module is imported. The FS guard is a
     separate :func:`install_fs_guard` call so plugin import can succeed.
     """
+    global _SCRATCH_DIR
     # 1. chdir to a scratch dir.
     sandbox_tmp = tempfile.mkdtemp(prefix="sandbox-")
+    _SCRATCH_DIR = Path(sandbox_tmp).resolve()
     try:
         os.chdir(sandbox_tmp)
     except OSError as exc:

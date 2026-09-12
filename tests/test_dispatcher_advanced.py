@@ -664,6 +664,7 @@ class TestRemoveFileSemanticCleanup:
         d._legacy_plugins = []
         d._semantic_registry = None
         d._semantic_indexer_fallback = semantic_indexer
+        d._semantic_enabled = semantic_indexer is not None
         d._lazy_load = False
         d._use_factory = False
         d._enable_advanced = False

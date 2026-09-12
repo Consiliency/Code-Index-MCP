@@ -784,15 +784,12 @@ class TestReindexEndpoint:
         self, test_client_with_dispatcher, temp_code_directory, monkeypatch
     ):
         """Test reindexing a directory."""
-        test_client_with_dispatcher.app.state.dispatcher.index_file = Mock()
-
-        # Mock plugin supports method via public Protocol method
-        mock_plugin = Mock()
-        mock_plugin.supports.side_effect = lambda p: p.suffix == ".py"
-        test_client_with_dispatcher.app.state.dispatcher.plugins = Mock(return_value=[mock_plugin])
+        test_client_with_dispatcher.app.state.dispatcher.index_directory = Mock(
+            return_value={"indexed_files": 2, "failed_files": 0}
+        )
         import mcp_server.gateway as gateway
 
-        ctx = Mock(repo_id="repo-a", workspace_root=temp_code_directory)
+        ctx = Mock(repo_id="repo-a", workspace_root=temp_code_directory, staging=False)
         monkeypatch.setattr(gateway, "get_repo_ctx", lambda _request: ctx)
 
         response = test_client_with_dispatcher.post(f"/reindex?path={temp_code_directory}")
@@ -802,8 +799,9 @@ class TestReindexEndpoint:
         assert data["status"] == "completed"
         assert "Reindexed" in data["message"]
 
-        # Should have indexed Python files
-        assert test_client_with_dispatcher.app.state.dispatcher.index_file.call_count >= 2
+        test_client_with_dispatcher.app.state.dispatcher.index_directory.assert_called_once_with(
+            ctx, temp_code_directory, recursive=True
+        )
 
     @pytest.mark.asyncio
     async def test_reindex_nonexistent_path(self, test_client_with_dispatcher):

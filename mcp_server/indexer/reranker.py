@@ -40,6 +40,8 @@ Cross-provider scores are never assumed comparable — see
 """
 
 import asyncio
+import hashlib
+import json
 import logging
 import os
 import threading
@@ -47,6 +49,7 @@ import uuid
 
 # Define interfaces inline for now
 from abc import ABC, abstractmethod
+from dataclasses import asdict
 from dataclasses import dataclass as dc
 from enum import Enum
 from typing import Any, Awaitable, Callable, Dict, List, Optional, TypeVar
@@ -65,6 +68,7 @@ class SearchResult:
     match_type: str  # exact, fuzzy, semantic
     score: float
     context: Optional[str] = None
+    generation_key: Optional[str] = None
 
     @property
     def line(self) -> int:
@@ -212,17 +216,30 @@ class BaseReranker(IReranker, ABC):
         self.cache_ttl = config.get("cache_ttl", 3600)  # 1 hour default
         self.initialized = False
 
-    async def _get_cache_key(self, query: str, results: List[SearchResult]) -> str:
+    async def _get_cache_key(
+        self, query: str, results: List[SearchResult], top_k: Optional[int] = None
+    ) -> str:
         """Generate cache key for reranking results"""
-        # Create a deterministic key based on query and result IDs
-        result_ids = [f"{r.file_path}:{r.line}" for r in results[:10]]  # Use top 10 for key
-        return f"rerank:{self.__class__.__name__}:{hash(query)}:{hash(tuple(result_ids))}"
+        payload = json.dumps(
+            {
+                "query": query,
+                "config": self.config,
+                "top_k": top_k,
+                "candidates": [asdict(r) for r in results],
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        )
+        return f"rerank:{self.__class__.__name__}:{hashlib.sha256(payload.encode()).hexdigest()}"
 
     async def _get_cached_results(
-        self, query: str, results: List[SearchResult]
+        self, query: str, results: List[SearchResult], top_k: Optional[int] = None
     ) -> Optional[List[RerankItem]]:
         """Get cached reranking results if available"""
-        cache_key = await self._get_cache_key(query, results)
+        if not results or any(result.generation_key is None for result in results):
+            return None
+        cache_key = await self._get_cache_key(query, results, top_k)
 
         if cache_key in self._cache:
             cached_data = self._cache[cache_key]
@@ -239,12 +256,18 @@ class BaseReranker(IReranker, ABC):
         return None
 
     async def _cache_results(
-        self, query: str, results: List[SearchResult], reranked: List[RerankItem]
+        self,
+        query: str,
+        results: List[SearchResult],
+        reranked: List[RerankItem],
+        top_k: Optional[int] = None,
     ):
         """Cache reranking results"""
         import time
 
-        cache_key = await self._get_cache_key(query, results)
+        if not results or any(result.generation_key is None for result in results):
+            return
+        cache_key = await self._get_cache_key(query, results, top_k)
         self._cache[cache_key] = {"results": reranked, "timestamp": time.time()}
 
         # Simple cache size limit
@@ -300,7 +323,7 @@ class CohereReranker(BaseReranker):
             return Result.error("Cohere reranker not initialized")
 
         # Check cache first
-        cached = await self._get_cached_results(query, results)
+        cached = await self._get_cached_results(query, results, top_k)
         if cached:
             rerank_result = RerankResult(
                 results=cached[:top_k] if top_k else cached,
@@ -348,7 +371,7 @@ class CohereReranker(BaseReranker):
                 reranked_items.append(rerank_item)
 
             # Cache results
-            await self._cache_results(query, results, reranked_items)
+            await self._cache_results(query, results, reranked_items, top_k)
 
             # Create RerankResult with metadata
             rerank_result = RerankResult(
@@ -426,7 +449,7 @@ class LocalCrossEncoderReranker(BaseReranker):
             return Result.error("Cross-encoder reranker not initialized")
 
         # Check cache first
-        cached = await self._get_cached_results(query, results)
+        cached = await self._get_cached_results(query, results, top_k)
         if cached:
             rerank_result = RerankResult(
                 results=cached[:top_k] if top_k else cached,
@@ -489,7 +512,7 @@ class LocalCrossEncoderReranker(BaseReranker):
                 reranked_items.append(rerank_item)
 
             # Cache results
-            await self._cache_results(query, results, reranked_items)
+            await self._cache_results(query, results, reranked_items, top_k)
 
             # Create RerankResult with metadata
             rerank_result = RerankResult(
@@ -568,7 +591,7 @@ class TFIDFReranker(BaseReranker):
             return Result.error("TF-IDF reranker not initialized")
 
         # Check cache first
-        cached = await self._get_cached_results(query, results)
+        cached = await self._get_cached_results(query, results, top_k)
         if cached:
             rerank_result = RerankResult(
                 results=cached[:top_k] if top_k else cached,
@@ -621,7 +644,7 @@ class TFIDFReranker(BaseReranker):
                 reranked_items.append(rerank_item)
 
             # Cache results
-            await self._cache_results(query, results, reranked_items)
+            await self._cache_results(query, results, reranked_items, top_k)
 
             # Create RerankResult with metadata
             rerank_result = RerankResult(
@@ -814,7 +837,9 @@ class VoyageReranker:
             return [candidates[r.index] for r in result.results]
         except Exception as e:
             self.last_error = _redact_error(e)
-            logger.warning("VoyageReranker.rerank() failed, using original order: %s", _redact_error(e))
+            logger.warning(
+                "VoyageReranker.rerank() failed, using original order: %s", _redact_error(e)
+            )
             return candidates[:top_k]
 
 
@@ -865,7 +890,9 @@ class FlashRankReranker:
             return [candidates[r["id"]] for r in results[:top_k]]
         except Exception as e:
             self.last_error = _redact_error(e)
-            logger.warning("FlashRankReranker.rerank() failed, using original order: %s", _redact_error(e))
+            logger.warning(
+                "FlashRankReranker.rerank() failed, using original order: %s", _redact_error(e)
+            )
             return candidates[:top_k]
 
 
@@ -912,7 +939,9 @@ class CrossEncoderReranker:
             return [candidates[i] for i, _ in indexed[:top_k]]
         except Exception as e:
             self.last_error = _redact_error(e)
-            logger.warning("CrossEncoderReranker.rerank() failed, using original order: %s", _redact_error(e))
+            logger.warning(
+                "CrossEncoderReranker.rerank() failed, using original order: %s", _redact_error(e)
+            )
             return candidates[:top_k]
 
 
@@ -986,9 +1015,7 @@ def run_coroutine_sync(coro: Awaitable[_T], *, timeout: Optional[float] = None) 
         worker_loop = asyncio.new_event_loop()
         try:
             if timeout is not None:
-                box["value"] = worker_loop.run_until_complete(
-                    asyncio.wait_for(coro, timeout)
-                )
+                box["value"] = worker_loop.run_until_complete(asyncio.wait_for(coro, timeout))
             else:
                 box["value"] = worker_loop.run_until_complete(coro)
         except BaseException as exc:  # noqa: BLE001 - re-raised on caller thread
@@ -1022,9 +1049,7 @@ class SyncRerankerAdapter:
         self._reranker = async_reranker
         self._timeout = timeout
 
-    def rerank(
-        self, query: str, results: List[SearchResult], top_k: Optional[int] = None
-    ) -> Any:
+    def rerank(self, query: str, results: List[SearchResult], top_k: Optional[int] = None) -> Any:
         return run_coroutine_sync(
             self._reranker.rerank(query, results, top_k), timeout=self._timeout
         )
@@ -1105,14 +1130,14 @@ class EndpointReranker(IReranker):
         """
         # Lazy import avoids a module-load cycle: rerank_contracts imports
         # RerankOutcome from this module.
+        import time
+
         from mcp_server.interfaces.rerank_contracts import (
             RerankCandidate,
             RerankRequest,
             RerankResponse,
             validate_rerank_response,
         )
-
-        import time
 
         limit = top_k if top_k is not None else len(results)
 
@@ -1126,9 +1151,7 @@ class EndpointReranker(IReranker):
             cid = f"cand-{idx}"
             by_id[cid] = result
             original_rank[cid] = idx
-            candidates.append(
-                RerankCandidate(candidate_id=cid, text=self._candidate_text(result))
-            )
+            candidates.append(RerankCandidate(candidate_id=cid, text=self._candidate_text(result)))
 
         request = RerankRequest(
             request_id=f"rerank-{uuid.uuid4().hex}",
@@ -1181,9 +1204,7 @@ class EndpointReranker(IReranker):
                     original_rank=original_rank[cid],
                     new_rank=new_rank,
                     explanation=(
-                        None
-                        if score is not None
-                        else f"status={statuses.get(cid, 'failed')}"
+                        None if score is not None else f"status={statuses.get(cid, 'failed')}"
                     ),
                 )
             )
@@ -1318,9 +1339,7 @@ class CohereV2RerankAdapter:
                     f"Cohere result index {index} out of range for {len(ids)} candidates"
                 )
             score = item.get("relevance_score")
-            status = (
-                RerankOutcome.SUCCEEDED if score is not None else RerankOutcome.FAILED
-            )
+            status = RerankOutcome.SUCCEEDED if score is not None else RerankOutcome.FAILED
             if score is not None:
                 scored += 1
             results.append(

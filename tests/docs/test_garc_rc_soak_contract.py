@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from tests.test_release_metadata import EXPECTED_TAG
+
 REPO = Path(__file__).parent.parent.parent
-ACTIVE_STABLE_TAG = "v1.4.0"
+ACTIVE_STABLE_TAG = EXPECTED_TAG
 
 GA_CHECKLIST = REPO / "docs" / "validation" / "ga-readiness-checklist.md"
 GA_GOVERNANCE = REPO / "docs" / "validation" / "ga-governance-evidence.md"

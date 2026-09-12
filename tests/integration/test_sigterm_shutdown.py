@@ -137,11 +137,11 @@ class TestGracefulShutdown:
 
         assert calls == ["exporter.stop"]
 
-    def test_shutdown_timeout_does_not_propagate(self):
-        """A timed-out watcher.stop is swallowed; subsequent steps still run."""
+    def test_shutdown_timeout_drains_before_releasing_storage(self):
+        """A slow watcher retains ownership until stopped; storage closes afterwards."""
         calls: list[str] = []
         # delay > timeout so watcher times out
-        watcher = FakeWatcher(calls, delay=10.0)
+        watcher = FakeWatcher(calls, delay=0.1)
         poller = FakePoller(calls)
         store = FakeStoreRegistry(calls)
         exporter = FakeExporter(calls)
@@ -154,6 +154,7 @@ class TestGracefulShutdown:
         assert "poller.stop" in calls
         assert "store.shutdown" in calls
         assert "exporter.stop" in calls
+        assert calls.index("watcher.stop") < calls.index("store.shutdown")
 
     def test_shutdown_idempotent(self):
         """Calling shutdown twice does not double-stop (idempotency flag)."""

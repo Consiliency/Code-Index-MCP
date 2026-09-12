@@ -312,6 +312,7 @@ def test_incremental_repair_revert_rename_and_delete_match_durable_index(tmp_pat
             {"symbol": matrix.alpha.token, "repository": str(matrix.alpha.path)},
         )
         assert renamed["symbol"] == renamed_token
+        assert "defined_in" in renamed, str(renamed)
         assert "renamed_alpha.py" in renamed["defined_in"]
         assert old_token["result"] == "not_found"
 

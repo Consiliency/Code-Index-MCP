@@ -11,6 +11,7 @@ Tests cover:
 """
 
 import os
+import subprocess
 import sys
 import threading
 import time
@@ -28,6 +29,7 @@ from watchdog.events import (
 )
 
 from mcp_server.watcher import FileWatcher, _Handler
+from tests.test_v13_data_storage import runtime
 
 
 @contextmanager
@@ -606,180 +608,104 @@ class TestPerformance:
 
 
 class TestReindexIntegration:
-    """Integration tests verifying correct SQLite DB state after file changes via the watcher path."""
+    """Committed watcher updates publish fresh SQLite generations."""
 
-    def _setup(self, tmp_path, monkeypatch):
-        from types import SimpleNamespace
+    @staticmethod
+    def _commit(repo):
+        subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "-qm", "Synthetic watcher fixture"], cwd=repo, check=True)
 
-        from mcp_server.core.path_resolver import PathResolver
-        from mcp_server.core.repo_context import RepoContext
-        from mcp_server.dispatcher import EnhancedDispatcher as Dispatcher
-        from mcp_server.plugins.python_plugin.plugin import Plugin as PythonPlugin
-        from mcp_server.storage.sqlite_store import SQLiteStore
-
-        monkeypatch.chdir(tmp_path)
-        store = SQLiteStore(str(tmp_path / "index.db"))
-        dispatcher = Dispatcher([PythonPlugin(sqlite_store=None)], semantic_search_enabled=False)
-        ctx = RepoContext(
-            repo_id="watcher-integration",
-            sqlite_store=store,
-            workspace_root=tmp_path,
-            tracked_branch="main",
-            registry_entry=SimpleNamespace(
-                repository_id="watcher-integration",
-                path=tmp_path,
-                tracked_branch="main",
-                current_branch="main",
-                name=tmp_path.name,
-            ),
-        )
+    @pytest.mark.integration
+    def test_file_modification_updates_line_numbers(self, runtime):
+        repo, _registry, repo_id, _original, manager = runtime
+        path = repo / "mod_test.py"
+        path.write_text("def foo():\n    pass\n")
+        self._commit(repo)
+        assert manager.rebuild_repository_index(repo_id).action == "full_index"
         handler = _Handler(
-            dispatcher,
-            path_resolver=PathResolver(repository_root=tmp_path),
-            ctx=ctx,
+            manager.dispatcher, ctx=manager._resolve_ctx(repo_id), index_manager=manager
         )
-        return store, dispatcher, handler
+        try:
+            store = handler.ctx.sqlite_store
+            file_id = store.get_file_id_by_path(path.name)
+            assert any(c["line_start"] == 1 for c in store.get_chunks_for_file(file_id))
+            path.write_text("\n\ndef foo():\n    pass\n")
+            self._commit(repo)
+            handler.trigger_reindex(path)
+            store = manager._resolve_ctx(repo_id).sqlite_store
+            chunks = store.get_chunks_for_file(store.get_file_id_by_path(path.name))
+            assert not any(c["line_start"] == 1 for c in chunks)
+            assert any(c["line_start"] == 3 for c in chunks)
+        finally:
+            handler.stop()
 
     @pytest.mark.integration
-    def test_file_modification_updates_line_numbers(self, tmp_path, monkeypatch):
-        """After an edit that shifts a function's line position, trigger_reindex must
-        clear stale chunks and store new chunks with correct line_start/line_end."""
-        store, dispatcher, handler = self._setup(tmp_path, monkeypatch)
-
-        test_file = tmp_path / "mod_test.py"
-
-        # v1: foo at line 1
-        test_file.write_text("def foo():\n    pass\n")
-        dispatcher.index_file(handler.ctx, test_file)
-
-        file_id = store.get_file_id_by_path(test_file.name)
-        assert file_id is not None, "file not indexed"
-        chunks_v1 = store.get_chunks_for_file(file_id)
-        assert any(c["line_start"] == 1 for c in chunks_v1), "expected chunk at line 1 in v1"
-
-        # v2: two blank lines prepended — foo now at line 3
-        test_file.write_text("\n\ndef foo():\n    pass\n")
-        handler.trigger_reindex(test_file)
-
-        file_id2 = store.get_file_id_by_path(test_file.name)
-        assert file_id2 is not None, "file missing from index after reindex"
-        chunks_v2 = store.get_chunks_for_file(file_id2)
-        assert not any(c["line_start"] == 1 for c in chunks_v2), "stale line-1 chunk persisted"
-        assert any(c["line_start"] == 3 for c in chunks_v2), "expected chunk at line 3 in v2"
-
-    @pytest.mark.integration
-    def test_file_deletion_clears_all_index_rows(self, tmp_path, monkeypatch):
-        """After remove_file_from_index, the file must have no row in files,
-        no chunks in code_chunks, and no hits in BM25 search."""
-        store, dispatcher, handler = self._setup(tmp_path, monkeypatch)
-
-        test_file = tmp_path / "del_test.py"
-        test_file.write_text("def bar():\n    return 1\n")
-        dispatcher.index_file(handler.ctx, test_file)
-
-        file_id = store.get_file_id_by_path(test_file.name)
-        assert file_id is not None, "file not indexed"
-        assert len(store.get_chunks_for_file(file_id)) > 0, "no chunks after indexing"
-
-        test_file.unlink()
-        handler.remove_file_from_index(test_file)
-
-        assert store.get_file_id_by_path(test_file.name) is None, "file row not removed"
-        bm25_hits = store.search_bm25("bar")
-        assert not any(
-            (r.get("filepath") or r.get("relative_path") or "").endswith("del_test.py")
-            for r in bm25_hits
-        ), "stale BM25 entry remained after deletion"
+    def test_file_deletion_clears_all_index_rows(self, runtime):
+        repo, _registry, repo_id, _original, manager = runtime
+        path = repo / "del_test.py"
+        path.write_text("def bar():\n    return 1\n")
+        self._commit(repo)
+        assert manager.rebuild_repository_index(repo_id).action == "full_index"
+        handler = _Handler(
+            manager.dispatcher, ctx=manager._resolve_ctx(repo_id), index_manager=manager
+        )
+        try:
+            store = handler.ctx.sqlite_store
+            file_id = store.get_file_id_by_path(path.name)
+            assert store.get_chunks_for_file(file_id)
+            path.unlink()
+            self._commit(repo)
+            handler.remove_file_from_index(path)
+            store = manager._resolve_ctx(repo_id).sqlite_store
+            assert store.get_file_id_by_path(path.name) is None
+            assert not any(
+                (r.get("filepath") or r.get("relative_path") or "").endswith(path.name)
+                for r in store.search_bm25("bar")
+            )
+        finally:
+            handler.stop()
 
     @pytest.mark.integration
-    def test_file_creation_populates_correct_line_numbers(self, tmp_path, monkeypatch):
-        """Indexing a new file must store chunks with correct line_start/line_end
-        and make the content findable via BM25 search."""
-        store, dispatcher, handler = self._setup(tmp_path, monkeypatch)
-
-        test_file = tmp_path / "create_test.py"
-        # baz() is at line 3 (two-line preamble before the def)
-        test_file.write_text("# header\n\ndef baz():\n    pass\n")
-        dispatcher.index_file(handler.ctx, test_file)
-
-        file_id = store.get_file_id_by_path(test_file.name)
-        assert file_id is not None, "file not indexed"
-        chunks = store.get_chunks_for_file(file_id)
-        assert len(chunks) > 0, "no chunks stored"
+    def test_file_creation_populates_correct_line_numbers(self, runtime):
+        repo, _registry, repo_id, _original, manager = runtime
+        path = repo / "create_test.py"
+        path.write_text("# header\n\ndef baz():\n    pass\n")
+        self._commit(repo)
+        assert manager.rebuild_repository_index(repo_id).action == "full_index"
+        store = manager._resolve_ctx(repo_id).sqlite_store
+        chunks = store.get_chunks_for_file(store.get_file_id_by_path(path.name))
+        assert chunks and any(c["line_start"] <= 3 <= c["line_end"] for c in chunks)
         assert any(
-            c["line_start"] <= 3 <= c["line_end"] for c in chunks
-        ), "no chunk spans line 3 where baz() is defined"
-
-        bm25_hits = store.search_bm25("baz")
-        assert any(
-            (r.get("filepath") or r.get("relative_path") or "").endswith("create_test.py")
-            for r in bm25_hits
-        ), "baz not findable via BM25 after indexing"
+            (r.get("filepath") or r.get("relative_path") or "").endswith(path.name)
+            for r in store.search_bm25("baz")
+        )
 
 
 class TestIntegration:
-    """Integration tests with real dispatcher and plugins."""
-
     @pytest.mark.integration
-    def test_watcher_with_real_dispatcher(self, tmp_path, monkeypatch):
-        """Test watcher with real dispatcher and plugin."""
-        from types import SimpleNamespace
-
-        from mcp_server.core.path_resolver import PathResolver
-        from mcp_server.core.repo_context import RepoContext
-        from mcp_server.dispatcher import EnhancedDispatcher as Dispatcher
-        from mcp_server.plugins.python_plugin.plugin import Plugin as PythonPlugin
-        from mcp_server.storage.sqlite_store import SQLiteStore
-
-        monkeypatch.chdir(tmp_path)
-        sqlite_store = SQLiteStore(str(tmp_path / "test_code_index.db"))
-        dispatcher = Dispatcher([PythonPlugin(sqlite_store=None)], semantic_search_enabled=False)
-        ctx = RepoContext(
-            repo_id="watcher-real-dispatcher",
-            sqlite_store=sqlite_store,
-            workspace_root=tmp_path,
-            tracked_branch="main",
-            registry_entry=SimpleNamespace(
-                repository_id="watcher-real-dispatcher",
-                path=tmp_path,
-                tracked_branch="main",
-                current_branch="main",
-                name=tmp_path.name,
-            ),
-        )
+    def test_watcher_with_real_dispatcher(self, runtime):
+        repo, registry, repo_id, _original, manager = runtime
+        assert manager.rebuild_repository_index(repo_id).action == "full_index"
+        before = registry.get(repo_id).index_generation
         watcher = FileWatcher(
-            tmp_path,
-            dispatcher,
-            path_resolver=PathResolver(repository_root=tmp_path),
-            ctx=ctx,
+            repo,
+            manager.dispatcher,
+            ctx=manager._resolve_ctx(repo_id),
+            index_manager=manager,
         )
         watcher.start()
-
         try:
-            # Create a Python file
-            test_file = tmp_path / "integration_test.py"
-            test_file.write_text("""
-def integration_function():
-    '''This is an integration test function.'''
-    return "Integration test"
-
-class IntegrationClass:
-    '''Integration test class.'''
-    pass
-""")
-
-            # Wait for indexing
-            time.sleep(1)
-
-            # Verify file was indexed via dispatcher
-            result = dispatcher.lookup(ctx, "integration_function")
-            assert result is not None
-            assert result["kind"] == "function"
-
-            # Verify class was also indexed
-            class_result = dispatcher.lookup(ctx, "IntegrationClass")
-            assert class_result is not None
-            assert class_result["kind"] == "class"
-
+            path = repo / "integration_test.py"
+            path.write_text(
+                "def integration_function():\n    return 1\n\nclass IntegrationClass:\n    pass\n"
+            )
+            TestReindexIntegration._commit(repo)
+            deadline = time.monotonic() + 10
+            while registry.get(repo_id).index_generation == before and time.monotonic() < deadline:
+                time.sleep(0.05)
+            assert registry.get(repo_id).index_generation != before
+            ctx = manager._resolve_ctx(repo_id)
+            assert manager.dispatcher.lookup(ctx, "integration_function")["kind"] == "function"
+            assert manager.dispatcher.lookup(ctx, "IntegrationClass")["kind"] == "class"
         finally:
             watcher.stop()

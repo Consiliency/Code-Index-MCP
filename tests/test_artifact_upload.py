@@ -8,20 +8,140 @@ import tarfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from mcp_server.artifacts.artifact_upload import IndexArtifactUploader
-from mcp_server.artifacts.attestation import Attestation
+from mcp_server.artifacts.attestation import Attestation, AttestationError
 from mcp_server.artifacts.manifest_v2 import LEXICAL_ONLY_SEMANTIC_PROFILE_HASH
 
 
+def test_prepared_upload_uses_exact_bytes_without_compression(tmp_path, monkeypatch):
+    from mcp_server.artifacts.artifact_upload import _metadata_bytes, build_parser, run_cli
+
+    monkeypatch.setenv("MCP_ATTESTATION_MODE", "skip")
+    archive = tmp_path / "archive.tar.gz"
+    archive.write_bytes(b"already prepared")
+    metadata = {"checksum": IndexArtifactUploader(repo="owner/repo")._calculate_checksum(archive)}
+    metadata_path = tmp_path / "metadata.json"
+    metadata_path.write_bytes(_metadata_bytes(metadata))
+    args = build_parser().parse_args(
+        [
+            "--repo",
+            "owner/repo",
+            "--prepared-archive",
+            str(archive),
+            "--prepared-metadata",
+            str(metadata_path),
+        ]
+    )
+    with patch.object(IndexArtifactUploader, "compress_indexes") as compress:
+        with patch.object(IndexArtifactUploader, "upload_direct") as upload:
+            assert run_cli(args) == 0
+    compress.assert_not_called()
+    upload.assert_called_once()
+    assert upload.call_args.args == (archive, metadata)
+    assert isinstance(upload.call_args.kwargs["attestation"], Attestation)
+    assert archive.read_bytes() == b"already prepared"
+
+
+@pytest.mark.parametrize(
+    "remote", ["git@github.com:fixture/widget.git", "https://github.com/fixture/widget"]
+)
+def test_repository_detection_uses_selected_worktree_and_exact_repo_suffix(
+    tmp_path, monkeypatch, remote
+):
+    import subprocess
+
+    from tests.test_git_index_manager import _make_git_repo
+
+    repo = _make_git_repo(tmp_path)
+    subprocess.run(["git", "remote", "add", "origin", remote], cwd=repo, check=True)
+    monkeypatch.chdir(tmp_path)
+    assert IndexArtifactUploader(repo_path=repo).repo == "fixture/widget"
+
+
+def test_repository_detection_rejects_github_lookalike_without_disclosing_url(monkeypatch):
+    monkeypatch.setattr(
+        "mcp_server.artifacts.artifact_upload.subprocess.run",
+        lambda *args, **kwargs: MagicMock(
+            stdout="https://fixture-user:do-not-log@github.com.invalid/owner/repo.git"
+        ),
+    )
+    with pytest.raises(RuntimeError) as failure:
+        IndexArtifactUploader()
+    assert "do-not-log" not in str(failure.value)
+
+
+def test_prepared_upload_rejects_changed_bytes_before_side_effects(tmp_path):
+    from mcp_server.artifacts.artifact_upload import build_parser, run_cli
+
+    archive = tmp_path / "archive.tar.gz"
+    archive.write_bytes(b"changed")
+    metadata_path = tmp_path / "metadata.json"
+    metadata_path.write_text(json.dumps({"checksum": "wrong"}))
+    args = build_parser().parse_args(
+        [
+            "--repo",
+            "owner/repo",
+            "--prepared-archive",
+            str(archive),
+            "--prepared-metadata",
+            str(metadata_path),
+        ]
+    )
+    with patch.object(IndexArtifactUploader, "upload_direct") as upload:
+        with pytest.raises(ValueError, match="checksum"):
+            run_cli(args)
+    upload.assert_not_called()
+
+
+def test_prepare_only_never_uploads_and_preserves_metadata_identity(tmp_path):
+    from mcp_server.artifacts.artifact_upload import build_parser, run_cli
+
+    archive = tmp_path / "archive.tar.gz"
+    archive.write_bytes(b"synthetic")
+    destination = tmp_path / "metadata.json"
+    args = build_parser().parse_args(
+        [
+            "--repo",
+            "owner/repo",
+            "--prepare-only",
+            "--output",
+            str(archive),
+            "--metadata-output",
+            str(destination),
+            "--commit",
+            "abc",
+            "--tracked-branch",
+            "main",
+        ]
+    )
+    with patch.object(
+        IndexArtifactUploader, "compress_indexes", return_value=(archive, "digest", 9)
+    ):
+        with patch.object(
+            IndexArtifactUploader, "create_metadata", return_value={"checksum": "digest"}
+        ) as metadata:
+            with patch.object(IndexArtifactUploader, "upload_direct") as upload:
+                assert run_cli(args) == 0
+    upload.assert_not_called()
+    assert metadata.call_args.kwargs["commit"] == "abc"
+    assert metadata.call_args.kwargs["tracked_branch"] == "main"
+    assert json.loads(destination.read_text()) == {"checksum": "digest"}
+
+
+def test_metadata_only_cannot_hide_prepare_only():
+    from mcp_server.artifacts.artifact_upload import build_parser, run_cli
+
+    with pytest.raises(ValueError, match="cannot be combined"):
+        run_cli(build_parser().parse_args(["--metadata-only", "--prepare-only"]))
+
+
 def _sqlite_db(path: Path) -> None:
+    from mcp_server.storage.sqlite_store import SQLiteStore
+
     path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(path)
-    try:
-        conn.execute("CREATE TABLE files (id INTEGER PRIMARY KEY, relative_path TEXT)")
-        conn.execute("CREATE TABLE symbols (id INTEGER PRIMARY KEY, file_id INTEGER)")
-        conn.commit()
-    finally:
-        conn.close()
+    SQLiteStore(str(path)).close()
 
 
 def test_compress_indexes_uses_repo_scoped_current_db(tmp_path: Path):
@@ -49,7 +169,9 @@ def test_compress_indexes_uses_repo_scoped_current_db(tmp_path: Path):
         names = tar.getnames()
     assert "current.db" in names
     assert "code_index.db" not in names
-    assert ".index_metadata.json" in names
+    assert (
+        ".index_metadata.json" not in names
+    )  # No fabricated semantic metadata for lexical-only export.
 
 
 def test_create_metadata_includes_full_p31_identity(tmp_path: Path):
@@ -183,11 +305,12 @@ def test_write_metadata_file_matches_create_metadata_contract(tmp_path: Path):
     assert payload["manifest_v2"]["tracked_branch"] == "main"
 
 
-def test_upload_direct_uses_explicit_release_tag_and_clobber(tmp_path: Path):
+def test_upload_direct_uses_explicit_release_tag_and_clobber(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("MCP_ATTESTATION_MODE", "skip")
     archive = tmp_path / "archive.tar.gz"
     archive.write_bytes(b"archive-bytes")
     metadata = {
-        "checksum": "deadbeef",
+        "checksum": IndexArtifactUploader(repo="owner/repo")._calculate_checksum(archive),
         "commit": "abcdef123456",
         "logical_artifact_id": "logical-id",
     }
@@ -224,3 +347,14 @@ def test_upload_direct_uses_explicit_release_tag_and_clobber(tmp_path: Path):
     assert "--clobber" in upload_call.args[0]
     uploaded_names = [Path(arg).name for arg in upload_call.args[0] if str(arg).startswith("/")]
     assert uploaded_names == ["archive.tar.gz", "artifact-metadata.json", "archive.tar.gz.sha256"]
+
+
+def test_unsigned_upload_has_no_github_mutation(tmp_path, monkeypatch):
+    monkeypatch.setenv("MCP_ATTESTATION_MODE", "enforce")
+    archive = tmp_path / "prepared.tar.gz"
+    archive.write_bytes(b"synthetic archive")
+    uploader = IndexArtifactUploader(repo="owner/repo")
+    with patch("subprocess.run") as run, pytest.raises(AttestationError):
+        uploader.upload_direct(archive, {"checksum": uploader._calculate_checksum(archive)})
+    run.assert_not_called()
+    assert archive.read_bytes() == b"synthetic archive"

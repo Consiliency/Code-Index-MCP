@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from mcp_server.artifacts.artifact_download import IndexArtifactDownloader
+from mcp_server.artifacts.attestation import AttestationError
 from mcp_server.artifacts.freshness import FreshnessVerdict
 
 
@@ -31,6 +32,30 @@ def _metadata(**overrides) -> dict:
     }
     payload.update(overrides)
     return payload
+
+
+@pytest.mark.parametrize("advertised_url", [None, "", "https://example.invalid/bundle"])
+def test_enforce_requires_attestation_before_extraction(tmp_path, monkeypatch, advertised_url):
+    monkeypatch.setenv("MCP_ATTESTATION_MODE", "enforce")
+    payload = tmp_path / "payload"
+    payload.mkdir()
+    archive = payload / "index.tar.gz"
+    source = tmp_path / "current.db"
+    source.write_bytes(b"synthetic-index")
+    with tarfile.open(archive, "w:gz") as tar:
+        tar.add(source, arcname="current.db")
+    metadata = _metadata(attestation_url=advertised_url)
+    (payload / "artifact-metadata.json").write_text(json.dumps(metadata))
+    output = tmp_path / "output"
+    output.mkdir()
+    downloader = IndexArtifactDownloader(repo="owner/repo")
+    with (
+        patch.object(downloader, "_run_integrity_gate"),
+        patch.object(downloader, "check_compatibility", return_value=(True, [])),
+        pytest.raises(AttestationError),
+    ):
+        downloader._restore_downloaded_payload(payload, output, allow_unsafe=True)
+    assert list(output.iterdir()) == []
 
 
 def test_validate_artifact_identity_rejects_wrong_repo_branch_commit_and_profile():
@@ -99,6 +124,43 @@ def test_install_indexes_accepts_legacy_code_index_after_validation(tmp_path: Pa
     assert index_path.read_text(encoding="utf-8") == "legacy-db"
 
 
+@pytest.mark.parametrize("collision", ["database", "sidecar", "metadata", "vectors"])
+def test_install_never_replaces_existing_generation_resources(tmp_path, collision):
+    source, destination = tmp_path / "source", tmp_path / "active"
+    source.mkdir()
+    destination.mkdir()
+    (source / "current.db").write_bytes(b"replacement")
+    (source / ".index_metadata.json").write_text("{}")
+    target = {
+        "database": destination / "current.db",
+        "sidecar": destination / "current.db-wal",
+        "metadata": destination / ".index_metadata.json",
+        "vectors": destination / "vector_index.qdrant",
+    }[collision]
+    if collision == "vectors":
+        target.mkdir()
+        target = target / "marker"
+    target.write_bytes(b"active")
+    downloader = IndexArtifactDownloader(repo="owner/repo")
+    with pytest.raises(FileExistsError, match="staging"):
+        downloader.install_indexes(source, index_location=destination, backup=False)
+    assert target.read_bytes() == b"active"
+    if collision != "database":
+        assert not (destination / "current.db").exists()
+
+
+def test_install_rejects_ambiguous_database_before_copying(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "current.db").write_bytes(b"current")
+    (source / "code_index.db").write_bytes(b"legacy")
+    with pytest.raises(ValueError, match="exactly one"):
+        IndexArtifactDownloader(repo="owner/repo").install_indexes(
+            source, index_location=tmp_path / "stage"
+        )
+    assert not (tmp_path / "stage" / "current.db").exists()
+
+
 @pytest.mark.parametrize(
     "verdict",
     [FreshnessVerdict.STALE_COMMIT, FreshnessVerdict.STALE_AGE, FreshnessVerdict.INVALID],
@@ -154,7 +216,8 @@ def test_download_selected_artifact_unsafe_override_reports_reasons(tmp_path: Pa
     assert result.validation_reasons == ["freshness verdict: stale_commit"]
 
 
-def test_download_release_artifact_restores_direct_publish_payload(tmp_path: Path):
+def test_download_release_artifact_restores_direct_publish_payload(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("MCP_ATTESTATION_MODE", "skip")
     payload_dir = tmp_path / "release-assets"
     payload_dir.mkdir()
     archive_path = payload_dir / "index-archive.tar.gz"
@@ -222,6 +285,7 @@ def test_download_release_artifact_restores_direct_publish_payload(tmp_path: Pat
             target_commit="abcdef123456",
         )
 
-    assert restored == output_dir
-    assert (output_dir / "current.db").read_text(encoding="utf-8") == "db"
-    assert (output_dir / "artifact-metadata.json").exists()
+    assert restored.parent == output_dir
+    assert restored.name.startswith("verified-")
+    assert (restored / "current.db").read_text(encoding="utf-8") == "db"
+    assert (restored / "artifact-metadata.json").exists()

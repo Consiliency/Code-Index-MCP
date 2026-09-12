@@ -14,14 +14,15 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional, Sequence
 
+import anyio
 import mcp.types as types
 
 from mcp_server.cli.bootstrap import _allowed_roots, _path_within_allowed, validate_index
-from mcp_server.cli.task_reindex import run_reindex_task
+from mcp_server.cli.task_reindex import _record_reindexed_files, run_reindex_task
 from mcp_server.cli.task_write_summaries import run_write_summaries_task
 from mcp_server.client import ClientValidationError, build_search_options, execute_search_service
 from mcp_server.core.repo_context import RepoContext
-from mcp_server.core.repo_resolver import RepoResolver
+from mcp_server.core.repo_resolver import RepoResolver, run_repository_mutation
 from mcp_server.dispatcher.dispatcher_enhanced import SemanticSearchFailure
 from mcp_server.dispatcher.protocol import DispatcherProtocol
 from mcp_server.health.repository_readiness import (
@@ -183,7 +184,7 @@ def _resolve_ctx(
             else repo_resolver.resolve(target)
         )
     except Exception as exc:
-        logger.debug("RepoResolver.resolve(%s) failed: %s", target, exc)
+        logger.debug("RepoResolver.resolve(%s) failed: %s", target, type(exc).__name__)
         return None
 
 
@@ -204,7 +205,7 @@ def _classify_ctx(
     try:
         readiness = classifier(target)
     except Exception as exc:
-        logger.debug("RepoResolver.classify(%s) failed: %s", target, exc)
+        logger.debug("RepoResolver.classify(%s) failed: %s", target, type(exc).__name__)
         return RepositoryReadiness(
             state=RepositoryReadinessState.UNREGISTERED_REPOSITORY,
             requested_path=str(target),
@@ -255,6 +256,8 @@ def _resolution_transition_response(tool: str) -> list[types.TextContent]:
             "tool": tool,
             "safe_fallback": "native_search",
             "mutation_performed": False,
+            "readiness": {"ready": False},
+            "message": "Repository context changed during this request; re-check readiness.",
             "remediation": "Re-check repository readiness and rebuild or refresh the index.",
         }
     )
@@ -328,43 +331,6 @@ def _semantic_failure_response(
     return _json_text_response(response)
 
 
-def _record_reindexed_files(active_store: Any, workspace_root: Path, target_path: Path) -> int:
-    """Record durable file rows for handler-driven reindex responses."""
-    if active_store is None:
-        return 0
-
-    workspace_root = workspace_root.expanduser().resolve(strict=True)
-    repo_row = active_store.ensure_repository_row(workspace_root)
-    if target_path.is_file():
-        paths = [target_path]
-    else:
-        paths = [
-            p
-            for p in target_path.rglob("*")
-            if p.is_file() and ".git" not in p.parts and ".mcp-index" not in p.parts
-        ]
-
-    recorded = 0
-    for file_path in paths:
-        try:
-            resolved_file = file_path.expanduser().resolve(strict=True)
-            relative_path = resolved_file.relative_to(workspace_root).as_posix()
-        except (OSError, ValueError):
-            continue
-        try:
-            active_store.store_file(
-                repo_row,
-                path=resolved_file,
-                relative_path=relative_path,
-                language=file_path.suffix.lstrip(".") or None,
-                size=resolved_file.stat().st_size,
-            )
-            recorded += 1
-        except Exception as exc:
-            logger.debug("Could not record reindexed file %s: %s", file_path, exc)
-    return recorded
-
-
 async def handle_symbol_lookup(
     *,
     arguments: dict,
@@ -412,8 +378,13 @@ async def handle_symbol_lookup(
         else:
             # Fallback: call without ctx for pre-SL-1 compatibility
             result = dispatcher.lookup(symbol)  # type: ignore[call-arg]
-    except TypeError:
-        result = dispatcher.lookup(symbol)  # type: ignore[call-arg]
+    except Exception:
+        if isinstance(repo_resolver, RepoResolver) and not repo_resolver.is_current(ctx):
+            return _resolution_transition_response("symbol_lookup")
+        raise
+
+    if isinstance(repo_resolver, RepoResolver) and not repo_resolver.is_current(ctx):
+        return _resolution_transition_response("symbol_lookup")
 
     if result:
         defined_in = (
@@ -561,7 +532,7 @@ async def handle_search_code(
             )
         ]
     except Exception as e:
-        logger.error(f"Search failed: {e}")
+        logger.error(f"Search failed: {type(e).__name__}")
         return [
             types.TextContent(
                 type="text",
@@ -1099,7 +1070,11 @@ async def handle_reindex(
                     "hint": "Reindex the registered repository without a file or nested path scope.",
                 }
             )
-        sync_result = git_index_manager.rebuild_repository_index(readiness.repository_id)
+        sync_result = await anyio.to_thread.run_sync(
+            git_index_manager.rebuild_repository_index,
+            readiness.repository_id,
+            abandon_on_cancel=False,
+        )
         if sync_result.action != "full_index":
             return _json_text_response(
                 {
@@ -1176,7 +1151,9 @@ async def handle_reindex(
         and not target_path.is_file()
     )
     if git_index_manager is not None and whole_repository and ctx is not None:
-        sync_result = git_index_manager.rebuild_repository_index(ctx.repo_id)
+        sync_result = await anyio.to_thread.run_sync(
+            git_index_manager.rebuild_repository_index, ctx.repo_id, abandon_on_cancel=False
+        )
         if sync_result.action != "full_index":
             return _json_text_response(
                 {
@@ -1210,35 +1187,25 @@ async def handle_reindex(
                     active_store=active_store,
                     target_path=target_path,
                     requested_path=path,
+                    repo_resolver=repo_resolver,
                 ),
                 model_immediate_response="Reindex task created; poll tasks/get or tasks/result for progress.",
             )
         try:
-            if ctx is not None:
-                dispatcher.index_file(ctx, target_path)  # type: ignore[call-arg]
-            else:
-                dispatcher.index_file(target_path)  # type: ignore[call-arg]
-            durable_files = (
-                _record_reindexed_files(active_store, ctx.workspace_root, target_path)
-                if ctx is not None and active_store is not None
-                else 0
-            )
-            return _json_text_response(
-                {
-                    "path": str(target_path),
-                    "mode": "file",
-                    "indexed_files": 1,
-                    "durable_files": durable_files,
-                    "mutation_performed": True,
-                    "message": f"Reindexed file: {path}",
-                }
-            )
-        except TypeError:
-            dispatcher.index_file(target_path)  # type: ignore[call-arg]
-            durable_files = (
-                _record_reindexed_files(active_store, ctx.workspace_root, target_path)
-                if ctx is not None and active_store is not None
-                else 0
+            durable_files = 0
+
+            def index_file(current):
+                nonlocal durable_files
+                if current is None:
+                    return dispatcher.index_file(target_path)
+                result = dispatcher.index_file(current, target_path)
+                durable_files = _record_reindexed_files(
+                    current.sqlite_store, ctx.workspace_root, target_path
+                )
+                return result
+
+            await anyio.to_thread.run_sync(
+                run_repository_mutation, repo_resolver, ctx, index_file, abandon_on_cancel=False
             )
             return _json_text_response(
                 {
@@ -1272,23 +1239,31 @@ async def handle_reindex(
                     active_store=active_store,
                     target_path=target_path,
                     requested_path=path,
+                    repo_resolver=repo_resolver,
                 ),
                 model_immediate_response="Reindex task created; poll tasks/get or tasks/result for progress.",
             )
-        try:
-            if ctx is not None:
-                stats = dispatcher.index_directory(ctx, target_path, recursive=True)  # type: ignore[call-arg]
-            else:
-                stats = dispatcher.index_directory(target_path, recursive=True)  # type: ignore[call-arg]
-        except TypeError:
-            stats = dispatcher.index_directory(target_path, recursive=True)  # type: ignore[call-arg]
 
-        durable_files = (
-            _record_reindexed_files(active_store, ctx.workspace_root, target_path)
-            if ctx is not None and active_store is not None
-            else 0
+        def index_directory(current):
+            if current is None:
+                stats = dispatcher.index_directory(target_path, recursive=True)
+                store = active_store
+            else:
+                stats = dispatcher.index_directory(current, target_path, recursive=True)
+                store = current.sqlite_store
+            stats["durable_files"] = (
+                _record_reindexed_files(store, ctx.workspace_root, target_path)
+                if current is not None and store is not None
+                else 0
+            )
+            stats["lexical_rows"] = store.rebuild_fts_code() if store else 0
+            return stats
+
+        stats = await anyio.to_thread.run_sync(
+            run_repository_mutation, repo_resolver, ctx, index_directory, abandon_on_cancel=False
         )
-        lexical_rows = active_store.rebuild_fts_code() if active_store else 0
+        durable_files = stats["durable_files"]
+        lexical_rows = stats["lexical_rows"]
 
         response_data = {
             "path": str(target_path),

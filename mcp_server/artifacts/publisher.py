@@ -8,8 +8,9 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
+from uuid import uuid4
 
-from mcp_server.artifacts.attestation import attest
+from mcp_server.artifacts.attestation import _attestation_mode
 from mcp_server.artifacts.delta_policy import DeltaPolicy
 from mcp_server.core.errors import MCPError
 
@@ -58,6 +59,9 @@ class ArtifactPublisher:
         *,
         tracked_branch: str = "main",
         index_location: Path | str | None = None,
+        index_path: Path | str | None = None,
+        repo_path: Path | str | None = None,
+        semantic_indexer=None,
     ) -> ArtifactRef:
         """Idempotent publish: creates a SHA-keyed release and atomically moves index-latest.
 
@@ -68,17 +72,33 @@ class ArtifactPublisher:
         short_sha = commit[:7]
         safe_repo = repo_id.replace("/", "_").replace(":", "_")
         safe_branch = tracked_branch.replace("/", "_").replace(":", "_")
-        sha_tag = f"index-{safe_repo}-{safe_branch}-{short_sha}"
+        sha_tag = f"index-{safe_repo}-{safe_branch}-{commit}"
         repo = self._uploader.repo
         release_url = f"https://github.com/{repo}/releases/tag/{sha_tag}"
 
         try:
+            if _attestation_mode() == "enforce":
+                raise ArtifactError(
+                    "ATTESTATION_PREREQ: automatic publication requires manual metadata signing; "
+                    "use artifact_upload --prepare-only, sign, then --prepared-archive "
+                    "with --prepared-metadata"
+                )
+            if repo_path is not None:
+                from .artifact_upload import IndexArtifactUploader
+
+                selected_repo = IndexArtifactUploader._detect_repository(self._uploader, repo_path)
+                if selected_repo.casefold() != repo.casefold():
+                    raise ArtifactError(
+                        "Publisher destination does not match the selected repository"
+                    )
             previous_artifact_id = self._get_latest_commit(repo)
             archive_path, checksum, size = self._uploader.compress_indexes(
-                Path(f"index-archive-{safe_repo}-{safe_branch}-{short_sha}.tar.gz"),
+                Path(f"index-archive-{safe_repo}-{safe_branch}-{short_sha}-{uuid4().hex}.tar.gz"),
                 index_location=index_location,
+                index_path=index_path,
+                repo_path=repo_path or ".",
+                semantic_indexer=semantic_indexer,
             )
-            attestation = attest(archive_path, repo=repo, gh_cmd=self._gh_cmd)
             policy = DeltaPolicy()
             decision = policy.decide(
                 compressed_size_bytes=size,
@@ -89,37 +109,31 @@ class ArtifactPublisher:
                 size,
                 artifact_type=decision.strategy,
                 delta_from=decision.base_artifact_id,
-                attestation=attestation,
                 repo_id=repo_id,
                 tracked_branch=tracked_branch,
                 commit=commit,
                 index_location=index_location,
+                index_path=index_path,
             )
-            created_sha_release = self._ensure_sha_release(sha_tag, commit, repo)
-            try:
-                self._uploader.upload_direct(
-                    archive_path,
-                    metadata,
-                    release_tag=sha_tag,
-                    attestation=attestation,
-                )
-                self._move_latest_pointer(sha_tag, commit, repo)
-            except Exception:
-                if created_sha_release:
-                    subprocess.run(
-                        [self._gh_cmd, "release", "delete", sha_tag, "--yes", "--repo", repo],
-                        capture_output=True,
-                    )
-                raise
+            self._ensure_sha_release(sha_tag, commit, repo)
+            # Keep prepared bytes and partial releases available for diagnosis/resume.
+            self._uploader.upload_direct(
+                archive_path,
+                metadata,
+                release_tag=sha_tag,
+            )
+            self._move_latest_pointer(sha_tag, commit, repo)
             is_latest = self._check_is_latest(commit, repo)
         except ArtifactError:
             raise
         except subprocess.CalledProcessError as exc:
             raise ArtifactError(
-                f"gh CLI returned non-zero exit {exc.returncode}: {exc.stderr}"
+                f"gh CLI returned non-zero exit {exc.returncode}; publication evidence retained"
             ) from exc
         except Exception as exc:
-            raise ArtifactError(f"publish_on_reindex failed: {exc}") from exc
+            raise ArtifactError(
+                f"publish_on_reindex failed ({type(exc).__name__}); prepared archive retained"
+            ) from exc
 
         return ArtifactRef(
             repo_id=repo_id,
@@ -169,7 +183,7 @@ class ArtifactPublisher:
             )
         except subprocess.CalledProcessError as exc:
             raise ArtifactError(
-                f"gh CLI returned non-zero exit {exc.returncode}: {exc.stderr}"
+                f"gh CLI returned non-zero exit {exc.returncode}; publication evidence retained"
             ) from exc
 
     def _ensure_sha_release(self, sha_tag: str, commit: str, repo: str) -> bool:

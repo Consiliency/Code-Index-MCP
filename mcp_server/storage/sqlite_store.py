@@ -6,12 +6,17 @@ for efficient full-text search capabilities.
 """
 
 import functools
+import hashlib
 import json
 import logging
 import re
 import sqlite3
-from contextlib import contextmanager
+import threading
+import time
+import uuid
+from contextlib import closing, contextmanager
 from datetime import datetime, timezone
+from importlib.resources import files
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
@@ -362,6 +367,16 @@ class SQLiteStore:
         self.db_path = db_path
         self.path_resolver = path_resolver or PathResolver()
         self._pool = pool
+        self._connection_state = threading.local()
+        self.registry_binding = None
+        self._memory_uri = None
+        self._memory_anchor = None
+        if db_path == ":memory:" and pool is None:
+            # Keep the database alive while allowing the existing nested read connections.
+            self._memory_uri = f"file:index-it-{uuid.uuid4().hex}?mode=memory&cache=shared"
+            self._memory_anchor = sqlite3.connect(
+                self._memory_uri, uri=True, check_same_thread=False
+            )
         self._readonly = False
         self._readonly_diagnostics: Optional[Dict[str, Any]] = None
 
@@ -379,12 +394,262 @@ class SQLiteStore:
         """Close the store.  If a connection pool is attached, drain it."""
         if self._pool is not None:
             self._pool.close_all()
+        if self._memory_anchor is not None:
+            self._memory_anchor.close()
+            self._memory_anchor = None
 
     def get_readonly_diagnostics(self) -> Optional[Dict[str, Any]]:
         """Return the most recent storage-failure provenance that forced read-only mode."""
         if self._readonly_diagnostics is None:
             return None
         return dict(self._readonly_diagnostics)
+
+    @staticmethod
+    def snapshot_database(source: Path, destination: Path) -> None:
+        """Copy a committed SQLite snapshot without modifying the active database."""
+        deadline = time.monotonic() + 30
+
+        def progress(status: int, remaining: int, total: int) -> None:
+            if time.monotonic() >= deadline:
+                raise TimeoutError("SQLite generation snapshot deadline exceeded")
+
+        with closing(sqlite3.connect(source.resolve().as_uri() + "?mode=ro", uri=True)) as reader:
+            with closing(sqlite3.connect(destination)) as writer:
+                reader.backup(writer, pages=256, progress=progress)
+
+    def prepare_generation(self, committed_hashes: Dict[str, str], profile_id: str) -> None:
+        """Regenerate code-owned rows in an unpublished copy, retaining owned data."""
+        self._require_writable()
+        with self._get_connection() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            retained_files = {
+                row[0]
+                for row in conn.execute(
+                    "SELECT DISTINCT file_id FROM code_chunks "
+                    "WHERE chunk_type = ? OR chunk_id LIKE 'history:%'",
+                    (PRESERVED_CHUNK_TYPE,),
+                )
+            }
+            files_by_id = {row["id"]: dict(row) for row in conn.execute("SELECT * FROM files")}
+            readable_scheme = evaluate_chunk_scheme(conn, self._current_scheme())[0] in {
+                "compatible",
+                "compatible_legacy",
+            }
+            valid_summaries = {
+                row["chunk_hash"]
+                for row in conn.execute("SELECT * FROM chunk_summaries")
+                if row["file_id"] in retained_files
+                or (
+                    readable_scheme
+                    and row["profile_id"] == profile_id
+                    and (file := files_by_id.get(row["file_id"])) is not None
+                    and file["content_hash"] is not None
+                    and committed_hashes.get(file["relative_path"]) == file["content_hash"]
+                )
+            }
+            stale = self._collect_stale_chunk_artifacts(conn, profile_id)
+            stale["summary_hashes"] = [
+                value for value in stale["summary_hashes"] if value not in valid_summaries
+            ]
+            self._delete_chunker_rows(conn, stale)
+            auxiliary_tables = {
+                row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            }
+            for file_id, file in files_by_id.items():
+                if file_id in retained_files:
+                    continue
+                for table in ("bm25_content", "bm25_documents", "bm25_index_status"):
+                    if table in auxiliary_tables:
+                        conn.execute(f"DELETE FROM {table} WHERE file_id = ?", (file_id,))
+                if "bm25_symbols" in auxiliary_tables:
+                    conn.execute(
+                        "DELETE FROM bm25_symbols WHERE symbol_id IN "
+                        "(SELECT id FROM symbols WHERE file_id = ?)",
+                        (file_id,),
+                    )
+                conn.execute(
+                    "DELETE FROM symbol_references WHERE file_id = ? OR symbol_id IN "
+                    "(SELECT id FROM symbols WHERE file_id = ?)",
+                    (file_id, file_id),
+                )
+                conn.execute("DELETE FROM imports WHERE file_id = ?", (file_id,))
+                conn.execute("DELETE FROM embeddings WHERE file_id = ?", (file_id,))
+                conn.execute(
+                    "DELETE FROM symbol_trigrams WHERE symbol_id IN "
+                    "(SELECT id FROM symbols WHERE file_id = ?)",
+                    (file_id,),
+                )
+                conn.execute("DELETE FROM symbols WHERE file_id = ?", (file_id,))
+                if file["relative_path"] not in committed_hashes:
+                    conn.execute("DELETE FROM files WHERE id = ?", (file_id,))
+            conn.execute("DELETE FROM query_cache")
+            conn.execute("DELETE FROM parse_cache")
+            conn.execute("DELETE FROM fts_code")
+            self._stamp_scheme(conn, self._current_scheme())
+            self._delete_config(conn, CHUNK_SCHEME_REBUILD_KEY)
+            self.rebuild_generation_indexes()
+
+    def import_artifact_rows(self, source_db: Path, source_root: Path) -> List[Dict]:
+        """Merge portable rows into a prepared stage, retaining local imported records."""
+        from ..core.ignore_patterns import build_walker_filter
+
+        excluded = build_walker_filter(source_root)
+        repository_id = self.ensure_repository_row(self.path_resolver.repository_root)
+        with closing(
+            sqlite3.connect(source_db.resolve().as_uri() + "?mode=ro", uri=True)
+        ) as source:
+            source.row_factory = sqlite3.Row
+            assert_chunk_scheme_readable(source)
+            if source.execute("PRAGMA foreign_key_check").fetchall():
+                raise ValueError("Artifact contains dangling storage relationships")
+            with self._get_connection() as target:
+                file_ids, symbol_ids = {}, {}
+                imported_chunks = set()
+                code_paths = set()
+
+                def insert(table, row, **overrides):
+                    columns = {item[1] for item in target.execute(f"PRAGMA table_info({table})")}
+                    values = {
+                        key: value
+                        for key, value in dict(row).items()
+                        if key in columns and key != "id"
+                    }
+                    values.update(overrides)
+                    names = list(values)
+                    return target.execute(
+                        f"INSERT INTO {table} ({','.join(names)}) VALUES ({','.join('?' for _ in names)})",
+                        [values[name] for name in names],
+                    ).lastrowid
+
+                for row in source.execute("SELECT * FROM files WHERE is_deleted=0"):
+                    relative = row["relative_path"]
+                    path = source_root / relative
+                    if (
+                        Path(relative).is_absolute()
+                        or ".." in Path(relative).parts
+                        or excluded(path)
+                    ):
+                        raise ValueError("Artifact contains an excluded source path")
+                    has_code = (
+                        source.execute(
+                            "SELECT 1 FROM code_chunks WHERE file_id=? AND chunk_type!='document' "
+                            "AND chunk_id NOT LIKE 'history:%' LIMIT 1",
+                            (row["id"],),
+                        ).fetchone()
+                        or not source.execute(
+                            "SELECT 1 FROM code_chunks WHERE file_id=?", (row["id"],)
+                        ).fetchone()
+                    )
+                    if has_code:
+                        if (
+                            not path.is_file()
+                            or hashlib.sha256(path.read_bytes()).hexdigest() != row["content_hash"]
+                        ):
+                            raise ValueError("Artifact source differs from committed input")
+                        code_paths.add(relative)
+                    existing = target.execute(
+                        "SELECT id FROM files WHERE repository_id=? AND relative_path=?",
+                        (repository_id, relative),
+                    ).fetchone()
+                    if existing and not has_code:
+                        continue
+                    canonical = str(self.path_resolver.resolve_path(relative))
+                    if existing:
+                        file_id = existing[0]
+                        target.execute(
+                            "UPDATE files SET path=?, hash=?, content_hash=?, language=?, is_deleted=0 WHERE id=?",
+                            (canonical, row["hash"], row["content_hash"], row["language"], file_id),
+                        )
+                    else:
+                        file_id = insert("files", row, repository_id=repository_id, path=canonical)
+                    file_ids[row["id"]] = file_id
+                    if has_code:
+                        target.execute(
+                            "DELETE FROM fts_code WHERE CAST(file_id AS TEXT)=?", (str(file_id),)
+                        )
+                        target.execute(
+                            "INSERT INTO fts_code (content, file_id) VALUES (?, ?)",
+                            (path.read_text(encoding="utf-8", errors="replace"), file_id),
+                        )
+                for row in source.execute("SELECT * FROM symbols"):
+                    if row["file_id"] in file_ids:
+                        symbol_ids[row["id"]] = insert(
+                            "symbols", row, file_id=file_ids[row["file_id"]]
+                        )
+                for row in source.execute("SELECT * FROM code_chunks"):
+                    file_id = file_ids.get(row["file_id"])
+                    if file_id is None:
+                        continue
+                    present = target.execute(
+                        "SELECT file_id, content FROM code_chunks WHERE chunk_id=?",
+                        (row["chunk_id"],),
+                    ).fetchone()
+                    if present:
+                        if present[0] != file_id or present[1] != row["content"]:
+                            raise ValueError("Artifact chunk identity collides with retained data")
+                        continue
+                    insert(
+                        "code_chunks",
+                        row,
+                        file_id=file_id,
+                        symbol_id=symbol_ids.get(row["symbol_id"]),
+                    )
+                    imported_chunks.add(row["chunk_id"])
+                for table in ("imports", "symbol_references", "embeddings"):
+                    for row in source.execute(f"SELECT * FROM {table}"):
+                        if row["file_id"] not in file_ids:
+                            continue
+                        overrides = {"file_id": file_ids[row["file_id"]]}
+                        if "symbol_id" in row.keys():
+                            if row["symbol_id"] is not None and row["symbol_id"] not in symbol_ids:
+                                continue
+                            overrides["symbol_id"] = symbol_ids.get(row["symbol_id"])
+                        insert(table, row, **overrides)
+                for row in source.execute("SELECT * FROM chunk_summaries"):
+                    if (
+                        row["chunk_hash"] in imported_chunks
+                        and not target.execute(
+                            "SELECT 1 FROM chunk_summaries WHERE chunk_hash=?",
+                            (row["chunk_hash"],),
+                        ).fetchone()
+                    ):
+                        insert("chunk_summaries", row, file_id=file_ids[row["file_id"]])
+                mappings = []
+                file_summaries = {f"{path}:file-summary" for path in code_paths}
+                for row in source.execute("SELECT * FROM semantic_points"):
+                    chunk_id = row["chunk_id"]
+                    if (
+                        chunk_id in imported_chunks
+                        or chunk_id.split(":part:")[0] in imported_chunks
+                        or chunk_id in file_summaries
+                    ):
+                        if target.execute(
+                            "SELECT 1 FROM semantic_points WHERE profile_id=? AND chunk_id=?",
+                            (row["profile_id"], chunk_id),
+                        ).fetchone():
+                            raise ValueError("Artifact mapping collides with retained data")
+                        insert("semantic_points", row)
+                        mappings.append(dict(row))
+                if target.execute("PRAGMA foreign_key_check").fetchall():
+                    raise ValueError("Artifact merge has dangling storage relationships")
+        return mappings
+
+    def rebuild_generation_indexes(self) -> None:
+        """Reconstruct symbol indexes and retained-document FTS from staged rows."""
+        with self._get_connection() as conn:
+            conn.execute("INSERT INTO fts_symbols(fts_symbols) VALUES('rebuild')")
+            conn.execute("DELETE FROM symbol_trigrams")
+            for symbol_id, name in conn.execute("SELECT id, name FROM symbols").fetchall():
+                self._store_trigrams(conn, symbol_id, name)
+            for row in conn.execute(
+                "SELECT DISTINCT file_id FROM code_chunks WHERE chunk_type = ? "
+                "OR chunk_id LIKE 'history:%'",
+                (PRESERVED_CHUNK_TYPE,),
+            ).fetchall():
+                self._refresh_fts_code_for_file(row[0])
+            conn.execute("INSERT INTO fts_code(fts_code) VALUES('rebuild')")
+            if conn.execute("PRAGMA foreign_key_check").fetchone() is not None:
+                raise RuntimeError("Staged generation has invalid row relationships")
 
     def _mark_readonly_from_storage_failure(
         self, error: sqlite3.OperationalError
@@ -485,9 +750,7 @@ class SQLiteStore:
             for row in rows
         ]
 
-    def clear_pending_vector_deletions(
-        self, ledger_ids: Optional[List[int]] = None
-    ) -> int:
+    def clear_pending_vector_deletions(self, ledger_ids: Optional[List[int]] = None) -> int:
         """Clear ledger rows once their remote vectors are deleted.
 
         With ``ledger_ids`` clears exactly those rows (the ids from
@@ -554,6 +817,8 @@ class SQLiteStore:
     def drain_pending_vector_deletions(
         self,
         delete_remote: Callable[[Optional[str], List[Any]], None],
+        *,
+        only_collection: Optional[str] = None,
     ) -> Dict[str, int]:
         """Best-effort recovery drain of the remote-vector crash-ledger (I4).
 
@@ -595,6 +860,9 @@ class SQLiteStore:
         pending = self.get_pending_vector_deletions()
         if not pending:
             return {"rows_drained": 0, "rows_remaining": 0, "groups_failed": 0}
+        total_pending = len(pending)
+        if only_collection is not None:
+            pending = [row for row in pending if row.get("collection") == only_collection]
 
         groups: Dict[Tuple[Optional[str], Optional[str]], Dict[str, List[Any]]] = {}
         for row in pending:
@@ -619,9 +887,7 @@ class SQLiteStore:
                     # deleted (its remote vector is in active use).  Only orphans
                     # (no live mapping) are remote deleted; the revived rows' ledger
                     # debt is still cleared below on success.
-                    live = self.get_live_semantic_point_ids(
-                        profile_id, collection, point_ids
-                    )
+                    live = self.get_live_semantic_point_ids(profile_id, collection, point_ids)
                     orphan_ids = [p for p in point_ids if p not in live]
                     if orphan_ids:
                         delete_remote(collection, orphan_ids)
@@ -633,17 +899,15 @@ class SQLiteStore:
                     profile_id,
                     collection,
                     len(point_ids),
-                    exc,
+                    type(exc).__name__,
                 )
                 continue
             drainable_ids.extend(group["ledger_ids"])
 
-        rows_drained = (
-            self.clear_pending_vector_deletions(drainable_ids) if drainable_ids else 0
-        )
+        rows_drained = self.clear_pending_vector_deletions(drainable_ids) if drainable_ids else 0
         return {
             "rows_drained": rows_drained,
-            "rows_remaining": len(pending) - rows_drained,
+            "rows_remaining": total_pending - rows_drained,
             "groups_failed": groups_failed,
         }
 
@@ -727,9 +991,19 @@ class SQLiteStore:
                 logger.debug("Skipping migrations for BM25-only database")
                 return
 
-        migrations_dir = Path(__file__).parent / "migrations"
-        if not migrations_dir.exists():
-            return
+        migrations_dir = files("mcp_server.storage").joinpath("migrations")
+        if not migrations_dir.is_dir():
+            raise RuntimeError(
+                "Installed SQLite migration resources are missing; reinstall index-it-mcp"
+            )
+        migration_files = sorted(
+            (item for item in migrations_dir.iterdir() if item.name.endswith(".sql")),
+            key=lambda item: item.name,
+        )
+        if not migration_files:
+            raise RuntimeError(
+                "Installed SQLite migration resources are empty; reinstall index-it-mcp"
+            )
 
         with self._get_connection() as conn:
             # Get current schema version
@@ -739,40 +1013,63 @@ class SQLiteStore:
             except sqlite3.OperationalError:
                 current_version = 0
 
-            # Run migrations
-            for migration_file in sorted(migrations_dir.glob("*.sql")):
+            # Reconcile pre-v7 partial scripts once, including falsely advanced versions.
+            for migration_file in migration_files:
                 # Extract version from filename (e.g., "002_relative_paths.sql" -> 2)
                 try:
-                    version = int(migration_file.stem.split("_")[0])
+                    version = int(migration_file.name.split("_")[0])
                 except (ValueError, IndexError):
                     continue
 
-                if version > current_version:
+                if version > current_version or (current_version < 7 and 2 <= version <= 7):
                     logger.info(f"Running migration {migration_file.name}")
                     try:
-                        with open(migration_file, "r") as f:
-                            conn.executescript(f.read())
+                        conn.execute("BEGIN IMMEDIATE")
+                        statement = ""
+                        for line in migration_file.read_text(encoding="utf-8").splitlines(True):
+                            statement += line
+                            if not sqlite3.complete_statement(statement):
+                                continue
+                            try:
+                                conn.execute(statement)
+                            except sqlite3.OperationalError as exc:
+                                ddl = re.sub(
+                                    r"^\s*--[^\n]*", "", statement, flags=re.MULTILINE
+                                ).strip()
+                                addition = re.match(
+                                    r"ALTER\s+TABLE\s+(\w+)\s+ADD\s+COLUMN\s+(\w+)\b",
+                                    ddl,
+                                    re.IGNORECASE,
+                                )
+                                if not (
+                                    addition
+                                    and str(exc).lower().startswith("duplicate column name:")
+                                    and self._check_column_exists(conn, *addition.groups())
+                                ):
+                                    raise
+                            statement = ""
+                        if re.sub(r"--[^\n]*", "", statement).strip():
+                            raise sqlite3.OperationalError("Incomplete migration statement")
+                        conn.commit()
                         logger.info(f"Completed migration to version {version}")
-                    except sqlite3.OperationalError as e:
-                        # Handle duplicate column errors gracefully (for ALTER TABLE ADD COLUMN)
-                        if "duplicate column name" in str(e).lower():
-                            logger.info(
-                                f"Migration {migration_file.name} encountered duplicate column (likely already applied), continuing..."
-                            )
-                        else:
-                            raise
+                    except Exception:
+                        conn.rollback()
+                        raise
 
         self._add_repo_identity_columns()
 
     def _add_repo_identity_columns(self) -> None:
         """Additive migration: ensure repositories has tracked_branch and git_common_dir."""
         with self._get_connection() as conn:
+            if not conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='repositories'"
+            ).fetchone():
+                # Permit health_check to diagnose incomplete, version-stamped databases.
+                return
             for col in ("tracked_branch", "git_common_dir"):
-                try:
+                if not self._check_column_exists(conn, "repositories", col):
                     conn.execute(f"ALTER TABLE repositories ADD COLUMN {col} TEXT")
                     logger.debug(f"Added column repositories.{col}")
-                except sqlite3.OperationalError:
-                    pass  # column already exists
 
     @contextmanager
     def _get_connection(self):
@@ -782,11 +1079,30 @@ class SQLiteStore:
         (skipping open/close) and applies row_factory + foreign_keys each
         time.  Commit/rollback semantics are identical to the non-pool path.
         """
+        existing = getattr(self._connection_state, "connection", None)
+        if existing is not None:
+            # A nested method must neither borrow another pool slot nor commit
+            # its caller's transaction. Savepoints isolate caught inner errors.
+            savepoint = f"mcp_nested_{uuid.uuid4().hex}"
+            if not existing.in_transaction:
+                existing.execute("BEGIN")
+            existing.execute(f"SAVEPOINT {savepoint}")
+            try:
+                yield existing
+                existing.execute(f"RELEASE SAVEPOINT {savepoint}")
+            except BaseException:
+                existing.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+                existing.execute(f"RELEASE SAVEPOINT {savepoint}")
+                raise
+            return
         if self._pool is not None:
             with self._pool.acquire() as conn:
                 conn.row_factory = sqlite3.Row
                 conn.execute("PRAGMA foreign_keys = ON")
                 try:
+                    # Preopened connections may cache the empty schema before migrations.
+                    conn.execute("SELECT name FROM sqlite_master LIMIT 1").fetchone()
+                    self._connection_state.connection = conn
                     yield conn
                     conn.commit()
                 except sqlite3.OperationalError as e:
@@ -794,14 +1110,22 @@ class SQLiteStore:
                     if self._mark_readonly_from_storage_failure(e) is not None:
                         raise TransientArtifactError(str(e)) from e
                     raise
-                except Exception:
+                except BaseException:
                     conn.rollback()
                     raise
+                finally:
+                    self._connection_state.connection = None
         else:
-            conn = sqlite3.connect(self.db_path)
+            if self._memory_uri is not None:
+                if self._memory_anchor is None:
+                    raise RuntimeError("In-memory SQLiteStore is closed")
+                conn = sqlite3.connect(self._memory_uri, uri=True)
+            else:
+                conn = sqlite3.connect(self.db_path)
             conn.row_factory = sqlite3.Row
             conn.execute("PRAGMA foreign_keys = ON")
             try:
+                self._connection_state.connection = conn
                 yield conn
                 conn.commit()
             except sqlite3.OperationalError as e:
@@ -809,10 +1133,11 @@ class SQLiteStore:
                 if self._mark_readonly_from_storage_failure(e) is not None:
                     raise TransientArtifactError(str(e)) from e
                 raise
-            except Exception:
+            except BaseException:
                 conn.rollback()
                 raise
             finally:
+                self._connection_state.connection = None
                 conn.close()
 
     def _check_fts5_support(self, conn: sqlite3.Connection) -> bool:
@@ -1261,22 +1586,6 @@ class SQLiteStore:
         indexed_at_value = datetime.now(timezone.utc)
 
         with self._get_connection() as conn:
-            # Check if file already exists with same content hash
-            existing = (
-                self.get_file_by_content_hash(content_hash_value, repository_id)
-                if content_hash_value
-                else None
-            )
-            if existing and existing["relative_path"] != relative_path_str:
-                # File moved - record the move
-                self.move_file(
-                    existing["relative_path"],
-                    relative_path_str,
-                    repository_id,
-                    content_hash_value or "",
-                )
-                return existing["id"]
-
             # Store using relative path as primary identifier
             cursor = conn.execute(
                 """INSERT INTO files 
@@ -1743,9 +2052,7 @@ class SQLiteStore:
             self._delete_chunker_rows(conn, stale)
         return {"target_scheme": target, "profile_id": profile_id, **stale}
 
-    def finalize_chunk_scheme_rebuild(
-        self, target_scheme: Optional[str] = None
-    ) -> None:
+    def finalize_chunk_scheme_rebuild(self, target_scheme: Optional[str] = None) -> None:
         """Phase 2: flip the scheme marker to the recorded rebuild target and clear
         the rebuilding flag, in one transaction - but ONLY after validating that:
 
@@ -1789,11 +2096,10 @@ class SQLiteStore:
             self._stamp_scheme(conn, target)
             self._delete_config(conn, CHUNK_SCHEME_REBUILD_KEY)
 
-    def _delete_chunker_rows(
-        self, conn: sqlite3.Connection, stale: Dict[str, Any]
-    ) -> None:
+    def _delete_chunker_rows(self, conn: sqlite3.Connection, stale: Dict[str, Any]) -> None:
         conn.execute(
-            "DELETE FROM code_chunks WHERE chunk_type != ?", (PRESERVED_CHUNK_TYPE,)
+            "DELETE FROM code_chunks WHERE chunk_type != ? AND chunk_id NOT LIKE 'history:%'",
+            (PRESERVED_CHUNK_TYPE,),
         )
         summary_hashes = stale.get("summary_hashes") or []
         for start in range(0, len(summary_hashes), 500):
@@ -1899,9 +2205,7 @@ class SQLiteStore:
         """
         serialized_metadata = _merge_chunk_source_metadata(metadata, content, line_start)
         with self._get_connection() as conn:
-            self._assert_chunk_scheme_writable(
-                conn, chunk_type=chunk_type, target=scheme_target
-            )
+            self._assert_chunk_scheme_writable(conn, chunk_type=chunk_type, target=scheme_target)
             cursor = conn.execute(
                 """INSERT INTO code_chunks
                    (file_id, symbol_id, content, content_start, content_end,
@@ -2048,11 +2352,64 @@ class SQLiteStore:
                 )
             return cursor.rowcount > 0
 
-    def delete_chunks_for_file(self, file_id: int) -> int:
-        """Delete all chunks for a file. Returns number of chunks deleted."""
+    def delete_chunks_for_file(
+        self, file_id: int, *, preserve_imported: bool = False, preserve_summaries: bool = False
+    ) -> int:
+        """Invalidate owned chunks, persisting vector debt before removing mappings."""
         with self._get_connection() as conn:
             self._assert_chunk_scheme_deletable(conn)
-            cursor = conn.execute("DELETE FROM code_chunks WHERE file_id = ?", (file_id,))
+            chunks = conn.execute(
+                "SELECT chunk_id, chunk_type FROM code_chunks WHERE file_id=?", (file_id,)
+            ).fetchall()
+            retained = {
+                row[0]
+                for row in chunks
+                if preserve_imported
+                and (row[1] == PRESERVED_CHUNK_TYPE or row[0].startswith("history:"))
+            }
+            stale_ids = {row[0] for row in chunks if row[0] not in retained}
+            summaries = conn.execute(
+                "SELECT chunk_hash FROM chunk_summaries WHERE file_id=?", (file_id,)
+            ).fetchall()
+            stale_summaries = [
+                row[0]
+                for row in summaries
+                if not any(row[0] == key or row[0].startswith(key + ":") for key in retained)
+            ]
+            stale_ids.update(stale_summaries)
+            file = conn.execute("SELECT relative_path FROM files WHERE id=?", (file_id,)).fetchone()
+            if file and file[0]:
+                stale_ids.add(f"{file[0]}:file-summary")
+            identifiers = sorted(stale_ids)
+            points = {}
+            for start in range(0, len(identifiers), 64):
+                batch = identifiers[start : start + 64]
+                clause = " OR ".join("chunk_id=? OR chunk_id LIKE ? ESCAPE '\\'" for _ in batch)
+                parameters = [
+                    value for key in batch for value in (key, _escape_like(key) + ":part:%")
+                ]
+                for point in conn.execute(
+                    f"SELECT profile_id, chunk_id, point_id, collection FROM semantic_points WHERE {clause}",
+                    parameters,
+                ).fetchall():
+                    points[(point["profile_id"], point["chunk_id"])] = dict(point)
+            self._record_pending_vector_deletions(conn, list(points.values()))
+            conn.executemany(
+                "DELETE FROM semantic_points WHERE profile_id=? AND chunk_id=?", list(points)
+            )
+            if not preserve_summaries:
+                conn.executemany(
+                    "DELETE FROM chunk_summaries WHERE chunk_hash=?",
+                    [(key,) for key in stale_summaries],
+                )
+            if preserve_imported:
+                cursor = conn.execute(
+                    "DELETE FROM code_chunks WHERE file_id=? AND chunk_type!=? "
+                    "AND chunk_id NOT LIKE 'history:%'",
+                    (file_id, PRESERVED_CHUNK_TYPE),
+                )
+            else:
+                cursor = conn.execute("DELETE FROM code_chunks WHERE file_id=?", (file_id,))
             return cursor.rowcount
 
     def upsert_semantic_point(
@@ -2141,9 +2498,7 @@ class SQLiteStore:
         with self._get_connection() as conn:
             # Central guard: any non-document (chunker-derived) row in the batch
             # must satisfy the scheme check before any write; stamps an empty index.
-            if any(
-                chunk.get("chunk_type", "code") != PRESERVED_CHUNK_TYPE for chunk in chunks
-            ):
+            if any(chunk.get("chunk_type", "code") != PRESERVED_CHUNK_TYPE for chunk in chunks):
                 self._assert_chunk_scheme_writable(conn, chunk_type="code")
             count = 0
             for chunk in chunks:
@@ -2220,21 +2575,26 @@ class SQLiteStore:
     def search_chunks_by_source_metadata(
         self,
         *,
+        query: Optional[str] = None,
         source_type: str = "friction",
         friction_categories: Optional[List[str]] = None,
         history_labels: Optional[List[str]] = None,
         history_repos: Optional[List[str]] = None,
-        limit: int = 20,
+        limit: Optional[int] = 20,
+        include_chunk_id: bool = False,
     ) -> List[Dict[str, Any]]:
-        """Return chunks whose stored source metadata matches the requested filters."""
+        """Filter then rank; an unlimited identity-bearing set feeds vector retrieval."""
+        if limit is not None and limit <= 0:
+            return []
         with self._get_connection() as conn:
             assert_chunk_scheme_readable(conn)
             cursor = conn.execute(
-                """SELECT c.content, c.line_start, c.line_end, c.metadata,
+                """SELECT c.chunk_id, c.content, c.line_start, c.line_end, c.metadata,
                           COALESCE(f.path, f.relative_path, CAST(c.file_id AS TEXT)) AS file_path
                    FROM code_chunks c
                    JOIN files f ON c.file_id = f.id
                    WHERE c.metadata LIKE '%"source_metadata"%'
+                     AND COALESCE(f.is_deleted, 0) = 0
                    ORDER BY f.path, c.line_start
                    """,
             )
@@ -2265,11 +2625,30 @@ class SQLiteStore:
                     "line_end": row["line_end"],
                     "snippet": row["content"],
                     "source_metadata": source_metadata,
+                    **({"chunk_id": row["chunk_id"]} if include_chunk_id else {}),
                 }
             )
-            if len(results) >= limit:
+            if query is None and limit is not None and len(results) >= limit:
                 break
-        return results
+        if query is None or not results:
+            return results
+        terms = re.findall(r"\w+", query.casefold())
+        if not terms:
+            return []
+        # A private, ephemeral FTS table ranks exact chunks without modifying the
+        # admitted index or matching text from another chunk in the same file.
+        with closing(sqlite3.connect(":memory:")) as ranking:
+            ranking.execute("CREATE VIRTUAL TABLE fts_code USING fts5(content, file_id UNINDEXED)")
+            ranking.executemany(
+                "INSERT INTO fts_code(rowid, content) VALUES (?, ?)",
+                [(index, row["snippet"]) for index, row in enumerate(results)],
+            )
+            matches = ranking.execute(
+                "SELECT rowid, bm25(fts_code) FROM fts_code WHERE fts_code MATCH ? "
+                "ORDER BY bm25(fts_code), rowid LIMIT ?",
+                (" AND ".join('"' + term + '"' for term in terms), -1 if limit is None else limit),
+            ).fetchall()
+        return [{**results[index], "score": -rank} for index, rank in matches]
 
     def upsert_history_issue_documents(
         self,
@@ -2353,7 +2732,7 @@ class SQLiteStore:
                 for row in cursor.fetchall()
                 if isinstance(row["content"], str) and row["content"].strip()
             )
-            conn.execute("DELETE FROM fts_code WHERE file_id = ?", (str(file_id),))
+            conn.execute("DELETE FROM fts_code WHERE CAST(file_id AS TEXT) = ?", (str(file_id),))
             conn.execute(
                 "INSERT INTO fts_code (content, file_id) VALUES (?, ?)", (content, file_id)
             )
@@ -2928,6 +3307,8 @@ class SQLiteStore:
         limit: int = 20,
         offset: int = 0,
         columns: Optional[List[str]] = None,
+        file_pattern: Optional[str] = None,
+        languages: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
         """
         Perform BM25 search using FTS5.
@@ -2957,13 +3338,19 @@ class SQLiteStore:
 
             if table == "fts_code" and "file_id" in table_columns:
                 # Support both integer file_id references and legacy path-style file_id values.
+                language_filter = (
+                    "AND f.language IN (" + ",".join("?" for _ in languages) + ")"
+                    if languages
+                    else ""
+                )
                 cursor = conn.execute(
-                    """
+                    f"""
                     SELECT
                         fts.content,
                         fts.file_id,
                         COALESCE(f.path, f.relative_path, CAST(fts.file_id AS TEXT)) as filepath,
                         f.relative_path,
+                        f.language,
                         bm25(fts_code) as score,
                         snippet(fts_code, 0, '<mark>', '</mark>', '...', 32) as snippet,
                         f.last_modified
@@ -2972,10 +3359,21 @@ class SQLiteStore:
                         OR CAST(fts.file_id AS TEXT) = f.path
                         OR CAST(fts.file_id AS TEXT) = f.relative_path
                     WHERE fts_code MATCH ?
+                        AND (? IS NULL OR COALESCE(f.path, CAST(fts.file_id AS TEXT)) GLOB ?
+                             OR f.relative_path GLOB ?)
+                        {language_filter}
                     ORDER BY bm25(fts_code)
                     LIMIT ? OFFSET ?
                     """,
-                    (query, limit, offset),
+                    (
+                        query,
+                        file_pattern,
+                        file_pattern,
+                        file_pattern,
+                        *(languages or []),
+                        limit,
+                        offset,
+                    ),
                 )
             elif table == "bm25_content" and "filepath" in table_columns:
                 # Legacy BM25 schema with direct filepath column
@@ -3112,11 +3510,24 @@ class SQLiteStore:
 
             for row in rows:
                 file_id = row[0]
+                if conn.execute(
+                    "SELECT 1 FROM code_chunks WHERE file_id=? "
+                    "AND (chunk_type=? OR chunk_id LIKE 'history:%') LIMIT 1",
+                    (file_id, PRESERVED_CHUNK_TYPE),
+                ).fetchone():
+                    self._refresh_fts_code_for_file(file_id)
+                    inserted += 1
+                    continue
                 path_value = row[1] or row[2]
                 if not path_value:
                     continue
 
                 file_path = Path(path_value)
+                if self.path_resolver.source_root is not None:
+                    relative = row[2] or self.path_resolver.normalize_path(file_path)
+                    file_path = (self.path_resolver.source_root / relative).resolve()
+                    if not file_path.is_relative_to(self.path_resolver.source_root):
+                        raise ValueError("FTS input is outside the committed snapshot")
                 if not file_path.exists() or file_path.name in _LEXICAL_EXCLUDED_FILENAMES:
                     continue
 
@@ -3267,13 +3678,29 @@ class SQLiteStore:
             absolute_path = path_row[0] if path_row else None
 
             # Delete all associated data (cascade should handle most)
-            conn.execute("DELETE FROM symbol_references WHERE file_id = ?", (file_id,))
+            self.delete_chunks_for_file(file_id)
+            conn.execute(
+                "DELETE FROM symbol_references WHERE file_id=? OR symbol_id IN "
+                "(SELECT id FROM symbols WHERE file_id=?)",
+                (file_id, file_id),
+            )
+            tables = {
+                row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            }
+            for table in ("bm25_content", "bm25_documents", "bm25_index_status"):
+                if table in tables:
+                    conn.execute(f"DELETE FROM {table} WHERE file_id=?", (file_id,))
+            if "bm25_symbols" in tables:
+                conn.execute(
+                    "DELETE FROM bm25_symbols WHERE symbol_id IN (SELECT id FROM symbols WHERE file_id=?)",
+                    (file_id,),
+                )
             conn.execute("DELETE FROM imports WHERE file_id = ?", (file_id,))
             conn.execute("DELETE FROM embeddings WHERE file_id = ?", (file_id,))
             # fts_code.file_id may be stored as an integer, an absolute path, or a
             # relative path depending on the indexing plugin — delete all three forms.
             conn.execute(
-                "DELETE FROM fts_code WHERE file_id = ? OR file_id = ? OR file_id = ?",
+                "DELETE FROM fts_code WHERE CAST(file_id AS TEXT) = ? OR file_id = ? OR file_id = ?",
                 (str(file_id), absolute_path or relative_path, relative_path),
             )
             conn.execute(
@@ -3490,8 +3917,7 @@ class SQLiteStore:
             if profile_id:
                 if source_chunk_ids:
                     like_clauses = " OR ".join(
-                        ["chunk_id = ? OR chunk_id LIKE ? ESCAPE '\\'"]
-                        * len(source_chunk_ids)
+                        ["chunk_id = ? OR chunk_id LIKE ? ESCAPE '\\'"] * len(source_chunk_ids)
                     )
                     params: List[Any] = [profile_id]
                     for chunk_id in source_chunk_ids:

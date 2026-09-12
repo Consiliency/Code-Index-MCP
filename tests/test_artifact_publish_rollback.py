@@ -1,4 +1,4 @@
-"""Tests for ArtifactPublisher rollback on mid-publish failure (SL-2.2)."""
+"""Failed publication preserves prepared bytes and remote diagnostic evidence."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from mcp_server.artifacts.publisher import ArtifactError, ArtifactPublisher
 REPO = "owner/repo"
 COMMIT = "abcdef1234567890abcdef1234567890abcdef12"
 SHORT_SHA = COMMIT[:7]
-SHA_TAG = f"index-repo-main-{SHORT_SHA}"
+SHA_TAG = f"index-repo-main-{COMMIT}"
 
 _SYNTHETIC_ATTESTATION = Attestation(
     bundle_url="https://github.com/owner/repo/attestations/1",
@@ -27,10 +27,7 @@ _SYNTHETIC_ATTESTATION = Attestation(
 
 @pytest.fixture(autouse=True)
 def _stub_attest(monkeypatch):
-    monkeypatch.setattr(
-        "mcp_server.artifacts.publisher.attest",
-        MagicMock(return_value=_SYNTHETIC_ATTESTATION),
-    )
+    monkeypatch.setenv("MCP_ATTESTATION_MODE", "skip")
 
 
 def _make_uploader() -> IndexArtifactUploader:
@@ -66,10 +63,10 @@ def _make_uploader() -> IndexArtifactUploader:
 
 
 class TestPublishRollback:
-    """Publisher must delete the SHA-keyed release if _move_latest_pointer fails."""
+    """Publisher must retain the SHA-keyed release if a later operation fails."""
 
-    def test_sha_release_deleted_on_move_latest_failure(self):
-        """When _move_latest_pointer raises, the SHA release is deleted (gh release delete)."""
+    def test_sha_release_retained_on_move_latest_failure(self):
+        """A pointer failure must not remove diagnostic release evidence."""
         uploader = _make_uploader()
         publisher = ArtifactPublisher(uploader, gh_cmd="gh")
         delete_calls: list[list[str]] = []
@@ -105,13 +102,10 @@ class TestPublishRollback:
             with pytest.raises((ArtifactError, subprocess.CalledProcessError)):
                 publisher.publish_on_reindex("repo", COMMIT)
 
-        # Must have attempted to delete the SHA release
-        assert any(
-            SHA_TAG in call_args for call_args in delete_calls
-        ), f"Expected delete of {SHA_TAG}; got: {delete_calls}"
+        assert not delete_calls
 
-    def test_rollback_includes_yes_flag(self):
-        """gh release delete call must include --yes for non-interactive use."""
+    def test_pointer_failure_does_not_delete_any_release(self):
+        """Cleanup must not mutate either the candidate or latest release."""
         uploader = _make_uploader()
         publisher = ArtifactPublisher(uploader, gh_cmd="gh")
         delete_calls: list[list[str]] = []
@@ -133,11 +127,7 @@ class TestPublishRollback:
             with pytest.raises((ArtifactError, subprocess.CalledProcessError)):
                 publisher.publish_on_reindex("repo", COMMIT)
 
-        sha_deletes = [c for c in delete_calls if SHA_TAG in c]
-        if sha_deletes:
-            assert (
-                "--yes" in sha_deletes[0]
-            ), f"--yes flag missing from delete call: {sha_deletes[0]}"
+        assert not delete_calls
 
     def test_original_error_reraised_after_rollback(self):
         """The original exception (not the delete exception) must propagate."""
@@ -189,8 +179,8 @@ class TestPublishRollback:
             not sha_deletes
         ), f"Should not delete SHA release we never created; got: {sha_deletes}"
 
-    def test_sha_release_deleted_on_asset_upload_failure(self):
-        """If release asset upload fails after SHA creation, rollback deletes the SHA release."""
+    def test_sha_release_retained_on_asset_upload_failure(self):
+        """An interrupted upload retains the SHA release for explicit recovery."""
         uploader = _make_uploader()
         uploader.upload_direct.side_effect = RuntimeError("upload failed")
         publisher = ArtifactPublisher(uploader, gh_cmd="gh")
@@ -211,4 +201,4 @@ class TestPublishRollback:
             with pytest.raises(ArtifactError):
                 publisher.publish_on_reindex("repo", COMMIT)
 
-        assert any(SHA_TAG in call_args for call_args in delete_calls)
+        assert not delete_calls

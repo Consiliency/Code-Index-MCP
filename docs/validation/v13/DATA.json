@@ -1,0 +1,1023 @@
+{
+  "schema_version": "v13.phase-receipt.v1",
+  "phase": "DATA",
+  "execution_mode": "manual",
+  "source_commit": "668bf754d1728d07e113c8560acb6e5cf79a9b3f",
+  "source_tree": "20a2b6cde596914a0ad06a19fdd4e8fab49af5ef",
+  "roadmap_sha256": "178b8328d8e7dc76ddc0804d7b72d3ccddb55e23577a3d52cb7cbd70d5fd5308",
+  "contract_sha256": "d1686bb23ca55e73ec54e8211de0269dd1332c593cef70f2e80d275f965573d8",
+  "data_contract_source_sha256": "c522b62a6c2202040013204eabcc65149616f18f5012c0d32ecfe334b02dc491",
+  "plan_source_sha256": "6f4a0f6e260edb8c94dc7a2b3c1f52747877343c65e53280ef75944c426c1b5a",
+  "verification_artifact_path": ".phase-loop/runs/v13-DATA-20260911-668bf75/verification.json",
+  "finding_dispositions": [
+    {
+      "id": "C05",
+      "status": "fixed",
+      "evidence": "Owned-row retained SQLite backup, stable imported links/config/debt and valid unchanged summaries survive production rebuild."
+    },
+    {
+      "id": "C06",
+      "status": "fixed",
+      "evidence": "Stage-owned SQLite/vector/profile context, writer fence and durable CAS admission; failures retain old generation and cannot publish partial effects."
+    },
+    {
+      "id": "C07",
+      "status": "fixed",
+      "evidence": "Acknowledged paginated real Qdrant maintenance at 1000/1001 in file/server modes, interruption and retry."
+    },
+    {
+      "id": "C08",
+      "status": "fixed",
+      "evidence": "Each provenance-capable embedding batch, including restart/concurrency, validates complete identity before vector writes; exact backend and generation metadata ownership."
+    },
+    {
+      "id": "C12",
+      "status": "fixed",
+      "evidence": "Uniform public readiness and generation admission; actual semantic rebuild/restore queries use matching owner metadata/collection and bound stores."
+    },
+    {
+      "id": "C17",
+      "status": "fixed",
+      "evidence": "Live Git identity checks for both object formats and branch/worktree states; master is not rewritten as main."
+    },
+    {
+      "id": "C18",
+      "status": "fixed",
+      "evidence": "Real source-filtered lexical and semantic rank-before-limit, all derived vector subchunks, no embedding on empty candidates and no lexical substitute after semantic failure."
+    },
+    {
+      "id": "R01",
+      "status": "fixed_in_scope",
+      "evidence": "Git-compatible ignore-before-copy, supported bounded input exceptions and synthetic dry-run estimate; live budget enforcement remains PILOT."
+    },
+    {
+      "id": "R02",
+      "status": "fixed",
+      "evidence": "Committed mutation/watch/sweep convergence; dirty working-tree input stays outside admission."
+    }
+  ],
+  "prior_attempts": [
+    {
+      "path": ".phase-loop/runs/v13-DATA-20260911-dd0c763/verification.json",
+      "sha256": "71eabd4ae95281c2ed7b8d80bef0f762b4d44c2f8222700691cd5a87ad548a13",
+      "accepted": false,
+      "reason": "All commands passed, including 3135 broad and 358 phase tests, but source review found C18 semantic source filters returning lexical FTS. Repaired vector/source filtering, generation readiness, signed IDs and bound standalone ownership, then reran every original gate."
+    },
+    {
+      "path": ".phase-loop/runs/v13-DATA-20260911-c0713a7/verification.json",
+      "sha256": "e17eefb8f1e8da56a557e80c83c721cee322726bfaf2bf8a04cc397fe24a58c1",
+      "accepted": false,
+      "reason": "Six broad failures with 3144 passes and three phase failures with 374 passes. Shared synthetic fixture git add committed live WAL/SHM; pooled close correctly tripped the final dirty-source fence. Local fixture excludes and staging assertion repaired; production fence unchanged. 37 selected reconciliation/watcher controls then passed."
+    },
+    {
+      "kind": "diagnostics",
+      "accepted": false,
+      "reason": "Earlier DATA runs exposed legacy host-registry access in test fixtures, stale mocks and uncontrolled semantic source filtering. Fixtures now isolate registry/index roots and preserve failed logs. Development counts are overlapping diagnostics, not summed acceptance evidence."
+    }
+  ],
+  "environment_identity": {
+    "os": "Linux",
+    "python": "3.12.12",
+    "dependency_lock": "uv.lock",
+    "inputs": "Synthetic Git repositories/SQLite stores and deterministic embedding providers, real file-backed Qdrant and pinned disposable Qdrant server. Installed isolated wheel and non-root production container. No live inference or fleet indexes."
+  },
+  "limits": [
+    "Linux/Python 3.12 proof only; not an all-platform/language support certification.",
+    "Installed inflight shutdown remains approximately 15 seconds; successful bounded fail-stop is not the PILOT five-second performance gate, which must still pass.",
+    "No local inference quality, PMCP provisioning, browser acceptance, fleet rollout, final implementation panel, version bump, merge or publication is claimed.",
+    "No new signing job, hosted CI dispatch, index upload or legacy private registry input.",
+    "Old generations are retained; automatic destructive reclamation is not part of DATA."
+  ],
+  "issue_inventory": [],
+  "issue_dispositions": [],
+  "required_human_inputs": [],
+  "doc_delta_decision": "docs_updated",
+  "spec_delta_closeout": {
+    "schema": "spec_delta_closeout.v1",
+    "decision": "canonical_spec_update",
+    "target_surfaces": [
+      "docs/contracts/v13-data.md",
+      "docs/operations/v13-data-generation.md"
+    ],
+    "evidence_paths": [
+      "docs/validation/v13/DATA.json"
+    ],
+    "redaction_posture": "metadata_only"
+  },
+  "next_phase": "PILOT",
+  "next_skill": "codex-plan-phase",
+  "next_command": "codex-plan-phase specs/phase-plans-v13.md PILOT",
+  "terminal_status": "complete",
+  "verification_status": "passed",
+  "human_required": false,
+  "blocker_class": null,
+  "timestamp": "2026-09-11T18:55:35Z",
+  "started_at": "2026-09-11T18:32:42Z",
+  "finished_at": "2026-09-11T18:55:35Z",
+  "plan_sha256": "9a46bec4f9e616510e0ccf4c4559c46d4bf8a8302623055fab8bb20b40dd791f",
+  "data_contract_sha256": "711da60a157cd17a7496254d966abb8ff081a99926714dfbed3b3be10637dfa3",
+  "verification_artifact_sha256": "7adb5da2297fa2e812673bb143bdadf3bec920915f70b08d49ad9d910de0b650",
+  "verification_log_sha256": "af57ee65dddef694f9b3f56931424e4aacea6378e498571b0714006bc655c4b9",
+  "verification_summary": "All fourteen commands, locked environment refresh and phase suite exited 0; independent validator ok=true, no findings or diagnostics. Focused vectors/provenance: 73 passed. Qdrant file/server: 19 passed each. Git manager: 140 passed. Broad offline: 3151 passed, 150 skipped, 31 deselected. Phase: 378 passed.",
+  "commands": [
+    {
+      "argv": [
+        "git",
+        "rev-parse",
+        "HEAD",
+        "HEAD^{tree}"
+      ],
+      "cwd": ".",
+      "duration_s": 0.007205,
+      "exit_code": 0,
+      "log_end_offset": 246,
+      "log_offset": 164
+    },
+    {
+      "argv": [
+        "/home/viperjuice/.local/share/uv/tools/phase-loop-runtime/bin/python",
+        "/home/viperjuice/.codex/skills/codex-plan-phase/scripts/validate_plan_doc.py",
+        "/mnt/HC_Volume_105438154/worktrees/Code-Index-MCP-v13-audit-remediation/plans/phase-plan-v13-DATA.md"
+      ],
+      "cwd": ".",
+      "duration_s": 0.441263,
+      "exit_code": 0,
+      "log_end_offset": 663,
+      "log_offset": 246
+    },
+    {
+      "argv": [
+        "env",
+        "SEMANTIC_SEARCH_ENABLED=false",
+        "MCP_TEST_MODE=1",
+        "uv",
+        "run",
+        "--locked",
+        "--extra",
+        "dev",
+        "pytest",
+        "tests/test_v13_data_vectors.py",
+        "tests/test_embedding_provenance.py",
+        "-q",
+        "--no-cov",
+        "-o",
+        "log_cli=false"
+      ],
+      "cwd": ".",
+      "duration_s": 72.990285,
+      "exit_code": 0,
+      "log_end_offset": 1789,
+      "log_offset": 663
+    },
+    {
+      "argv": [
+        "uv",
+        "run",
+        "--locked",
+        "--extra",
+        "dev",
+        "python",
+        "scripts/v13_qdrant_smoke.py",
+        "--mode",
+        "file"
+      ],
+      "cwd": ".",
+      "duration_s": 73.865456,
+      "exit_code": 0,
+      "log_end_offset": 4344,
+      "log_offset": 1789
+    },
+    {
+      "argv": [
+        "uv",
+        "run",
+        "--locked",
+        "--extra",
+        "dev",
+        "python",
+        "scripts/v13_qdrant_smoke.py",
+        "--mode",
+        "server"
+      ],
+      "cwd": ".",
+      "duration_s": 9.063891,
+      "exit_code": 0,
+      "log_end_offset": 6986,
+      "log_offset": 4344
+    },
+    {
+      "argv": [
+        "uv",
+        "run",
+        "--locked",
+        "--extra",
+        "dev",
+        "python",
+        "scripts/v13_pilot_estimate.py"
+      ],
+      "cwd": ".",
+      "duration_s": 0.370811,
+      "exit_code": 0,
+      "log_end_offset": 7898,
+      "log_offset": 6986
+    },
+    {
+      "argv": [
+        "env",
+        "SEMANTIC_SEARCH_ENABLED=false",
+        "MCP_TEST_MODE=1",
+        "make",
+        "agent-gate"
+      ],
+      "cwd": ".",
+      "duration_s": 161.267097,
+      "exit_code": 0,
+      "log_end_offset": 521788,
+      "log_offset": 7898
+    },
+    {
+      "argv": [
+        "env",
+        "SEMANTIC_SEARCH_ENABLED=false",
+        "MCP_TEST_MODE=1",
+        "make",
+        "release-smoke-container"
+      ],
+      "cwd": ".",
+      "duration_s": 262.579512,
+      "exit_code": 0,
+      "log_end_offset": 591474,
+      "log_offset": 521788
+    },
+    {
+      "argv": [
+        "env",
+        "SEMANTIC_SEARCH_ENABLED=false",
+        "MCP_TEST_MODE=1",
+        "uv",
+        "run",
+        "--locked",
+        "--extra",
+        "dev",
+        "pytest",
+        "tests/test_git_index_manager.py",
+        "-m",
+        "not requires_network and not benchmark",
+        "-q",
+        "--no-cov",
+        "-o",
+        "log_cli=false"
+      ],
+      "cwd": ".",
+      "duration_s": 31.581781,
+      "exit_code": 0,
+      "log_end_offset": 592601,
+      "log_offset": 591474
+    },
+    {
+      "argv": [
+        "env",
+        "SEMANTIC_SEARCH_ENABLED=false",
+        "MCP_TEST_MODE=1",
+        "uv",
+        "run",
+        "--locked",
+        "--extra",
+        "dev",
+        "pytest",
+        "tests",
+        "--ignore=tests/test_git_index_manager.py",
+        "-m",
+        "not requires_network and not benchmark",
+        "-q",
+        "--no-cov",
+        "-o",
+        "log_cli=false"
+      ],
+      "cwd": ".",
+      "duration_s": 534.50568,
+      "exit_code": 0,
+      "log_end_offset": 620253,
+      "log_offset": 592601
+    },
+    {
+      "argv": [
+        "uv",
+        "run",
+        "--locked",
+        "--extra",
+        "dev",
+        "isort",
+        "--check-only",
+        "mcp_server/artifacts/artifact_download.py",
+        "mcp_server/artifacts/artifact_upload.py",
+        "mcp_server/artifacts/freshness.py",
+        "mcp_server/artifacts/multi_repo_artifact_coordinator.py",
+        "mcp_server/artifacts/publisher.py",
+        "mcp_server/artifacts/secure_export.py",
+        "mcp_server/cli/artifact_commands.py",
+        "mcp_server/cli/bootstrap.py",
+        "mcp_server/cli/stdio_runner.py",
+        "mcp_server/cli/tool_handlers.py",
+        "mcp_server/client.py",
+        "mcp_server/core/ignore_patterns.py",
+        "mcp_server/core/path_resolver.py",
+        "mcp_server/core/repo_context.py",
+        "mcp_server/core/repo_resolver.py",
+        "mcp_server/dispatcher/cross_repo_coordinator.py",
+        "mcp_server/dispatcher/dispatcher_enhanced.py",
+        "mcp_server/gateway.py",
+        "mcp_server/health/repository_readiness.py",
+        "mcp_server/storage/git_index_manager.py",
+        "mcp_server/storage/multi_repo_manager.py",
+        "mcp_server/storage/repository_registry.py",
+        "mcp_server/storage/sqlite_store.py",
+        "mcp_server/utils/semantic_indexer.py",
+        "mcp_server/utils/semantic_indexer_registry.py",
+        "mcp_server/watcher/file_watcher.py",
+        "mcp_server/watcher/sweeper.py",
+        "mcp_server/watcher_multi_repo.py",
+        "scripts/installed_runtime_smoke.py",
+        "scripts/release_smoke.py",
+        "scripts/safety_runtime_smoke.py",
+        "scripts/v13_pilot_estimate.py",
+        "scripts/v13_qdrant_smoke.py",
+        "tests/conftest.py",
+        "tests/fixtures/multi_repo.py",
+        "tests/integration/test_multi_repo_hydration.py",
+        "tests/smoke/test_secondary_tool_readiness_smoke.py",
+        "tests/test_artifact_commands.py",
+        "tests/test_artifact_download.py",
+        "tests/test_artifact_freshness.py",
+        "tests/test_artifact_upload.py",
+        "tests/test_benchmark_query_regressions.py",
+        "tests/test_chunker_scheme_recovery.py",
+        "tests/test_collection_provenance.py",
+        "tests/test_cross_repo_coordinator.py",
+        "tests/test_dispatcher.py",
+        "tests/test_dispatcher_advanced.py",
+        "tests/test_dispatcher_p3_integration.py",
+        "tests/test_friction_search_filters.py",
+        "tests/test_gateway.py",
+        "tests/test_git_index_manager.py",
+        "tests/test_git_integration.py",
+        "tests/test_history_issue_storage.py",
+        "tests/test_history_search_filters.py",
+        "tests/test_ignore_patterns.py",
+        "tests/test_multi_repo_artifact_coordinator.py",
+        "tests/test_multi_repo_failure_matrix.py",
+        "tests/test_multi_repo_manager.py",
+        "tests/test_multi_repository_support.py",
+        "tests/test_profile_aware_semantic_indexer.py",
+        "tests/test_python_client_contract.py",
+        "tests/test_python_client_sources.py",
+        "tests/test_repo_context.py",
+        "tests/test_semantic_indexer_registry.py",
+        "tests/test_semantic_stale_vector_cleanup.py",
+        "tests/test_store_registry.py",
+        "tests/test_tool_handlers_readiness.py",
+        "tests/test_v13_data_queries.py",
+        "tests/test_v13_data_reconciliation.py",
+        "tests/test_v13_data_storage.py",
+        "tests/test_v13_data_vectors.py",
+        "tests/test_v13_state.py",
+        "tests/test_watcher.py",
+        "tests/test_watcher_multi_repo.py",
+        "tests/test_watcher_sweep.py"
+      ],
+      "cwd": ".",
+      "duration_s": 0.559205,
+      "exit_code": 0,
+      "log_end_offset": 620253,
+      "log_offset": 620253
+    },
+    {
+      "argv": [
+        "uv",
+        "run",
+        "--locked",
+        "--extra",
+        "dev",
+        "black",
+        "--check",
+        "mcp_server/artifacts/artifact_download.py",
+        "mcp_server/artifacts/artifact_upload.py",
+        "mcp_server/artifacts/freshness.py",
+        "mcp_server/artifacts/multi_repo_artifact_coordinator.py",
+        "mcp_server/artifacts/publisher.py",
+        "mcp_server/artifacts/secure_export.py",
+        "mcp_server/cli/artifact_commands.py",
+        "mcp_server/cli/bootstrap.py",
+        "mcp_server/cli/stdio_runner.py",
+        "mcp_server/cli/tool_handlers.py",
+        "mcp_server/client.py",
+        "mcp_server/core/ignore_patterns.py",
+        "mcp_server/core/path_resolver.py",
+        "mcp_server/core/repo_context.py",
+        "mcp_server/core/repo_resolver.py",
+        "mcp_server/dispatcher/cross_repo_coordinator.py",
+        "mcp_server/dispatcher/dispatcher_enhanced.py",
+        "mcp_server/gateway.py",
+        "mcp_server/health/repository_readiness.py",
+        "mcp_server/storage/git_index_manager.py",
+        "mcp_server/storage/multi_repo_manager.py",
+        "mcp_server/storage/repository_registry.py",
+        "mcp_server/storage/sqlite_store.py",
+        "mcp_server/utils/semantic_indexer.py",
+        "mcp_server/utils/semantic_indexer_registry.py",
+        "mcp_server/watcher/file_watcher.py",
+        "mcp_server/watcher/sweeper.py",
+        "mcp_server/watcher_multi_repo.py",
+        "scripts/installed_runtime_smoke.py",
+        "scripts/release_smoke.py",
+        "scripts/safety_runtime_smoke.py",
+        "scripts/v13_pilot_estimate.py",
+        "scripts/v13_qdrant_smoke.py",
+        "tests/conftest.py",
+        "tests/fixtures/multi_repo.py",
+        "tests/integration/test_multi_repo_hydration.py",
+        "tests/smoke/test_secondary_tool_readiness_smoke.py",
+        "tests/test_artifact_commands.py",
+        "tests/test_artifact_download.py",
+        "tests/test_artifact_freshness.py",
+        "tests/test_artifact_upload.py",
+        "tests/test_benchmark_query_regressions.py",
+        "tests/test_chunker_scheme_recovery.py",
+        "tests/test_collection_provenance.py",
+        "tests/test_cross_repo_coordinator.py",
+        "tests/test_dispatcher.py",
+        "tests/test_dispatcher_advanced.py",
+        "tests/test_dispatcher_p3_integration.py",
+        "tests/test_friction_search_filters.py",
+        "tests/test_gateway.py",
+        "tests/test_git_index_manager.py",
+        "tests/test_git_integration.py",
+        "tests/test_history_issue_storage.py",
+        "tests/test_history_search_filters.py",
+        "tests/test_ignore_patterns.py",
+        "tests/test_multi_repo_artifact_coordinator.py",
+        "tests/test_multi_repo_failure_matrix.py",
+        "tests/test_multi_repo_manager.py",
+        "tests/test_multi_repository_support.py",
+        "tests/test_profile_aware_semantic_indexer.py",
+        "tests/test_python_client_contract.py",
+        "tests/test_python_client_sources.py",
+        "tests/test_repo_context.py",
+        "tests/test_semantic_indexer_registry.py",
+        "tests/test_semantic_stale_vector_cleanup.py",
+        "tests/test_store_registry.py",
+        "tests/test_tool_handlers_readiness.py",
+        "tests/test_v13_data_queries.py",
+        "tests/test_v13_data_reconciliation.py",
+        "tests/test_v13_data_storage.py",
+        "tests/test_v13_data_vectors.py",
+        "tests/test_v13_state.py",
+        "tests/test_watcher.py",
+        "tests/test_watcher_multi_repo.py",
+        "tests/test_watcher_sweep.py"
+      ],
+      "cwd": ".",
+      "duration_s": 0.246843,
+      "exit_code": 0,
+      "log_end_offset": 620310,
+      "log_offset": 620253
+    },
+    {
+      "argv": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "cwd": ".",
+      "duration_s": 0.006605,
+      "exit_code": 0,
+      "log_end_offset": 620310,
+      "log_offset": 620310
+    },
+    {
+      "argv": [
+        "git",
+        "diff",
+        "--exit-code",
+        "HEAD"
+      ],
+      "cwd": ".",
+      "duration_s": 0.006033,
+      "exit_code": 0,
+      "log_end_offset": 620310,
+      "log_offset": 620310
+    }
+  ],
+  "env_refresh": {
+    "exit_code": 0,
+    "install_argv": [
+      "uv",
+      "sync",
+      "--locked",
+      "--python",
+      "3.12",
+      "--extra",
+      "dev"
+    ],
+    "log_end_offset": 164,
+    "log_offset": 107,
+    "manifests": [
+      "pyproject.toml",
+      "uv.lock"
+    ],
+    "triggered": true
+  },
+  "suite": {
+    "argv": [
+      "env",
+      "SEMANTIC_SEARCH_ENABLED=false",
+      "MCP_TEST_MODE=1",
+      "uv",
+      "run",
+      "--locked",
+      "--extra",
+      "dev",
+      "pytest",
+      "tests/test_v13_data_storage.py",
+      "tests/test_v13_data_vectors.py",
+      "tests/test_v13_data_queries.py",
+      "tests/test_v13_data_reconciliation.py",
+      "tests/test_semantic_indexer_registry.py",
+      "tests/test_embedding_provenance.py",
+      "tests/test_friction_search_filters.py",
+      "tests/test_history_search_filters.py",
+      "tests/test_history_issue_storage.py",
+      "tests/test_ignore_patterns.py",
+      "tests/test_watcher_sweep.py",
+      "tests/test_repository_readiness.py",
+      "tests/test_tool_readiness_fail_closed.py",
+      "-q",
+      "--no-cov"
+    ],
+    "duration_s": 225.73557,
+    "exit_code": 0,
+    "log_end_offset": 1184271,
+    "log_offset": 620310
+  },
+  "per_goal_results": [
+    {
+      "goal": "EC-DATA-1",
+      "status": "passed",
+      "evidence": "Actual rebuild/incremental/scoped/artifact generation stages retain imported documents/history, relationships, valid unchanged summaries, operator config and collection-qualified cleanup debt. Production boundary fault controls preserve old bytes/fence; retained-vector copy never mutates admitted generation; failed semantic close and Git/CAS drift prevent publication. WAL-aware portable export, verified restore and public queries use the admitted generation."
+    },
+    {
+      "goal": "EC-DATA-2",
+      "status": "passed",
+      "evidence": "Named real file/client-server Qdrant nodes each exercise 19 controls: 1000/1001 deletion/move/lookup/soft-delete, source-filter rank-before-limit for source and derived IDs, signed-ID SQLite roundtrips, and interrupted maintenance retry. Separate actual lock holder, exact-backend, per-batch/restart/concurrent provenance controls deny drift/partial metadata and unacknowledged debt loss."
+    },
+    {
+      "goal": "EC-DATA-3",
+      "status": "passed",
+      "evidence": "Public STDIO/HTTP/Python and compatibility cross-repository controls recheck live SHA-1/SHA-256 Git, exact branch, registration/worktree and generation before returning data. Actual rebuild/verified restore admit generation-specific semantic metadata, reject unrelated legacy metadata. Real SQLite/Qdrant friction/history filtering applies lexical or semantic query and rank before limiting; unavailable semantic paths do not return lexical success; ready no-match stays distinct."
+    },
+    {
+      "goal": "EC-DATA-4",
+      "status": "passed",
+      "evidence": "Committed source snapshot applies nested Git exclusions before ordinary blob reads/parse/embed, retains bounded JSON/JSONL exceptions and rejects dirty source. Committed create/modify/delete/rename and lost-event sweep converge with generation/cache binding. Offline estimate remains 79360 including retry envelopes, zero inference."
+    }
+  ],
+  "artifact_digests": {
+    "wheel": {
+      "wheel": "index_it_mcp-1.4.0-py3-none-any.whl",
+      "sha256": "9dc637fddde6986a75b2521a9520ddd3dec125e288f13fa2043320cd26ebd1dd"
+    },
+    "container": {
+      "image": "ghcr.io/consiliency/code-index-mcp:local-smoke",
+      "image_id": "sha256:5c7766780f776456e7b2bd97f8eaf98170fdb6fadb2bb5e2e9ac794e43558166"
+    }
+  },
+  "operational_receipts": {
+    "qdrant": [
+      {
+        "proof": "qdrant-file",
+        "status": "passed",
+        "started_at": "2026-09-11T18:33:55.704653+00:00",
+        "finished_at": "2026-09-11T18:35:09.447908+00:00",
+        "client_version": "1.17.1",
+        "server_version": null,
+        "image": null,
+        "exit_code": 0,
+        "cases": [
+          {
+            "name": "test_maintenance_crosses_page_boundary[remove-1000]",
+            "seconds": 5.698,
+            "passed": true
+          },
+          {
+            "name": "test_maintenance_crosses_page_boundary[remove-1001]",
+            "seconds": 5.565,
+            "passed": true
+          },
+          {
+            "name": "test_maintenance_crosses_page_boundary[move-1000]",
+            "seconds": 6.128,
+            "passed": true
+          },
+          {
+            "name": "test_maintenance_crosses_page_boundary[move-1001]",
+            "seconds": 5.738,
+            "passed": true
+          },
+          {
+            "name": "test_maintenance_crosses_page_boundary[lookup-1000]",
+            "seconds": 3.204,
+            "passed": true
+          },
+          {
+            "name": "test_maintenance_crosses_page_boundary[lookup-1001]",
+            "seconds": 2.867,
+            "passed": true
+          },
+          {
+            "name": "test_maintenance_crosses_page_boundary[mark-1000]",
+            "seconds": 5.612,
+            "passed": true
+          },
+          {
+            "name": "test_maintenance_crosses_page_boundary[mark-1001]",
+            "seconds": 5.596,
+            "passed": true
+          },
+          {
+            "name": "test_maintenance_filtered_ranking_precedes_limit[chunk_id-1000]",
+            "seconds": 2.812,
+            "passed": true
+          },
+          {
+            "name": "test_maintenance_filtered_ranking_precedes_limit[chunk_id-1001]",
+            "seconds": 2.936,
+            "passed": true
+          },
+          {
+            "name": "test_maintenance_filtered_ranking_precedes_limit[source_chunk_id-1000]",
+            "seconds": 2.764,
+            "passed": true
+          },
+          {
+            "name": "test_maintenance_filtered_ranking_precedes_limit[source_chunk_id-1001]",
+            "seconds": 2.937,
+            "passed": true
+          },
+          {
+            "name": "test_generated_point_ids_fit_both_sqlite_and_qdrant[0]",
+            "seconds": 0.163,
+            "passed": true
+          },
+          {
+            "name": "test_generated_point_ids_fit_both_sqlite_and_qdrant[9223372036854775807]",
+            "seconds": 0.141,
+            "passed": true
+          },
+          {
+            "name": "test_generated_point_ids_fit_both_sqlite_and_qdrant[9223372036854775808]",
+            "seconds": 0.13,
+            "passed": true
+          },
+          {
+            "name": "test_generated_point_ids_fit_both_sqlite_and_qdrant[18446744073709551615]",
+            "seconds": 0.137,
+            "passed": true
+          },
+          {
+            "name": "test_maintenance_interruption_retries_without_payload_corruption[remove]",
+            "seconds": 5.866,
+            "passed": true
+          },
+          {
+            "name": "test_maintenance_interruption_retries_without_payload_corruption[move]",
+            "seconds": 5.697,
+            "passed": true
+          },
+          {
+            "name": "test_maintenance_interruption_retries_without_payload_corruption[mark]",
+            "seconds": 6.413,
+            "passed": true
+          }
+        ],
+        "output_sha256": "8d192e75194451fe44529c91e7989b5acd33ed7a5c3e6f0c2f22eaf37fe9d5f5",
+        "output_path": ".phase-loop/runs/v13-DATA-qdrant-1791bbfae1db4c6dbdf22005ef8fc5db/pytest.log",
+        "inference_requests": 0,
+        "inputs": "synthetic deterministic vectors only"
+      },
+      {
+        "proof": "qdrant-server",
+        "status": "passed",
+        "started_at": "2026-09-11T18:35:09.571601+00:00",
+        "finished_at": "2026-09-11T18:35:18.198479+00:00",
+        "client_version": "1.17.1",
+        "server_version": "1.17.0",
+        "image": "qdrant/qdrant@sha256:f1c7272cdac52b38c1a0e89313922d940ba50afd90d593a1605dbbc214e66ffb",
+        "exit_code": 0,
+        "cases": [
+          {
+            "name": "test_maintenance_crosses_page_boundary[remove-1000]",
+            "seconds": 0.406,
+            "passed": true
+          },
+          {
+            "name": "test_maintenance_crosses_page_boundary[remove-1001]",
+            "seconds": 0.241,
+            "passed": true
+          },
+          {
+            "name": "test_maintenance_crosses_page_boundary[move-1000]",
+            "seconds": 0.312,
+            "passed": true
+          },
+          {
+            "name": "test_maintenance_crosses_page_boundary[move-1001]",
+            "seconds": 0.361,
+            "passed": true
+          },
+          {
+            "name": "test_maintenance_crosses_page_boundary[lookup-1000]",
+            "seconds": 0.254,
+            "passed": true
+          },
+          {
+            "name": "test_maintenance_crosses_page_boundary[lookup-1001]",
+            "seconds": 0.261,
+            "passed": true
+          },
+          {
+            "name": "test_maintenance_crosses_page_boundary[mark-1000]",
+            "seconds": 0.354,
+            "passed": true
+          },
+          {
+            "name": "test_maintenance_crosses_page_boundary[mark-1001]",
+            "seconds": 0.362,
+            "passed": true
+          },
+          {
+            "name": "test_maintenance_filtered_ranking_precedes_limit[chunk_id-1000]",
+            "seconds": 0.146,
+            "passed": true
+          },
+          {
+            "name": "test_maintenance_filtered_ranking_precedes_limit[chunk_id-1001]",
+            "seconds": 0.142,
+            "passed": true
+          },
+          {
+            "name": "test_maintenance_filtered_ranking_precedes_limit[source_chunk_id-1000]",
+            "seconds": 0.135,
+            "passed": true
+          },
+          {
+            "name": "test_maintenance_filtered_ranking_precedes_limit[source_chunk_id-1001]",
+            "seconds": 0.177,
+            "passed": true
+          },
+          {
+            "name": "test_generated_point_ids_fit_both_sqlite_and_qdrant[0]",
+            "seconds": 0.26,
+            "passed": true
+          },
+          {
+            "name": "test_generated_point_ids_fit_both_sqlite_and_qdrant[9223372036854775807]",
+            "seconds": 0.216,
+            "passed": true
+          },
+          {
+            "name": "test_generated_point_ids_fit_both_sqlite_and_qdrant[9223372036854775808]",
+            "seconds": 0.234,
+            "passed": true
+          },
+          {
+            "name": "test_generated_point_ids_fit_both_sqlite_and_qdrant[18446744073709551615]",
+            "seconds": 0.2,
+            "passed": true
+          },
+          {
+            "name": "test_maintenance_interruption_retries_without_payload_corruption[remove]",
+            "seconds": 0.209,
+            "passed": true
+          },
+          {
+            "name": "test_maintenance_interruption_retries_without_payload_corruption[move]",
+            "seconds": 0.251,
+            "passed": true
+          },
+          {
+            "name": "test_maintenance_interruption_retries_without_payload_corruption[mark]",
+            "seconds": 0.292,
+            "passed": true
+          }
+        ],
+        "output_sha256": "6244e910229df0b61a36f6435c66d8a86682b3c98099475db054c8eea5df26d8",
+        "output_path": ".phase-loop/runs/v13-DATA-qdrant-9d7f361cfde442699d4a54d6f1aac78d/pytest.log",
+        "inference_requests": 0,
+        "inputs": "synthetic deterministic vectors only"
+      }
+    ],
+    "installed_runtime": [
+      {
+        "schema": "passed",
+        "version": "1.4.0",
+        "module": "/tmp/mcp-release-wheel-wqzr_eko/venv/lib/python3.12/site-packages/mcp_server/__init__.py",
+        "uid": 1000
+      },
+      {
+        "python_client": "passed"
+      },
+      {
+        "stdio_session": 1,
+        "queries": "passed"
+      },
+      {
+        "stdio_session": 2,
+        "queries": "passed"
+      },
+      {
+        "installed_lifecycle": "passed",
+        "uid": 1000,
+        "cases": [
+          {
+            "mode": "sigterm",
+            "exit_code": 0,
+            "exit_seconds": 1.317,
+            "owned_children_observed": 1,
+            "surviving_children": [],
+            "metrics_ports": [],
+            "inflight_admitted": false
+          },
+          {
+            "mode": "sigint",
+            "exit_code": 0,
+            "exit_seconds": 0.665,
+            "owned_children_observed": 1,
+            "surviving_children": [],
+            "metrics_ports": [],
+            "inflight_admitted": false
+          },
+          {
+            "mode": "eof",
+            "exit_code": 0,
+            "exit_seconds": 1.468,
+            "owned_children_observed": 1,
+            "surviving_children": [],
+            "metrics_ports": [],
+            "inflight_admitted": false
+          },
+          {
+            "mode": "repeated",
+            "exit_code": 0,
+            "exit_seconds": 1.428,
+            "owned_children_observed": 1,
+            "surviving_children": [],
+            "metrics_ports": [],
+            "inflight_admitted": false
+          },
+          {
+            "mode": "partial_input",
+            "exit_code": 0,
+            "exit_seconds": 0.515,
+            "owned_children_observed": 1,
+            "surviving_children": [],
+            "metrics_ports": [],
+            "inflight_admitted": false
+          },
+          {
+            "mode": "inflight",
+            "exit_code": 1,
+            "exit_seconds": 15.06,
+            "owned_children_observed": 1,
+            "surviving_children": [],
+            "metrics_ports": [],
+            "inflight_admitted": true
+          }
+        ]
+      },
+      {
+        "schema": "passed",
+        "version": "1.4.0",
+        "module": "/home/mcp/.venv/lib/python3.12/site-packages/mcp_server/__init__.py",
+        "uid": 999
+      },
+      {
+        "python_client": "passed"
+      },
+      {
+        "http_queries": "passed",
+        "after_restart": false
+      },
+      {
+        "http_queries": "passed",
+        "after_restart": true
+      },
+      {
+        "http_log_privacy": "passed",
+        "untrusted_proxy": "ignored"
+      },
+      {
+        "installed_lifecycle": "passed",
+        "uid": 999,
+        "cases": [
+          {
+            "mode": "sigterm",
+            "exit_code": 0,
+            "exit_seconds": 0.816,
+            "owned_children_observed": 4,
+            "surviving_children": [],
+            "metrics_ports": [
+              36913
+            ],
+            "inflight_admitted": false
+          },
+          {
+            "mode": "sigint",
+            "exit_code": 0,
+            "exit_seconds": 1.067,
+            "owned_children_observed": 4,
+            "surviving_children": [],
+            "metrics_ports": [
+              46141
+            ],
+            "inflight_admitted": false
+          },
+          {
+            "mode": "eof",
+            "exit_code": 0,
+            "exit_seconds": 1.067,
+            "owned_children_observed": 7,
+            "surviving_children": [],
+            "metrics_ports": [
+              34047
+            ],
+            "inflight_admitted": false
+          },
+          {
+            "mode": "repeated",
+            "exit_code": 0,
+            "exit_seconds": 1.428,
+            "owned_children_observed": 5,
+            "surviving_children": [],
+            "metrics_ports": [
+              33733
+            ],
+            "inflight_admitted": false
+          },
+          {
+            "mode": "partial_input",
+            "exit_code": 0,
+            "exit_seconds": 1.417,
+            "owned_children_observed": 5,
+            "surviving_children": [],
+            "metrics_ports": [
+              38847
+            ],
+            "inflight_admitted": false
+          },
+          {
+            "mode": "inflight",
+            "exit_code": 1,
+            "exit_seconds": 15.056,
+            "owned_children_observed": 6,
+            "surviving_children": [],
+            "metrics_ports": [
+              36031
+            ],
+            "inflight_admitted": true
+          }
+        ]
+      }
+    ],
+    "pilot_estimate": {
+      "input_token_upper_bound": 79360,
+      "approved_limit": 100000,
+      "inference_requests": 0
+    },
+    "publication": {
+      "published": false,
+      "merged": false,
+      "version_bumped": false,
+      "pr": "Consiliency/Code-Index-MCP#97",
+      "pr_state": "OPEN DRAFT, head 668bf75 live checked 2026-09-11T18:39:35Z"
+    },
+    "issues": {
+      "open_issues": 0,
+      "checked_at": "2026-09-11T18:39:35Z",
+      "note": "Roadmap-only findings; no issue closure claimed."
+    }
+  },
+  "exclusions": {
+    "marker_expression": "not requires_network and not benchmark",
+    "marker_deselected": 31,
+    "reported_skips": 150,
+    "git_integration": "140 tests run separately and passed; excluded only from broad invocation.",
+    "interpretation": "Skips are not passes. No live inference, PMCP/browser workflow, all-platform/language, coverage percentage or fleet acceptance. Core wheel lacks optional Prometheus; non-root container exercises actual metrics listeners."
+  },
+  "if_gates_produced": [
+    "IF-0-DATA-1"
+  ],
+  "tool_diagnostics": [
+    "Known Consiliency/agent-harness#819 circular-import warning persists; standalone structural and verification validators pass. No outer-loop or review-gate bypass.",
+    "Broad proof took 529.19 pytest seconds and reports all failures; separately named Qdrant/installed nodes preserve timeout and partial evidence."
+  ]
+}
