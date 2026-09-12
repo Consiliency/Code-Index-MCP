@@ -91,3 +91,18 @@ The installed phase-loop runtime emits a circular-import warning that `fab_gate`
 This narrows the earlier warning: startup is defective, but permanent gate absence is not demonstrated on these paths. These negative controls are not real-candidate or end-to-end execution acceptance. Preserve blocking review configuration and verify trusted gate inputs on the actual execution path; do not bypass gates or modify agent-harness from this repository. The reviewed roadmap bytes remain unchanged.
 
 Existing `.phase-loop` state and its ledger describe completed v9 work and older Git topology. Current source remains on main at the audit baseline. No old runner state was rewritten or resumed; future execution must explicitly select v13.
+
+## Implementation Review Boundary
+
+The preceding roadmap review is historical planning acceptance, not code review.
+V13 manual execution now has accepted FREEZE, DIST, STATE, SAFETY, DATA and PILOT
+receipts. PREP prepares version 1.4.1 and requires a new four-seat review of the
+actual implementation candidate plus cross-model reconciliation. No such final
+code approval is claimed by this pre-review document update.
+
+Final raw reports, launch provenance, source/diff/artifact bindings and accepted
+PREP evidence remain outside the frozen candidate under its owned PREP run.
+The SHIP handoff and qualified Code-Index-MCP#97 comment must identify exact
+paths and hashes. This avoids changing reviewed source to record its own votes.
+The original roadmap bytes and all requested-model/replacement rules remain
+unchanged. Any source change after review requires renewed exact-candidate review.

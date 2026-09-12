@@ -1,4 +1,4 @@
-"""Release metadata assertions for the published v1.4.0 contract.
+"""Release metadata assertions for the prepared v1.4.1 contract.
 
 Historical GARC soak target: v1.2.0-rc6.
 """
@@ -15,9 +15,8 @@ except ImportError:  # Python <3.11
 
 
 REPO = Path(__file__).parent.parent
-EXPECTED_VERSION = "1.4.0"
-EXPECTED_TAG = "v1.4.0"
-GA_RC_EVIDENCE = REPO / "docs" / "validation" / "ga-rc-evidence.md"
+EXPECTED_VERSION = "1.4.1"
+EXPECTED_TAG = "v1.4.1"
 DOCKER_INSTALLERS = (
     "scripts/install-mcp-docker.sh",
     "scripts/install-mcp-docker.ps1",
@@ -53,6 +52,14 @@ def test_python_distribution_identity_is_frozen():
     assert "code-index-mcp" not in data["project"]["scripts"]
 
 
+def test_lock_root_version_matches_release():
+    lock = tomllib.loads(_read_text("uv.lock"))
+    roots = [p for p in lock["package"] if p["name"] == "index-it-mcp"]
+    assert len(roots) == 1
+    assert roots[0]["version"] == EXPECTED_VERSION
+    assert roots[0]["source"] == {"editable": "."}
+
+
 def test_readme_distribution_identity_remains_stable():
     readme = _read_text("README.md")
 
@@ -64,8 +71,10 @@ def test_readme_distribution_identity_remains_stable():
 def test_changelog_has_prepared_unpublished_contract_section():
     changelog = _read_text("CHANGELOG.md")
 
-    assert f"## [{EXPECTED_VERSION}] — 2026-07-19" in changelog
-    assert "Unpublished" in changelog
+    section = changelog.split(f"## [{EXPECTED_VERSION}] - 2026-09-12", 1)[1].split("\n## [", 1)[0]
+    assert "Prepared" in section
+    assert "Code-Index-MCP#97" in section
+    assert "does not imply publication" in section
 
 
 def test_release_workflow_separates_prepare_from_protected_main_publish():
@@ -110,12 +119,7 @@ def test_release_tag_is_not_reused_locally():
         text=True,
         check=True,
     ).stdout.strip()
-    if tag_commit == head:
-        return
-
-    evidence = GA_RC_EVIDENCE.read_text(encoding="utf-8")
-    assert EXPECTED_TAG in evidence or "v1.2.0-rc8" in evidence
-    assert tag_commit in evidence, f"{EXPECTED_TAG} exists but points at undocumented {tag_commit}"
+    assert tag_commit == head, f"{EXPECTED_TAG} already identifies a different source commit"
 
 
 def test_installers_and_download_helper_match_stable_identity_contract():
@@ -130,11 +134,10 @@ def test_installers_and_download_helper_match_stable_identity_contract():
     powershell = _read_text("scripts/install-mcp-docker.ps1")
     download_helper = _read_text("scripts/download-release.py")
 
-    # Installers now default to the published v1.4.0 image, not local-smoke.
-    assert 'MCP_VARIANT="${MCP_VARIANT:-v1.4.0}"' in shell
+    assert 'MCP_VARIANT="${MCP_VARIANT:-v1.4.1}"' in shell
     assert 'MCP_VARIANT="${MCP_VARIANT:-local-smoke}"' not in shell
-    assert 'param(\n    [string]$Variant = "v1.4.0"' in powershell
-    assert 'IF "%MCP_VARIANT%"=="" SET MCP_VARIANT=v1.4.0' in powershell
+    assert 'param(\n    [string]$Variant = "v1.4.1"' in powershell
+    assert 'IF "%MCP_VARIANT%"=="" SET MCP_VARIANT=v1.4.1' in powershell
     assert 'IF "%MCP_VARIANT%"=="" SET MCP_VARIANT=local-smoke' not in powershell
 
     # local-smoke stays available as a selectable dev option (just not the default).
@@ -143,16 +146,13 @@ def test_installers_and_download_helper_match_stable_identity_contract():
     assert "local-smoke" in powershell
     assert "make release-smoke-container" in powershell
 
-    # v1.4.0 is presented as a published release image, not prepared/unpublished.
-    assert "v1.4.0 is prepared but unpublished" not in shell
-    assert "v1.4.0 is prepared but unpublished" not in powershell
-    assert "Published release image (default)" in shell
-    assert "Published release image (default)" in powershell
+    assert "Versioned release image (requires publication)" in shell
+    assert "Versioned release image (requires publication)" in powershell
 
     readme = _read_text("README.md")
     quick_start = readme.split("## 🚀 Quick Start", 1)[1].split("## Using Against Many Repos", 1)[0]
-    assert "after protected-main publication" not in quick_start
-    assert "ghcr.io/consiliency/code-index-mcp:v1.4.0" in quick_start
+    assert "after protected-main publication" in quick_start
+    assert "ghcr.io/consiliency/code-index-mcp:v1.4.1" in quick_start
 
     for expected in (
         "index_it_mcp-",
@@ -164,6 +164,15 @@ def test_installers_and_download_helper_match_stable_identity_contract():
         "ViperJuice/Code-Index-MCP",
     ):
         assert expected in download_helper
+
+
+def test_active_docs_separate_candidate_from_publication():
+    for path in ("README.md", "docs/GETTING_STARTED.md", "docs/MCP_CONFIGURATION.md"):
+        text = _read_text(path)
+        assert "1.4.1" in text
+        assert "prepared candidate" in text
+        assert "docs/operations/v13-release.md" in text or "operations/v13-release.md" in text
+        assert "July 10, 2026 collision check" not in text
 
 
 def test_index_management_workflow_uses_repo_scoped_indexes_for_ci_uploads():

@@ -1,9 +1,10 @@
 # Code-Index-MCP Support Matrix
 
-This matrix is the canonical GASUPPORT support statement for the prepared
-stable surface `1.4.0`. MCP STDIO is the primary LLM surface, FastAPI is a
-secondary admin surface, and the GA-hardening roadmap remains responsible for
-separating stable release prep from the downstream `GADISP` dispatch evidence.
+This matrix is the canonical support statement for the `1.4.1` prepared
+candidate. MCP STDIO is the primary LLM surface and FastAPI is secondary admin.
+Published `1.4.0` is historical distribution evidence, not proof of these v13
+repairs. See [release preparation and acceptance](operations/v13-release.md)
+for the separate PREP and SHIP gates. Support tiers below are unchanged.
 
 Repository-topology support is separate from language/runtime support. The v3
 public-alpha model supports many unrelated repositories on one machine, with one

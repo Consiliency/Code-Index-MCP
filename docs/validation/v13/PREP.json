@@ -1,0 +1,22 @@
+{
+  "schema_version": "v13.phase-receipt.v1",
+  "phase": "PREP",
+  "execution_mode": "manual",
+  "terminal_status": "executing",
+  "verification_status": "not_run",
+  "version": "1.4.1",
+  "published": false,
+  "accepted": false,
+  "if_gates_produced": [],
+  "acceptance_criteria": [],
+  "issue_inventory": [],
+  "issue_dispositions": [],
+  "receipt_role": "pre-review-status-only",
+  "accepted_receipt_location": ".phase-loop/runs/v13-PREP-<candidate>/PREP.json",
+  "accepted_receipt_resolution": "Require the exact path and SHA-256 from the SHIP handoff and qualified Code-Index-MCP#97 comment. This tracked status is never acceptance evidence.",
+  "required_checks": ["full-local", "installed-wheel-pmcp", "qdrant-file", "qdrant-server", "non-root-container", "browser", "loopback-rehearsal", "version-only-pilot-consumption"],
+  "required_reviews": ["claude-fable-5", "gpt-5.6-sol", "grok-4.5", "Gemini 3.1 Pro"],
+  "cross_model_reconciliation_required": true,
+  "recovery_policy": "docs/operations/v13-release.md",
+  "next_phase": "SHIP only after accepted external PREP receipt"
+}

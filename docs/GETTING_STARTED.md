@@ -2,14 +2,11 @@
 
 This guide walks you through installing and using Code-Index-MCP to index and search your codebase.
 
-> **Stable-surface prep status**: This guide targets `1.4.0`. MCP STDIO is the
-> primary LLM surface; FastAPI is a secondary admin surface. Language behavior is
-> documented in [SUPPORT_MATRIX.md](SUPPORT_MATRIX.md), and the pre-GA release
-> boundary is frozen in
-> [ga-readiness-checklist.md](validation/ga-readiness-checklist.md).
-> A July 10, 2026 collision check found no live `index-it-mcp==1.4.0`, so
-> this guide keeps public install instructions on source and local-wheel proof
-> instead of claiming the prepared `1.4.0` package is published.
+> **Release status**: This guide targets the `1.4.1` prepared candidate.
+> Published `1.4.0` does not include the v13 repairs. Use source or a locally
+> built wheel until protected-main publication and delivered-artifact acceptance.
+> See [release preparation and acceptance](operations/v13-release.md).
+> MCP STDIO is the primary LLM surface; FastAPI is secondary admin only.
 > Install-surface and language/runtime support tiers are defined in
 > [SUPPORT_MATRIX.md](SUPPORT_MATRIX.md); do not treat every install path or
 > language row as equivalent support.
@@ -48,7 +45,7 @@ uv run mcp-index --version
 ```bash
 # From the repo root
 uv run --extra dev python -m build --wheel
-python -m pip install dist/index_it_mcp-1.4.0-py3-none-any.whl
+python -m pip install dist/index_it_mcp-1.4.1-py3-none-any.whl
 index-it-mcp --version
 ```
 

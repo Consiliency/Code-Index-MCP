@@ -6,16 +6,15 @@ Code-Index-MCP is a fast, **local-first** search index for your code. It plugs i
 
 > **New to Code-Index-MCP?** Start with the [Getting Started Guide](docs/GETTING_STARTED.md).
 >
-> **Status:** v1.4.0 stable surface prepared — MCP tools (`search_code`, `symbol_lookup`) are the primary interface; a FastAPI admin gateway is available for diagnostics.
+> **Status:** v1.4.1 stable surface prepared — MCP tools (`search_code`, `symbol_lookup`) are the primary interface; a FastAPI admin gateway is available for diagnostics.
 
-> **Stable-surface prep status**: This guide targets the repo-owned `1.4.0`
-> hardening release candidate. MCP STDIO remains the primary LLM surface and
-> FastAPI remains a secondary admin surface. A July 10, 2026 collision check
-> found no live `index-it-mcp==1.4.0`, so this guide uses source and local-wheel
-> proof instead of claiming that the prepared `1.4.0` surface is published.
+> **Release status**: This guide targets the `1.4.1` prepared candidate.
+> Published `1.4.0` (2026-07-19) does not include these v13 repairs.
+> See [release preparation and acceptance](docs/operations/v13-release.md).
+> Publication and fleet rollout remain separate acceptance gates.
 
 ## Project Status
-**Version**: 1.4.0 (repo-owned prepared surface; unpublished as of July 10, 2026)
+**Version**: 1.4.1 (prepared candidate; publication tracked separately)
 **Python distribution**: `index-it-mcp`
 **Container image**: `ghcr.io/consiliency/code-index-mcp`
 **Primary surface**: MCP tools (`search_code`, `symbol_lookup`) via the STDIO runner when repository readiness is `ready`
@@ -158,9 +157,11 @@ quality or default sandbox behavior.
 
 ## 🚀 Quick Start
 
-Supported install paths are the published container image
-`ghcr.io/consiliency/code-index-mcp:v1.4.0` (or `:latest`), native Python/STDIO
-with `uv sync --locked`, and a locally built `index-it-mcp` wheel. The
+Supported install paths are the versioned container image
+`ghcr.io/consiliency/code-index-mcp:v1.4.1` (or `:latest`), native Python/STDIO
+with `uv sync --locked`, and a locally built `index-it-mcp` wheel. Use the
+`v1.4.1` registry image only after protected-main publication and delivered
+artifact acceptance; until then use the candidate source or local wheel. The
 `ghcr.io/consiliency/code-index-mcp:local-smoke` image remains an optional dev
 path built from this checkout with `make release-smoke-container`.
 Language coverage is bounded by [docs/SUPPORT_MATRIX.md](docs/SUPPORT_MATRIX.md),
@@ -168,7 +169,7 @@ GA-hardening evidence ownership is frozen in
 [docs/validation/ga-readiness-checklist.md](docs/validation/ga-readiness-checklist.md),
 and rollback procedures live in
 [docs/operations/deployment-runbook.md](docs/operations/deployment-runbook.md).
-Do not treat this published stable surface as a universal language support
+Do not treat this prepared surface as a universal language support
 claim; row-level support tiers still live in the support matrix.
 
 ### 🎯 Automatic Setup for Claude Code/Desktop (Recommended)
@@ -184,14 +185,14 @@ This automatically detects your environment and creates the appropriate `.mcp.js
 
 ### 🐳 Docker Setup
 
-Pull the published `v1.4.0` image from GHCR. The installer defaults to this
-published image; the `local-smoke` tag remains an optional dev image you can
+The installer targets `v1.4.1`; pulling it requires matching GHCR publication.
+Before that gate, the `local-smoke` tag is an optional dev image you can
 build from this checkout with `make release-smoke-container`.
 
 #### Option 1: Basic Search (No API Keys) - 2 Minutes
 ```bash
-# Index your current directory with the published image
-docker run -it -v $(pwd):/workspace ghcr.io/consiliency/code-index-mcp:v1.4.0
+# After release acceptance, index your current directory
+docker run -it -v $(pwd):/workspace ghcr.io/consiliency/code-index-mcp:v1.4.1
 ```
 
 #### Option 2: AI-Powered Search
@@ -200,7 +201,7 @@ docker run -it -v $(pwd):/workspace ghcr.io/consiliency/code-index-mcp:v1.4.0
 export VOYAGE_API_KEY=your-key
 
 # Run with semantic search enabled explicitly
-docker run -it -v $(pwd):/workspace -e SEMANTIC_SEARCH_ENABLED=true -e VOYAGE_API_KEY ghcr.io/consiliency/code-index-mcp:v1.4.0
+docker run -it -v $(pwd):/workspace -e SEMANTIC_SEARCH_ENABLED=true -e VOYAGE_API_KEY ghcr.io/consiliency/code-index-mcp:v1.4.1
 ```
 
 ### 💻 Environment-Specific Setup
@@ -211,7 +212,7 @@ docker run -it -v $(pwd):/workspace -e SEMANTIC_SEARCH_ENABLED=true -e VOYAGE_AP
 .\scripts\setup-mcp-json.ps1
 
 # Or manually with Docker Desktop
-docker run -it -v ${PWD}:/workspace ghcr.io/consiliency/code-index-mcp:v1.4.0
+docker run -it -v ${PWD}:/workspace ghcr.io/consiliency/code-index-mcp:v1.4.1
 ```
 
 #### 🍎 macOS
@@ -288,7 +289,7 @@ The setup script creates the appropriate `.mcp.json` for your environment. Manua
       "args": [
         "run", "-i", "--rm",
         "-v", "${workspace}:/workspace",
-        "ghcr.io/consiliency/code-index-mcp:v1.4.0"
+        "ghcr.io/consiliency/code-index-mcp:v1.4.1"
       ]
     }
   }
@@ -451,14 +452,14 @@ uv run mcp-index --version
 ```bash
 # From the repo root
 uv run --extra dev python -m build --wheel
-python -m pip install dist/index_it_mcp-1.4.0-py3-none-any.whl
+python -m pip install dist/index_it_mcp-1.4.1-py3-none-any.whl
 index-it-mcp --version
 ```
 
-The canonical Python distribution name remains `index-it-mcp`, but the live
-PyPI currently has no published artifact for this repo's prepared `1.4.0` surface.
-Use the local wheel or source install above until a later release-evidence
-phase re-proves live package parity.
+The canonical Python distribution remains `index-it-mcp`. The commands above
+install this prepared candidate, not the older published release. Use
+`pip install index-it-mcp==1.4.1` only after the protected-main publication and
+independent delivered-package checks recorded in the release receipt.
 
 ### Quick Start After Installation
 
@@ -1324,11 +1325,11 @@ python scripts/download-release.py --tag v2024.01.15 --output ./my-index
 Maintainers can create new releases with pre-built indexes:
 
 ```bash
-# Prepare or update the release PR from the feature branch
-gh workflow run "Release Automation" --ref <release-branch> -f mode=prepare -f version=v1.4.0 -f auto_merge=false
+# Prepare locally and reconcile Code-Index-MCP#97 before merging
+make agent-gate
 
-# After that PR merges, publish only from protected main
-gh workflow run "Release Automation" --ref main -f mode=publish -f version=v1.4.0 -f auto_merge=false
+# Only after accepted review, merge identity and publication authorization
+gh workflow run "Release Automation" --ref main -f mode=publish -f version=v1.4.1 -f auto_merge=false
 ```
 
 ### Automatic Index Synchronization
@@ -1398,7 +1399,7 @@ For detailed architectural documentation, see the [architecture/](architecture/)
 
 See [ROADMAP.md](ROADMAP.md) for detailed development plans and current progress.
 
-**Current Status**: 1.4.0 hardening surface prepared; protected-main publication is still pending
+**Current Status**: 1.4.1 hardening surface prepared; protected-main publication is still pending
 - ✅ **Core Indexing**: SQLite + FTS5 for fast local search
 - ✅ **Multi-Language**: Specialized and registry-backed language coverage; see `docs/SUPPORT_MATRIX.md`
 - ✅ **MCP Protocol**: Verified official Python SDK compatibility over STDIO; see `docs/status/MCP_COMPATIBILITY_EVALUATION.md` for named client posture

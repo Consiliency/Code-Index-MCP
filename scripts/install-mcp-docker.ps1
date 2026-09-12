@@ -2,8 +2,8 @@
 # PowerShell script to install and configure MCP Index with Docker
 
 param(
-    [string]$Variant = "v1.4.0",
-    [string]$Version = "v1.4.0"
+    [string]$Variant = "v1.4.1",
+    [string]$Version = "v1.4.1"
 )
 
 # Configuration
@@ -80,7 +80,7 @@ function Install-Docker {
 function Select-Variant {
     Write-Host ""
     Write-Host "Choose MCP Index variant:"
-    Write-Host "1) v1.4.0      - Published release image (default)"
+    Write-Host "1) v1.4.1      - Versioned release image (requires publication)"
     Write-Host "2) local-smoke - Locally built via make release-smoke-container"
     Write-Host "3) latest      - Stable channel (published)"
     Write-Host ""
@@ -97,8 +97,8 @@ function Select-Variant {
             Write-Host "[INFO] Selected: latest" -ForegroundColor Green
         }
         default {
-            $script:Variant = "v1.4.0"
-            Write-Host "[INFO] Selected: v1.4.0" -ForegroundColor Green
+            $script:Variant = "v1.4.1"
+            Write-Host "[INFO] Selected: v1.4.1" -ForegroundColor Green
         }
     }
 }
@@ -123,7 +123,7 @@ function Create-Launcher {
 REM MCP Index Docker Launcher for Windows
 
 SET MCP_VARIANT=%MCP_VARIANT%
-IF "%MCP_VARIANT%"=="" SET MCP_VARIANT=v1.4.0
+IF "%MCP_VARIANT%"=="" SET MCP_VARIANT=v1.4.1
 
 SET MCP_IMAGE=ghcr.io/consiliency/code-index-mcp
 SET WORKSPACE=%CD%

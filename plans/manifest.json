@@ -412,6 +412,43 @@
       "updated_at": "2026-09-12T08:18:11Z"
     },
     {
+      "acceptance_criteria_count": 3,
+      "created_at": "2026-09-12T08:31:28Z",
+      "file": "plans/phase-plan-v13-PREP.md",
+      "handoff_ref": ".dev-skills/handoffs/codex-plan-phase/20260912T083128Z-prep-plan.md",
+      "if_gates_produced": [],
+      "lanes": [
+        "SL-0",
+        "SL-1"
+      ],
+      "lifecycle": [
+        {
+          "at": "2026-09-12T08:32:17Z",
+          "by": "codex-execute-phase",
+          "metadata": {
+            "execution_mode": "manual",
+            "issue_dispositions": [],
+            "issue_inventory": []
+          },
+          "transition": "executing"
+        }
+      ],
+      "owner_skill": "codex-plan-phase",
+      "phase_alias": "PREP",
+      "reflection_ref": null,
+      "roadmap_ref": {
+        "file": "specs/phase-plans-v13.md",
+        "slug": "phase-plans-v13",
+        "status": "committed",
+        "type": "roadmap"
+      },
+      "slug": "phase-plan-v13-PREP",
+      "status": "executing",
+      "task_summary": null,
+      "type": "phase",
+      "updated_at": "2026-09-12T08:32:17Z"
+    },
+    {
       "acceptance_criteria_count": 4,
       "created_at": "2026-09-11T11:48:04Z",
       "file": "plans/phase-plan-v13-SAFETY.md",

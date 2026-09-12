@@ -13,7 +13,7 @@ Worktree: `/mnt/workspace/worktrees/Code-Index-MCP-v13-audit-remediation`.
 | SAFETY | Accepted | `docs/validation/v13/SAFETY.json`; IF-0-SAFETY-1 |
 | DATA | Accepted | `docs/validation/v13/DATA.json`; IF-0-DATA-1 |
 | PILOT | Accepted | `docs/validation/v13/PILOT.json`; IF-0-PILOT-1 |
-| PREP | Not started | No version bump or implementation code review claimed |
+| PREP | Executing | 1.4.1 prepared; candidate gates and four-seat review pending |
 | SHIP | Not started | No merge, publication or issue closure claimed |
 
 The four-seat reconciled roadmap remains unchanged at SHA-256
@@ -73,8 +73,31 @@ failed attempts remain preserved and are not accepted evidence.
 Read `docs/validation/v13/PILOT.json` and
 `.dev-skills/handoffs/codex-execute-phase/latest.md` in this worktree.
 Next phase: PREP, version preparation and four-seat implementation review.
-Command: `codex-plan-phase specs/phase-plans-v13.md PREP`.
+Command: `codex-execute-phase plans/phase-plan-v13-PREP.md`.
 Do not restart v9 or infer v13 completion from old primary-checkout state.
+
+## PREP Candidate
+
+The patch version is 1.4.1. Seven release-metadata assertions reproduced the old
+version and inconsistent active docs before repair; the initial focused run
+now passes 30 tests. Locked refresh changes only the root distribution version.
+An offline lock re-resolution lacked cached BAML metadata for another Python
+version; the existing complete lock was retained and its root version updated,
+then `uv sync --locked --python 3.12 --extra dev` passed without dependency drift.
+Later verification counts and candidate identities belong in external receipts.
+
+The accepted live PILOT used 24,267 input units, 82 requests and 44.579 seconds.
+Its allowance expired at approximately 08:24 UTC September 12. The PREP validator
+consumes its original-source records read-only only after exact runtime and
+dependency comparisons; it does not claim a new live run of 1.4.1.
+Fresh version-specific operational checks and final four-seat review remain
+required. GitHub had no v1.4.1 tag and PyPI returned 404 during preparation.
+Publication recovery and rollout restrictions are in `docs/operations/v13-release.md`.
+
+Final panel/check metadata is retained outside the frozen candidate tree. The
+tracked `docs/validation/v13/PREP.json` is explicitly pending; accepted external
+evidence must be located and hash-bound by the SHIP handoff and qualified PR
+comment before any merge. No PREP acceptance or publication is claimed here.
 
 ## PILOT Accepted
 

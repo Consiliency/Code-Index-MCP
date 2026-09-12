@@ -1,7 +1,7 @@
 [project]
 name = "index-it-mcp"
 # Historical GARC soak target: 1.2.0-rc6.
-version = "1.4.0"
+version = "1.4.1"
 description = "Local-first code indexer for AI assistants via Model Context Protocol (MCP)"
 readme = "README.md"
 license = "MIT"
