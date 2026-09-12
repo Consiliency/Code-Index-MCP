@@ -99,7 +99,7 @@ def test_integrity_gate_fails_on_missing_required_metadata_key(tmp_path: Path):
     assert "missing key: commit" in result.reasons
 
 
-def test_integrity_gate_prefers_checksum_sidecar_when_present(tmp_path: Path):
+def test_integrity_gate_rejects_sidecar_disagreeing_with_metadata(tmp_path: Path):
     archive_path = _write_archive(tmp_path)
     checksum = hashlib.sha256(archive_path.read_bytes()).hexdigest()
     metadata = _base_metadata("wrong-checksum")
@@ -112,8 +112,9 @@ def test_integrity_gate_prefers_checksum_sidecar_when_present(tmp_path: Path):
         checksum_path=checksum_path,
     )
 
-    assert result.passed is True
-    assert result.expected_checksum == checksum
+    assert result.passed is False
+    assert result.expected_checksum == "wrong-checksum"
+    assert "checksum sidecar disagrees with signed metadata" in result.reasons
 
 
 def test_integrity_gate_validates_optional_manifest_v2_payload(tmp_path: Path):

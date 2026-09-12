@@ -4,7 +4,7 @@ phase: PREP
 roadmap: specs/phase-plans-v13.md
 roadmap_sha256: 178b8328d8e7dc76ddc0804d7b72d3ccddb55e23577a3d52cb7cbd70d5fd5308
 automation:
-  suite_command: "env SEMANTIC_SEARCH_ENABLED=false MCP_TEST_MODE=1 uv run --locked --extra dev pytest tests/test_release_metadata.py tests/test_v13_release_candidate.py tests/test_v13_pmcp_pilot.py tests/test_v13_pilot_budget.py tests/test_gateway_transport_boundary.py -q --no-cov -o log_cli=false"
+  suite_command: "env SEMANTIC_SEARCH_ENABLED=false MCP_TEST_MODE=1 uv run --locked --extra dev pytest tests/test_release_metadata.py tests/test_v13_release_candidate.py tests/test_v13_pmcp_pilot.py tests/test_v13_pilot_budget.py tests/test_gateway_transport_boundary.py tests/test_v13_prep_repairs.py -q --no-cov -o log_cli=false"
 ---
 
 # PREP: Versioned Candidate And Four-Agent Review
@@ -59,6 +59,37 @@ claim a pre-review placeholder is accepted. Any tracked change after review
 requires new exact-candidate review; repairs first amend bounded ownership and
 repeat affected verification. Support tiers never widen from review alone.
 
+## Review Repair Amendment
+
+Initial candidate 6310af8 failed its full gate (ten version/document assertions)
+and its first three diagnostic review batches found reproduced runtime gaps.
+Those reports and checks remain historical, not final-candidate acceptance.
+Pause further review of rejected bytes. SL-0 now owns the enumerated bounded
+repairs; SL-1 repeats the full four-seat code coverage and reconciliation after
+the repaired source is frozen. Do not count incomplete Gemini batch01 coverage.
+
+- test: Preserve counterexamples, then prove metadata identity tampering,
+  reused extraction outputs/symlinks, ignored task files, cancellation timing,
+  cleanup exceptions, schema mismatches, profile reconciliation, future/offset
+  timestamps, client repeat-close and complete multi-language search scope.
+- impl: Authenticate metadata plus archive checksum before trusting identity or
+  extracting. Preserve manual digest-only signing, fail closed for old unbound
+  artifacts, never silently downgrade enforce policy. Use fresh owned extraction
+  output and exclusive sidecar writes; do not overlay stale files.
+- impl: Make task bookkeeping count-only, reflect actual staged publication in
+  cancellation responses, drain all shutdown owners, align tool output schemas,
+  use generation metadata, and keep Git exclusions independent of MCP negations.
+- impl: Fix confirmed release assertions and restore checklist links without
+  editing historical release evidence. Clarify metrics and container bind limits.
+- verify: New focused tests first, then all affected suites, the full local gate,
+  installed wheel/container, both Qdrant modes and actual browser workflows.
+  Candidate comparator MUST reject runtime drift; never loosen it to accept
+  these repairs as version-only. An explicit fresh PILOT and signing allowance
+  is requested but PENDING. No live inference, new ledger or hosted signing
+  until separately approved. Preserve the expired original allowance and all
+  original signatures. Later approval requires a bounded operational amendment
+  with exact new allowance identity; this amendment grants no such effect.
+
 ## Lane Index & Dependencies
 
 SL-0 — Version, release docs and candidate proof
@@ -77,7 +108,7 @@ SL-1 — Independent review and evidence reducer
 
 - **Scope**: Prepare consistent patch metadata and prove unchanged runtime plus fresh installed release behavior.
 - **Depends on**: (none)
-- **Owned files**: `pyproject.toml`, `uv.lock`, `mcp_server/__init__.py`, `.github/workflows/release-automation.yml`, `CHANGELOG.md`, `README.md`, `scripts/install-mcp-docker.sh`, `scripts/install-mcp-docker.ps1`, `docs/GETTING_STARTED.md`, `docs/MCP_CONFIGURATION.md`, `docs/SUPPORT_MATRIX.md`, `tests/test_release_metadata.py`, `scripts/v13_release_candidate.py`, `tests/test_v13_release_candidate.py`, `docs/operations/v13-release.md`
+- **Owned files**: `pyproject.toml`, `uv.lock`, `mcp_server/__init__.py`, `.github/workflows/release-automation.yml`, `CHANGELOG.md`, `README.md`, `scripts/install-mcp-docker.sh`, `scripts/install-mcp-docker.ps1`, `docs/GETTING_STARTED.md`, `docs/MCP_CONFIGURATION.md`, `docs/SUPPORT_MATRIX.md`, `tests/test_release_metadata.py`, `scripts/v13_release_candidate.py`, `tests/test_v13_release_candidate.py`, `docs/operations/v13-release.md`, `mcp_server/artifacts/artifact_download.py`, `mcp_server/artifacts/integrity_gate.py`, `tests/test_artifact_integrity_gate.py`, `mcp_server/artifacts/artifact_upload.py`, `mcp_server/artifacts/freshness.py`, `mcp_server/artifacts/multi_repo_artifact_coordinator.py`, `mcp_server/artifacts/publisher.py`, `mcp_server/cli/artifact_commands.py`, `mcp_server/cli/task_reindex.py`, `mcp_server/cli/tool_handlers.py`, `mcp_server/cli/stdio_runner.py`, `mcp_server/client.py`, `mcp_server/core/ignore_patterns.py`, `mcp_server/core/repo_resolver.py`, `mcp_server/dispatcher/cross_repo_coordinator.py`, `mcp_server/dispatcher/dispatcher_enhanced.py`, `mcp_server/storage/sqlite_store.py`, `mcp_server/storage/multi_repo_manager.py`, `docs/operations/v13-pmcp-pilot.md`, `docs/security/attestation.md`, `docs/security/auth-boundary.md`, `.github/workflows/sign-published-image.yml`, `tests/test_v13_prep_repairs.py`, `tests/test_artifact_download.py`, `tests/test_artifact_upload.py`, `tests/test_artifact_attestation.py`, `tests/security/test_artifact_attestation.py`, `tests/test_artifact_publish_race.py`, `tests/test_artifact_publish_rollback.py`, `tests/test_artifact_auto_delta.py`, `tests/test_artifact_commands.py`, `tests/test_multi_repo_artifact_coordinator.py`, `tests/test_mcptasks_reindex.py`, `tests/test_artifact_freshness.py`, `tests/test_ignore_patterns.py`, `tests/test_python_client_contract.py`, `tests/test_cross_repo_coordinator.py`, `tests/docs/test_gabase_ga_readiness_contract.py`, `tests/docs/test_garc_rc_soak_contract.py`, `tests/docs/test_garecut_rc_recut_contract.py`, `tests/docs/test_p34_public_alpha_recut.py`, `tests/docs/test_pubname_public_docs.py`, `tests/smoke/test_mcpbase_stdio_smoke.py`, `tests/smoke/test_mcpeval_sdk_surface.py`
 - **Interfaces provided**: prepared-version-contract, version-only-evidence-binding, fresh-release-checks
 - **Interfaces consumed**: accepted-pilot-contract (pre-existing), accepted-freeze-contract (pre-existing)
 - **Parallel-safe**: no

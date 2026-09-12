@@ -20,16 +20,19 @@ protected-main dispatch and independent delivered-artifact acceptance are separa
 - Path, credential, artifact and local-inference policy boundaries.
 - SQLite/vector reconciliation, staged corpus provenance and duplicate vector mapping counts.
 - Disabled watcher admission, bounded shutdown and repository selectors in the admin UI.
+- Signed artifact metadata binds repository identity and archive checksum; restores use fresh output directories.
+- Staged reindex cancellation and durable row counts, independent ignore rules, cleanup failures and multi-language search scope.
 
 ### Verified
-- Installed PMCP 2.7.3, Inspector 2.6.0 and admin workflows on Linux/Python 3.12.
-- Bounded synthetic local-inference pilot with durable accounting and query/index contention.
+- Original pre-review pilot: installed PMCP 2.7.3, Inspector 2.6.0 and admin workflows on Linux/Python 3.12.
+- Original bounded synthetic local-inference pilot with durable accounting and query/index contention; runtime repairs require fresh candidate-bound acceptance.
 - Version-specific release checks and final review are tracked in `docs/operations/v13-release.md`.
 
 ### Limits
 - Controlled rollout only; multi-repo and STDIO remain beta. No automatic fleet indexing.
 - Other operating systems, Python 3.13+, broad retrieval quality and default reranking
   require separate evidence. Provider immutable revisions were unreported in the pilot.
+- Archive-only signatures from earlier versions are rejected in enforce mode; prepare and sign canonical metadata as documented in `docs/security/attestation.md`.
 
 ## [1.4.0] — 2026-07-19
 

@@ -12,8 +12,8 @@ Worktree: `/mnt/workspace/worktrees/Code-Index-MCP-v13-audit-remediation`.
 | STATE | Accepted | `docs/validation/v13/STATE.json`; IF-0-STATE-1 |
 | SAFETY | Accepted | `docs/validation/v13/SAFETY.json`; IF-0-SAFETY-1 |
 | DATA | Accepted | `docs/validation/v13/DATA.json`; IF-0-DATA-1 |
-| PILOT | Accepted | `docs/validation/v13/PILOT.json`; IF-0-PILOT-1 |
-| PREP | Executing | 1.4.1 prepared; candidate gates and four-seat review pending |
+| PILOT | Historical source accepted; repairs require revalidation | `docs/validation/v13/PILOT.json`; original IF-0-PILOT-1 unchanged |
+| PREP | Executing review repairs | 1.4.1 prepared; fresh candidate gates and four-seat review pending |
 | SHIP | Not started | No merge, publication or issue closure claimed |
 
 The four-seat reconciled roadmap remains unchanged at SHA-256
@@ -98,6 +98,39 @@ Final panel/check metadata is retained outside the frozen candidate tree. The
 tracked `docs/validation/v13/PREP.json` is explicitly pending; accepted external
 evidence must be located and hash-bound by the SHIP handoff and qualified PR
 comment before any merge. No PREP acceptance or publication is claimed here.
+
+### PREP Review Repairs
+
+Candidate `6310af8` failed ten active release assertions and diagnostic code
+review. The assertions and reproduced runtime defects were repaired under an
+explicit ownership amendment to `plans/phase-plan-v13-PREP.md`. Repairs cover
+signed metadata/identity and fresh extraction, ignored-file bookkeeping,
+staged cancellation, shutdown errors, tool schemas, generation profile reads,
+timestamps, client retirement and complete cross-repository language scope.
+Actual mixed-language indexing additionally exposed a persisted JS alias mismatch.
+
+The first repair gate passed 131 focused controls and 140 Git-manager tests;
+the broad suite reported 3371 passed, one failed, 150 skipped, 31 deselected.
+The failure exposed callers comparing canonical requested paths with the
+temporary staged root. It was reproduced for task file/directory operations
+and corrected without removing the containment guard. That rejected gate is
+retained; the complete original local command set must pass again.
+Both Qdrant modes and the non-root container passed separate diagnostic checks,
+including six lifecycle cases without surviving children. These checks do not
+substitute for frozen-candidate acceptance after the final bookkeeping repair.
+
+First-round diagnostic review batches 01-03 are not final approval; Gemini
+batch01 reviewed only roadmap prose. Batches 04-10 of the rejected candidate
+were paused. All four exact seats must review the repaired final candidate and
+reconcile peer findings. No provider refusal or substitute was accepted.
+
+The runtime changed, so the strict version-only comparator must refuse the old
+PILOT evidence. A fresh synthetic pilot (100000 input units, 900 seconds,
+concurrency one) and one five-minute metadata-signing validation job were
+requested separately and remain pending approval. Never reset the expired
+original ledger or redispatch its consumed job. No real inference or new
+signing ran during these repairs. Code-Index-MCP#97 remains a draft; there were
+no open Code-Index-MCP issues at the September 12 live check. SHIP is not started.
 
 ## PILOT Accepted
 

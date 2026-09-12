@@ -10,12 +10,19 @@ This phase does not change the STDIO `MCP_CLIENT_SECRET` handshake. The HTTP adm
 
 ## Local And Ephemeral
 
-The admin gateway defaults to `127.0.0.1`. Users, refresh tokens, sessions,
+The `mcp-index serve` admin gateway defaults to `127.0.0.1`. Users, refresh tokens, sessions,
 lockouts and rate-limit state are process-local memory, not durable identity
 storage. Restart invalidates existing access and refresh sessions. Multiple
 workers or replicas do not share identity or rate limits. This is not a hosted
 multi-tenant authentication service. An explicit non-loopback bind requires a
 separately secured operator deployment; it is not a fleet-readiness claim.
+
+The production container is an explicit exception: its Gunicorn command binds
+`0.0.0.0:8000` inside the container and does not consume `MCP_SERVER_HOST`.
+Publish the port on host loopback only, for example `-p 127.0.0.1:8000:8000`,
+and use an isolated container network. Do not use host networking or an
+unqualified `-p 8000:8000` for the local-only deployment. Other containers on
+the same network can reach that listener; authentication is still required.
 
 The `serve` entrypoint disables Uvicorn's implicit proxy-header rewriting.
 `MCP_TRUSTED_PROXIES` optionally lists comma-separated proxy IPs/CIDRs. Security

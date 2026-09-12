@@ -1,12 +1,12 @@
 ---
 from: codex-plan-phase
-timestamp: "2026-09-12T08:31:28Z"
+timestamp: "2026-09-12T10:10:00Z"
 repo: 448c2cf6
 repo_root: /mnt/HC_Volume_105438154/worktrees/Code-Index-MCP-v13-audit-remediation
 branch: codex/v13-audit-remediation
 branch_slug: codex-v13-audit-remediation
-commit: 475bb7a44b7a2e0f8af41e3281db868a710f0542
-run_id: 20260912T083128Z-prep-plan
+commit: 6310af8793d35c5563159e9ff71c1df758a3044d
+run_id: 20260912T0953Z-prep-repairs
 artifact: /mnt/HC_Volume_105438154/worktrees/Code-Index-MCP-v13-audit-remediation/plans/phase-plan-v13-PREP.md
 artifact_state: staged
 next_skill: codex-execute-phase
@@ -14,24 +14,31 @@ next_command: codex-execute-phase plans/phase-plan-v13-PREP.md
 next_phase: PREP
 automation:
   status: planned
-  verification_status: not_run
+  verification_status: passed
   human_required: false
   blocker_class: null
   if_gates_produced: []
 ---
-# PREP Execution Handoff
+# PREP Repair Ownership Handoff
 
-PILOT accepted at 475bb7a; source tested366f6bc is unchanged except closeout docs.
-Read docs/validation/v13/PILOT.json. Version preparation is1.4.1, not published.
-Two serial lanes validated. Structural validator warns SL-0 release docs look
-like a reducer; these docs consume only upstream PILOT, never SL-1 review
-results. SL-1 alone owns final review synthesis. No ownership overlap.
+This is structural planning validation, not code or release acceptance.
+The amended plan explicitly owns reproduced review fixes and their tests.
+Full draft literals validate; two lanes validate with the known SL-0 docs
+warning. SL-0 consumes only upstream PILOT; SL-1 owns final review synthesis.
+The immutable roadmap and accepted historical receipts are unchanged.
 
-Original live pilot spent24267units/82requests/44.579s. The900s allowance from
-08:09:04UTC has expired. Never rerun live, reset/new ledger or signing34597512666.
-Version-only runtime/dependency comparison plus fresh no-inference release
-checks required; source changes invalidate live consumption and need a decision.
-Fable5/Sol5.6/Grok4.5/Gemini3.1Pro exact four-seat review and reconciliation.
-NoAPI/backfill. Explicit refusal stops that seat; preserve evidence.
-No merge/publish until acceptedPREP. SHIP separate clean publication worktree.
-Immutable roadmap retained; outer phase-loop disabled(agent-harness#819).
+Runtime repairs invalidate version-only pilot inheritance. Continue offline
+checks and review preparation; no live inference or new signing under this
+handoff. A separate fresh synthetic allowance (100000 units, 900 seconds,
+concurrency one) and one five-minute signing-only job remain pending approval.
+Never reset the original ledger or reuse signing job 34597512666.
+
+Candidate 6310af8 and the first repair gate were rejected, with all evidence
+retained. The last failure was a real canonical-root versus staged-root
+bookkeeping bug, corrected in synchronous/task callers. Read repair-progress.md
+under .phase-loop/runs/v13-PREP-6310af8793d3/ and the latest executor handoff.
+Do not count Gemini batch01 as substantive code review. Final four-seat
+coverage and cross-model reconciliation are still mandatory. No merge/publish.
+
+The phase-loop CLI entrypoint remains disabled under agent-harness#819.
+Use standalone helpers; never rewrite old v9 runner history to imply v13 approval.

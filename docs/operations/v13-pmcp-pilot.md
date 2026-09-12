@@ -43,7 +43,7 @@ CLI registration and the downstream child must share these values:
 | SEMANTIC_SEARCH_ENABLED | false for lexical operation |
 | SEMANTIC_DEFAULT_PROFILE | Explicit matching profile; legacy-default for the lexical fixture |
 | MCP_AUTO_INDEX | false during controlled admission |
-| MCP_METRICS_PORT | 0 to disable or a distinct owned local port |
+| MCP_METRICS_PORT | Unset to disable; 0 for an ephemeral loopback port or an explicit owned local port |
 | MCP_CLIENT_SECRET | Optional shared secret injected privately; requires handshake before queries |
 
 Never commit credentials or reuse synthetic fixture credentials. Admin JWT auth
@@ -145,4 +145,3 @@ Publication requires the versioned PREP candidate, four requested review seats,
 cross-model reconciliation, exact merge/release identity checks and controlled
 SHIP dispatch. Published-but-unaccepted artifacts block cohort promotion; preserve
 them and seek a corrective-release decision, never silently retry, yank or delete.
-

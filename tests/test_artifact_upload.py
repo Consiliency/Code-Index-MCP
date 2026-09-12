@@ -15,14 +15,15 @@ from mcp_server.artifacts.attestation import Attestation, AttestationError
 from mcp_server.artifacts.manifest_v2 import LEXICAL_ONLY_SEMANTIC_PROFILE_HASH
 
 
-def test_prepared_upload_uses_exact_bytes_without_compression(tmp_path):
-    from mcp_server.artifacts.artifact_upload import build_parser, run_cli
+def test_prepared_upload_uses_exact_bytes_without_compression(tmp_path, monkeypatch):
+    from mcp_server.artifacts.artifact_upload import _metadata_bytes, build_parser, run_cli
 
+    monkeypatch.setenv("MCP_ATTESTATION_MODE", "skip")
     archive = tmp_path / "archive.tar.gz"
     archive.write_bytes(b"already prepared")
     metadata = {"checksum": IndexArtifactUploader(repo="owner/repo")._calculate_checksum(archive)}
     metadata_path = tmp_path / "metadata.json"
-    metadata_path.write_text(json.dumps(metadata))
+    metadata_path.write_bytes(_metadata_bytes(metadata))
     args = build_parser().parse_args(
         [
             "--repo",
@@ -37,7 +38,9 @@ def test_prepared_upload_uses_exact_bytes_without_compression(tmp_path):
         with patch.object(IndexArtifactUploader, "upload_direct") as upload:
             assert run_cli(args) == 0
     compress.assert_not_called()
-    upload.assert_called_once_with(archive, metadata)
+    upload.assert_called_once()
+    assert upload.call_args.args == (archive, metadata)
+    assert isinstance(upload.call_args.kwargs["attestation"], Attestation)
     assert archive.read_bytes() == b"already prepared"
 
 
@@ -307,7 +310,7 @@ def test_upload_direct_uses_explicit_release_tag_and_clobber(tmp_path: Path, mon
     archive = tmp_path / "archive.tar.gz"
     archive.write_bytes(b"archive-bytes")
     metadata = {
-        "checksum": "deadbeef",
+        "checksum": IndexArtifactUploader(repo="owner/repo")._calculate_checksum(archive),
         "commit": "abcdef123456",
         "logical_artifact_id": "logical-id",
     }

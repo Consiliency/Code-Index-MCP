@@ -10,14 +10,20 @@ import re
 import sqlite3
 import subprocess
 import sys
-import tarfile
 import tempfile
+from contextlib import closing
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, NamedTuple, Optional, Tuple
 from urllib.parse import urlsplit
 
-from mcp_server.artifacts.attestation import Attestation, attest, verify_attestation
+from mcp_server.artifacts.attestation import (
+    Attestation,
+    AttestationError,
+    _attestation_mode,
+    attest,
+    verify_attestation,
+)
 from mcp_server.artifacts.delta_policy import DeltaPolicy
 from mcp_server.config.settings import get_settings
 from mcp_server.core.errors import record_handled_error
@@ -33,6 +39,11 @@ from .semantic_profiles import (
     extract_semantic_profile_metadata,
     get_primary_semantic_profile_metadata,
 )
+
+
+def _metadata_bytes(metadata: Dict[str, Any]) -> bytes:
+    """Keep prepared and uploaded attestation subjects byte-identical."""
+    return (json.dumps(metadata, indent=2, sort_keys=True, allow_nan=False) + "\n").encode("utf-8")
 
 
 class IndexArtifactUploader:
@@ -398,7 +409,8 @@ class IndexArtifactUploader:
         )
         destination = Path(output_path)
         destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+        with destination.open("xb") as handle:
+            handle.write(_metadata_bytes(metadata))
         return destination
 
     def trigger_workflow(self, archive_path: Path, metadata: Dict[str, Any]) -> None:
@@ -431,7 +443,8 @@ class IndexArtifactUploader:
         bundle_dir.mkdir(parents=True, exist_ok=True)
 
         metadata_path = bundle_dir / "artifact-metadata.json"
-        metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+        with metadata_path.open("xb") as handle:
+            handle.write(_metadata_bytes(metadata))
 
         checksum_path = bundle_dir / f"{archive_path.name}.sha256"
         checksum_path.write_text(f"{checksum}  {archive_path.name}\n", encoding="utf-8")
@@ -483,21 +496,17 @@ class IndexArtifactUploader:
         release_tag: Optional[str] = None,
         attestation: Optional[Attestation] = None,
     ) -> "ReleaseAssetBundle":
+        if metadata.get("checksum") != self._calculate_checksum(archive_path):
+            raise ValueError("Prepared archive checksum does not match its metadata")
+        bundle = self._build_release_asset_bundle(archive_path, metadata, attestation=attestation)
         if attestation is None:
-            attestation = attest(archive_path, repo=self.repo)
+            attestation = attest(bundle.metadata_path, repo=self.repo)
         else:
-            verify_attestation(archive_path, attestation, expected_repo=self.repo)
-        metadata = dict(metadata)
-        if attestation.bundle_url:
-            metadata["attestation_url"] = attestation.bundle_url
-        else:
-            metadata.pop("attestation_url", None)
+            verify_attestation(bundle.metadata_path, attestation, expected_repo=self.repo)
         self._ensure_gh_cli()
 
         tag = str(release_tag or metadata.get("logical_artifact_id") or "index-latest")
         commit = str(metadata.get("commit", ""))[:8]
-        bundle = self._build_release_asset_bundle(archive_path, metadata, attestation=attestation)
-
         # Create the release if it doesn't exist (ignore failure if it already exists)
         subprocess.run(
             [
@@ -602,10 +611,18 @@ def run_cli(args: argparse.Namespace) -> int:
             "checksum"
         ) != uploader._calculate_checksum(archive):
             raise ValueError("Prepared archive checksum does not match its metadata")
-        uploader.upload_direct(archive, metadata)
+        metadata_path = Path(args.prepared_metadata)
+        if metadata_path.read_bytes() != _metadata_bytes(metadata):
+            raise ValueError("Prepared metadata is not canonical; prepare and sign again")
+        attestation = attest(metadata_path, repo=uploader.repo)
+        uploader.upload_direct(archive, metadata, attestation=attestation)
         return 0
     if getattr(args, "prepared_metadata", None):
         raise ValueError("--prepared-metadata requires --prepared-archive")
+    if getattr(args, "prepare_only", False):
+        destination = Path(args.metadata_output)
+        if destination.exists() or destination.is_symlink():
+            raise ValueError("Prepared metadata already exists; use a fresh output path")
     index_location = Path(args.index_location) if args.index_location else Path(".mcp-index")
     index_path = Path(args.index_path) if args.index_path else index_location / "current.db"
 
@@ -629,8 +646,19 @@ def run_cli(args: argparse.Namespace) -> int:
         print(f"✅ Wrote metadata: {metadata_path}")
         return 0
 
+    if not getattr(args, "prepare_only", False) and _attestation_mode() == "enforce":
+        raise AttestationError(
+            "ATTESTATION_PREREQ: use --prepare-only, sign the metadata digest, "
+            "then upload with --prepared-archive and --prepared-metadata"
+        )
+
     if args.validate:
         print("🔍 Validating indexes...")
+        with closing(sqlite3.connect(index_path.resolve().as_uri() + "?mode=ro", uri=True)) as conn:
+            if conn.execute("PRAGMA quick_check").fetchall() != [("ok",)]:
+                raise ValueError("Index integrity validation failed")
+            if conn.execute("PRAGMA foreign_key_check").fetchall():
+                raise ValueError("Index foreign-key validation failed")
         print("✅ Validation passed")
 
     secure = not args.no_secure
@@ -663,13 +691,16 @@ def run_cli(args: argparse.Namespace) -> int:
     if getattr(args, "prepare_only", False):
         destination = Path(args.metadata_output)
         destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+        with destination.open("xb") as handle:
+            handle.write(_metadata_bytes(metadata))
         print(
             json.dumps(
                 {
                     "archive": str(archive_path),
                     "metadata": str(destination),
-                    "sha256": checksum,
+                    "sha256": uploader._calculate_checksum(destination),
+                    "signature_subject": "artifact-metadata.json",
+                    "archive_sha256": checksum,
                     "uploaded": False,
                 }
             )

@@ -190,16 +190,16 @@ class TestSkipMode:
 
 
 # ---------------------------------------------------------------------------
-# Test (f): publish_on_reindex stubbed flow returns metadata with attestation_url
+# Test (f): automatic publication cannot substitute an archive-only attestation
 # ---------------------------------------------------------------------------
 
 
 class TestPublishOnReindexAttestationUrl:
-    def test_publish_on_reindex_metadata_has_attestation_url(self, monkeypatch):
+    def test_publish_on_reindex_requires_manual_metadata_signing(self, monkeypatch):
         from unittest.mock import MagicMock as _MM
 
         from mcp_server.artifacts.artifact_upload import IndexArtifactUploader
-        from mcp_server.artifacts.publisher import ArtifactPublisher
+        from mcp_server.artifacts.publisher import ArtifactError, ArtifactPublisher
 
         monkeypatch.delenv("MCP_ATTESTATION_MODE", raising=False)
 
@@ -236,13 +236,10 @@ class TestPublishOnReindexAttestationUrl:
                 )
             return MagicMock(returncode=0, stdout="", stderr="")
 
-        with patch("mcp_server.artifacts.publisher.attest", return_value=_synthetic_attestation):
-            with patch("subprocess.run", side_effect=gh_side_effect):
+        with patch("subprocess.run", side_effect=gh_side_effect) as gh:
+            with pytest.raises(ArtifactError, match="prepare-only"):
                 publisher.publish_on_reindex("owner/repo", commit)
-
-        # Assert create_metadata was called with the attestation kwarg
-        call_kwargs = uploader.create_metadata.call_args.kwargs
-        assert "attestation" in call_kwargs
-        assert call_kwargs["attestation"] is _synthetic_attestation
-        # Assert the configured return value has attestation_url
-        assert metadata_return["attestation_url"] == "https://github.com/owner/repo/attestations/1"
+        uploader.compress_indexes.assert_not_called()
+        uploader.create_metadata.assert_not_called()
+        uploader.upload_direct.assert_not_called()
+        gh.assert_not_called()

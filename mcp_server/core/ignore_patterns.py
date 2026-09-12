@@ -161,8 +161,7 @@ class IgnorePatternManager:
                     ignored = match
             name = candidate.relative_to(self.root_path).as_posix() + ("/" if is_directory else "")
             match = self._mcp_spec.check_file(name).include
-            if match is not None:
-                ignored = match
+            ignored = ignored or match is True
             if ignored:
                 return True
             parent = candidate

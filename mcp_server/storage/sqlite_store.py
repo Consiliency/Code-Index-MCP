@@ -3308,6 +3308,7 @@ class SQLiteStore:
         offset: int = 0,
         columns: Optional[List[str]] = None,
         file_pattern: Optional[str] = None,
+        languages: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
         """
         Perform BM25 search using FTS5.
@@ -3337,13 +3338,19 @@ class SQLiteStore:
 
             if table == "fts_code" and "file_id" in table_columns:
                 # Support both integer file_id references and legacy path-style file_id values.
+                language_filter = (
+                    "AND f.language IN (" + ",".join("?" for _ in languages) + ")"
+                    if languages
+                    else ""
+                )
                 cursor = conn.execute(
-                    """
+                    f"""
                     SELECT
                         fts.content,
                         fts.file_id,
                         COALESCE(f.path, f.relative_path, CAST(fts.file_id AS TEXT)) as filepath,
                         f.relative_path,
+                        f.language,
                         bm25(fts_code) as score,
                         snippet(fts_code, 0, '<mark>', '</mark>', '...', 32) as snippet,
                         f.last_modified
@@ -3354,10 +3361,19 @@ class SQLiteStore:
                     WHERE fts_code MATCH ?
                         AND (? IS NULL OR COALESCE(f.path, CAST(fts.file_id AS TEXT)) GLOB ?
                              OR f.relative_path GLOB ?)
+                        {language_filter}
                     ORDER BY bm25(fts_code)
                     LIMIT ? OFFSET ?
                     """,
-                    (query, file_pattern, file_pattern, file_pattern, limit, offset),
+                    (
+                        query,
+                        file_pattern,
+                        file_pattern,
+                        file_pattern,
+                        *(languages or []),
+                        limit,
+                        offset,
+                    ),
                 )
             elif table == "bm25_content" and "filepath" in table_columns:
                 # Legacy BM25 schema with direct filepath column

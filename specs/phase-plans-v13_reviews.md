@@ -106,3 +106,19 @@ The SHIP handoff and qualified Code-Index-MCP#97 comment must identify exact
 paths and hashes. This avoids changing reviewed source to record its own votes.
 The original roadmap bytes and all requested-model/replacement rules remain
 unchanged. Any source change after review requires renewed exact-candidate review.
+
+### Rejected Candidate And Repairs
+
+The initial implementation candidate `6310af8` did not pass PREP: the full local
+gate failed ten release assertions and the first three code-review batches
+identified reproduced runtime defects. Reports, counterexamples and dispositions
+remain under `.phase-loop/runs/v13-PREP-6310af8793d3/`. They are diagnostic
+evidence, not final approval. Gemini batch01 was roadmap-only; no substantive
+code approval is inferred from its transport success. Remaining batches of
+rejected bytes were paused pending a repaired candidate.
+
+Plan-scoped repairs require new full local and operational proof, full exact
+four-seat review and cross-model reconciliation. Runtime and signature-subject
+changes invalidate inherited live/signing evidence; fresh bounded allowances
+are pending owner approval. The requested model identities and no-substitution
+policy above remain unchanged. No merge or publication has occurred.

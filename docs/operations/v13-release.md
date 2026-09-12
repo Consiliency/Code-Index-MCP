@@ -23,6 +23,12 @@ dependency metadata before consuming the original-source evidence. It refuses
 runtime changes and validates archived live records read-only. This is not a
 new live run of the version-bumped wheel.
 
+The first candidate (6310af8) was rejected during review. Subsequent runtime
+repairs are NOT version-only, so that comparator must refuse inheritance of
+the old pilot. A fresh candidate-bound pilot and metadata-signature validation
+are required before acceptance. The requested replacement allowances are pending;
+the old ledger and consumed signing job are not reusable authorizations.
+
 Fresh candidate-specific local full, installed PMCP, container, Qdrant,
 loopback-provider and browser checks are required in PREP. Real inference is not
 a repeatable release check: the original 900-second cumulative allowance has

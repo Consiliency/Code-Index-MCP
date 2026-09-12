@@ -2,7 +2,7 @@
 
 This guide provides comprehensive information on configuring the Code-Index-MCP for different environments and use cases.
 
-> **Release status**: This guide targets the `1.4.1` prepared candidate.
+> **Stable-surface prep status**: This guide targets the `1.4.1` prepared candidate.
 > MCP STDIO is primary; FastAPI is secondary admin only. Docker examples require
 > the matching registry publication. Published `1.4.0` lacks the v13 repairs.
 > See [release preparation and acceptance](operations/v13-release.md).

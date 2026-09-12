@@ -17,6 +17,10 @@
   "required_checks": ["full-local", "installed-wheel-pmcp", "qdrant-file", "qdrant-server", "non-root-container", "browser", "loopback-rehearsal", "version-only-pilot-consumption"],
   "required_reviews": ["claude-fable-5", "gpt-5.6-sol", "grok-4.5", "Gemini 3.1 Pro"],
   "cross_model_reconciliation_required": true,
+  "prior_candidate_status": "6310af8 rejected by full gate and diagnostic review",
+  "runtime_repairs_invalidate_version_only_consumption": true,
+  "fresh_pilot_and_metadata_signature_required": true,
+  "replacement_allowances": "pending_owner_approval",
   "recovery_policy": "docs/operations/v13-release.md",
   "next_phase": "SHIP only after accepted external PREP receipt"
 }

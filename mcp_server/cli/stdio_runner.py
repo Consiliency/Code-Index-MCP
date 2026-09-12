@@ -617,6 +617,7 @@ def _build_tool_list() -> list[types.Tool]:
                 "oneOf": [
                     _HANDSHAKE_REQUIRED_SCHEMA,
                     _PATH_OUTSIDE_ALLOWED_ROOTS_SCHEMA,
+                    _INDEX_UNAVAILABLE_SCHEMA,
                     _SECONDARY_READINESS_REFUSAL_SCHEMA,
                     _CONFLICTING_SCOPE_SCHEMA,
                     _object_schema(
@@ -749,6 +750,7 @@ def _build_tool_list() -> list[types.Tool]:
                 "oneOf": [
                     _HANDSHAKE_REQUIRED_SCHEMA,
                     _PATH_OUTSIDE_ALLOWED_ROOTS_SCHEMA,
+                    _INDEX_UNAVAILABLE_SCHEMA,
                     _SECONDARY_READINESS_REFUSAL_SCHEMA,
                     _SUMMARIZATION_UNAVAILABLE_SCHEMA,
                     _SQLITE_NOT_INITIALIZED_SCHEMA,
@@ -818,6 +820,7 @@ def _build_tool_list() -> list[types.Tool]:
                 "oneOf": [
                     _HANDSHAKE_REQUIRED_SCHEMA,
                     _PATH_OUTSIDE_ALLOWED_ROOTS_SCHEMA,
+                    _INDEX_UNAVAILABLE_SCHEMA,
                     _SECONDARY_READINESS_REFUSAL_SCHEMA,
                     _CONFLICTING_SCOPE_SCHEMA,
                     _SUMMARIZATION_UNAVAILABLE_SCHEMA,
@@ -904,14 +907,22 @@ async def _graceful_shutdown(
     store_registry: Any,
     exporter: Any,
     dispatcher: Any = None,
-    timeout: float = 5.0,
+    timeout: float = 1.0,
 ) -> None:
     """Await one cleanup owner; a timeout never abandons a resource owner."""
     global _shutdown_called, _shutdown_task
+    failures = []
+
+    def record_failure(name: str, exc: Exception) -> None:
+        failures.append(f"{name} ({type(exc).__name__})")
+        logger.error("%s cleanup failed (%s)", name, type(exc).__name__)
 
     async def cleanup() -> None:
         if _lazy_summarizer is not None:
-            await _lazy_summarizer.stop()
+            try:
+                await _lazy_summarizer.stop()
+            except Exception as exc:
+                record_failure("LazySummarizer", exc)
         components = [
             ("MultiRepositoryWatcher", multi_watcher, "stop"),
             ("RefPoller", ref_poller, "stop"),
@@ -922,7 +933,7 @@ async def _graceful_shutdown(
                 await stop_component(name, getattr(component, method))
         for thread in (_indexing_thread, _fts_rebuild_thread):
             if thread is not None and thread.is_alive():
-                await asyncio.to_thread(thread.join)
+                await stop_component("IndexWorker", thread.join)
         for name, component, method in [
             ("Dispatcher", dispatcher, "shutdown"),
             ("StoreRegistry", store_registry, "shutdown"),
@@ -930,15 +941,22 @@ async def _graceful_shutdown(
         ]:
             if component is not None:
                 await stop_component(name, getattr(component, method))
+        if failures:
+            raise RuntimeError("Owned resource cleanup failed: " + ", ".join(failures))
 
     async def stop_component(name: str, stop: Callable[[], None]) -> None:
         worker = asyncio.create_task(asyncio.to_thread(stop))
         try:
-            await asyncio.wait_for(asyncio.shield(worker), timeout)
-        except asyncio.TimeoutError:
-            logger.warning("%s cleanup exceeded %.1fs; awaiting its resource owner", name, timeout)
-            await worker
-        logger.info("%s stopped", name)
+            try:
+                await asyncio.wait_for(asyncio.shield(worker), timeout)
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "%s cleanup exceeded %.1fs; awaiting its resource owner", name, timeout
+                )
+                await worker
+            logger.info("%s stopped", name)
+        except Exception as exc:
+            record_failure(name, exc)
 
     if not _shutdown_called:
         _shutdown_called = True
@@ -950,10 +968,10 @@ async def _graceful_shutdown(
 
 def _force_shutdown() -> None:
     """Last resort for an uncooperative worker: fail the entire owning service."""
-    import psutil
-
     # Do not acquire logging locks or write potentially blocked client pipes here.
     try:
+        import psutil
+
         children = psutil.Process().children(recursive=True)
         for child in children:
             try:
@@ -1696,24 +1714,25 @@ async def _serve(registry_path=None) -> None:
                 )
     finally:
         _handle_signal()
-        await _graceful_shutdown(
-            multi_watcher,
-            ref_poller,
-            store_registry,
-            exporter,
-            dispatcher=_disp,
-            timeout=5.0,
-        )
-        for transport in transports:
-            transport.close()
-        await _loop.shutdown_default_executor()
-        if watchdog is not None:
-            watchdog.cancel()
-        for sig in (signal.SIGTERM, signal.SIGINT):
-            try:
-                _loop.remove_signal_handler(sig)
-            except NotImplementedError:
-                pass
+        try:
+            await _graceful_shutdown(
+                multi_watcher,
+                ref_poller,
+                store_registry,
+                exporter,
+                dispatcher=_disp,
+            )
+        finally:
+            for transport in transports:
+                transport.close()
+            await _loop.shutdown_default_executor()
+            if watchdog is not None:
+                watchdog.cancel()
+            for sig in (signal.SIGTERM, signal.SIGINT):
+                try:
+                    _loop.remove_signal_handler(sig)
+                except NotImplementedError:
+                    pass
 
 
 def run() -> None:

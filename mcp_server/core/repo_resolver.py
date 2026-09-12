@@ -20,6 +20,14 @@ logger = logging.getLogger(__name__)
 _MutationResult = TypeVar("_MutationResult")
 
 
+class RepositoryMutationCancelled(RuntimeError):
+    """A cancelled staged mutation that was not published."""
+
+    def __init__(self, outcome: dict):
+        super().__init__("Staged mutation cancelled without publication")
+        self.outcome = {**outcome, "mutation_performed": False}
+
+
 def run_repository_mutation(resolver, ctx, operation: Callable):
     """Share writer admission across synchronous and task-backed entrypoints."""
     if ctx is None:
@@ -140,7 +148,11 @@ class RepoResolver:
                 ctx.repo_id, stage_operation=staged_operation
             )
             if sync.action != "full_index":
+                if outcome and isinstance(outcome[0], dict) and outcome[0].get("cancelled"):
+                    raise RepositoryMutationCancelled(outcome[0])
                 raise RuntimeError("Staged mutation did not publish; rebuild required")
+            if isinstance(outcome[0], dict):
+                outcome[0]["mutation_performed"] = True
             return outcome[0]
 
     def _context_from_readiness(self, readiness: RepositoryReadiness) -> Optional[RepoContext]:

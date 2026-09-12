@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 from uuid import uuid4
 
-from mcp_server.artifacts.attestation import attest
+from mcp_server.artifacts.attestation import _attestation_mode
 from mcp_server.artifacts.delta_policy import DeltaPolicy
 from mcp_server.core.errors import MCPError
 
@@ -72,11 +72,17 @@ class ArtifactPublisher:
         short_sha = commit[:7]
         safe_repo = repo_id.replace("/", "_").replace(":", "_")
         safe_branch = tracked_branch.replace("/", "_").replace(":", "_")
-        sha_tag = f"index-{safe_repo}-{safe_branch}-{short_sha}"
+        sha_tag = f"index-{safe_repo}-{safe_branch}-{commit}"
         repo = self._uploader.repo
         release_url = f"https://github.com/{repo}/releases/tag/{sha_tag}"
 
         try:
+            if _attestation_mode() == "enforce":
+                raise ArtifactError(
+                    "ATTESTATION_PREREQ: automatic publication requires manual metadata signing; "
+                    "use artifact_upload --prepare-only, sign, then --prepared-archive "
+                    "with --prepared-metadata"
+                )
             if repo_path is not None:
                 from .artifact_upload import IndexArtifactUploader
 
@@ -93,7 +99,6 @@ class ArtifactPublisher:
                 repo_path=repo_path or ".",
                 semantic_indexer=semantic_indexer,
             )
-            attestation = attest(archive_path, repo=repo, gh_cmd=self._gh_cmd)
             policy = DeltaPolicy()
             decision = policy.decide(
                 compressed_size_bytes=size,
@@ -104,7 +109,6 @@ class ArtifactPublisher:
                 size,
                 artifact_type=decision.strategy,
                 delta_from=decision.base_artifact_id,
-                attestation=attestation,
                 repo_id=repo_id,
                 tracked_branch=tracked_branch,
                 commit=commit,
@@ -117,7 +121,6 @@ class ArtifactPublisher:
                 archive_path,
                 metadata,
                 release_tag=sha_tag,
-                attestation=attestation,
             )
             self._move_latest_pointer(sha_tag, commit, repo)
             is_latest = self._check_is_latest(commit, repo)

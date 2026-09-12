@@ -101,6 +101,10 @@ async def test_run_reindex_task_returns_merge_payload_and_clears_checkpoint(tmp_
     active_store = MagicMock()
     active_store.ensure_repository_row.return_value = "repo-row"
     active_store.rebuild_fts_code.return_value = 2
+    active_store.path_resolver.normalize_path.return_value = "."
+    active_store._get_connection.return_value.__enter__.return_value.execute.return_value.fetchone.return_value = (
+        2,
+    )
     ctx = SimpleNamespace(repo_id="repo-1", workspace_root=repo, sqlite_store=active_store)
 
     result = await run_reindex_task(

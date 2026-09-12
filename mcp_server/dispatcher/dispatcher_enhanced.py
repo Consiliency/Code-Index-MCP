@@ -2550,7 +2550,7 @@ class EnhancedDispatcher:
             else:
                 # Find the appropriate plugin
                 plugin = self._match_plugin(ctx, path)
-                plugin_language = plugin.language
+                plugin_language = get_language_by_extension(path.suffix.lower()) or plugin.language
                 plugin_lang = plugin.lang
 
             # Index the file
@@ -2872,7 +2872,8 @@ class EnhancedDispatcher:
             logger.info(f"Indexing {path} with {plugin.lang} plugin (guarded)")
             shard = plugin.indexFile(path, content)
             try:
-                self._persist_index_shard(ctx, path, content, plugin.language, shard)
+                language = get_language_by_extension(path.suffix.lower()) or plugin.language
+                self._persist_index_shard(ctx, path, content, language, shard)
             except Exception as e:
                 return IndexResult(
                     status=IndexResultStatus.ERROR,

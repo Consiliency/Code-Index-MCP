@@ -8,8 +8,9 @@ Code-Index-MCP is a fast, **local-first** search index for your code. It plugs i
 >
 > **Status:** v1.4.1 stable surface prepared — MCP tools (`search_code`, `symbol_lookup`) are the primary interface; a FastAPI admin gateway is available for diagnostics.
 
-> **Release status**: This guide targets the `1.4.1` prepared candidate.
+> **Stable-surface prep status**: This guide targets the `1.4.1` prepared candidate.
 > Published `1.4.0` (2026-07-19) does not include these v13 repairs.
+> MCP STDIO is primary; FastAPI is secondary admin only.
 > See [release preparation and acceptance](docs/operations/v13-release.md).
 > Publication and fleet rollout remain separate acceptance gates.
 

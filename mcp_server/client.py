@@ -352,6 +352,7 @@ class IndexItClient:
         self._repo_resolver: RepoResolver | None = None
         self._dispatcher: DispatcherProtocol | None = None
         self._owned_store_registry = None
+        self._close_failed = False
 
     def __enter__(self) -> IndexItClient:
         self._ensure_services()
@@ -364,15 +365,22 @@ class IndexItClient:
         if self._owned_store_registry is not None:
             shutdown = getattr(self._dispatcher, "shutdown", None)
             try:
-                if shutdown is not None:
-                    shutdown()
-            finally:
-                self._owned_store_registry.shutdown()
+                try:
+                    if shutdown is not None:
+                        shutdown()
+                finally:
+                    self._owned_store_registry.shutdown()
+            except Exception:
+                self._close_failed = True
+                raise
             self._owned_store_registry = None
         self._repo_resolver = None
         self._dispatcher = None
+        self._close_failed = False
 
     def _ensure_services(self) -> None:
+        if self._close_failed:
+            raise RuntimeError("Client cleanup is incomplete; retry close before using services")
         if self._dispatcher is not None and self._repo_resolver is not None:
             return
         self._owned_store_registry, self._repo_resolver, self._dispatcher, _, _ = (

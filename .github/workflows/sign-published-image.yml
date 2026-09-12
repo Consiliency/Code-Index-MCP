@@ -19,7 +19,7 @@ on:
         required: false
         type: string
       subject_digest:
-        description: 'Index SHA-256 hex digest only; never source or index contents.'
+        description: 'Canonical artifact-metadata.json SHA-256; never source or index contents.'
         required: false
         type: string
 
@@ -101,7 +101,7 @@ jobs:
       - name: Attest local digest without claiming a hosted build
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
         with:
-          subject-name: index-it-mcp-index.tar.gz
+          subject-name: index-it-mcp-artifact-metadata.json
           subject-digest: sha256:${{ inputs.subject_digest }}
           predicate-type: https://github.com/Consiliency/Code-Index-MCP/local-index-digest/v1
           predicate: '{"artifact_origin":"local","digest_origin":"operator-supplied","built_in_this_workflow":false}'

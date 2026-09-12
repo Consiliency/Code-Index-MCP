@@ -105,12 +105,11 @@ class TestCrossRepositorySearchCoordinator:
 
     @pytest.mark.asyncio
     async def test_get_target_repositories_by_language(self, coordinator):
-        """Test filtering repositories by language."""
+        """Language filters belong to indexed rows, not stale registry statistics."""
         scope = SearchScope(languages=["java"])
         repos = await coordinator._get_target_repositories(scope)
 
-        assert len(repos) == 1
-        assert repos[0].repository_id == "repo2"  # Only repo2 has Java
+        assert {repo.repository_id for repo in repos} == {"repo1", "repo2"}
 
     @pytest.mark.asyncio
     async def test_get_target_repositories_priority_order(self, coordinator):

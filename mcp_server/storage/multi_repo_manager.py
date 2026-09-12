@@ -584,6 +584,7 @@ class MultiRepositoryManager:
         repository_ids: Optional[List[str]] = None,
         file_pattern: Optional[str] = None,
         limit: int = 50,
+        languages: Optional[List[str]] = None,
     ) -> List[CrossRepoSearchResult]:
         """
         Search for code content across repositories using BM25.
@@ -626,6 +627,7 @@ class MultiRepositoryManager:
                     query,
                     file_pattern,
                     limit,
+                    **({"languages": languages} if languages else {}),
                 ): repo
                 for repo in repos
             }
@@ -664,7 +666,12 @@ class MultiRepositoryManager:
         return results
 
     def _search_code_in_repository(
-        self, repository_id: str, query: str, file_pattern: Optional[str], limit: int
+        self,
+        repository_id: str,
+        query: str,
+        file_pattern: Optional[str],
+        limit: int,
+        languages: Optional[List[str]] = None,
     ) -> Optional[CrossRepoSearchResult]:
         """Search code content in a single repository using BM25."""
         start_time = datetime.now()
@@ -679,7 +686,11 @@ class MultiRepositoryManager:
 
         try:
             bm25_results = store.search_bm25(
-                query, table="fts_code", limit=limit, file_pattern=file_pattern
+                query,
+                table="fts_code",
+                limit=limit,
+                file_pattern=file_pattern,
+                **({"languages": languages} if languages else {}),
             )
 
             # Format results
@@ -691,6 +702,7 @@ class MultiRepositoryManager:
                         "file_path": result.get("filepath", result.get("file_path", "")),
                         "content": result.get("content", result.get("snippet", "")),
                         "line": result.get("line", 0),
+                        "language": result.get("language"),
                         "snippet": result.get("snippet", ""),
                         "score": -float(result.get("score", 0.0)),
                         "repository": repo_info.name,

@@ -15,7 +15,7 @@ from mcp_server.artifacts.publisher import ArtifactError, ArtifactPublisher
 REPO = "owner/repo"
 COMMIT = "abcdef1234567890abcdef1234567890abcdef12"
 SHORT_SHA = COMMIT[:7]
-SHA_TAG = f"index-repo-main-{SHORT_SHA}"
+SHA_TAG = f"index-repo-main-{COMMIT}"
 
 _SYNTHETIC_ATTESTATION = Attestation(
     bundle_url="https://github.com/owner/repo/attestations/1",
@@ -27,10 +27,7 @@ _SYNTHETIC_ATTESTATION = Attestation(
 
 @pytest.fixture(autouse=True)
 def _stub_attest(monkeypatch):
-    monkeypatch.setattr(
-        "mcp_server.artifacts.publisher.attest",
-        MagicMock(return_value=_SYNTHETIC_ATTESTATION),
-    )
+    monkeypatch.setenv("MCP_ATTESTATION_MODE", "skip")
 
 
 def _make_uploader() -> IndexArtifactUploader:

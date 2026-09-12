@@ -18,7 +18,7 @@ import anyio
 import mcp.types as types
 
 from mcp_server.cli.bootstrap import _allowed_roots, _path_within_allowed, validate_index
-from mcp_server.cli.task_reindex import run_reindex_task
+from mcp_server.cli.task_reindex import _record_reindexed_files, run_reindex_task
 from mcp_server.cli.task_write_summaries import run_write_summaries_task
 from mcp_server.client import ClientValidationError, build_search_options, execute_search_service
 from mcp_server.core.repo_context import RepoContext
@@ -256,6 +256,8 @@ def _resolution_transition_response(tool: str) -> list[types.TextContent]:
             "tool": tool,
             "safe_fallback": "native_search",
             "mutation_performed": False,
+            "readiness": {"ready": False},
+            "message": "Repository context changed during this request; re-check readiness.",
             "remediation": "Re-check repository readiness and rebuild or refresh the index.",
         }
     )
@@ -327,24 +329,6 @@ def _semantic_failure_response(
         "details": str(error),
     }
     return _json_text_response(response)
-
-
-def _record_reindexed_files(active_store: Any, workspace_root: Path, target_path: Path) -> int:
-    """Count dispatcher-persisted rows without importing unfiltered working-tree files."""
-    if active_store is None:
-        return 0
-    relative = active_store.path_resolver.normalize_path(target_path)
-    with active_store._get_connection() as connection:
-        if relative == ".":
-            return connection.execute(
-                "SELECT COUNT(*) FROM files WHERE COALESCE(is_deleted, 0) = 0"
-            ).fetchone()[0]
-        prefix = relative.rstrip("/") + "/"
-        return connection.execute(
-            "SELECT COUNT(*) FROM files WHERE COALESCE(is_deleted, 0) = 0 "
-            "AND (relative_path = ? OR substr(relative_path, 1, ?) = ?)",
-            (relative, len(prefix), prefix),
-        ).fetchone()[0]
 
 
 async def handle_symbol_lookup(
@@ -1216,7 +1200,7 @@ async def handle_reindex(
                     return dispatcher.index_file(target_path)
                 result = dispatcher.index_file(current, target_path)
                 durable_files = _record_reindexed_files(
-                    current.sqlite_store, current.workspace_root, target_path
+                    current.sqlite_store, ctx.workspace_root, target_path
                 )
                 return result
 
@@ -1268,7 +1252,7 @@ async def handle_reindex(
                 stats = dispatcher.index_directory(current, target_path, recursive=True)
                 store = current.sqlite_store
             stats["durable_files"] = (
-                _record_reindexed_files(store, current.workspace_root, target_path)
+                _record_reindexed_files(store, ctx.workspace_root, target_path)
                 if current is not None and store is not None
                 else 0
             )

@@ -285,6 +285,7 @@ def test_download_release_artifact_restores_direct_publish_payload(tmp_path: Pat
             target_commit="abcdef123456",
         )
 
-    assert restored == output_dir
-    assert (output_dir / "current.db").read_text(encoding="utf-8") == "db"
-    assert (output_dir / "artifact-metadata.json").exists()
+    assert restored.parent == output_dir
+    assert restored.name.startswith("verified-")
+    assert (restored / "current.db").read_text(encoding="utf-8") == "db"
+    assert (restored / "artifact-metadata.json").exists()

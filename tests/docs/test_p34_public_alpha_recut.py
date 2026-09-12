@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from tests.test_release_metadata import EXPECTED_TAG, EXPECTED_VERSION
+
 REPO = Path(__file__).parent.parent.parent
 
 PREPARED_STABLE_VERSION = "1.4.0"
@@ -92,14 +94,17 @@ def test_release_surfaces_use_prepared_stable_identifier_and_preserve_rc_history
         if relative != "CHANGELOG.md":
             assert "1.2.0-rc4" not in text, relative
     assert PUBLIC_ALPHA_VERSION in _read("CHANGELOG.md")
-    assert PREPARED_STABLE_TAG in _read(".github/workflows/release-automation.yml")
+    assert EXPECTED_TAG in _read(".github/workflows/release-automation.yml")
 
 
 def test_active_release_instructions_do_not_reference_rc4_or_stale_recut_target():
     for relative in ACTIVE_RC4_DRIFT_SURFACES:
         text = _read(relative)
+        if relative in {"scripts/install-mcp-docker.sh", "scripts/install-mcp-docker.ps1"}:
+            assert EXPECTED_TAG in text, relative
         assert (
-            PREPARED_STABLE_VERSION in text
+            EXPECTED_VERSION in text
+            or PREPARED_STABLE_VERSION in text
             or PREPARED_STABLE_TAG in text
             or PUBLIC_ALPHA_VERSION in text
             or PUBLIC_ALPHA_TAG in text

@@ -2,10 +2,12 @@
 
 This guide walks you through installing and using Code-Index-MCP to index and search your codebase.
 
-> **Release status**: This guide targets the `1.4.1` prepared candidate.
+> **Stable-surface prep status**: This guide targets the `1.4.1` prepared candidate.
 > Published `1.4.0` does not include the v13 repairs. Use source or a locally
 > built wheel until protected-main publication and delivered-artifact acceptance.
 > See [release preparation and acceptance](operations/v13-release.md).
+> The [GA readiness checklist](validation/ga-readiness-checklist.md) retains
+> the release gates and support limits; a stable identifier does not widen them.
 > MCP STDIO is the primary LLM surface; FastAPI is secondary admin only.
 > Install-surface and language/runtime support tiers are defined in
 > [SUPPORT_MATRIX.md](SUPPORT_MATRIX.md); do not treat every install path or

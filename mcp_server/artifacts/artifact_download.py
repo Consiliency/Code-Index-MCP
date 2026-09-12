@@ -224,7 +224,16 @@ class IndexArtifactDownloader:
             self._locate_download_payload(payload_dir)
         )
 
-        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        att = Attestation(
+            bundle_url="",
+            bundle_path=attestation_path,
+            subject_digest="",
+            signed_at=datetime.now(timezone.utc),
+        )
+        # The signed metadata binds identity and the archive checksum together.
+        verify_attestation(metadata_path, att, expected_repo=self.repo, gh_cmd="gh")
+        metadata_bytes = metadata_path.read_bytes()
+        metadata = json.loads(metadata_bytes)
         delta_base = metadata.get("delta_from")
         if delta_base:
             probe = subprocess.run(
@@ -263,24 +272,25 @@ class IndexArtifactDownloader:
         if not compatible:
             raise ValueError("Artifact compatibility validation failed: " + "; ".join(issues))
 
-        att = Attestation(
-            bundle_url="",
-            bundle_path=attestation_path,
-            subject_digest="",
-            signed_at=datetime.now(timezone.utc),
-        )
-        verify_attestation(archive_path, att, expected_repo=self.repo, gh_cmd="gh")
-
         print("📦 Extracting index files...")
+        if output_dir.is_symlink():
+            raise ValueError("Artifact output must not be a symbolic link")
+        output_dir.mkdir(parents=True, exist_ok=True)
+        extracted = Path(tempfile.mkdtemp(prefix="verified-", dir=output_dir))
         with tarfile.open(archive_path, "r:gz") as tar:
             members = tar.getmembers()
             for member in members:
-                if not self._validate_tar_member(member, output_dir):
+                if not self._validate_tar_member(member, extracted) or Path(member.name).parts == (
+                    "artifact-metadata.json",
+                ):
                     raise ValueError(f"Unsafe archive member blocked: {member.name}")
-            tar.extractall(output_dir, members=members)  # nosec B202 - members validated above
+            tar.extractall(
+                extracted, members=members
+            )  # nosec B202 - fresh directory, regular members only
 
-        shutil.copy2(metadata_path, output_dir / "artifact-metadata.json")
-        return output_dir
+        with (extracted / "artifact-metadata.json").open("xb") as handle:
+            handle.write(metadata_bytes)
+        return extracted
 
     def _calculate_checksum(self, file_path: Path) -> str:
         sha256 = hashlib.sha256()
@@ -355,7 +365,7 @@ class IndexArtifactDownloader:
                             )
             except Exception as exc:
                 record_handled_error(__name__, exc)
-                pass
+                issues.append("Local semantic profile configuration is unavailable")
         elif artifact_model:
             try:
                 current_model = get_settings().semantic_embedding_model
@@ -365,7 +375,7 @@ class IndexArtifactDownloader:
                     )
             except Exception as exc:
                 record_handled_error(__name__, exc)
-                pass
+                issues.append("Local embedding model configuration is unavailable")
 
         return len(issues) == 0, issues
 
@@ -527,20 +537,12 @@ class IndexArtifactDownloader:
             return False
 
     def _validate_tar_member(self, member: tarfile.TarInfo, extraction_dir: Path) -> bool:
+        if not (member.isfile() or member.isdir()) or Path(member.name).is_absolute():
+            return False
         target_path = extraction_dir / member.name
         if not self._is_within_directory(extraction_dir, target_path):
             return False
-        if member.issym():
-            if not member.linkname:
-                return False
-            if not self._is_within_directory(extraction_dir, target_path.parent / member.linkname):
-                return False
-        if member.islnk():
-            if not member.linkname:
-                return False
-            if not self._is_within_directory(extraction_dir, extraction_dir / member.linkname):
-                return False
-        return not member.isdev()
+        return True
 
     def install_indexes(
         self,
@@ -686,17 +688,18 @@ class IndexArtifactDownloader:
 
         manager = self._index_manager
         owned = manager is None
-        if owned:
-            registry = self._registry if self._registry is not None else RepositoryRegistry()
-            dispatcher = EnhancedDispatcher(
-                enable_advanced_features=False,
-                use_plugin_factory=True,
-                semantic_search_enabled=get_settings().semantic_search_enabled,
-                memory_aware=False,
-                multi_repo_enabled=False,
-            )
-            manager = GitAwareIndexManager(registry, dispatcher)
+        dispatcher = None
         try:
+            if owned:
+                registry = self._registry if self._registry is not None else RepositoryRegistry()
+                dispatcher = EnhancedDispatcher(
+                    enable_advanced_features=False,
+                    use_plugin_factory=True,
+                    semantic_search_enabled=get_settings().semantic_search_enabled,
+                    memory_aware=False,
+                    multi_repo_enabled=False,
+                )
+                manager = GitAwareIndexManager(registry, dispatcher)
             info = manager.registry.get(repo_id)
             if info is None or (
                 repo_path is not None and Path(info.path).resolve() != Path(repo_path).resolve()
@@ -708,9 +711,12 @@ class IndexArtifactDownloader:
             return [str(manager.registry.get(repo_id).index_path)]
         finally:
             if owned:
-                manager.dispatcher.shutdown()
-                if manager.store_registry is not None:
-                    manager.store_registry.shutdown()
+                try:
+                    if dispatcher is not None:
+                        dispatcher.shutdown()
+                finally:
+                    if manager is not None and manager.store_registry is not None:
+                        manager.store_registry.shutdown()
 
     def download_latest(
         self,

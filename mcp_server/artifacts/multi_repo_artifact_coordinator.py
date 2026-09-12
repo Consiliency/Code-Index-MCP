@@ -407,7 +407,7 @@ class MultiRepoArtifactCoordinator:
                 repo.repository_id,
                 artifact_health=health,
                 available_semantic_profiles=self._read_local_profiles(
-                    repo.path, repo.index_location
+                    repo.path, repo.index_location, repo.index_path
                 ),
             )
             details = {
@@ -417,7 +417,7 @@ class MultiRepoArtifactCoordinator:
                 "last_published_commit": repo.last_published_commit,
                 "last_recovered_commit": repo.last_recovered_commit,
                 "available_semantic_profiles": self._read_local_profiles(
-                    repo.path, repo.index_location
+                    repo.path, repo.index_location, repo.index_path
                 ),
                 "readiness": readiness.to_dict(),
             }

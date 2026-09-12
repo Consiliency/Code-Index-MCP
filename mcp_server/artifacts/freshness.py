@@ -32,8 +32,15 @@ def verify_artifact_freshness(
         return FreshnessVerdict.INVALID
 
     try:
-        ts = datetime.fromisoformat(timestamp_str.rstrip("Z")).replace(tzinfo=timezone.utc)
-    except (ValueError, AttributeError):
+        ts = datetime.fromisoformat(timestamp_str)
+        if ts.tzinfo is None:
+            return FreshnessVerdict.INVALID
+        ts = ts.astimezone(timezone.utc)
+    except (ValueError, TypeError, OverflowError):
+        return FreshnessVerdict.INVALID
+
+    now = datetime.now(timezone.utc)
+    if ts > now + timedelta(minutes=5):
         return FreshnessVerdict.INVALID
 
     # Check commit ancestry first — if not an ancestor, report STALE_COMMIT.
@@ -49,7 +56,7 @@ def verify_artifact_freshness(
         return FreshnessVerdict.STALE_COMMIT
 
     # Check age.
-    age = datetime.now(timezone.utc) - ts
+    age = now - ts
     if age > timedelta(days=max_age_days):
         return FreshnessVerdict.STALE_AGE
 
