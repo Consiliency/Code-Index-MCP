@@ -152,7 +152,7 @@ def artifact_payload(tmp_path, monkeypatch):
         "semantic_profile_hash": "lexical-only",
         "checksum": hashlib.sha256(archive.read_bytes()).hexdigest(),
         "artifact_type": "full",
-        "timestamp": "2026-09-12T00:00:00Z",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "compatibility": {"schema_version": "2", "embedding_model": None},
     }
     metadata_path = payload / "artifact-metadata.json"

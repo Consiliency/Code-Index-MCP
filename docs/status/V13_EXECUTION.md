@@ -1,6 +1,6 @@
 # V13 Manual Execution
 
-Updated 2026-09-12. Branch: `codex/v13-audit-remediation`.
+Updated 2026-09-17. Branch: `codex/v13-audit-remediation`.
 Worktree: `/mnt/workspace/worktrees/Code-Index-MCP-v13-audit-remediation`.
 
 ## Progress
@@ -13,7 +13,7 @@ Worktree: `/mnt/workspace/worktrees/Code-Index-MCP-v13-audit-remediation`.
 | SAFETY | Accepted | `docs/validation/v13/SAFETY.json`; IF-0-SAFETY-1 |
 | DATA | Accepted | `docs/validation/v13/DATA.json`; IF-0-DATA-1 |
 | PILOT | Historical source accepted; repairs require revalidation | `docs/validation/v13/PILOT.json`; original IF-0-PILOT-1 unchanged |
-| PREP | Repairs verified locally; acceptance blocked | Fresh live/signing approval and final four-seat review pending |
+| PREP | Diagnostic panel repairs under verification | Renewed live/signing and manual review approved; final proof and four-seat reconciliation pending |
 | SHIP | Not started | No merge, publication or issue closure claimed |
 
 The four-seat reconciled roadmap remains unchanged at SHA-256
@@ -72,8 +72,8 @@ failed attempts remain preserved and are not accepted evidence.
 
 Read `docs/validation/v13/PILOT.json` and
 `.dev-skills/handoffs/codex-execute-phase/latest.md` in this worktree.
-Next phase: PREP, blocked on renewed live/signing approval before final review.
-Next command: none until the bounded allowance amendment is approved and planned.
+Next phase: PREP, execute the approved diagnostic repair amendment and fresh checks.
+Next command: manual `codex-execute-phase plans/phase-plan-v13-PREP.md`; keep the outer loop disabled.
 Do not restart v9 or infer v13 completion from old primary-checkout state.
 
 ## PREP Candidate
@@ -127,7 +127,7 @@ reconcile peer findings. No provider refusal or substitute was accepted.
 The runtime changed, so the strict version-only comparator must refuse the old
 PILOT evidence. A fresh synthetic pilot (100000 input units, 900 seconds,
 concurrency one) and one five-minute metadata-signing validation job were
-requested separately and remain pending approval. Never reset the expired
+requested separately at that checkpoint and subsequently approved September 15. Never reset the expired
 original ledger or redispatch its consumed job. No real inference or new
 signing ran during these repairs. Code-Index-MCP#97 remains a draft; there were
 no open Code-Index-MCP issues at the September 12 live check. SHIP is not started.
@@ -158,8 +158,32 @@ The original live ledger was checked read-only and remains byte-identical at
 The strict version-only comparator correctly rejects runtime drift; its refusal
 is a negative control, not a passed release gate. Final candidate review and
 four-seat cross-model reconciliation remain unrun on the repaired source.
-The current execution attempt closes as blocked on the requested additional
-allowances; the roadmap and historical phase receipts are unchanged.
+That historical execution attempt closed blocked on additional allowances;
+the roadmap and historical phase receipts are unchanged.
+
+### Current PREP Repair Checkpoint
+
+The owner approved both bounded replacement allowances on September 15 and
+the confined, pointer-based manual four-seat route on September 17. Neither
+replacement allowance has been consumed. The approved identities, mandatory
+ordering and read boundaries are in `plans/phase-plan-v13-PREP.md`.
+
+Candidate `5219192` passed the full local runner, including 3449 broad offline
+tests, 140 separate Git-manager tests, both Qdrant modes and container smoke.
+Its diagnostic panel was not accepted: Sol disagreed with concrete blockers,
+Grok partially agreed, Fable agreed with explicit coverage limitations, and
+Gemini remained coverage-incomplete. Reports and the expected-red reproductions
+are preserved under `.phase-loop/runs/v13-PREP-5219192-20260917/`.
+
+The next candidate repairs prepared Release upload/discovery, bounded Actions
+ZIP extraction, signed-digest container promotion, one-shot signing reduction,
+watcher retirement, whole-generation task refusal, post-publication trace
+failures and HTTP error privacy. Installed CLI coverage exposed the additional
+SQLite-schema-7 artifact mismatch; validation now follows the SQLite runtime
+version and rejects unknown future schemas. The focused repair suite passed
+261 tests before this checkpoint. Fresh full, installed/browser/rehearsal,
+four-seat review and one-shot operational proof remain required. These counts
+and historical reports do not grant acceptance to later candidate bytes.
 
 ## PILOT Accepted
 

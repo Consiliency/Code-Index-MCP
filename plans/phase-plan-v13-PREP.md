@@ -4,7 +4,7 @@ phase: PREP
 roadmap: specs/phase-plans-v13.md
 roadmap_sha256: 178b8328d8e7dc76ddc0804d7b72d3ccddb55e23577a3d52cb7cbd70d5fd5308
 automation:
-  suite_command: "env SEMANTIC_SEARCH_ENABLED=false MCP_TEST_MODE=1 uv run --locked --extra dev pytest tests/test_release_metadata.py tests/test_v13_release_candidate.py tests/test_v13_pmcp_pilot.py tests/test_v13_pilot_budget.py tests/test_gateway_transport_boundary.py tests/test_v13_prep_repairs.py -q --no-cov -o log_cli=false"
+  suite_command: "env SEMANTIC_SEARCH_ENABLED=false MCP_TEST_MODE=1 uv run --locked --extra dev pytest tests/test_release_metadata.py tests/test_v13_release_candidate.py tests/test_v13_pmcp_pilot.py tests/test_v13_pilot_budget.py tests/test_gateway_transport_boundary.py tests/test_v13_prep_repairs.py tests/test_v13_prep_panel_repairs.py tests/test_workflow_release_policy.py -q --no-cov -o log_cli=false"
 ---
 
 # PREP: Versioned Candidate And Four-Agent Review
@@ -160,6 +160,48 @@ code approval. The operational limits and sequencing above remain unchanged.
 No additional approval is needed for the already-authorized pilot/signing
 effects, and no fleet expansion or unbounded inference is authorized.
 
+## Diagnostic Panel Repair Amendment - 2026-09-17
+
+Candidate 5219192 passed all standalone runner nodes but is not accepted:
+Sol found reproduced blockers, Grok returned PARTIALLY AGREE, Fable AGREE
+with explicit coverage limits, and Gemini remains coverage-incomplete. Preserve
+all four results. No operational allowance has been consumed. SL-0 now owns
+these additional bounded repairs; SL-1 repeats exact-candidate review afterward.
+
+- test/impl: Connect Release-backed prepared uploads to installed CLI and
+  coordinator fetch while retaining explicit legacy Actions compatibility.
+  Expose prepare/prepared-upload through existing installed commands and prove
+  publisher output can be discovered, authenticated and restored.
+  Validate database schema against SQLiteStore's current migration version,
+  not the legacy artifact-envelope migration helper; reject future versions.
+- test/impl: Inspect the untrusted Actions ZIP before expansion. Reject unknown,
+  nested, duplicate, ambiguous and special members; bound compressed/expanded
+  bytes and member count; use fresh exclusive output before metadata verification.
+- test/impl: Push a unique nonstable image reference, sign and verify its exact
+  digest, then promote version/latest only after release publication succeeds.
+  Serialize release dispatches, preserve protected-main guards and evidence of
+  partial publication; never add automatic retries or a hosted prepare run.
+- test/impl: Read-only signing reduction enumerates exact-candidate workflow
+  dispatches and rejects duplicate/ambiguous effects. The local claim controls
+  this operator, not all holders of a broad GitHub credential. Require an exact
+  signer digest for nondefault trusted source refs.
+- test/impl: Remove unused multi-repo debounce workers and confirm observer
+  termination before resource retirement. Keep missing generation owners
+  fail-closed with an explicit diagnostic, never legacy mutable fallback.
+- test/impl: Refuse unsupported whole-generation task requests before mutation
+  for ready and recovery states; preserve supported task cancellation/ownership.
+- test/impl: Post-publication diagnostic write failures must not fence a committed
+  generation or change its successful mutation result.
+- test/impl: Remove raw exception text from HTTP and health-check error responses
+  without changing structured readiness refusals.
+- docs: Make committed-source-only indexing, retained generations, first rebuild
+  inference cost and external gateway supervision explicit. Performance tuning,
+  automatic reclamation and additional platform support remain out of scope.
+- verify: Preserve expected-failing counterexamples, run focused then full local
+  checks, freeze new source/artifacts and repeat four-seat coverage/reconciliation.
+  Installed/browser/rehearsal gates and all code blockers precede both already
+  approved one-shot effects. No merge or publication in PREP.
+
 ## Lane Index & Dependencies
 
 SL-0 — Version, release docs and candidate proof
@@ -178,7 +220,7 @@ SL-1 — Independent review and evidence reducer
 
 - **Scope**: Prepare consistent patch metadata and prove current candidate behavior with the explicitly renewed operational evidence.
 - **Depends on**: (none)
-- **Owned files**: `pyproject.toml`, `uv.lock`, `mcp_server/__init__.py`, `.github/workflows/release-automation.yml`, `CHANGELOG.md`, `README.md`, `scripts/install-mcp-docker.sh`, `scripts/install-mcp-docker.ps1`, `docs/GETTING_STARTED.md`, `docs/MCP_CONFIGURATION.md`, `docs/SUPPORT_MATRIX.md`, `tests/test_release_metadata.py`, `scripts/v13_release_candidate.py`, `tests/test_v13_release_candidate.py`, `scripts/v13_pmcp_pilot.py`, `tests/test_v13_pmcp_pilot.py`, `scripts/v13_pilot_budget.py`, `tests/test_v13_pilot_budget.py`, `docs/operations/v13-release.md`, `mcp_server/artifacts/artifact_download.py`, `mcp_server/artifacts/integrity_gate.py`, `tests/test_artifact_integrity_gate.py`, `mcp_server/artifacts/artifact_upload.py`, `mcp_server/artifacts/freshness.py`, `mcp_server/artifacts/multi_repo_artifact_coordinator.py`, `mcp_server/artifacts/publisher.py`, `mcp_server/cli/artifact_commands.py`, `mcp_server/cli/task_reindex.py`, `mcp_server/cli/tool_handlers.py`, `mcp_server/cli/stdio_runner.py`, `mcp_server/client.py`, `mcp_server/core/ignore_patterns.py`, `mcp_server/core/repo_resolver.py`, `mcp_server/dispatcher/cross_repo_coordinator.py`, `mcp_server/dispatcher/dispatcher_enhanced.py`, `mcp_server/storage/sqlite_store.py`, `mcp_server/storage/multi_repo_manager.py`, `docs/operations/v13-pmcp-pilot.md`, `docs/security/attestation.md`, `docs/security/auth-boundary.md`, `.github/workflows/sign-published-image.yml`, `tests/test_v13_prep_repairs.py`, `tests/test_artifact_download.py`, `tests/test_artifact_upload.py`, `tests/test_artifact_attestation.py`, `tests/security/test_artifact_attestation.py`, `tests/test_artifact_publish_race.py`, `tests/test_artifact_publish_rollback.py`, `tests/test_artifact_auto_delta.py`, `tests/test_artifact_commands.py`, `tests/test_multi_repo_artifact_coordinator.py`, `tests/test_mcptasks_reindex.py`, `tests/test_artifact_freshness.py`, `tests/test_ignore_patterns.py`, `tests/test_python_client_contract.py`, `tests/test_cross_repo_coordinator.py`, `tests/docs/test_gabase_ga_readiness_contract.py`, `tests/docs/test_garc_rc_soak_contract.py`, `tests/docs/test_garecut_rc_recut_contract.py`, `tests/docs/test_p34_public_alpha_recut.py`, `tests/docs/test_pubname_public_docs.py`, `tests/smoke/test_mcpbase_stdio_smoke.py`, `tests/smoke/test_mcpeval_sdk_surface.py`
+- **Owned files**: `pyproject.toml`, `uv.lock`, `mcp_server/__init__.py`, `.github/workflows/release-automation.yml`, `CHANGELOG.md`, `README.md`, `scripts/install-mcp-docker.sh`, `scripts/install-mcp-docker.ps1`, `docs/GETTING_STARTED.md`, `docs/MCP_CONFIGURATION.md`, `docs/SUPPORT_MATRIX.md`, `tests/test_release_metadata.py`, `scripts/v13_release_candidate.py`, `tests/test_v13_release_candidate.py`, `scripts/v13_pmcp_pilot.py`, `tests/test_v13_pmcp_pilot.py`, `scripts/v13_pilot_budget.py`, `tests/test_v13_pilot_budget.py`, `docs/operations/v13-release.md`, `mcp_server/artifacts/artifact_download.py`, `mcp_server/artifacts/integrity_gate.py`, `tests/test_artifact_integrity_gate.py`, `mcp_server/artifacts/artifact_upload.py`, `mcp_server/artifacts/freshness.py`, `mcp_server/artifacts/multi_repo_artifact_coordinator.py`, `mcp_server/artifacts/publisher.py`, `mcp_server/cli/artifact_commands.py`, `mcp_server/cli/task_reindex.py`, `mcp_server/cli/tool_handlers.py`, `mcp_server/cli/stdio_runner.py`, `mcp_server/client.py`, `mcp_server/core/ignore_patterns.py`, `mcp_server/core/repo_resolver.py`, `mcp_server/dispatcher/cross_repo_coordinator.py`, `mcp_server/dispatcher/dispatcher_enhanced.py`, `mcp_server/storage/sqlite_store.py`, `mcp_server/storage/multi_repo_manager.py`, `docs/operations/v13-pmcp-pilot.md`, `docs/security/attestation.md`, `docs/security/auth-boundary.md`, `.github/workflows/sign-published-image.yml`, `tests/test_v13_prep_repairs.py`, `tests/test_artifact_download.py`, `tests/test_artifact_upload.py`, `tests/test_artifact_attestation.py`, `tests/security/test_artifact_attestation.py`, `tests/test_artifact_publish_race.py`, `tests/test_artifact_publish_rollback.py`, `tests/test_artifact_auto_delta.py`, `tests/test_artifact_commands.py`, `tests/test_multi_repo_artifact_coordinator.py`, `tests/test_mcptasks_reindex.py`, `tests/test_artifact_freshness.py`, `tests/test_ignore_patterns.py`, `tests/test_python_client_contract.py`, `tests/test_cross_repo_coordinator.py`, `tests/docs/test_gabase_ga_readiness_contract.py`, `tests/docs/test_garc_rc_soak_contract.py`, `tests/docs/test_garecut_rc_recut_contract.py`, `tests/docs/test_p34_public_alpha_recut.py`, `tests/docs/test_pubname_public_docs.py`, `tests/smoke/test_mcpbase_stdio_smoke.py`, `tests/smoke/test_mcpeval_sdk_surface.py`, `mcp_server/artifacts/attestation.py`, `mcp_server/gateway.py`, `mcp_server/metrics/health_check.py`, `mcp_server/watcher/file_watcher.py`, `mcp_server/watcher_multi_repo.py`, `mcp_server/storage/git_index_manager.py`, `tests/test_v13_prep_panel_repairs.py`, `tests/test_gateway_transport_boundary.py`, `tests/test_watcher_multi_repo.py`, `tests/test_workflow_release_policy.py`, `tests/test_gateway.py`
 - **Interfaces provided**: prepared-version-contract, version-only-evidence-binding, fresh-release-checks
 - **Interfaces consumed**: accepted-pilot-contract (pre-existing), accepted-freeze-contract (pre-existing)
 - **Parallel-safe**: no

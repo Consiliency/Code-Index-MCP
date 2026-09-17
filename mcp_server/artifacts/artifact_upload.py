@@ -451,8 +451,9 @@ class IndexArtifactUploader:
 
         attestation_path: Optional[Path] = None
         if attestation is not None and attestation.bundle_path and attestation.bundle_path.exists():
-            attestation_path = bundle_dir / attestation.bundle_path.name
-            attestation_path.write_bytes(attestation.bundle_path.read_bytes())
+            attestation_path = bundle_dir / "artifact-metadata.json.attestation.jsonl"
+            with attestation_path.open("xb") as handle:
+                handle.write(attestation.bundle_path.read_bytes())
 
         assets = [archive_path, metadata_path, checksum_path]
         if attestation_path is not None:
@@ -487,6 +488,33 @@ class IndexArtifactUploader:
             raise RuntimeError(
                 f"Release {tag} missing required assets after upload: {', '.join(missing)}"
             )
+
+    def upload_prepared(
+        self,
+        archive_path: Path,
+        metadata_path: Path,
+        *,
+        repo_id: Optional[str] = None,
+        tracked_branch: Optional[str] = None,
+        commit: Optional[str] = None,
+    ) -> "ReleaseAssetBundle":
+        """Verify and upload existing signed bytes without rebuilding metadata."""
+        from .artifact_download import IndexArtifactDownloader
+
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        if not isinstance(metadata, dict) or metadata.get("checksum") != self._calculate_checksum(
+            archive_path
+        ):
+            raise ValueError("Prepared archive checksum does not match its metadata")
+        if metadata_path.read_bytes() != _metadata_bytes(metadata):
+            raise ValueError("Prepared metadata is not canonical; prepare and sign again")
+        reasons = IndexArtifactDownloader(repo=self.repo).validate_artifact_identity(
+            metadata, repo_id=repo_id, tracked_branch=tracked_branch, target_commit=commit
+        )
+        if reasons:
+            raise ValueError("Prepared artifact identity mismatch: " + "; ".join(reasons))
+        attestation = attest(metadata_path, repo=self.repo)
+        return self.upload_direct(archive_path, metadata, attestation=attestation)
 
     def upload_direct(
         self,
@@ -605,17 +633,7 @@ def run_cli(args: argparse.Namespace) -> int:
     if getattr(args, "prepared_archive", None):
         if not args.prepared_metadata:
             raise ValueError("--prepared-archive requires --prepared-metadata")
-        archive = Path(args.prepared_archive)
-        metadata = json.loads(Path(args.prepared_metadata).read_text(encoding="utf-8"))
-        if not isinstance(metadata, dict) or metadata.get(
-            "checksum"
-        ) != uploader._calculate_checksum(archive):
-            raise ValueError("Prepared archive checksum does not match its metadata")
-        metadata_path = Path(args.prepared_metadata)
-        if metadata_path.read_bytes() != _metadata_bytes(metadata):
-            raise ValueError("Prepared metadata is not canonical; prepare and sign again")
-        attestation = attest(metadata_path, repo=uploader.repo)
-        uploader.upload_direct(archive, metadata, attestation=attestation)
+        uploader.upload_prepared(Path(args.prepared_archive), Path(args.prepared_metadata))
         return 0
     if getattr(args, "prepared_metadata", None):
         raise ValueError("--prepared-metadata requires --prepared-archive")

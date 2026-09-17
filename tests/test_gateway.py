@@ -623,7 +623,8 @@ class TestStatusEndpoint:
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "error"
-        assert "Stats error" in data["message"]
+        assert data["message"] == "Failed to get server status"
+        assert "Stats error" not in response.text
 
     def test_status_plugin_statistics(self, test_client_with_dispatcher):
         """Test status reports plugin count via plugins() Protocol method."""

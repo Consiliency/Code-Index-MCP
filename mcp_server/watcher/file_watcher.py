@@ -223,11 +223,13 @@ class _Handler(FileSystemEventHandler):
             logger.warning("Watcher mutation unavailable without a generation owner")
             return True
         ctx = self.index_manager._resolve_ctx(self.ctx.repo_id)
-        if ctx is not None:
-            self.ctx = ctx
-            result = self.index_manager.sync_repository_index(ctx.repo_id)
-            if result.action in {"full_index", "incremental_update"}:
-                self._kick_cache_invalidation(path)
+        if ctx is None:
+            logger.warning("Watcher reconciliation requires a registered repository context")
+            return True
+        self.ctx = ctx
+        result = self.index_manager.sync_repository_index(ctx.repo_id)
+        if result.action in {"full_index", "incremental_update"}:
+            self._kick_cache_invalidation(path)
         return True
 
     def _trigger_reindex(self, path: Path) -> None:

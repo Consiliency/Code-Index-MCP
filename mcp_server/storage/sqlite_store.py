@@ -349,6 +349,8 @@ def assert_chunk_scheme_readable(
 class SQLiteStore:
     """SQLite-based storage implementation with FTS5 support."""
 
+    SCHEMA_VERSION = 7
+
     def __init__(
         self,
         db_path: str = "code_index.db",

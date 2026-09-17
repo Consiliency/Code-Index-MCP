@@ -227,7 +227,7 @@ class TestHandlerGitignoreFilter:
             ignored_file = tmp_path / "debug.log"
             ignored_file.write_text("log content")
             # Treat .log as code extension by patching code_extensions
-            handler._inner_handler.code_extensions = {".log", ".py"}
+            handler.code_extensions = {".log", ".py"}
             handler._trigger_reindex_with_ctx(ignored_file)
 
         dispatcher.index_file.assert_not_called()

@@ -197,6 +197,7 @@ def test_reconcile_workspace_marks_missing_or_ready(tmp_path: Path):
 
 @pytest.mark.parametrize("upload_fails", [False, True])
 def test_publish_workspace_records_actual_upload_outcome(monkeypatch, tmp_path: Path, upload_fails):
+    monkeypatch.setenv("MCP_ATTESTATION_MODE", "skip")
     manager = MultiRepositoryManager(central_index_path=tmp_path / "registry.json")
     repo_path = tmp_path / "repo"
     repo_path.mkdir()
@@ -258,7 +259,33 @@ def test_publish_workspace_records_actual_upload_outcome(monkeypatch, tmp_path: 
     manager.close()
 
 
+def test_enforced_workspace_publish_refuses_before_compression(monkeypatch, tmp_path):
+    from unittest.mock import Mock
+
+    monkeypatch.setenv("MCP_ATTESTATION_MODE", "enforce")
+    manager = MultiRepositoryManager(central_index_path=tmp_path / "registry.json")
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    repo_info = _repo_info("repo-1", repo_path)
+    manager.registry.register(repo_info)
+    _write_ready_index(repo_info)
+    compression = Mock()
+    monkeypatch.setattr(
+        "mcp_server.artifacts.multi_repo_artifact_coordinator.IndexArtifactUploader.compress_indexes",
+        compression,
+    )
+    try:
+        result = MultiRepoArtifactCoordinator(manager).publish_workspace(["repo-1"])
+        assert result[0].success is False
+        assert result[0].details["code"] == "attestation_required"
+        compression.assert_not_called()
+        assert manager.registry.get("repo-1").last_published_commit is None
+    finally:
+        manager.close()
+
+
 def test_workspace_publish_and_fetch_do_not_chdir(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("MCP_ATTESTATION_MODE", "skip")
     manager = MultiRepositoryManager(central_index_path=tmp_path / "registry.json")
     repo_path = tmp_path / "repo"
     repo_path.mkdir()

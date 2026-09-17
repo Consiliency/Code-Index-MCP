@@ -226,6 +226,23 @@ class MultiRepoArtifactCoordinator:
                     results.append(refused)
                     continue
 
+                from .attestation import _attestation_mode
+
+                if _attestation_mode() == "enforce":
+                    results.append(
+                        RepoArtifactLifecycleResult(
+                            repository_id=repo.repository_id,
+                            repository_name=repo.name,
+                            action="publish",
+                            success=False,
+                            error="Signed prepared artifact required",
+                            details={
+                                "code": "attestation_required",
+                                "remediation": "Use artifact push --prepare-only for each repository, sign its metadata, then --prepared-archive with --prepared-metadata",
+                            },
+                        )
+                    )
+                    continue
                 index_location = Path(repo.index_location or repo.index_path.parent)
                 archive_path = index_location / f"index-archive-{uuid4().hex}.tar.gz"
                 uploader = IndexArtifactUploader(repo_path=repo.path)
@@ -347,7 +364,7 @@ class MultiRepoArtifactCoordinator:
                 self.multi_repo_manager.registry.update_artifact_state(
                     repo.repository_id,
                     last_recovered_commit=repo.last_indexed_commit,
-                    artifact_backend=repo.artifact_backend or "github_actions",
+                    artifact_backend=artifact.get("artifact_backend") or "github_actions",
                     artifact_health=health,
                     available_semantic_profiles=profiles,
                 )

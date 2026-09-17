@@ -1070,6 +1070,15 @@ async def handle_reindex(
                     "hint": "Reindex the registered repository without a file or nested path scope.",
                 }
             )
+        if request_experimental is not None and request_experimental.is_task:
+            return _json_text_response(
+                {
+                    "error": "Whole-repository rebuild does not support task mode",
+                    "code": "task_scope_unsupported",
+                    "mutation_performed": False,
+                    "hint": "Retry without a task object for a synchronous staged rebuild.",
+                }
+            )
         sync_result = await anyio.to_thread.run_sync(
             git_index_manager.rebuild_repository_index,
             readiness.repository_id,
@@ -1151,6 +1160,15 @@ async def handle_reindex(
         and not target_path.is_file()
     )
     if git_index_manager is not None and whole_repository and ctx is not None:
+        if request_experimental is not None and request_experimental.is_task:
+            return _json_text_response(
+                {
+                    "error": "Whole-repository rebuild does not support task mode",
+                    "code": "task_scope_unsupported",
+                    "mutation_performed": False,
+                    "hint": "Retry without a task object for a synchronous staged rebuild.",
+                }
+            )
         sync_result = await anyio.to_thread.run_sync(
             git_index_manager.rebuild_repository_index, ctx.repo_id, abandon_on_cancel=False
         )

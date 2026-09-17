@@ -1,10 +1,11 @@
 """
-CLI commands for managing index artifacts in GitHub Actions.
+CLI commands for managing signed index artifacts in GitHub Releases.
 
 This module provides commands for uploading, downloading, and managing
-index artifacts using GitHub Actions Artifacts storage.
+index artifacts with legacy GitHub Actions compatibility.
 """
 
+import hashlib
 import json
 import subprocess
 import tempfile
@@ -20,6 +21,7 @@ from mcp_server.artifacts.artifact_download import (
     format_artifact_table,
 )
 from mcp_server.artifacts.artifact_upload import IndexArtifactUploader
+from mcp_server.artifacts.attestation import _attestation_mode
 from mcp_server.artifacts.multi_repo_artifact_coordinator import (
     MultiRepoArtifactCoordinator,
 )
@@ -286,7 +288,7 @@ def _print_reconcile_guidance() -> None:
 
 @click.group()
 def artifact():
-    """Manage index artifacts in GitHub Actions."""
+    """Manage signed Release index artifacts and legacy Actions downloads."""
 
 
 @artifact.command()
@@ -294,6 +296,12 @@ def artifact():
 @click.option("--compress-only", is_flag=True, help="Only compress, do not upload")
 @click.option("--no-secure", is_flag=True, help="Disable secure export (include all files)")
 @click.option("--repository", help="Registered repository id or name")
+@click.option("--prepare-only", is_flag=True, help="Prepare archive and metadata without uploading")
+@click.option(
+    "--metadata-output", type=click.Path(path_type=Path), default="artifact-metadata.json"
+)
+@click.option("--prepared-archive", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.option("--prepared-metadata", type=click.Path(exists=True, dir_okay=False, path_type=Path))
 @click.option(
     "--skip-if-current",
     is_flag=True,
@@ -306,9 +314,25 @@ def push(
     no_secure: bool,
     skip_if_current: bool,
     repository: Optional[str],
+    prepare_only: bool,
+    metadata_output: Path,
+    prepared_archive: Optional[Path],
+    prepared_metadata: Optional[Path],
 ):
-    """Upload local indexes to GitHub Actions Artifacts."""
+    """Prepare or upload signed local index Release assets."""
     try:
+        if bool(prepared_archive) != bool(prepared_metadata):
+            raise click.ClickException(
+                "Both --prepared-archive and --prepared-metadata are required"
+            )
+        if (prepared_archive and (prepare_only or compress_only or no_secure)) or (
+            prepare_only and compress_only
+        ):
+            raise click.ClickException(
+                "Preparation, compression and prepared upload are separate modes"
+            )
+        if prepare_only and (metadata_output.exists() or metadata_output.is_symlink()):
+            raise click.ClickException("Prepared metadata already exists; use a fresh output path")
         repo_info = _resolve_repository(repository)
         index_path = _canonical_index_path(repo_info)
         index_location = _canonical_index_location(repo_info)
@@ -329,6 +353,13 @@ def push(
             click.echo("This indexed commit was already published. Skipping upload.")
             return
 
+        if (
+            not (prepare_only or compress_only or prepared_archive)
+            and _attestation_mode() == "enforce"
+        ):
+            raise click.ClickException(
+                "Use --prepare-only, sign the metadata, then --prepared-archive with --prepared-metadata"
+            )
         uploader = IndexArtifactUploader(repo_path=repo_info.path if repo_info else None)
 
         if validate:
@@ -344,28 +375,57 @@ def push(
                     raise click.ClickException("Index integrity validation failed")
             click.echo("✅ Validation passed")
 
-        secure = not no_secure
-        archive_path, checksum, size = uploader.compress_indexes(
-            index_location / f"index-archive-{uuid4().hex}.tar.gz",
-            secure=secure,
-            repo_path=repo_info.path if repo_info else Path.cwd(),
-            index_location=index_location,
-            index_path=index_path,
-        )
-        if compress_only:
-            click.echo(f"Prepared archive: {archive_path}; no upload requested")
-            return
-        metadata = uploader.create_metadata(
-            checksum,
-            size,
-            secure=secure,
-            repo_id=repo_info.repository_id if repo_info else None,
-            commit=repo_info.last_indexed_commit if repo_info else None,
-            tracked_branch=repo_info.tracked_branch if repo_info else None,
-            index_location=index_location,
-            index_path=index_path,
-        )
-        uploader.upload_direct(archive_path, metadata)
+        identity = {
+            "repo_id": repo_info.repository_id if repo_info else None,
+            "commit": repo_info.last_indexed_commit if repo_info else None,
+            "tracked_branch": repo_info.tracked_branch if repo_info else None,
+        }
+        if prepared_archive:
+            assert prepared_metadata is not None
+            uploader.upload_prepared(prepared_archive, prepared_metadata, **identity)
+        else:
+            secure = not no_secure
+            archive_path, checksum, size = uploader.compress_indexes(
+                index_location / f"index-archive-{uuid4().hex}.tar.gz",
+                secure=secure,
+                repo_path=repo_info.path if repo_info else Path.cwd(),
+                index_location=index_location,
+                index_path=index_path,
+            )
+            if compress_only:
+                click.echo(f"Prepared archive: {archive_path}; no upload requested")
+                return
+            if prepare_only:
+                uploader.write_metadata_file(
+                    checksum=checksum,
+                    size=size,
+                    output_path=metadata_output,
+                    secure=secure,
+                    index_location=index_location,
+                    index_path=index_path,
+                    **identity,
+                )
+                click.echo(
+                    json.dumps(
+                        {
+                            "archive": str(archive_path),
+                            "metadata": str(metadata_output),
+                            "sha256": hashlib.sha256(metadata_output.read_bytes()).hexdigest(),
+                            "archive_sha256": checksum,
+                            "uploaded": False,
+                        }
+                    )
+                )
+                return
+            metadata = uploader.create_metadata(
+                checksum,
+                size,
+                secure=secure,
+                index_location=index_location,
+                index_path=index_path,
+                **identity,
+            )
+            uploader.upload_direct(archive_path, metadata)
         if repo_info is not None:
             with closing(MultiRepositoryManager()) as owner:
                 owner.registry.update_artifact_state(

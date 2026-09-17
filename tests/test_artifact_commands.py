@@ -79,6 +79,7 @@ def test_implicit_repository_resolution_finds_registered_cwd(monkeypatch, tmp_pa
 
 
 def test_push_records_uploaded_commit_and_next_skip_does_not_upload(monkeypatch, tmp_path):
+    monkeypatch.setenv("MCP_ATTESTATION_MODE", "skip")
     owner = MultiRepositoryManager(central_index_path=tmp_path / "registry.json")
     repo = _repo_info("repo-1", tmp_path)
     _write_ready_index(repo)

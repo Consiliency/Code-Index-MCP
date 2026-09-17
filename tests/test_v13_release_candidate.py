@@ -385,7 +385,7 @@ def signing_candidate(candidate, monkeypatch):
         }
     ]
     calls = []
-    state = {"verification_exit": 0}
+    state = {"verification_exit": 0, "dispatch_ids": [123]}
     original_run = subprocess.run
 
     def gh(args, **kwargs):
@@ -393,7 +393,12 @@ def signing_candidate(candidate, monkeypatch):
             return original_run(args, **kwargs)
         calls.append(args)
         if args[1] == "api":
-            payload = jobs if args[2].endswith("/jobs") else run
+            if "/actions/workflows/" in args[2]:
+                assert "head_sha=" + intent["source"] in args
+                assert "--paginate" in args and "--slurp" in args
+                payload = [{"workflow_runs": [{"id": value} for value in state["dispatch_ids"]]}]
+            else:
+                payload = jobs if args[2].endswith("/jobs") else run
         else:
             assert args[:3] == ["gh", "attestation", "verify"]
             assert args[args.index("--source-ref") + 1] == intent["ref"]
@@ -413,10 +418,19 @@ def test_signing_proof_uses_production_verifier_and_never_dispatches(signing_can
     before = {path.name: path.read_bytes() for path in root.iterdir()}
     result = release.verify_signing_proof(repo, root)
     assert result["production_verifier"] == "passed"
+    assert result["observed_candidate_dispatches"] == 1
     assert result["new_dispatches"] == 0
     assert len([args for args in calls if args[1] == "attestation"]) == 2
     assert not any("workflow" in args for args in calls)
     assert before == {path.name: path.read_bytes() for path in root.iterdir()}
+
+
+@pytest.mark.parametrize("dispatch_ids", [[], [123, 124], [124]])
+def test_signing_proof_rejects_missing_duplicate_or_other_dispatch(signing_candidate, dispatch_ids):
+    repo, root, _, _, _, state, _ = signing_candidate
+    state["dispatch_ids"] = dispatch_ids
+    with pytest.raises(CandidateRefused, match="signing_dispatch_count_mismatch"):
+        release.verify_signing_proof(repo, root)
 
 
 def test_second_signing_claim_cannot_reset_or_replace_intent(signing_candidate):

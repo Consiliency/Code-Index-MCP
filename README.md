@@ -549,6 +549,9 @@ synchronous path or include a `task` object in `tools/call` and then use
 terminal payload retrieval, and best-effort cancellation. Readiness refusals,
 path sandbox failures, conflicting scope errors, and
 summarizer-unavailable preflights still fail synchronously before any task is created.
+Whole-repository generation rebuilds, including readiness recovery, require the
+synchronous path. A task request for that scope returns `task_scope_unsupported`
+without mutation; it never silently runs a long synchronous rebuild instead.
 
 Current verified MCP client posture is summarized in the
 [MCP compatibility matrix](docs/status/MCP_COMPATIBILITY_EVALUATION.md). The

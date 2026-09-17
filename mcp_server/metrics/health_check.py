@@ -72,11 +72,11 @@ class ComponentHealthChecker(IHealthCheck):
                 message="Health check timed out",
             )
         except Exception as e:
-            logger.error(f"Health check for {component_name} failed: {e}", exc_info=True)
+            logger.error("Health check for %s failed (%s)", component_name, type(e).__name__)
             return HealthCheckResult(
                 component=component_name,
                 status=HealthStatus.UNHEALTHY,
-                message=f"Health check failed: {str(e)}",
+                message="Health check failed",
             )
 
     async def check_all_components(self) -> List[HealthCheckResult]:
@@ -97,7 +97,7 @@ class ComponentHealthChecker(IHealthCheck):
                     results[i] = HealthCheckResult(
                         component=component_names[i],
                         status=HealthStatus.UNHEALTHY,
-                        message=f"Health check failed: {str(result)}",
+                        message="Health check failed",
                     )
 
         return results
@@ -206,11 +206,11 @@ class ComponentHealthChecker(IHealthCheck):
             return HealthCheckResult(
                 component="system", status=status, message=message, details=details
             )
-        except Exception as e:
+        except Exception:
             return HealthCheckResult(
                 component="system",
                 status=HealthStatus.UNHEALTHY,
-                message=f"Failed to check system health: {str(e)}",
+                message="Failed to check system health",
             )
 
     async def _check_memory_health(self) -> HealthCheckResult:
@@ -243,11 +243,11 @@ class ComponentHealthChecker(IHealthCheck):
             return HealthCheckResult(
                 component="memory", status=status, message=message, details=details
             )
-        except Exception as e:
+        except Exception:
             return HealthCheckResult(
                 component="memory",
                 status=HealthStatus.UNHEALTHY,
-                message=f"Failed to check memory health: {str(e)}",
+                message="Failed to check memory health",
             )
 
     async def _check_disk_health(self) -> HealthCheckResult:
@@ -284,7 +284,7 @@ class ComponentHealthChecker(IHealthCheck):
             return HealthCheckResult(
                 component="disk",
                 status=HealthStatus.UNHEALTHY,
-                message=f"Failed to check disk health: {str(e)}",
+                message="Failed to check disk health",
             )
 
     def create_database_health_check(
@@ -337,11 +337,11 @@ class ComponentHealthChecker(IHealthCheck):
                         status=HealthStatus.UNHEALTHY,
                         message="Database connection failed",
                     )
-            except Exception as e:
+            except Exception:
                 return HealthCheckResult(
                     component="database",
                     status=HealthStatus.UNHEALTHY,
-                    message=f"Database health check failed: {str(e)}",
+                    message="Database health check failed",
                 )
 
         return check_database
@@ -399,11 +399,11 @@ class ComponentHealthChecker(IHealthCheck):
                 return HealthCheckResult(
                     component="plugins", status=status, message=message, details=details
                 )
-            except Exception as e:
+            except Exception:
                 return HealthCheckResult(
                     component="plugins",
                     status=HealthStatus.UNHEALTHY,
-                    message=f"Plugin health check failed: {str(e)}",
+                    message="Plugin health check failed",
                 )
 
         return check_plugins

@@ -21,10 +21,10 @@ from .core.repo_context import RepoContext
 from .core.repo_resolver import RepoResolver, run_repository_mutation
 from .dispatcher.dispatcher_enhanced import EnhancedDispatcher, IndexResult, IndexResultStatus
 from .indexing.lock_registry import lock_registry
+from .plugins.language_registry import get_all_extensions
 from .storage.git_index_manager import GitAwareIndexManager, should_reindex_for_branch
 from .storage.repository_registry import RepositoryRegistry
 from .utils.subprocess_env import get_full_env
-from .watcher import _Handler
 from .watcher.sweeper import WatcherSweeper
 
 logger = logging.getLogger(__name__)
@@ -130,9 +130,7 @@ class MultiRepositoryHandler(FileSystemEventHandler):
         self.repo_path = repo_path
         self.parent_watcher = parent_watcher
         self.ctx = ctx
-        self._inner_handler = _Handler(
-            parent_watcher.dispatcher, parent_watcher.query_cache, parent_watcher.path_resolver
-        )
+        self.code_extensions = get_all_extensions()
         self._gitignore_filter = build_walker_filter(repo_path)
 
     def _refresh_context(self) -> bool:
@@ -240,7 +238,7 @@ class MultiRepositoryHandler(FileSystemEventHandler):
             logger.debug("Dropping reindex event for %s: matched gitignore filter", path)
             return False
 
-        if path.suffix not in self._inner_handler.code_extensions:
+        if path.suffix not in self.code_extensions:
             return False
         if not path.exists():
             return False
@@ -298,7 +296,7 @@ class MultiRepositoryHandler(FileSystemEventHandler):
         if self._gitignore_filter(path):
             return False
 
-        if path.suffix not in self._inner_handler.code_extensions:
+        if path.suffix not in self.code_extensions:
             return False
 
         logger.info("Removing from index: %s (repo=%s)", path, self.repo_id)
@@ -325,7 +323,7 @@ class MultiRepositoryHandler(FileSystemEventHandler):
         if self._gitignore_filter(new_path):
             return False
 
-        exts = self._inner_handler.code_extensions
+        exts = self.code_extensions
         if old_path.suffix not in exts and new_path.suffix not in exts:
             return False
 
@@ -607,7 +605,7 @@ class MultiRepositoryWatcher:
             handler = self.watchers.pop(repo_id, None)
             if observer is not None:
                 observer.stop()
-                observer.join(timeout=5)
+                observer.join()
         repo_root = (
             Path(repo_info.path)
             if repo_info is not None

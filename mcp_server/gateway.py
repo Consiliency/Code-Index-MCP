@@ -1306,7 +1306,7 @@ async def register(
         }
     except Exception as e:
         logger.error(f"User registration failed: {type(e).__name__}")
-        raise HTTPException(400, str(e))
+        raise HTTPException(400, "User registration failed")
 
 
 # Security management endpoints
@@ -1375,7 +1375,7 @@ async def detailed_health_check() -> Dict[str, Any]:
         logger.error(f"Health check failed: {type(e).__name__}")
         return {
             "status": "unhealthy",
-            "message": f"Health check failed: {str(e)}",
+            "message": "Health check failed",
             "timestamp": time.time(),
         }
 
@@ -1394,7 +1394,7 @@ async def component_health_check(component: str) -> Dict[str, Any]:
         }
     except Exception as e:
         logger.error(f"Component health check failed for {component}: {type(e).__name__}")
-        raise HTTPException(500, f"Health check failed: {str(e)}")
+        raise HTTPException(500, "Health check failed")
 
 
 @app.get("/ready")
@@ -1466,7 +1466,7 @@ def get_prometheus_metrics() -> Response:
         return Response(content=metrics, media_type=prometheus_exporter.get_content_type())
     except Exception as e:
         logger.error(f"Failed to generate Prometheus metrics: {type(e).__name__}")
-        raise HTTPException(500, f"Failed to generate metrics: {str(e)}")
+        raise HTTPException(500, "Failed to generate metrics")
 
 
 @app.get("/metrics/json")
@@ -1485,7 +1485,7 @@ def get_metrics_json(
         }
     except Exception as e:
         logger.error(f"Failed to get JSON metrics: {type(e).__name__}")
-        raise HTTPException(500, f"Failed to get metrics: {str(e)}")
+        raise HTTPException(500, "Failed to get metrics")
 
 
 def _require_current_generation(ctx: RepoContext) -> None:
@@ -1575,7 +1575,7 @@ async def symbol(
             query=symbol, semantic=False, results_count=0, duration=duration
         )
         logger.error("Symbol lookup failed (%s)", type(e).__name__)
-        raise HTTPException(500, f"Internal error during symbol lookup: {str(e)}")
+        raise HTTPException(500, "Internal error during symbol lookup")
 
 
 @app.get("/search", response_model=list[dict[str, Any]])
@@ -1907,7 +1907,7 @@ async def search(
             query=q, semantic=semantic, results_count=0, duration=duration
         )
         logger.error("Search failed (%s)", type(e).__name__)
-        raise HTTPException(500, f"Internal error during search: {str(e)}")
+        raise HTTPException(500, "Internal error during search")
 
 
 @app.get("/search/capabilities")
@@ -2100,7 +2100,7 @@ async def get_status(
             "indexed_files": {"total": 0, "by_language": {}},
             "profile_hydration": profile_hydration_status,
             "version": "0.1.0",
-            "message": str(e),
+            "message": "Failed to get server status",
         }
 
 
@@ -2136,7 +2136,7 @@ def plugins(
         return plugin_list
     except Exception as e:
         logger.error(f"Error getting plugin list: {type(e).__name__}")
-        raise HTTPException(500, f"Internal error getting plugins: {str(e)}")
+        raise HTTPException(500, "Internal error getting plugins")
 
 
 @app.post("/reindex")
@@ -2304,7 +2304,7 @@ async def reindex(
         raise
     except Exception as e:
         logger.error(f"Reindexing failed: {type(e).__name__}")
-        raise HTTPException(500, f"Reindexing failed: {str(e)}")
+        raise HTTPException(500, "Reindexing failed")
 
 
 @app.post("/plugins/{plugin_name}/reload")
@@ -2331,7 +2331,7 @@ async def reload_plugin(
         }
     except Exception as e:
         logger.error(f"Failed to reload plugin '{plugin_name}': {type(e).__name__}")
-        raise HTTPException(500, f"Failed to reload plugin: {str(e)}")
+        raise HTTPException(500, "Failed to reload plugin")
 
 
 @app.post("/plugins/{plugin_name}/enable")
@@ -2363,7 +2363,7 @@ async def enable_plugin(
         }
     except Exception as e:
         logger.error(f"Failed to enable plugin '{plugin_name}': {type(e).__name__}")
-        raise HTTPException(500, f"Failed to enable plugin: {str(e)}")
+        raise HTTPException(500, "Failed to enable plugin")
 
 
 @app.post("/plugins/{plugin_name}/disable")
@@ -2395,7 +2395,7 @@ async def disable_plugin(
         }
     except Exception as e:
         logger.error(f"Failed to disable plugin '{plugin_name}': {type(e).__name__}")
-        raise HTTPException(500, f"Failed to disable plugin: {str(e)}")
+        raise HTTPException(500, "Failed to disable plugin")
 
 
 # Cache management endpoints
@@ -2435,7 +2435,7 @@ async def get_cache_stats(
         return stats
     except Exception as e:
         logger.error(f"Failed to get cache stats: {type(e).__name__}")
-        raise HTTPException(500, f"Failed to get cache statistics: {str(e)}")
+        raise HTTPException(500, "Failed to get cache statistics")
 
 
 @app.post("/cache/clear")
@@ -2457,7 +2457,7 @@ async def clear_cache(
         }
     except Exception as e:
         logger.error(f"Failed to clear cache: {type(e).__name__}")
-        raise HTTPException(500, f"Failed to clear cache: {str(e)}")
+        raise HTTPException(500, "Failed to clear cache")
 
 
 @app.post("/cache/invalidate")
@@ -2483,7 +2483,7 @@ async def invalidate_cache_by_tags(
         }
     except Exception as e:
         logger.error(f"Failed to invalidate cache by tags: {type(e).__name__}")
-        raise HTTPException(500, f"Failed to invalidate cache: {str(e)}")
+        raise HTTPException(500, "Failed to invalidate cache")
 
 
 @app.post("/cache/invalidate/files")
@@ -2512,7 +2512,7 @@ async def invalidate_cache_by_files(
         }
     except Exception as e:
         logger.error(f"Failed to invalidate cache by files: {type(e).__name__}")
-        raise HTTPException(500, f"Failed to invalidate cache by files: {str(e)}")
+        raise HTTPException(500, "Failed to invalidate cache by files")
 
 
 @app.post("/cache/invalidate/semantic")
@@ -2536,7 +2536,7 @@ async def invalidate_semantic_cache(
         }
     except Exception as e:
         logger.error(f"Failed to invalidate semantic cache: {type(e).__name__}")
-        raise HTTPException(500, f"Failed to invalidate semantic cache: {str(e)}")
+        raise HTTPException(500, "Failed to invalidate semantic cache")
 
 
 @app.post("/cache/warm")
@@ -2564,7 +2564,7 @@ async def warm_cache(
         }
     except Exception as e:
         logger.error(f"Failed to warm cache: {type(e).__name__}")
-        raise HTTPException(500, f"Failed to warm cache: {str(e)}")
+        raise HTTPException(500, "Failed to warm cache")
 
 
 @app.post("/cache/cleanup")
@@ -2588,7 +2588,7 @@ async def cleanup_cache(
         }
     except Exception as e:
         logger.error(f"Failed to cleanup cache: {type(e).__name__}")
-        raise HTTPException(500, f"Failed to cleanup cache: {str(e)}")
+        raise HTTPException(500, "Failed to cleanup cache")
 
 
 # Hybrid Search endpoints
@@ -2661,7 +2661,7 @@ async def update_search_weights(
         }
     except Exception as e:
         logger.error(f"Failed to update search weights: {type(e).__name__}")
-        raise HTTPException(500, f"Failed to update weights: {str(e)}")
+        raise HTTPException(500, "Failed to update weights")
 
 
 @app.put("/search/config/methods")
@@ -2698,7 +2698,7 @@ async def toggle_search_methods(
         }
     except Exception as e:
         logger.error(f"Failed to update search methods: {type(e).__name__}")
-        raise HTTPException(500, f"Failed to update methods: {str(e)}")
+        raise HTTPException(500, "Failed to update methods")
 
 
 @app.get("/search/statistics")
@@ -2767,7 +2767,7 @@ async def optimize_search_indexes(
         }
     except Exception as e:
         logger.error(f"Failed to optimize search indexes: {type(e).__name__}")
-        raise HTTPException(500, f"Failed to optimize indexes: {str(e)}")
+        raise HTTPException(500, "Failed to optimize indexes")
 
 
 @app.get("/search/term/{term}/stats")
@@ -2789,7 +2789,7 @@ async def get_term_statistics(
         return {"term": term, "statistics": stats}
     except Exception as e:
         logger.error(f"Failed to get term statistics: {type(e).__name__}")
-        raise HTTPException(500, f"Failed to get term statistics: {str(e)}")
+        raise HTTPException(500, "Failed to get term statistics")
 
 
 @app.post("/search/rebuild")
@@ -2845,7 +2845,7 @@ async def rebuild_search_indexes(
         }
     except Exception as e:
         logger.error(f"Failed to rebuild search indexes: {type(e).__name__}")
-        raise HTTPException(500, f"Failed to rebuild indexes: {str(e)}")
+        raise HTTPException(500, "Failed to rebuild indexes")
 
 
 # Graph Analysis Endpoints
@@ -2874,7 +2874,7 @@ async def get_symbol_dependencies(
         }
     except Exception as e:
         logger.error("Dependency lookup failed (%s)", type(e).__name__)
-        raise HTTPException(500, f"Failed to get dependencies: {str(e)}")
+        raise HTTPException(500, "Failed to get dependencies")
 
 
 @app.get("/graph/dependents/{symbol}")
@@ -2900,7 +2900,7 @@ async def get_symbol_dependents(
         }
     except Exception as e:
         logger.error("Dependent lookup failed (%s)", type(e).__name__)
-        raise HTTPException(500, f"Failed to get dependents: {str(e)}")
+        raise HTTPException(500, "Failed to get dependents")
 
 
 @app.get("/graph/hotspots")
@@ -2924,7 +2924,7 @@ async def get_code_hotspots(
         }
     except Exception as e:
         logger.error(f"Error getting hotspots: {type(e).__name__}")
-        raise HTTPException(500, f"Failed to get hotspots: {str(e)}")
+        raise HTTPException(500, "Failed to get hotspots")
 
 
 @app.post("/graph/context")
@@ -2986,7 +2986,7 @@ async def get_context_for_symbols(
         }
     except Exception as e:
         logger.error(f"Error getting context for symbols: {type(e).__name__}")
-        raise HTTPException(500, f"Failed to get context: {str(e)}")
+        raise HTTPException(500, "Failed to get context")
 
 
 @app.get("/graph/search")
@@ -3034,7 +3034,7 @@ async def graph_search(
         }
     except Exception as e:
         logger.error(f"Error in graph search: {type(e).__name__}")
-        raise HTTPException(500, f"Graph search failed: {str(e)}")
+        raise HTTPException(500, "Graph search failed")
 
 
 @app.get("/graph/status")
@@ -3071,7 +3071,7 @@ async def get_graph_status(
         return status
     except Exception as e:
         logger.error(f"Error getting graph status: {type(e).__name__}")
-        raise HTTPException(500, f"Failed to get graph status: {str(e)}")
+        raise HTTPException(500, "Failed to get graph status")
 
 
 @app.post("/graph/initialize")
@@ -3118,4 +3118,4 @@ async def initialize_graph(
         }
     except Exception as e:
         logger.error(f"Error initializing graph: {type(e).__name__}")
-        raise HTTPException(500, f"Failed to initialize graph: {str(e)}")
+        raise HTTPException(500, "Failed to initialize graph")

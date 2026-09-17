@@ -694,17 +694,22 @@ class GitAwareIndexManager:
             repo_info.staleness_reason = None
             ReadinessClassifier.clear_index_inspection_cache()
             if force_full:
-                self._write_force_full_exit_trace(
-                    repo_info,
-                    {
-                        **(result.semantic or {}),
-                        "status": "completed",
-                        "stage": "force_full_completed",
-                        "stage_family": "final_closeout",
-                        "in_flight_path": None,
-                        "blocker_source": "final_closeout",
-                    },
-                )
+                try:
+                    self._write_force_full_exit_trace(
+                        repo_info,
+                        {
+                            **(result.semantic or {}),
+                            "status": "completed",
+                            "stage": "force_full_completed",
+                            "stage_family": "final_closeout",
+                            "in_flight_path": None,
+                            "blocker_source": "final_closeout",
+                        },
+                    )
+                except OSError as exc:
+                    logger.warning(
+                        "Published generation trace unavailable (%s)", type(exc).__name__
+                    )
             return IndexSyncResult(
                 action="full_index" if changes is None else "incremental_update",
                 commit=current_commit,

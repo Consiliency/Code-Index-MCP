@@ -22,6 +22,18 @@ def test_prepared_upload_uses_exact_bytes_without_compression(tmp_path, monkeypa
     archive = tmp_path / "archive.tar.gz"
     archive.write_bytes(b"already prepared")
     metadata = {"checksum": IndexArtifactUploader(repo="owner/repo")._calculate_checksum(archive)}
+    metadata.update(
+        {
+            "repo_id": "fixture",
+            "tracked_branch": "main",
+            "commit": "a" * 40,
+            "schema_version": "2",
+            "semantic_profile_hash": "lexical-only",
+            "artifact_type": "full",
+            "timestamp": "2026-09-17T00:00:00Z",
+            "compatibility": {"schema_version": "2", "embedding_model": None},
+        }
+    )
     metadata_path = tmp_path / "metadata.json"
     metadata_path.write_bytes(_metadata_bytes(metadata))
     args = build_parser().parse_args(
@@ -257,7 +269,7 @@ def test_build_release_asset_bundle_writes_metadata_checksum_and_attestation(tmp
         "archive.tar.gz",
         "artifact-metadata.json",
         "archive.tar.gz.sha256",
-        "archive.tar.gz.attestation.jsonl",
+        "artifact-metadata.json.attestation.jsonl",
     ]
 
 

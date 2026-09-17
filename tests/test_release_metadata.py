@@ -91,7 +91,8 @@ def test_release_workflow_separates_prepare_from_protected_main_publish():
     assert 'grep -Fxq "version = \\"$VERSION_NO_V\\"" pyproject.toml' in workflow
     assert 'grep -Fxq "__version__ = \\"$VERSION_NO_V\\"" mcp_server/__init__.py' in workflow
     assert "prerelease: ${{ contains(inputs.version, '-') }}" in workflow
-    assert "${{ env.IMAGE_REF }}:${{ inputs.version }}" in workflow
+    assert "promote-container:" in workflow
+    assert 'tags=(--tag "${IMAGE_REF}:${RELEASE_VERSION}")' in workflow
     assert 'owner="${GITHUB_REPOSITORY_OWNER,,}"' in workflow
     assert "pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b" in workflow
     assert "softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b" in workflow

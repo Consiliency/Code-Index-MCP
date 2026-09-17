@@ -174,6 +174,23 @@ def verify_signing_proof(repo: Path, root: Path) -> dict:
             or run["conclusion"] != "success"
         ):
             raise CandidateRefused("signing_run_mismatch")
+        pages = gh_json(
+            "api",
+            f"repos/{SIGNING_REPOSITORY}/actions/workflows/sign-published-image.yml/runs",
+            "--method",
+            "GET",
+            "-f",
+            f"head_sha={expected['source']}",
+            "-f",
+            f"branch={SIGNING_BRANCH}",
+            "-f",
+            "event=workflow_dispatch",
+            "--paginate",
+            "--slurp",
+        )
+        matching_runs = [item for page in pages for item in page["workflow_runs"]]
+        if [item["id"] for item in matching_runs] != [run_id]:
+            raise CandidateRefused("signing_dispatch_count_mismatch")
         jobs = gh_json("api", f"repos/{SIGNING_REPOSITORY}/actions/runs/{run_id}/attempts/1/jobs")[
             "jobs"
         ]
@@ -248,6 +265,7 @@ def verify_signing_proof(repo: Path, root: Path) -> dict:
             "run_attempt": 1,
             "job_seconds": seconds,
             "production_verifier": "passed",
+            "observed_candidate_dispatches": 1,
             "new_dispatches": 0,
         }
     except (

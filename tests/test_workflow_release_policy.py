@@ -9,7 +9,7 @@ import yaml
 REPO = Path(__file__).resolve().parents[1]
 WORKFLOWS = REPO / ".github" / "workflows"
 WORKFLOW_PATH = REPO / ".github" / "workflows" / "release-automation.yml"
-PUBLISH_JOBS = ("preflight-publish", "build-release", "publish-release")
+PUBLISH_JOBS = ("preflight-publish", "build-release", "publish-release", "promote-container")
 
 
 def _workflow() -> dict[str, object]:
@@ -56,6 +56,7 @@ def test_every_release_mutation_has_an_adjacent_protected_main_guard() -> None:
     )
     build_steps = _jobs()["build-release"]["steps"]
     mutation_steps = [(build_steps, "Build and push container images")]
+    mutation_steps.append((_jobs()["promote-container"]["steps"], "Promote stable container tags"))
     mutation_steps.extend((steps, name) for name in mutation_names)
 
     for job_steps, mutation_name in mutation_steps:
@@ -83,6 +84,7 @@ def _is_external_release_mutation(step: dict[str, object]) -> bool:
         or "pypa/gh-action-pypi-publish@" in uses
         or "actions/delete-package-versions@" in uses
         or "cosign sign" in run
+        or "docker buildx imagetools create" in run
         or step.get("name") == "Create and push tag"
     )
 
@@ -176,6 +178,36 @@ def test_publish_permissions_are_job_scoped() -> None:
         "contents": "write",
         "id-token": "write",
     }
+    assert jobs["promote-container"]["permissions"] == {"contents": "read", "packages": "write"}
+
+
+def test_stable_tags_require_completed_publication_and_verified_digest():
+    workflow = _workflow()
+    jobs = workflow["jobs"]
+    assert workflow["concurrency"]["cancel-in-progress"] == "false"
+    assert "'publish'" in workflow["concurrency"]["group"]
+    promote = jobs["promote-container"]
+    assert promote["needs"] == ["build-release", "publish-release"]
+    assert promote["env"]["IMAGE_DIGEST"] == "${{ needs.build-release.outputs.image_digest }}"
+    build = jobs["build-release"]
+    build_step = next(step for step in build["steps"] if step.get("id") == "build-and-push")
+    assert "latest" not in build_step["with"]["tags"]
+    assert "inputs.version" not in build_step["with"]["tags"]
+    assert "github.run_id" in build_step["with"]["tags"]
+    assert "github.run_attempt" in build_step["with"]["tags"]
+    verify = next(
+        step for step in promote["steps"] if step["name"] == "Verify staged digest before promotion"
+    )
+    assert "cosign verify" in verify["run"]
+    assert (
+        '--certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release-automation.yml@refs/heads/main"'
+        in verify["run"]
+    )
+    assert 'test "$existing" = "$IMAGE_DIGEST"' in verify["run"]
+    mutation = promote["steps"][-1]["run"]
+    assert '"${IMAGE_REF}@${IMAGE_DIGEST}"' in mutation
+    assert "--prefer-index=false" in mutation
+    assert 'test "$actual" = "$IMAGE_DIGEST"' in mutation
 
 
 def test_release_workflow_does_not_dispatch_downstream_workflows() -> None:

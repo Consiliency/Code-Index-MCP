@@ -81,6 +81,11 @@ an approval substitute. Any candidate edit after review requires renewed review.
 
 Routine verification is local. No hosted prepare dispatch is required. Existing
 release workflow action pins and protected-main guards remain unchanged.
+The serialized publish workflow first uploads a unique candidate image reference,
+signs and verifies its digest, and publishes the Python/GitHub artifacts. Only
+then does the final job promote that same digest to version/latest tags. A failed
+intermediate step may leave a candidate image or partial release; it never
+authorizes automatic redispatch or promotion of an unsigned image.
 
 ## Recovery And Rollout
 
@@ -96,3 +101,23 @@ not semantic readiness. The accepted pilot covers synthetic local inputs on
 Linux/Python 3.12.12, PMCP 2.7.3 and Inspector 2.6.0. It does not establish other
 platforms, broad retrieval quality, immutable provider revisions or default
 reranking safety. Fleet indexing needs a separate budget and cohort decision.
+
+Index authority covers committed content on the registered tracked branch only.
+Tracked local edits refuse indexed queries until committed and reconciled; use
+native search during that interval. Failed staged builds also remain fenced until
+a successful rebuild. Unregistered watcher contexts refuse mutation explicitly.
+Older registries that recorded `main` for an actual `master` repository need
+re-registration with the correct tracked branch.
+
+Old and failed generations are retained deliberately. Rebuilds snapshot the whole
+committed tree and may copy retained vectors; capacity and latency must be measured
+before scaling. The first generation rebuild after upgrading legacy vector storage
+may re-embed the corpus and needs a separate inference budget. No automatic garbage
+collection or fleet indexing is authorized by this release.
+
+The HTTP admin gateway requires external process supervision. Python cannot safely
+abandon a stuck mutating worker while it owns the repository fence; an indexing
+timeout may therefore await that worker. A supervisor must terminate/restart a
+wedged gateway process, after which readiness still refuses incomplete generations.
+STDIO separately uses its bounded shutdown watchdog. Neither surface promises
+in-process recovery from arbitrary stuck native plugin code.
