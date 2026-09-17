@@ -46,7 +46,7 @@ OWNER_DERIVED_WORKFLOWS = (
 # container jobs derived while the others silently resolved an empty namespace.
 OWNER_DERIVED_STEP_COUNTS = {
     ".github/workflows/container-registry.yml": 3,  # alpha-build, push-manifests, sign
-    ".github/workflows/release-automation.yml": 1,  # build-release
+    ".github/workflows/release-automation.yml": 2,  # build-release, promote-container
 }
 _DERIVE_STEP = 'owner="${GITHUB_REPOSITORY_OWNER,,}"'
 

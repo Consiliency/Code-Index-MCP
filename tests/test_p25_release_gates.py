@@ -135,9 +135,14 @@ def test_release_automation_marks_prerelease_and_keeps_latest_stable_only():
     workflow_text = _read(".github/workflows/release-automation.yml")
 
     assert "prerelease: ${{ contains(inputs.version, '-') }}" in workflow_text
-    assert "${{ env.IMAGE_REF }}:${{ inputs.version }}" in workflow_text
-    assert "!contains(inputs.version, '-')" in workflow_text
-    assert "format('{0}:latest', env.IMAGE_REF)" in workflow_text
+    promotion = yaml.safe_load(workflow_text)["jobs"]["promote-container"]
+    assert "publish-release" in promotion["needs"]
+    step = next(
+        step for step in promotion["steps"] if step["name"] == "Promote stable container tags"
+    )
+    assert 'tags=(--tag "${IMAGE_REF}:${RELEASE_VERSION}")' in step["run"]
+    assert 'if [[ "$RELEASE_VERSION" != *-* ]]; then' in step["run"]
+    assert 'tags+=(--tag "${IMAGE_REF}:latest")' in step["run"]
     assert 'owner="${GITHUB_REPOSITORY_OWNER,,}"' in workflow_text
     assert 'find docs -name "*.md" -exec sed -i' not in workflow_text
 

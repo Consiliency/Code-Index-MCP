@@ -651,6 +651,25 @@ class RepositoryRegistry:
                 raise ValueError("Repository registration or generation changed before mutation")
             repo["staleness_reason"] = "index_publication_pending"
 
+    def fail_generation_mutation(
+        self,
+        repository_id: str,
+        *,
+        error: str,
+        expected_registration_id: Optional[str],
+        expected_generation: Optional[str],
+    ) -> bool:
+        """Record a failed generation only while its admitted owner is current."""
+        with self._transaction(write=True):
+            repo = self._registry.get(repository_id)
+            if repo is None or (
+                repo.get("registration_id") != expected_registration_id
+                or repo.get("index_generation") != expected_generation
+            ):
+                return False
+            repo.update(staleness_reason="partial_index_failure", last_sync_error=error)
+            return True
+
     def publish_generation(
         self,
         repository_id: str,

@@ -177,6 +177,36 @@ class TestGatewayStartupShutdown:
             with startup_test_client:
                 pass
 
+    @pytest.mark.parametrize(
+        "boundary", ["watcher_construct", "poller_construct", "watcher_start", "poller_start"]
+    )
+    @patch("mcp_server.gateway.format_preflight_report", return_value=[])
+    @patch("mcp_server.gateway.run_startup_preflight")
+    @patch("mcp_server.gateway.SQLiteStore")
+    @patch("mcp_server.gateway.EnhancedDispatcher")
+    @patch("mcp_server.gateway.RefPoller")
+    @patch("mcp_server.gateway.MultiRepositoryWatcher")
+    def test_partial_watcher_startup_drains_all_constructed_owners(
+        self, watchers, pollers, dispatcher, store, preflight, report, boundary, startup_test_client
+    ):
+        import mcp_server.gateway as gateway
+
+        preflight.return_value = type("PreflightResult", (), {"status": "warning", "checks": []})()
+        watcher, poller = watchers.return_value, pollers.return_value
+        failing = {
+            "watcher_construct": watchers,
+            "poller_construct": pollers,
+            "watcher_start": watcher.start_watching_all,
+            "poller_start": poller.start,
+        }[boundary]
+        failing.side_effect = RuntimeError("synthetic startup failure")
+        with startup_test_client:
+            assert gateway.multi_watcher is None
+            assert gateway.ref_poller is None
+            assert gateway.app.state.file_watcher is None
+        assert watcher.stop_watching_all.call_count == (0 if boundary == "watcher_construct" else 1)
+        assert poller.stop.call_count == (1 if boundary in {"watcher_start", "poller_start"} else 0)
+
     @patch("mcp_server.gateway.EnhancedDispatcher")
     @patch("mcp_server.gateway.MultiRepositoryWatcher")
     def test_shutdown_stops_watcher(

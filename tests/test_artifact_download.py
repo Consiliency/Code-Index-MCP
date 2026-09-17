@@ -262,19 +262,27 @@ def test_download_release_artifact_restores_direct_publish_payload(tmp_path: Pat
 
     downloader = IndexArtifactDownloader(repo="owner/repo")
 
-    def side_effect(args, **kwargs):
-        if args[:4] == ["gh", "release", "download", "index-sha-tag"]:
-            dest = Path(args[args.index("--dir") + 1])
-            for file in payload_dir.iterdir():
-                if file.is_file():
-                    (dest / file.name).write_bytes(file.read_bytes())
-            return MagicMock(returncode=0, stdout="", stderr="")
-        return MagicMock(returncode=0, stdout="", stderr="")
+    def side_effect(args, target, limit, deadline):
+        if args[:4] == ["gh", "release", "view", "index-sha-tag"]:
+            data = json.dumps(
+                {
+                    "assets": [
+                        {"name": file.name, "size": file.stat().st_size}
+                        for file in payload_dir.iterdir()
+                    ]
+                }
+            ).encode()
+        else:
+            assert args[:4] == ["gh", "release", "download", "index-sha-tag"]
+            assert args[-2:] == ["--output", "-"]
+            data = (payload_dir / args[args.index("--pattern") + 1]).read_bytes()
+        assert len(data) <= limit
+        target.write(data)
 
     output_dir = tmp_path / "out"
     output_dir.mkdir()
     with (
-        patch("subprocess.run", side_effect=side_effect),
+        patch("mcp_server.artifacts.artifact_download._download_bounded", side_effect=side_effect),
         patch.object(downloader, "check_compatibility", return_value=(True, [])),
     ):
         restored = downloader.download_release_artifact(

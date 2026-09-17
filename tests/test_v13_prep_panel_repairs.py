@@ -1,10 +1,12 @@
 """Counterexamples from the independent four-seat PREP review."""
 
 import hashlib
+import io
 import json
 import stat
 import subprocess
 import sys
+import tarfile
 import threading
 import zipfile
 from datetime import datetime, timezone
@@ -26,6 +28,78 @@ from mcp_server.storage.store_registry import StoreRegistry
 from mcp_server.watcher_multi_repo import MultiRepositoryHandler
 from tests.test_v13_data_storage import runtime
 from tests.test_v13_prep_repairs import artifact_payload
+
+
+@pytest.mark.parametrize("boundary", ["admission", "publication"])
+def test_losing_generation_writer_cannot_poison_new_registration(runtime, monkeypatch, boundary):
+    repo, registry, repo_id, _store, manager = runtime
+    assert manager.rebuild_repository_index(repo_id).action == "full_index"
+    replacement = []
+
+    def replace_registration():
+        assert registry.unregister_repository(repo_id)
+        assert registry.register_repository(str(repo)) == repo_id
+        replacement.append(registry.get(repo_id))
+
+    if boundary == "admission":
+        original = registry.begin_generation_mutation
+
+        def begin(*args, **kwargs):
+            replace_registration()
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(registry, "begin_generation_mutation", begin)
+    else:
+
+        def checkpoint(stage):
+            if stage == "before_provenance":
+                replace_registration()
+
+        monkeypatch.setattr(manager, "_rebuild_checkpoint", checkpoint)
+    result = manager.rebuild_repository_index(repo_id)
+    assert result.action == "failed"
+    assert replacement
+    after = registry.get(repo_id)
+    assert after.registration_id == replacement[0].registration_id
+    assert after.staleness_reason == replacement[0].staleness_reason
+    assert after.last_sync_error == replacement[0].last_sync_error
+
+
+@pytest.mark.parametrize("operation", ["add", "modify", "delete", "rename_in", "rename_out"])
+def test_incremental_sync_respects_committed_exclusions(runtime, operation):
+    repo, registry, repo_id, _store, manager = runtime
+    excluded = repo / "generated_pb2.py"
+    included = repo / "ordinary.py"
+    for index in range(12):
+        (repo / f"stable{index}.py").write_text(f"stable_value_{index} = {index}\n")
+    if operation in {"modify", "delete", "rename_in"}:
+        excluded.write_text("excluded_sentinel = 1\n")
+    if operation == "rename_out":
+        included.write_text("excluded_sentinel = 1\n")
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "Synthetic incremental baseline"], cwd=repo, check=True)
+    assert manager.rebuild_repository_index(repo_id).action == "full_index"
+    if operation in {"add", "modify"}:
+        excluded.write_text("excluded_sentinel = 2\n")
+    elif operation == "delete":
+        excluded.unlink()
+    elif operation == "rename_in":
+        excluded.rename(included)
+    else:
+        included.rename(excluded)
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "Synthetic excluded change"], cwd=repo, check=True)
+    result = manager.sync_repository_index(repo_id)
+    assert result.action == "incremental_update", result.error
+    assert registry.get(repo_id).staleness_reason is None
+    store = manager._resolve_ctx(repo_id).sqlite_store
+    assert bool(store.search_code_fts("excluded_sentinel")) == (operation == "rename_in")
+    with store._get_connection() as connection:
+        assert connection.execute("SELECT count(*) FROM fts_code").fetchone()[0] > 0
+        assert not connection.execute(
+            "SELECT fts_code.file_id FROM fts_code LEFT JOIN files "
+            "ON files.id = fts_code.file_id WHERE files.id IS NULL"
+        ).fetchall()
 
 
 @pytest.mark.asyncio
@@ -194,6 +268,130 @@ def test_actions_download_bounds_and_reaps_child(tmp_path, monkeypatch, failure)
     assert processes[0].stdout.closed
 
 
+@pytest.mark.parametrize("damage", ["size", "duplicate", "nested", "count", "negative"])
+def test_release_asset_preflight_refuses_before_download(tmp_path, monkeypatch, damage):
+    import mcp_server.artifacts.artifact_download as download
+
+    assets = [{"name": "index.tar.gz", "size": 12}, {"name": "artifact-metadata.json", "size": 2}]
+    if damage == "size":
+        assets[0]["size"] = 2**40
+    elif damage == "duplicate":
+        assets.append(dict(assets[0]))
+    elif damage == "nested":
+        assets[0]["name"] = "../index.tar.gz"
+    elif damage == "negative":
+        assets[0]["size"] = -1
+    else:
+        assets.extend({"name": f"extra{index}", "size": 0} for index in range(3))
+    requests = []
+
+    def response(command, target, limit, deadline):
+        requests.append(command)
+        assert command[:3] == ["gh", "release", "view"]
+        assert limit == 1024**2
+        target.write(json.dumps({"assets": assets}).encode())
+
+    monkeypatch.setattr(download, "_download_bounded", response)
+    with pytest.raises(ValueError):
+        IndexArtifactDownloader(repo="synthetic/example").download_release_artifact(
+            "index-fixture", tmp_path / "out"
+        )
+    assert len(requests) == 1
+    assert not (tmp_path / "out").exists()
+
+
+@pytest.mark.parametrize("failure", ["metadata_size", "asset_size", "timeout"])
+def test_release_stream_bounds_reap_processes(tmp_path, monkeypatch, failure):
+    import mcp_server.artifacts.artifact_download as download
+
+    popen = subprocess.Popen
+    processes = []
+    assets = [{"name": "index.tar.gz", "size": 1}, {"name": "artifact-metadata.json", "size": 1}]
+
+    def child(command, **kwargs):
+        if failure == "metadata_size":
+            script = "import os,time; os.write(1,b'x'*(1024**2+1)); time.sleep(30)"
+        elif command[:3] == ["gh", "release", "view"]:
+            script = "import sys; sys.stdout.write(" + repr(json.dumps({"assets": assets})) + ")"
+        else:
+            script = "import os,time; os.write(1,b'x'*64); time.sleep(30)"
+        process = popen([sys.executable, "-c", script], **kwargs)
+        processes.append(process)
+        return process
+
+    monkeypatch.setattr(download.subprocess, "Popen", child)
+    monkeypatch.setattr(download, "MAX_ACTIONS_PAYLOAD_BYTES", 32)
+    if failure == "timeout":
+        monkeypatch.setattr(download.select, "select", lambda *args: ([], [], []))
+    with pytest.raises(subprocess.TimeoutExpired if failure == "timeout" else ValueError):
+        IndexArtifactDownloader(repo="synthetic/example").download_release_artifact(
+            "index-fixture", tmp_path / "out"
+        )
+    assert processes and all(process.poll() is not None for process in processes)
+    assert all(process.stdout.closed for process in processes)
+    assert not (tmp_path / "out").exists()
+
+
+@pytest.mark.parametrize("failure", ["expansion", "members", "write"])
+def test_authenticated_tar_bounds_and_cleans_fresh_output(
+    artifact_payload, tmp_path, monkeypatch, failure
+):
+    import mcp_server.artifacts.artifact_download as download
+
+    downloader, payload, _metadata, verified = artifact_payload
+    output = tmp_path / "output"
+    output.mkdir()
+    sentinel = output / "existing"
+    sentinel.write_text("untouched")
+    if failure == "expansion":
+        monkeypatch.setattr(download, "MAX_EXTRACTED_INDEX_BYTES", 4)
+    elif failure == "members":
+        monkeypatch.setattr(download, "MAX_INDEX_MEMBERS", 0)
+    else:
+        extract = tarfile.TarFile.extract
+
+        def fail_after_write(self, *args, **kwargs):
+            extract(self, *args, **kwargs)
+            raise OSError("synthetic disk failure")
+
+        monkeypatch.setattr(tarfile.TarFile, "extract", fail_after_write)
+    with pytest.raises(OSError if failure == "write" else ValueError):
+        downloader._restore_downloaded_payload(payload, output)
+    assert verified
+    assert list(output.iterdir()) == [sentinel]
+    assert sentinel.read_text() == "untouched"
+
+
+@pytest.mark.parametrize("name", ["current.db", "./current.db", "a/../current.db"])
+def test_tar_duplicate_or_parent_paths_refuse_and_cleanup(
+    artifact_payload, tmp_path, monkeypatch, name
+):
+    from mcp_server.artifacts.artifact_upload import _metadata_bytes
+
+    downloader, payload, metadata, _verified = artifact_payload
+    archive = payload / "index.tar.gz"
+    with tarfile.open(archive, "w:gz") as tar:
+        for path in ("current.db", name):
+            member = tarfile.TarInfo(path)
+            member.size = 1
+            tar.addfile(member, io.BytesIO(b"x"))
+    metadata["checksum"] = hashlib.sha256(archive.read_bytes()).hexdigest()
+    subject = payload / "artifact-metadata.json"
+    subject.write_bytes(_metadata_bytes(metadata))
+    signed_digest = hashlib.sha256(subject.read_bytes()).hexdigest()
+
+    def verify(command, **kwargs):
+        assert command[:3] == ["gh", "attestation", "verify"]
+        assert hashlib.sha256(Path(command[3]).read_bytes()).hexdigest() == signed_digest
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", verify)
+    output = tmp_path / "output"
+    with pytest.raises(ValueError, match="Unsafe archive member"):
+        downloader._restore_downloaded_payload(payload, output)
+    assert not list(output.iterdir())
+
+
 @pytest.mark.parametrize("metadata_name", ["artifact-metadata.json", "custom-prepared.json"])
 def test_uploaded_release_is_discovered_authenticated_and_restored(
     artifact_payload, tmp_path, monkeypatch, metadata_name
@@ -236,11 +434,6 @@ def test_uploaded_release_is_discovered_authenticated_and_restored(
                 return subprocess.CompletedProcess(
                     args, 0, json.dumps({"assets": release["assets"]}), ""
                 )
-            elif args[2] == "download":
-                assert args[3] == release["tag_name"]
-                target = Path(args[args.index("--dir") + 1])
-                for name, data in uploaded.items():
-                    (target / name).write_bytes(data)
             else:
                 pytest.fail("Unexpected release command")
         elif args[:2] == ["gh", "api"]:
@@ -251,6 +444,18 @@ def test_uploaded_release_is_discovered_authenticated_and_restored(
             pytest.fail("Unexpected external command")
         return subprocess.CompletedProcess(args, 0, "", "")
 
+    def download(args, target, limit, deadline):
+        assert args[3] == release["tag_name"]
+        if args[:3] == ["gh", "release", "view"]:
+            data = json.dumps({"assets": release["assets"]}).encode()
+        else:
+            assert args[:3] == ["gh", "release", "download"]
+            assert args[-2:] == ["--output", "-"]
+            data = uploaded[args[args.index("--pattern") + 1]]
+        assert len(data) <= limit
+        target.write(data)
+
+    monkeypatch.setattr("mcp_server.artifacts.artifact_download._download_bounded", download)
     monkeypatch.setattr(subprocess, "run", gh)
     IndexArtifactUploader(repo="synthetic/example").upload_prepared(
         payload / "index.tar.gz",

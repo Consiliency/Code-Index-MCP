@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import gzip
 import hashlib
 import json
 import logging
@@ -40,6 +41,56 @@ from .semantic_profiles import extract_semantic_profile_metadata
 logger = logging.getLogger(__name__)
 MAX_ACTIONS_ZIP_BYTES = 2 * 1024**3
 MAX_ACTIONS_PAYLOAD_BYTES = 2 * 1024**3
+MAX_EXTRACTED_INDEX_BYTES = 2 * 1024**3
+MAX_INDEX_MEMBERS = 100_000
+
+
+def _download_bounded(command: List[str], target, limit: int, deadline: float) -> None:
+    """Stream a CLI response within a shared deadline and reap it on every exit."""
+    with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL) as process:
+        assert process.stdout is not None
+        try:
+            received = 0
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0 or not select.select([process.stdout], [], [], remaining)[0]:
+                    raise subprocess.TimeoutExpired(command, 300)
+                chunk = os.read(process.stdout.fileno(), 1024 * 1024)
+                if not chunk:
+                    break
+                received += len(chunk)
+                if received > limit:
+                    raise ValueError("Artifact response exceeds the download size limit")
+                target.write(chunk)
+            returncode = process.wait(timeout=max(0, deadline - time.monotonic()))
+            if returncode:
+                raise subprocess.CalledProcessError(returncode, command)
+        except BaseException:
+            process.kill()
+            process.wait()
+            raise
+
+
+def _payload_limits(names: List[str]) -> Dict[str, int]:
+    archives = [
+        name for name in names if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*\.tar\.gz", name)
+    ]
+    if (
+        not 2 <= len(names) <= 4
+        or len(set(names)) != len(names)
+        or len(archives) != 1
+        or "artifact-metadata.json" not in names
+    ):
+        raise ValueError("Artifact has an ambiguous payload")
+    limits = {
+        archives[0]: MAX_ACTIONS_PAYLOAD_BYTES,
+        "artifact-metadata.json": 1024**2,
+        "artifact-metadata.json.attestation.jsonl": 4 * 1024**2,
+        archives[0] + ".sha256": 1024,
+    }
+    if any(name not in limits for name in names):
+        raise ValueError("Artifact contains an invalid member")
+    return limits
 
 
 @dataclass
@@ -163,34 +214,7 @@ class IndexArtifactDownloader:
         try:
             with (temp_dir / "artifact.zip").open("xb") as zip_file:
                 command = ["gh", "api", f"/repos/{self.repo}/actions/artifacts/{artifact_id}/zip"]
-                deadline = time.monotonic() + 300
-                with subprocess.Popen(
-                    command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
-                ) as process:
-                    assert process.stdout is not None
-                    try:
-                        received = 0
-                        while True:
-                            remaining = deadline - time.monotonic()
-                            if (
-                                remaining <= 0
-                                or not select.select([process.stdout], [], [], remaining)[0]
-                            ):
-                                raise subprocess.TimeoutExpired(command, 300)
-                            chunk = os.read(process.stdout.fileno(), 1024 * 1024)
-                            if not chunk:
-                                break
-                            received += len(chunk)
-                            if received > MAX_ACTIONS_ZIP_BYTES:
-                                raise ValueError("Actions artifact ZIP exceeds the download limit")
-                            zip_file.write(chunk)
-                        returncode = process.wait(timeout=max(0, deadline - time.monotonic()))
-                        if returncode:
-                            raise subprocess.CalledProcessError(returncode, command)
-                    except BaseException:
-                        process.kill()
-                        process.wait()
-                        raise
+                _download_bounded(command, zip_file, MAX_ACTIONS_ZIP_BYTES, time.monotonic() + 300)
             self._extract_actions_artifact_zip(temp_dir)
             return self._restore_downloaded_payload(
                 temp_dir,
@@ -211,22 +235,7 @@ class IndexArtifactDownloader:
         with zipfile.ZipFile(archive_path, "r") as zip_ref:
             members = zip_ref.infolist()
             names = [member.filename for member in members]
-            archives = [
-                name for name in names if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*\.tar\.gz", name)
-            ]
-            if (
-                not 2 <= len(members) <= 4
-                or len(set(names)) != len(names)
-                or len(archives) != 1
-                or "artifact-metadata.json" not in names
-            ):
-                raise ValueError("Actions artifact ZIP has an ambiguous payload")
-            limits = {
-                archives[0]: MAX_ACTIONS_PAYLOAD_BYTES,
-                "artifact-metadata.json": 1024**2,
-                "artifact-metadata.json.attestation.jsonl": 4 * 1024**2,
-                archives[0] + ".sha256": 1024,
-            }
+            limits = _payload_limits(names)
             if sum(member.file_size for member in members) > MAX_ACTIONS_PAYLOAD_BYTES:
                 raise ValueError("Actions artifact ZIP exceeds the expanded-size limit")
             for member in members:
@@ -261,20 +270,48 @@ class IndexArtifactDownloader:
         print(f"📥 Downloading release artifact {release_tag}...")
         temp_dir = Path(tempfile.mkdtemp())
         try:
-            subprocess.run(
-                [
-                    "gh",
-                    "release",
-                    "download",
-                    release_tag,
-                    "--repo",
-                    self.repo,
-                    "--dir",
-                    str(temp_dir),
-                    "--clobber",
-                ],
-                check=True,
-            )
+            deadline = time.monotonic() + 300
+            with tempfile.TemporaryFile() as response:
+                _download_bounded(
+                    ["gh", "release", "view", release_tag, "--repo", self.repo, "--json", "assets"],
+                    response,
+                    1024**2,
+                    deadline,
+                )
+                response.seek(0)
+                assets = json.load(response)["assets"]
+            names = [asset["name"] for asset in assets]
+            limits = _payload_limits(names)
+            if (
+                any(
+                    type(asset["size"]) is not int
+                    or not 0 <= asset["size"] <= limits[asset["name"]]
+                    for asset in assets
+                )
+                or sum(asset["size"] for asset in assets) > MAX_ACTIONS_PAYLOAD_BYTES
+            ):
+                raise ValueError("Release assets exceed the payload size limit")
+            remaining = MAX_ACTIONS_PAYLOAD_BYTES
+            for name in names:
+                with (temp_dir / name).open("xb") as target:
+                    _download_bounded(
+                        [
+                            "gh",
+                            "release",
+                            "download",
+                            release_tag,
+                            "--repo",
+                            self.repo,
+                            "--pattern",
+                            name,
+                            "--output",
+                            "-",
+                        ],
+                        target,
+                        min(remaining, limits[name]),
+                        deadline,
+                    )
+                    remaining -= target.tell()
             return self._restore_downloaded_payload(
                 temp_dir,
                 output_dir,
@@ -340,6 +377,7 @@ class IndexArtifactDownloader:
                 ["gh", "release", "view", delta_base, "--repo", self.repo],
                 capture_output=True,
                 text=True,
+                timeout=30,
             )
             if probe.returncode != 0:
                 logger.warning(
@@ -377,20 +415,44 @@ class IndexArtifactDownloader:
             raise ValueError("Artifact output must not be a symbolic link")
         output_dir.mkdir(parents=True, exist_ok=True)
         extracted = Path(tempfile.mkdtemp(prefix="verified-", dir=output_dir))
-        with tarfile.open(archive_path, "r:gz") as tar:
-            members = tar.getmembers()
-            for member in members:
-                if not self._validate_tar_member(member, extracted) or Path(member.name).parts == (
-                    "artifact-metadata.json",
-                ):
-                    raise ValueError(f"Unsafe archive member blocked: {member.name}")
-            tar.extractall(
-                extracted, members=members
-            )  # nosec B202 - fresh directory, regular members only
-
-        with (extracted / "artifact-metadata.json").open("xb") as handle:
-            handle.write(metadata_bytes)
-        return extracted
+        try:
+            deadline = time.monotonic() + 300
+            # Bound gzip expansion, including TAR headers, before parsing any members.
+            with tempfile.TemporaryFile(dir=output_dir) as expanded:
+                with gzip.open(archive_path, "rb") as compressed:
+                    while chunk := compressed.read(1024 * 1024):
+                        if time.monotonic() > deadline:
+                            raise TimeoutError("Artifact expansion exceeded the time limit")
+                        if expanded.tell() + len(chunk) > MAX_EXTRACTED_INDEX_BYTES:
+                            raise ValueError("Artifact exceeds the expanded size limit")
+                        expanded.write(chunk)
+                expanded.seek(0)
+                with tarfile.open(fileobj=expanded, mode="r:") as tar:
+                    names = set()
+                    total = 0
+                    for member in tar:
+                        if time.monotonic() > deadline:
+                            raise TimeoutError("Artifact extraction exceeded the time limit")
+                        name = Path(member.name).as_posix()
+                        total += member.size
+                        if len(names) >= MAX_INDEX_MEMBERS or total > MAX_EXTRACTED_INDEX_BYTES:
+                            raise ValueError("Artifact exceeds the member or expanded size limit")
+                        if (
+                            name in names
+                            or member.size < 0
+                            or member.issparse()
+                            or not self._validate_tar_member(member, extracted)
+                            or name == "artifact-metadata.json"
+                        ):
+                            raise ValueError(f"Unsafe archive member blocked: {member.name}")
+                        names.add(name)
+                        tar.extract(member, extracted, set_attrs=False)  # nosec B202 - owned output
+            with (extracted / "artifact-metadata.json").open("xb") as handle:
+                handle.write(metadata_bytes)
+            return extracted
+        except BaseException:
+            shutil.rmtree(extracted)
+            raise
 
     def _calculate_checksum(self, file_path: Path) -> str:
         sha256 = hashlib.sha256()
@@ -649,7 +711,11 @@ class IndexArtifactDownloader:
             return False
 
     def _validate_tar_member(self, member: tarfile.TarInfo, extraction_dir: Path) -> bool:
-        if not (member.isfile() or member.isdir()) or Path(member.name).is_absolute():
+        if (
+            not (member.isfile() or member.isdir())
+            or Path(member.name).is_absolute()
+            or ".." in Path(member.name).parts
+        ):
             return False
         target_path = extraction_dir / member.name
         if not self._is_within_directory(extraction_dir, target_path):

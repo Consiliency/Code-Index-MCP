@@ -19,6 +19,10 @@ separate protected-main workflow mode.
    The manual job is capped at five minutes. It has no checkout, index build,
    source upload or private archive upload. Only the digest and descriptive
    metadata are sent. Signing is never dispatched by a watcher or library.
+   `create-storage-record: false` disables optional container inventory records,
+   not GitHub attestation storage. The pinned action still writes the signed
+   bundle to the repository attestation API, independently of registry upload
+   ([pinned implementation](https://github.com/actions/attest/blob/1e69f48acb82d1966a394da916b4c1698aa569d6/src/attest.ts)).
 3. Download the bundle using `gh attestation download artifact-metadata.json --repo OWNER/REPO --predicate-type https://github.com/Consiliency/Code-Index-MCP/local-index-digest/v1`.
    Rename the resulting digest-named JSONL file to
    `artifact-metadata.json.attestation.jsonl`. Keep the exact prepared archive
@@ -51,10 +55,16 @@ to reuse an old signature.
 Restores return a new private `verified-*` directory beneath the requested
 output directory. They never overlay prior files, and tar links/special files
 and an embedded `artifact-metadata.json` are rejected.
-The untrusted outer Actions ZIP is limited to four flat payload files, 2 GiB
-downloaded and expanded bytes, 1 MiB metadata, 4 MiB attestation and 1 KiB checksum.
-Downloads have a five-minute bound. Unexpected, duplicate, linked or ambiguous
-members are refused before expansion. No archive upload or signing is automatic.
+The untrusted outer Actions ZIP and Release asset selection are limited to four
+flat payload files and 2 GiB total payload bytes, with 1 MiB metadata, 4 MiB
+attestation and 1 KiB checksum limits. Release discovery responses are capped at
+1 MiB; each selected asset is streamed with enforced byte limits, independent of
+the server's declared size. Downloads share a five-minute deadline. Unexpected,
+duplicate, linked or ambiguous outer members are refused before extraction.
+Authenticated TAR expansion has a separate five-minute deadline, a 2 GiB ceiling
+including headers, and at most 100000 members. Duplicate paths and sparse files
+are refused. Failed restores remove only their fresh extraction directory; prior
+outputs remain untouched. No archive upload or signing is automatic.
 
 ## Verification Policy
 

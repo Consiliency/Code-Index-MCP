@@ -542,7 +542,6 @@ class GitAwareIndexManager:
         generation_path = generation_dir / f"{generation}.db"
         stage_dir = None
         stage_store = None
-        publication_started = False
         result = UpdateResult()
         indexed_before = repo_info.last_indexed_commit
         full_call_started = False
@@ -554,7 +553,6 @@ class GitAwareIndexManager:
                 expected_registration_id=repo_info.registration_id,
                 expected_generation=repo_info.index_generation,
             )
-            publication_started = True
             if force_full:
                 self._write_force_full_exit_trace(
                     repo_info,
@@ -642,7 +640,26 @@ class GitAwareIndexManager:
                     result = self._normalize_update_result(self._full_index(repo_id, stage_ctx))
                 full_call_completed = True
             else:
-                result = self._incremental_index_update(repo_id, stage_ctx, changes)
+                # Project Git changes onto the admitted snapshot and previously indexed rows.
+                with stage_store._get_connection() as connection:
+                    indexed = {
+                        row[0] for row in connection.execute("SELECT relative_path FROM files")
+                    }
+                admitted = ChangeSet(added=[], modified=[], deleted=[], renamed=[])
+                admitted.deleted = [path for path in changes.deleted if path in indexed]
+                for path in changes.added + changes.modified:
+                    if path in hashes:
+                        (admitted.modified if path in indexed else admitted.added).append(path)
+                    elif path in indexed:
+                        admitted.deleted.append(path)
+                for old_path, new_path in changes.renamed:
+                    if old_path in indexed and new_path in hashes:
+                        admitted.renamed.append((old_path, new_path))
+                    elif old_path in indexed:
+                        admitted.deleted.append(old_path)
+                    elif new_path in hashes:
+                        admitted.added.append(new_path)
+                result = self._incremental_index_update(repo_id, stage_ctx, admitted)
             if not result.clean:
                 raise RuntimeError("Staged full index did not complete cleanly")
             if getattr(self.dispatcher, "_semantic_enabled", False) is True:
@@ -656,9 +673,6 @@ class GitAwareIndexManager:
                         canonical = str(repo_path / source.relative_to(source_root))
                         connection.execute(
                             "UPDATE files SET path=? WHERE id=?", (canonical, file_id)
-                        )
-                        connection.execute(
-                            "UPDATE fts_code SET file_id=? WHERE file_id=?", (canonical, path)
                         )
                 stage_store._set_config(
                     connection, "index_generation", generation, "Durable generation"
@@ -723,9 +737,12 @@ class GitAwareIndexManager:
             )
         except Exception as exc:
             error = f"Staged rebuild failed ({type(exc).__name__})"
-            if publication_started:
-                self.registry.update_staleness_reason(repo_id, "partial_index_failure")
-            self.registry.update_last_sync_error(repo_id, error)
+            self.registry.fail_generation_mutation(
+                repo_id,
+                error=error,
+                expected_registration_id=repo_info.registration_id,
+                expected_generation=repo_info.index_generation,
+            )
             if force_full and full_call_started and not full_call_completed:
                 raise
             if force_full:

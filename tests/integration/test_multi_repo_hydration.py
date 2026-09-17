@@ -23,6 +23,7 @@ def test_multi_repo_workspace_hydration_restores_clean_state_and_query_truth(
     monkeypatch,
     tmp_path: Path,
 ):
+    monkeypatch.setenv("MCP_ATTESTATION_MODE", "skip")  # publication transport is mocked below
     matrix = build_production_matrix(tmp_path)
     registry_path = tmp_path / "registry.json"
     snapshots: dict[str, dict[str, object]] = {}

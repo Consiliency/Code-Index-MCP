@@ -185,6 +185,36 @@ version and rejects unknown future schemas. The focused repair suite passed
 four-seat review and one-shot operational proof remain required. These counts
 and historical reports do not grant acceptance to later candidate bytes.
 
+### Second PREP Repair Checkpoint
+
+Candidate `765f390` is also rejected. Its installed PMCP/offline/rehearsal and
+eight actual admin/Inspector browser goals passed, but the broad local suite
+found seven stale fixtures/assertions. Independent review identified unbounded
+Release/TAR restores, stale-owner failure-state writes, partial watcher-startup
+cleanup and ignored-file incremental failures. Six new ownership/policy
+counterexamples failed before repair; one rename-out control already passed.
+
+Repairs now bound Release metadata/assets and TAR expansion, reap download
+children, clean fresh failed restores, atomically condition failure writes on
+registration/generation ownership, drain partial watcher startup and reconcile
+incremental changes against the admitted committed snapshot. Removed the dead
+FTS path-as-ID update. The seven fixture/assertion corrections preserve enforce
+mode and stable-tag publication gates. Focused checks: 74 passed; broader Git,
+registry, reconciliation and release regression checks: 190 passed.
+
+Sol's signing-storage allegation is not supported by the pinned action:
+`create-storage-record` controls OCI inventory only. The action invokes the
+attestation library without `skipWrite`, and its pinned compiled implementation
+stores the bundle through the GitHub attestation API. Preserve this disposition
+for independent reviewer reconciliation; no signing workflow waiver or dispatch.
+
+All four `765f390` reports are preserved under
+`.phase-loop/runs/v13-PREP-panel-repairs-20260917/panel/`. Fable and Gemini
+returned AGREE, Sol DISAGREE and Grok PARTIALLY AGREE. Access auditing found
+coverage gaps; none is final-candidate acceptance. The repaired source requires
+new full/installed/UI checks, complete four-seat coverage and reconciliation.
+Both approved one-shot effects remain unused. No merge or publication occurred.
+
 ## PILOT Accepted
 
 Source `366f6bca7765d545498f41b02014ae8ba105d2e2` passed all 13 installed

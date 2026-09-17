@@ -11,7 +11,7 @@ from datetime import datetime
 from inspect import signature
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import ANY, MagicMock
 
 import pytest
 
@@ -244,6 +244,9 @@ def _make_rebuild_manager(repo_info: RepositoryInfo, commit: str):
         return True
 
     registry.update_staleness_reason.side_effect = update_staleness
+    registry.fail_generation_mutation.side_effect = lambda repo_id, **kwargs: update_staleness(
+        repo_id, "partial_index_failure"
+    )
     manager = GitAwareIndexManager(registry, DurableFullIndexDispatcher())
     manager._resolve_ctx = MagicMock(return_value=None)
     return manager, registry
@@ -707,7 +710,12 @@ def test_sync_repository_index_persists_partial_index_failure(tmp_path):
         expected_registration_id=repo_info.registration_id,
         expected_generation=repo_info.index_generation,
     )
-    registry.update_staleness_reason.assert_called_with("test-repo-id", "partial_index_failure")
+    registry.fail_generation_mutation.assert_called_once_with(
+        repo_info.repository_id,
+        error=ANY,
+        expected_registration_id=repo_info.registration_id,
+        expected_generation=repo_info.index_generation,
+    )
 
 
 def test_full_index_without_durable_rows_does_not_advance_commit(tmp_path):
@@ -736,8 +744,11 @@ def test_full_index_without_durable_rows_does_not_advance_commit(tmp_path):
         expected_registration_id=repo_info.registration_id,
         expected_generation=repo_info.index_generation,
     )
-    registry.update_staleness_reason.assert_called_with(
-        repo_info.repository_id, "partial_index_failure"
+    registry.fail_generation_mutation.assert_called_once_with(
+        repo_info.repository_id,
+        error=ANY,
+        expected_registration_id=repo_info.registration_id,
+        expected_generation=repo_info.index_generation,
     )
     registry.update_indexed_commit.assert_not_called()
 
@@ -1122,8 +1133,11 @@ def test_force_full_timeout_fences_active_runtime_and_preserves_exact_blocker(tm
     assert semantic_points == 0
     assert (semantic_qdrant / "marker.txt").read_text(encoding="utf-8") == "original"
     registry.update_indexed_commit.assert_not_called()
-    registry.update_staleness_reason.assert_called_with(
-        repo_info.repository_id, "partial_index_failure"
+    registry.fail_generation_mutation.assert_called_once_with(
+        repo_info.repository_id,
+        error=ANY,
+        expected_registration_id=repo_info.registration_id,
+        expected_generation=repo_info.index_generation,
     )
 
 
@@ -1228,8 +1242,11 @@ def test_force_full_storage_closeout_fences_runtime_and_preserves_exact_blocker(
     assert semantic_points == 0
     assert (semantic_qdrant / "marker.txt").read_text(encoding="utf-8") == "original"
     registry.update_indexed_commit.assert_not_called()
-    registry.update_staleness_reason.assert_called_with(
-        repo_info.repository_id, "partial_index_failure"
+    registry.fail_generation_mutation.assert_called_once_with(
+        repo_info.repository_id,
+        error=ANY,
+        expected_registration_id=repo_info.registration_id,
+        expected_generation=repo_info.index_generation,
     )
 
 
@@ -1611,8 +1628,11 @@ def test_force_full_sync_does_not_advance_commit_when_semantic_stage_is_blocked(
         expected_registration_id=repo_info.registration_id,
         expected_generation=repo_info.index_generation,
     )
-    registry.update_staleness_reason.assert_called_with(
-        repo_info.repository_id, "partial_index_failure"
+    registry.fail_generation_mutation.assert_called_once_with(
+        repo_info.repository_id,
+        error=ANY,
+        expected_registration_id=repo_info.registration_id,
+        expected_generation=repo_info.index_generation,
     )
     registry.update_indexed_commit.assert_not_called()
 
@@ -1676,8 +1696,11 @@ def test_force_full_sync_preserves_exact_summary_call_timeout_blocker(tmp_path):
         expected_registration_id=repo_info.registration_id,
         expected_generation=repo_info.index_generation,
     )
-    registry.update_staleness_reason.assert_called_with(
-        repo_info.repository_id, "partial_index_failure"
+    registry.fail_generation_mutation.assert_called_once_with(
+        repo_info.repository_id,
+        error=ANY,
+        expected_registration_id=repo_info.registration_id,
+        expected_generation=repo_info.index_generation,
     )
 
 

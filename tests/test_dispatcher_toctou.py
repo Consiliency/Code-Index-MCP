@@ -209,8 +209,7 @@ class TestWatcherUsesGuardedDispatch:
         handler.repo_id = "repo1"
         handler.repo_path = tmp_path
         handler.parent_watcher = mock_parent
-        handler._inner_handler = MagicMock()
-        handler._inner_handler.code_extensions = {".py"}
+        handler.code_extensions = {".py"}
 
         # Mock branch check and gitignore filter
         handler._get_current_branch = MagicMock(return_value="main")

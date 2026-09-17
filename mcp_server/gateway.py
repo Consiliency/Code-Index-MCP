@@ -1037,8 +1037,10 @@ async def startup_event():
             ref_poller = None
         else:
             logger.info("Starting MultiRepositoryWatcher and RefPoller...")
+            starting_watcher = None
+            starting_poller = None
             try:
-                multi_watcher = MultiRepositoryWatcher(
+                starting_watcher = MultiRepositoryWatcher(
                     registry=_repo_registry,
                     dispatcher=dispatcher,
                     index_manager=git_index_manager,
@@ -1047,21 +1049,39 @@ async def startup_event():
                     semantic_indexer_registry=semantic_indexer_registry,
                     plugin_set_registry=getattr(dispatcher, "_plugin_set_registry", None),
                 )
-                ref_poller = RefPoller(
+                starting_poller = RefPoller(
                     registry=_repo_registry,
                     git_index_manager=git_index_manager,
                     dispatcher=dispatcher,
                     repo_resolver=repo_resolver,
                 )
-                multi_watcher.start_watching_all()
-                ref_poller.start()
-                logger.info("MultiRepositoryWatcher and RefPoller started")
+                starting_watcher.start_watching_all()
+                starting_poller.start()
             except Exception as _watcher_err:
+                cleanup_errors = []
+                for owner, stop in (
+                    (starting_poller, "stop"),
+                    (starting_watcher, "stop_watching_all"),
+                ):
+                    if owner is not None:
+                        try:
+                            getattr(owner, stop)()
+                        except Exception as cleanup_error:
+                            cleanup_errors.append(cleanup_error)
+                if cleanup_errors:
+                    # Retain owners for shutdown retry and fail startup rather than leak silently.
+                    multi_watcher = starting_watcher
+                    ref_poller = starting_poller
+                    raise RuntimeError("Watcher startup cleanup failed") from cleanup_errors[0]
                 logger.warning(
                     "MultiRepositoryWatcher failed to start: %s", type(_watcher_err).__name__
                 )
                 multi_watcher = None
                 ref_poller = None
+            else:
+                multi_watcher = starting_watcher
+                ref_poller = starting_poller
+                logger.info("MultiRepositoryWatcher and RefPoller started")
 
         # Store in app.state for potential future use
         app.state.dispatcher = dispatcher
