@@ -299,6 +299,54 @@ attempt; neither operational allowance was consumed.
   durable version-scoped remote claim before publication and refuse reruns.
   This implementation remains local during PREP; the claim is a SHIP effect.
 
+## Fifth Diagnostic Repair Amendment - 2026-09-17
+
+Candidate df5a969 is not accepted. Its exact-source broad suite recorded 3587
+passes and two stale workflow assertions; installed offline/rehearsal and actual
+admin/PMCP Inspector browser proof passed, with all owned services retired.
+Independent batch reviews remain diagnostic, not full-seat approval. Neither
+one-shot operational allowance has been consumed.
+
+- test/impl: Bind upload attestation to the copied sidecar bytes, bound GitHub
+  pointer commands and identity candidate selection, clean workspace-owned
+  archives, and require authenticated target identity before restore admission.
+- test/impl: Preserve single-file semantic failures through sync/task responses
+  and leave failed files retryable; unchanged results must report zero mutation.
+- test/impl: Reject reruns at the beginning of every publication job, including
+  failed-job-only reruns that retain successful upstream claim jobs.
+- test/impl: Require ready database classification for unchanged-commit sync;
+  recover damaged/incomplete generations through staged full rebuilds. Fence
+  every HTTP graph response/error and retire services on late startup failures.
+- test/impl: Scope retirement to the original registration/generation, including
+  failed stages, without evicting a replacement registration's resources. Keep
+  semantic cache keys stable while invalidating them on profile changes.
+- test/impl: Carry registration/generation ownership through artifact download,
+  restore admission and completion; reject a failed final metadata CAS. Bind
+  watcher events, sweepers and queued rescans to their owner and automatic-sync
+  policy, rechecking policy atomically before fencing a healthy generation.
+- test/impl: Verify wheel package bytes, version, dependencies and entry points
+  against candidate source before installation; use lock constraints without
+  preinstalling undeclared dependencies. Predeclare unique owned container names
+  so ambiguous launch failures still clean up. Atomically install complete signing
+  intent records; partial writes must not consume the one-shot allowance.
+- test/impl: Require source-bound per-owner resource records, exactly one measured
+  Qdrant container and matching native start/stop output in live/rehearsal proof.
+  Derive and cross-check shutdown/RSS/survivor totals. Read-only claim inspection
+  may diagnose a complete intent after uncertain local durability, never reset
+  the claim or authorize a second signing dispatch.
+- test/impl: Publish the signed container digest as a GitHub release asset without
+  mutating GHCR version/latest tags. Pin installer configurations to that digest
+  and reject missing/malformed references without tag fallback. Create GitHub
+  releases without update/clobber behavior; verify delivered image version,
+  revision and signature against the accepted source before execution.
+- docs/verify: Replace stale artifact instructions with registered-generation
+  recovery, lexical-only unused legacy staging, explicit full-only policy and
+  re-preparation requirements for old signed archives. No in-place overwrite
+  or new unsafe bypass is introduced. Sanitize remaining provider-error paths.
+- verify: Reconcile all findings, refresh the frozen candidate, rerun exact-head
+  tests and installed/browser evidence, then obtain four complete independent
+  code verdicts. The existing SL-1 effect/reconciliation sequence is unchanged.
+
 ## Lane Index & Dependencies
 
 SL-0 — Version, release docs and candidate proof
@@ -316,8 +364,9 @@ SL-1 — Independent review and evidence reducer
 ### SL-0 - Version, release docs and candidate proof
 
 - **Scope**: Prepare consistent patch metadata and prove local candidate behavior without consuming either one-shot operational allowance.
+- **Owned files** (fifth amendment additions): `docs/guides/artifact-persistence.md`, `tests/test_tool_handlers_readiness.py`, `tests/test_v13_data_storage.py`, `tests/test_branch_drift_rescan.py`
 - **Depends on**: (none)
-- **Owned files**: `pyproject.toml`, `uv.lock`, `mcp_server/__init__.py`, `.github/workflows/release-automation.yml`, `CHANGELOG.md`, `README.md`, `scripts/install-mcp-docker.sh`, `scripts/install-mcp-docker.ps1`, `docs/GETTING_STARTED.md`, `docs/MCP_CONFIGURATION.md`, `docs/SUPPORT_MATRIX.md`, `tests/test_release_metadata.py`, `scripts/v13_release_candidate.py`, `tests/test_v13_release_candidate.py`, `scripts/v13_pmcp_pilot.py`, `tests/test_v13_pmcp_pilot.py`, `scripts/v13_pilot_budget.py`, `tests/test_v13_pilot_budget.py`, `docs/operations/v13-release.md`, `mcp_server/artifacts/artifact_download.py`, `mcp_server/artifacts/integrity_gate.py`, `tests/test_artifact_integrity_gate.py`, `mcp_server/artifacts/artifact_upload.py`, `mcp_server/artifacts/freshness.py`, `mcp_server/artifacts/multi_repo_artifact_coordinator.py`, `mcp_server/artifacts/publisher.py`, `mcp_server/cli/artifact_commands.py`, `mcp_server/cli/task_reindex.py`, `mcp_server/cli/tool_handlers.py`, `mcp_server/cli/stdio_runner.py`, `mcp_server/client.py`, `mcp_server/core/ignore_patterns.py`, `mcp_server/core/repo_resolver.py`, `mcp_server/dispatcher/cross_repo_coordinator.py`, `mcp_server/dispatcher/dispatcher_enhanced.py`, `mcp_server/storage/sqlite_store.py`, `mcp_server/storage/multi_repo_manager.py`, `docs/operations/v13-pmcp-pilot.md`, `docs/security/attestation.md`, `docs/security/auth-boundary.md`, `.github/workflows/sign-published-image.yml`, `tests/test_v13_prep_repairs.py`, `tests/test_artifact_download.py`, `tests/test_artifact_upload.py`, `tests/test_artifact_attestation.py`, `tests/security/test_artifact_attestation.py`, `tests/test_artifact_publish_race.py`, `tests/test_artifact_publish_rollback.py`, `tests/test_artifact_auto_delta.py`, `tests/test_artifact_commands.py`, `tests/test_multi_repo_artifact_coordinator.py`, `tests/test_mcptasks_reindex.py`, `tests/test_artifact_freshness.py`, `tests/test_ignore_patterns.py`, `tests/test_python_client_contract.py`, `tests/test_cross_repo_coordinator.py`, `tests/docs/test_gabase_ga_readiness_contract.py`, `tests/docs/test_garc_rc_soak_contract.py`, `tests/docs/test_garecut_rc_recut_contract.py`, `tests/docs/test_p34_public_alpha_recut.py`, `tests/docs/test_pubname_public_docs.py`, `tests/smoke/test_mcpbase_stdio_smoke.py`, `tests/smoke/test_mcpeval_sdk_surface.py`, `mcp_server/artifacts/attestation.py`, `mcp_server/gateway.py`, `mcp_server/metrics/health_check.py`, `mcp_server/watcher/file_watcher.py`, `mcp_server/watcher_multi_repo.py`, `mcp_server/storage/git_index_manager.py`, `tests/test_v13_prep_panel_repairs.py`, `tests/test_gateway_transport_boundary.py`, `tests/test_watcher_multi_repo.py`, `tests/test_workflow_release_policy.py`, `tests/test_gateway.py`, `mcp_server/storage/repository_registry.py`, `tests/test_git_index_manager.py`, `tests/docs/test_gagov_governance_contract.py`, `tests/integration/test_multi_repo_hydration.py`, `tests/smoke/test_release_smoke_contract.py`, `tests/test_delta_base_fallback.py`, `tests/test_dispatcher_toctou.py`, `tests/test_p25_release_gates.py`, `tests/test_workflow_action_pins.py`, `mcp_server/core/lifecycle.py`, `mcp_server/core/logging.py`, `mcp_server/storage/store_registry.py`, `mcp_server/utils/semantic_indexer.py`, `tests/test_dispatcher.py`, `tests/test_profile_aware_semantic_indexer.py`, `tests/test_v13_data_vectors.py`, `tests/test_v13_safety.py`, `docs/IGNORE_PATTERNS_BEHAVIOR.md`, `mcp_server/utils/semantic_indexer_registry.py`, `tests/test_semantic_indexer_registry.py`, `scripts/release_smoke.py`
+- **Owned files**: `pyproject.toml`, `uv.lock`, `mcp_server/__init__.py`, `.github/workflows/release-automation.yml`, `CHANGELOG.md`, `README.md`, `scripts/install-mcp-docker.sh`, `scripts/install-mcp-docker.ps1`, `docs/GETTING_STARTED.md`, `docs/MCP_CONFIGURATION.md`, `docs/SUPPORT_MATRIX.md`, `tests/test_release_metadata.py`, `scripts/v13_release_candidate.py`, `tests/test_v13_release_candidate.py`, `scripts/v13_pmcp_pilot.py`, `tests/test_v13_pmcp_pilot.py`, `scripts/v13_pilot_budget.py`, `tests/test_v13_pilot_budget.py`, `docs/operations/v13-release.md`, `mcp_server/artifacts/artifact_download.py`, `mcp_server/artifacts/integrity_gate.py`, `tests/test_artifact_integrity_gate.py`, `mcp_server/artifacts/artifact_upload.py`, `mcp_server/artifacts/freshness.py`, `mcp_server/artifacts/multi_repo_artifact_coordinator.py`, `mcp_server/artifacts/publisher.py`, `mcp_server/cli/artifact_commands.py`, `mcp_server/cli/task_reindex.py`, `mcp_server/cli/tool_handlers.py`, `mcp_server/cli/stdio_runner.py`, `mcp_server/client.py`, `mcp_server/core/ignore_patterns.py`, `mcp_server/core/repo_resolver.py`, `mcp_server/dispatcher/cross_repo_coordinator.py`, `mcp_server/dispatcher/dispatcher_enhanced.py`, `mcp_server/storage/sqlite_store.py`, `mcp_server/storage/multi_repo_manager.py`, `docs/operations/v13-pmcp-pilot.md`, `docs/security/attestation.md`, `docs/security/auth-boundary.md`, `.github/workflows/sign-published-image.yml`, `tests/test_v13_prep_repairs.py`, `tests/test_artifact_download.py`, `tests/test_artifact_upload.py`, `tests/test_artifact_attestation.py`, `tests/security/test_artifact_attestation.py`, `tests/test_artifact_publish_race.py`, `tests/test_artifact_publish_rollback.py`, `tests/test_artifact_auto_delta.py`, `tests/test_artifact_commands.py`, `tests/test_multi_repo_artifact_coordinator.py`, `tests/test_mcptasks_reindex.py`, `tests/test_artifact_freshness.py`, `tests/test_ignore_patterns.py`, `tests/test_python_client_contract.py`, `tests/test_cross_repo_coordinator.py`, `tests/docs/test_gabase_ga_readiness_contract.py`, `tests/docs/test_garc_rc_soak_contract.py`, `tests/docs/test_garecut_rc_recut_contract.py`, `tests/docs/test_p34_public_alpha_recut.py`, `tests/docs/test_pubname_public_docs.py`, `tests/smoke/test_mcpbase_stdio_smoke.py`, `tests/smoke/test_mcpeval_sdk_surface.py`, `mcp_server/artifacts/attestation.py`, `mcp_server/gateway.py`, `mcp_server/metrics/health_check.py`, `mcp_server/watcher/file_watcher.py`, `mcp_server/watcher_multi_repo.py`, `mcp_server/storage/git_index_manager.py`, `tests/test_v13_prep_panel_repairs.py`, `tests/test_gateway_transport_boundary.py`, `tests/test_watcher_multi_repo.py`, `tests/test_workflow_release_policy.py`, `tests/test_gateway.py`, `mcp_server/storage/repository_registry.py`, `tests/test_git_index_manager.py`, `tests/docs/test_gagov_governance_contract.py`, `tests/integration/test_multi_repo_hydration.py`, `tests/smoke/test_release_smoke_contract.py`, `tests/test_delta_base_fallback.py`, `tests/test_dispatcher_toctou.py`, `tests/test_p25_release_gates.py`, `tests/test_workflow_action_pins.py`, `mcp_server/core/lifecycle.py`, `mcp_server/core/logging.py`, `mcp_server/storage/store_registry.py`, `mcp_server/utils/semantic_indexer.py`, `tests/test_dispatcher.py`, `tests/test_profile_aware_semantic_indexer.py`, `tests/test_v13_data_vectors.py`, `tests/test_v13_safety.py`, `docs/IGNORE_PATTERNS_BEHAVIOR.md`, `mcp_server/utils/semantic_indexer_registry.py`, `tests/test_semantic_indexer_registry.py`, `scripts/release_smoke.py`, `tests/docs/test_garel_ga_release_contract.py`
 - **Interfaces provided**: prepared-version-contract, version-only-evidence-binding, fresh-release-checks
 - **Interfaces consumed**: accepted-pilot-contract (pre-existing), accepted-freeze-contract (pre-existing)
 - **Parallel-safe**: no

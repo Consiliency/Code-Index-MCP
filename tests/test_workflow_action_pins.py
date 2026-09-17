@@ -21,7 +21,7 @@ WORKFLOW_CENSUS = {
     "lockfile-check.yml": ({"workflow_dispatch"}, 1),
     "maintenance.yml": ({"pull_request", "push"}, 1),
     "mcp-index.yml": ({"workflow_dispatch"}, 2),
-    "release-automation.yml": ({"workflow_dispatch"}, 8),
+    "release-automation.yml": ({"workflow_dispatch"}, 9),
     "sign-published-image.yml": ({"workflow_dispatch"}, 2),
 }
 

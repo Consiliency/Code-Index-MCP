@@ -113,6 +113,7 @@ def test_committed_event_failure_does_not_terminate_observation(tmp_path):
     handler = MultiRepositoryHandler.__new__(MultiRepositoryHandler)
     handler.repo_path = tmp_path
     handler.repo_id = "repo-1"
+    handler.ctx = _make_repo_context(tmp_path)
     handler._refresh_context = Mock(return_value=True)
     handler.parent_watcher = Mock()
     sync = handler.parent_watcher.index_manager.sync_repository_index
@@ -188,7 +189,9 @@ def test_watcher_uses_current_generation_and_external_registry_membership(tmp_pa
             assert not handler._trigger_reindex_with_ctx(first / "seed.py")
             assert handler.ctx.sqlite_store is not old_store
             dispatcher.index_file_guarded.assert_not_called()
-            watcher.index_manager.sync_repository_index.assert_called_once_with(first_id)
+            watcher.index_manager.sync_repository_index.assert_called_once_with(
+                first_id, expected_registration_id=info.registration_id, require_auto_sync=True
+            )
             external.unregister(first_id)
             assert not handler._trigger_reindex_with_ctx(first / "seed.py")
             external.register_repository(str(second))

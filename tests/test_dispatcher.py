@@ -10975,6 +10975,49 @@ class TestEnhancedDispatcherProtocolConformance:
         assert first.status == IndexResultStatus.INDEXED
         assert second.status == IndexResultStatus.SKIPPED_UNCHANGED
 
+    @pytest.mark.parametrize("guarded", [False, True])
+    @pytest.mark.parametrize("failure", ["exception", "semantic_failed", "semantic_blocked"])
+    def test_single_file_semantic_failure_retries_unchanged_content(
+        self, tmp_path, monkeypatch, guarded, failure
+    ):
+        from mcp_server.storage.sqlite_store import SQLiteStore
+
+        target = tmp_path / "sample.py"
+        target.write_text("value = 1\n")
+        store = SQLiteStore(str(tmp_path / "index.db"))
+        ctx = _make_repo_ctx(store, workspace_root=tmp_path)
+        plugin = MagicMock(spec=IPlugin, lang="python")
+        plugin.language = "python"
+        plugin.supports.return_value = True
+        plugin.indexFile.return_value = {"symbols": []}
+        dispatcher = Dispatcher([plugin], semantic_search_enabled=False)
+        monkeypatch.setattr(dispatcher, "_get_semantic_indexer", lambda ctx: object())
+        semantic = MagicMock(
+            side_effect=[
+                RuntimeError("provider failed") if failure == "exception" else {failure: 1},
+                {"semantic_indexed": 1, "semantic_failed": 0, "semantic_blocked": 0},
+            ]
+        )
+        monkeypatch.setattr(dispatcher, "rebuild_semantic_for_paths", semantic)
+
+        def index():
+            if guarded:
+                return dispatcher.index_file_guarded(
+                    ctx, target, hashlib.sha256(target.read_bytes()).hexdigest()
+                )
+            return dispatcher.index_file(ctx, target)
+
+        try:
+            assert index().status == IndexResultStatus.ERROR
+            assert store.get_file(target) is not None
+            assert str(target) not in dispatcher._file_cache
+            assert index().status == IndexResultStatus.INDEXED
+            assert semantic.call_count == 2
+            assert index().status == IndexResultStatus.SKIPPED_UNCHANGED
+        finally:
+            dispatcher.shutdown()
+            store.close()
+
     def test_skip_cache_does_not_suppress_writes_to_another_store(self, tmp_path):
         from dataclasses import replace
 

@@ -15,6 +15,7 @@ import sys
 import tempfile
 import time
 from contextlib import closing
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, NamedTuple, Optional, Tuple
@@ -550,6 +551,7 @@ class IndexArtifactUploader:
         if attestation is None:
             attestation = attest(bundle.metadata_path, repo=self.repo)
         else:
+            attestation = replace(attestation, bundle_path=bundle.attestation_path)
             verify_attestation(bundle.metadata_path, attestation, expected_repo=self.repo)
         self._ensure_gh_cli()
 

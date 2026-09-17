@@ -147,10 +147,7 @@ class StoreRegistry:
                 if (
                     expected_owner is not None
                     and cached is not None
-                    and (
-                        cached.registry_binding[0]
-                        != getattr(expected_owner, "registration_id", None)
-                    )
+                    and (cached.registry_binding[:5] != self.binding(expected_owner)[:5])
                 ):
                     return
                 store = self._cache.pop(repo_id, None)

@@ -18,7 +18,11 @@ import anyio
 import mcp.types as types
 
 from mcp_server.cli.bootstrap import _allowed_roots, _path_within_allowed, validate_index
-from mcp_server.cli.task_reindex import _record_reindexed_files, run_reindex_task
+from mcp_server.cli.task_reindex import (
+    _file_mutation_count,
+    _record_reindexed_files,
+    run_reindex_task,
+)
 from mcp_server.cli.task_write_summaries import run_write_summaries_task
 from mcp_server.client import ClientValidationError, build_search_options, execute_search_service
 from mcp_server.core.repo_context import RepoContext
@@ -1211,12 +1215,16 @@ async def handle_reindex(
             )
         try:
             durable_files = 0
+            indexed_files = 0
 
             def index_file(current):
-                nonlocal durable_files
+                nonlocal durable_files, indexed_files
                 if current is None:
-                    return dispatcher.index_file(target_path)
+                    result = dispatcher.index_file(target_path)
+                    indexed_files = _file_mutation_count(result)
+                    return result
                 result = dispatcher.index_file(current, target_path)
+                indexed_files = _file_mutation_count(result)
                 durable_files = _record_reindexed_files(
                     current.sqlite_store, ctx.workspace_root, target_path
                 )
@@ -1229,10 +1237,10 @@ async def handle_reindex(
                 {
                     "path": str(target_path),
                     "mode": "file",
-                    "indexed_files": 1,
+                    "indexed_files": indexed_files,
                     "durable_files": durable_files,
-                    "mutation_performed": True,
-                    "message": f"Reindexed file: {path}",
+                    "mutation_performed": bool(indexed_files),
+                    "message": f"Reindexed file: {path}" if indexed_files else "File unchanged",
                 }
             )
         except Exception as e:

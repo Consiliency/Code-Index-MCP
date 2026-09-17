@@ -97,10 +97,17 @@ def test_container_retirement_records_slow_and_forced_exit(
     monkeypatch.setattr(pilot, "run_command", command)
     owner.stop()
     value = receipt(manifest, "live")
-    value.update(
-        shutdown_seconds=[owner.exit_seconds],
-        surviving_children=owner.survivors,
+    measured = value["resource_owners"][-1]
+    measured.update(
+        shutdown_seconds=owner.exit_seconds,
         peak_rss_mib=owner.peak_rss_mib,
+        survivors=owner.survivors,
+        exit_state=owner.exit_state,
+    )
+    value.update(
+        shutdown_seconds=[1, owner.exit_seconds],
+        surviving_children=owner.survivors,
+        peak_rss_mib=60 + owner.peak_rss_mib,
     )
     if elapsed > 5 or exit_code == 137:
         with pytest.raises(PilotRefused, match="operational"):
@@ -117,6 +124,9 @@ def manifest():
 
 
 def receipt(manifest, kind):
+    from scripts.v13_pmcp_pilot import QDRANT_IMAGE
+
+    unit = "code-index-v13-" + "b" * 32 + ".scope"
     return {
         "kind": kind,
         "manifest_sha256": digest_json(manifest),
@@ -126,6 +136,30 @@ def receipt(manifest, kind):
         "shutdown_seconds": [1, 3.1],
         "surviving_children": [],
         "peak_rss_mib": 100,
+        "qdrant_measured": True,
+        "resource_owners": [
+            {
+                "kind": "process",
+                "identity": unit,
+                "pid": 123,
+                "cgroup": "/sys/fs/cgroup/user.slice/" + unit,
+                "shutdown_seconds": 1,
+                "peak_rss_mib": 60,
+                "survivors": [],
+                "exit_state": {"running": False, "exit_code": 0, "oom_killed": False},
+            },
+            {
+                "kind": "qdrant",
+                "identity": "a" * 64,
+                "pid": 456,
+                "cgroup": "/sys/fs/cgroup/system.slice/docker-" + "a" * 64 + ".scope",
+                "image": QDRANT_IMAGE,
+                "shutdown_seconds": 3.1,
+                "peak_rss_mib": 40,
+                "survivors": [],
+                "exit_state": {"running": False, "exit_code": 0, "oom_killed": False},
+            },
+        ],
         "latencies_ms": {"symbol": [20] * 40, "lexical": [60] * 40, "semantic": [100] * 40},
         "contention_successes": dict.fromkeys(("symbol", "lexical", "semantic"), 20),
         "budget": {"reserved_input_units": 2000, "elapsed_seconds": 20, "blocked": None},
@@ -135,6 +169,47 @@ def receipt(manifest, kind):
 @pytest.mark.parametrize("kind", ["offline", "live", "browser"])
 def test_complete_receipt_contract(manifest, kind):
     validate_receipt(receipt(manifest, kind), manifest, kind)
+
+
+@pytest.mark.parametrize(
+    "damage",
+    [
+        "missing_flag",
+        "false_flag",
+        "no_owners",
+        "missing_qdrant",
+        "duplicate_qdrant",
+        "rss",
+        "duration",
+        "exit_state",
+        "identity",
+        "group",
+    ],
+)
+def test_live_receipt_requires_complete_owned_measurements(manifest, damage):
+    value = receipt(manifest, "live")
+    if damage == "missing_flag":
+        value.pop("qdrant_measured")
+    elif damage == "false_flag":
+        value["qdrant_measured"] = False
+    elif damage == "no_owners":
+        value.pop("resource_owners")
+    elif damage == "missing_qdrant":
+        value["resource_owners"].pop()
+    elif damage == "duplicate_qdrant":
+        value["resource_owners"].append(copy.deepcopy(value["resource_owners"][-1]))
+    elif damage == "rss":
+        value["peak_rss_mib"] = 60
+    elif damage == "duration":
+        value["shutdown_seconds"] = [1]
+    elif damage == "exit_state":
+        value["resource_owners"][-1]["exit_state"]["exit_code"] = 137
+    elif damage == "identity":
+        value["resource_owners"][-1]["identity"] = "c" * 64
+    else:
+        value["resource_owners"][-1]["cgroup"] = "/outside"
+    with pytest.raises(PilotRefused):
+        validate_receipt(value, manifest, "live")
 
 
 @pytest.mark.parametrize("field", ["source", "wheel_sha256", "manifest_sha256"])
@@ -215,6 +290,7 @@ def test_browser_goals_without_artifacts_cannot_pass(tmp_path, manifest):
 
 @pytest.mark.parametrize("valid", [True, False])
 def test_prepare_delivered_wheel_never_builds(tmp_path, monkeypatch, valid):
+    from scripts import release_smoke
     from scripts import v13_pmcp_pilot as pilot
 
     wheel = tmp_path / "index_it_mcp-1.4.1-py3-none-any.whl"
@@ -222,13 +298,14 @@ def test_prepare_delivered_wheel_never_builds(tmp_path, monkeypatch, valid):
     root = tmp_path / "owned"
     calls = []
     monkeypatch.setattr(pilot, "source_identity", lambda: {"source": "a" * 40})
+    monkeypatch.setattr(release_smoke, "validate_wheel_source", lambda *args: {"version": "1.4.1"})
 
     def run(command, directory, label, **kwargs):
         assert command[:2] != ["uv", "build"]
         calls.append(command)
         if label == "pilot-lock-export":
             (directory / "constraints.txt").write_text("dependency==1\n")
-        return "{}" if label == "installed-identity" else "fixture"
+        return '{"version": "1.4.1"}' if label == "installed-identity" else "fixture"
 
     monkeypatch.setattr(pilot, "run_command", run)
     digest = pilot.digest_file(wheel) if valid else "0" * 64
@@ -242,6 +319,30 @@ def test_prepare_delivered_wheel_never_builds(tmp_path, monkeypatch, valid):
         assert result["wheel_sha256"] == digest
         assert (root / "dist" / wheel.name).read_bytes() == wheel.read_bytes()
         assert (root / "dist" / wheel.name).as_uri() in " ".join(result["uvx_prefix"])
+
+
+@pytest.mark.asyncio
+async def test_ambiguous_qdrant_creation_cleans_owned_name(tmp_path, manifest, monkeypatch):
+    from scripts import v13_pmcp_pilot as pilot
+
+    monkeypatch.syspath_prepend(str(pilot.REPO / "scripts"))
+    monkeypatch.setattr(pilot, "create_fixture", lambda *args, **kwargs: {"root": tmp_path})
+    calls = []
+
+    def run(command, *args, **kwargs):
+        calls.append(command)
+        if command[:2] == ["docker", "run"]:
+            assert "--name" in command
+            raise subprocess.TimeoutExpired(command, 1)
+        return ""
+
+    monkeypatch.setattr(pilot, "run_command", run)
+    with pytest.raises(subprocess.TimeoutExpired):
+        await pilot.inference_pilot(tmp_path, manifest, rehearsal=True)
+    name = calls[0][calls[0].index("--name") + 1]
+    assert name.startswith("mcp-v13-pilot-")
+    assert calls[-1] == ["docker", "rm", "--force", name]
+    assert not (tmp_path / "allowance").exists()
 
 
 def test_artifact_replacement_cannot_change_the_validated_snapshot(tmp_path, manifest, monkeypatch):
@@ -505,6 +606,12 @@ def live_records(tmp_path, manifest, request, monkeypatch):
             "workload": workload,
             "runtime_metadata": metadata,
             "runtime_provenance": {"repositories": repositories},
+            "resource_measurements": {
+                **{key: result[key] for key in ("source", "wheel_sha256", "manifest_sha256")},
+                "owners": copy.deepcopy(result["resource_owners"]),
+            },
+            "qdrant_start": "a" * 64,
+            "qdrant_stop_state": {"Running": False, "ExitCode": 0, "OOMKilled": False},
         },
     )
 
@@ -538,6 +645,12 @@ def live_records(tmp_path, manifest, request, monkeypatch):
         "rehearsal",
         "incomplete",
         "duplicate_artifact",
+        "resources_missing_qdrant",
+        "resources_binding",
+        "resource_rss",
+        "resource_shutdown",
+        "qdrant_start",
+        "qdrant_exit",
     ],
 )
 def test_live_record_reduction_is_consistent_and_read_only(
@@ -609,10 +722,24 @@ def test_live_record_reduction_is_consistent_and_read_only(
         documents["workload"]["rehearsal"] = True
     elif damage == "incomplete":
         result["workflow_completed"] = False
+    elif damage == "resources_missing_qdrant":
+        documents["resource_measurements"]["owners"].pop()
+    elif damage == "resources_binding":
+        documents["resource_measurements"]["source"] = "d" * 40
+    elif damage == "resource_rss":
+        documents["resource_measurements"]["owners"][-1]["peak_rss_mib"] += 1
+    elif damage == "resource_shutdown":
+        documents["resource_measurements"]["owners"][-1]["shutdown_seconds"] = 9
+    elif damage == "qdrant_start":
+        documents["qdrant_start"] = "d" * 64
+    elif damage == "qdrant_exit":
+        documents["qdrant_stop_state"]["ExitCode"] = 137
     paths = {"allowance_ledger": ledger_path.relative_to(tmp_path).as_posix()}
     for role, document in documents.items():
         paths[role] = role + ".json"
-        (tmp_path / paths[role]).write_text(json.dumps(document))
+        (tmp_path / paths[role]).write_text(
+            document if isinstance(document, str) else json.dumps(document)
+        )
     result["artifacts"] = [
         {"role": role, "path": path, "sha256": digest_file(tmp_path / path)}
         for role, path in paths.items()
@@ -645,7 +772,9 @@ def test_saved_rehearsal_requires_actual_bound_records(tmp_path, manifest, live_
     paths = {"allowance_ledger": (ledger.root / "ledger.sqlite").relative_to(tmp_path).as_posix()}
     for role, document in documents.items():
         paths[role] = role + ".json"
-        (tmp_path / paths[role]).write_text(json.dumps(document))
+        (tmp_path / paths[role]).write_text(
+            document if isinstance(document, str) else json.dumps(document)
+        )
     result["artifacts"] = [
         {"role": role, "path": path, "sha256": digest_file(tmp_path / path)}
         for role, path in paths.items()

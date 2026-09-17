@@ -5,8 +5,13 @@ Historical GARC soak target: v1.2.0-rc6.
 
 from __future__ import annotations
 
+import json
+import os
+import shlex
 import subprocess
 from pathlib import Path
+
+import pytest
 
 try:
     import tomllib
@@ -21,6 +26,93 @@ DOCKER_INSTALLERS = (
     "scripts/install-mcp-docker.sh",
     "scripts/install-mcp-docker.ps1",
 )
+
+
+@pytest.mark.parametrize(
+    "case",
+    ["version", "latest", "local", "missing", "malformed", "wrong_namespace", "invalid_selector"],
+)
+def test_docker_installer_pins_release_digest_without_tag_fallback(tmp_path, case):
+    image = "ghcr.io/consiliency/code-index-mcp@sha256:" + "a" * 64
+    response = image
+    if case == "malformed":
+        response = "ghcr.io/consiliency/code-index-mcp:latest"
+    elif case == "wrong_namespace":
+        response = "ghcr.io/another/image@sha256:" + "a" * 64
+    selector = {"latest": "latest", "local": "local-smoke", "invalid_selector": "../wrong"}.get(
+        case, "v1.4.1"
+    )
+    script = REPO / "scripts/install-mcp-docker.sh"
+    command = r"""
+set -e
+source "$INSTALLER"
+curl() { printf '%s\n' "$@" > curl-args; printf '%s\n' "$FIXTURE_REF"; return "$FETCH_EXIT"; }
+docker() { printf '%s\n' "$@" >> docker-args; }
+pull_image
+setup_mcp_json
+"""
+    result = subprocess.run(
+        ["bash", "-c", command],
+        cwd=tmp_path,
+        env={
+            **os.environ,
+            "INSTALLER": str(script),
+            "MCP_VARIANT": selector,
+            "FIXTURE_REF": response,
+            "FETCH_EXIT": "22" if case == "missing" else "0",
+        },
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+    if case in {"missing", "malformed", "wrong_namespace", "invalid_selector"}:
+        assert result.returncode != 0
+        assert not (tmp_path / "docker-args").exists()
+        assert not (tmp_path / ".mcp.json").exists()
+        return
+    assert result.returncode == 0, result.stderr
+    expected = "ghcr.io/consiliency/code-index-mcp:local-smoke" if case == "local" else image
+    calls = (tmp_path / "docker-args").read_text().splitlines()
+    assert calls == (["image", "inspect", expected] if case == "local" else ["pull", expected])
+    config = json.loads((tmp_path / ".mcp.json").read_text())
+    assert config["mcpServers"]["code-index"]["args"][-3:] == [expected, "index-it-mcp", "stdio"]
+    if case != "local":
+        url = (tmp_path / "curl-args").read_text().splitlines()[-1]
+        selector_path = "latest/download" if case == "latest" else "download/v1.4.1"
+        assert url.endswith(f"/releases/{selector_path}/image-reference.txt")
+
+
+@pytest.mark.parametrize(
+    "args", [[], ["--version"], ["setup"], ["upgrade"], ["search", "two words"]]
+)
+def test_generated_docker_launcher_keeps_selected_digest(tmp_path, args):
+    source = _read_text("scripts/install-mcp-docker.sh")
+    template = source.split("cat > /tmp/mcp-index << 'EOF'\n", 1)[1].split("\nEOF", 1)[0]
+    image = "ghcr.io/consiliency/code-index-mcp@sha256:" + "a" * 64
+    launcher = tmp_path / "launcher"
+    launcher.write_text(template.replace("@MCP_IMAGE_REF@", image))
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            'docker() { printf "%s\\n" "$@" > "$CALLS"; }; export -f docker; bash "$@"',
+            "test",
+            str(launcher),
+            *args,
+        ],
+        cwd=tmp_path,
+        env={**os.environ, "CALLS": str(tmp_path / "calls"), "MCP_VARIANT": "untrusted-tag"},
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+    assert result.returncode == 0, result.stderr
+    calls = (tmp_path / "calls").read_text().splitlines()
+    assert image in calls and "untrusted-tag" not in calls
+    if args == ["upgrade"]:
+        assert calls == ["pull", image]
+    else:
+        assert calls[calls.index(image) + 1 :] == ["index-it-mcp", *(args or ["stdio"])]
 
 
 def _read_text(relative_path: str) -> str:
@@ -68,6 +160,31 @@ def test_readme_distribution_identity_remains_stable():
     assert "docs/status/public-package-identity.md" in readme
 
 
+def test_documented_publish_dispatch_binds_accepted_identity():
+    import yaml
+
+    readme = _read_text("README.md")
+    section = readme.split("### Creating Releases", 1)[1].split("### Automatic", 1)[0]
+    command = next(
+        line
+        for line in section.replace("\\\n", " ").splitlines()
+        if line.startswith("gh workflow run")
+    )
+    arguments = shlex.split(command)
+    fields = dict(
+        arguments[index + 1].split("=", 1) for index, value in enumerate(arguments) if value == "-f"
+    )
+    workflow = yaml.safe_load(_read_text(".github/workflows/release-automation.yml"))
+    inputs = (workflow.get("on") or workflow[True])["workflow_dispatch"]["inputs"]
+    assert set(fields) <= set(inputs)
+    assert fields["expected_commit"] == "$ACCEPTED_MERGE_COMMIT"
+    assert fields["expected_tree"] == "$ACCEPTED_MERGE_TREE"
+    assert fields["mode"] == "publish"
+    assert fields["version"] == EXPECTED_TAG
+    assert "GitHub SLSA attestations" not in readme
+    assert "Automatic redaction of detected secrets" not in readme
+
+
 def test_changelog_has_prepared_unpublished_contract_section():
     changelog = _read_text("CHANGELOG.md")
 
@@ -90,12 +207,14 @@ def test_release_workflow_separates_prepare_from_protected_main_publish():
     assert "gh workflow run" not in workflow
     assert 'grep -Fxq "version = \\"$VERSION_NO_V\\"" pyproject.toml' in workflow
     assert 'grep -Fxq "__version__ = \\"$VERSION_NO_V\\"" mcp_server/__init__.py' in workflow
-    assert "prerelease: ${{ contains(inputs.version, '-') }}" in workflow
-    assert "promote-container:" in workflow
-    assert 'tags=(--tag "${IMAGE_REF}:${RELEASE_VERSION}")' in workflow
+    assert 'if [[ "$RELEASE_VERSION" == *-* ]]; then flags+=(--prerelease); fi' in workflow
+    assert "verify-container:" in workflow
+    assert "image-reference.txt" in workflow
+    assert "imagetools create" not in workflow
     assert 'owner="${GITHUB_REPOSITORY_OWNER,,}"' in workflow
     assert "pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b" in workflow
-    assert "softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b" in workflow
+    assert 'gh release create "$RELEASE_VERSION"' in workflow
+    assert "--verify-tag" in workflow
 
 
 def test_release_tag_is_not_reused_locally():
@@ -138,7 +257,7 @@ def test_installers_and_download_helper_match_stable_identity_contract():
     assert 'MCP_VARIANT="${MCP_VARIANT:-v1.4.1}"' in shell
     assert 'MCP_VARIANT="${MCP_VARIANT:-local-smoke}"' not in shell
     assert 'param(\n    [string]$Variant = "v1.4.1"' in powershell
-    assert 'IF "%MCP_VARIANT%"=="" SET MCP_VARIANT=v1.4.1' in powershell
+    assert "SET MCP_IMAGE_REF=@MCP_IMAGE_REF@" in powershell
     assert 'IF "%MCP_VARIANT%"=="" SET MCP_VARIANT=local-smoke' not in powershell
 
     # local-smoke stays available as a selectable dev option (just not the default).
@@ -153,7 +272,10 @@ def test_installers_and_download_helper_match_stable_identity_contract():
     readme = _read_text("README.md")
     quick_start = readme.split("## 🚀 Quick Start", 1)[1].split("## Using Against Many Repos", 1)[0]
     assert "after protected-main publication" in quick_start
-    assert "ghcr.io/consiliency/code-index-mcp:v1.4.1" in quick_start
+    assert "image-reference.txt" in quick_start
+    for installer in (shell, powershell):
+        assert "image-reference.txt" in installer
+        assert "no tag fallback is permitted" in installer
 
     for expected in (
         "index_it_mcp-",

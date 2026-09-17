@@ -184,6 +184,12 @@ jobs:
       contents: read
       packages: read
     steps:
+      - name: Refuse publication retries
+        run: |
+          test "$GITHUB_RUN_ATTEMPT" = "1" || {
+            echo "::error::Release recovery requires a new owner decision; do not rerun jobs"
+            exit 1
+          }
       - name: Check out exact protected-main commit
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
@@ -226,6 +232,12 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Refuse publication retries
+        run: |
+          test "$GITHUB_RUN_ATTEMPT" = "1" || {
+            echo "::error::Release recovery requires a new owner decision; do not rerun jobs"
+            exit 1
+          }
       - name: Check out exact protected-main commit
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
@@ -270,6 +282,12 @@ jobs:
     outputs:
       image_digest: ${{ steps.build-and-push.outputs.digest }}
     steps:
+      - name: Refuse publication retries
+        run: |
+          test "$GITHUB_RUN_ATTEMPT" = "1" || {
+            echo "::error::Release recovery requires a new owner decision; do not rerun jobs"
+            exit 1
+          }
       - name: Derive lowercase GHCR image name (follows repo owner across transfers)
         run: |
           owner="${GITHUB_REPOSITORY_OWNER,,}"
@@ -357,8 +375,10 @@ jobs:
           cosign sign --yes "${IMAGE_REF}@${IMAGE_DIGEST}"
           cosign verify "${IMAGE_REF}@${IMAGE_DIGEST}" \
             --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release-automation.yml@refs/heads/main" \
-            --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            --certificate-github-workflow-sha "${{ github.sha }}"
           printf '%s\n' "$IMAGE_DIGEST" > image-digest.txt
+          printf '%s\n' "${IMAGE_REF}@${IMAGE_DIGEST}" > image-reference.txt
 
       - name: Upload release artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -370,6 +390,7 @@ jobs:
             sbom.spdx.json
             CHANGELOG.md
             image-digest.txt
+            image-reference.txt
 
   publish-release:
     name: Publish protected-main artifacts
@@ -380,6 +401,12 @@ jobs:
       contents: write
       id-token: write
     steps:
+      - name: Refuse publication retries
+        run: |
+          test "$GITHUB_RUN_ATTEMPT" = "1" || {
+            echo "::error::Release recovery requires a new owner decision; do not rerun jobs"
+            exit 1
+          }
       - name: Check out exact protected-main commit
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
@@ -423,17 +450,14 @@ jobs:
           test "$(git rev-list -n 1 "$RELEASE_VERSION")" = "${{ github.sha }}"
 
       - name: Create GitHub release
-        uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b # v3
-        with:
-          tag_name: ${{ inputs.version }}
-          target_commitish: ${{ github.sha }}
-          name: Release ${{ inputs.version }}
-          body_path: CHANGELOG.md
-          draft: false
-          prerelease: ${{ contains(inputs.version, '-') }}
-          files: |
-            dist/*
-            sbom.spdx.json
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          flags=(--verify-tag --target "$GITHUB_SHA" --title "Release $RELEASE_VERSION" --notes-file CHANGELOG.md)
+          if [[ "$RELEASE_VERSION" == *-* ]]; then flags+=(--prerelease); fi
+          # Do not attach assets in `create`: gh otherwise deletes its draft on upload failure.
+          gh release create "$RELEASE_VERSION" "${flags[@]}"
+          gh release upload "$RELEASE_VERSION" dist/* sbom.spdx.json image-digest.txt image-reference.txt
 
       - name: Guard protected main before publish to pypi
         run: |
@@ -450,17 +474,23 @@ jobs:
         with:
           packages-dir: dist/
 
-  promote-container:
-    name: Promote verified container digest
+  verify-container:
+    name: Verify released container digest
     needs: [build-release, publish-release]
     if: inputs.mode == 'publish' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: write
+      packages: read
     env:
       IMAGE_DIGEST: ${{ needs.build-release.outputs.image_digest }}
     steps:
+      - name: Refuse publication retries
+        run: |
+          test "$GITHUB_RUN_ATTEMPT" = "1" || {
+            echo "::error::Release recovery requires a new owner decision; do not rerun jobs"
+            exit 1
+          }
       - name: Check out exact protected-main commit
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
@@ -480,23 +510,14 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Install Cosign
         uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
-      - name: Verify staged digest before promotion
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          OWNER_TYPE: ${{ github.event.repository.owner.type }}
+      - name: Verify released digest and source signature
         run: |
           [[ "$IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
           cosign verify "${IMAGE_REF}@${IMAGE_DIGEST}" \
             --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release-automation.yml@refs/heads/main" \
-            --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
-          scope=users
-          if [ "$OWNER_TYPE" = "Organization" ]; then scope=orgs; fi
-          versions=$(gh api "/${scope}/${GITHUB_REPOSITORY_OWNER}/packages/container/code-index-mcp/versions" --paginate --slurp)
-          existing=$(printf '%s' "$versions" | jq -r --arg tag "$RELEASE_VERSION" '.[][] | select(.metadata.container.tags | index($tag)) | .name')
-          if [ -n "$existing" ]; then
-            test "$existing" = "$IMAGE_DIGEST"
-          fi
-      - name: Guard protected main before promote stable container tags
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            --certificate-github-workflow-sha "${{ github.sha }}"
+      - name: Guard protected main before verify released container
         run: |
           VERSION_NO_V=${RELEASE_VERSION#v}
           git fetch origin main --tags
@@ -504,14 +525,7 @@ jobs:
           git merge-base --is-ancestor "${{ github.sha }}" origin/main
           grep -Fxq "version = \"$VERSION_NO_V\"" pyproject.toml
           grep -Fxq "__version__ = \"$VERSION_NO_V\"" mcp_server/__init__.py
-      - name: Promote stable container tags
+      - name: Confirm immutable container identity without retagging
         run: |
-          tags=(--tag "${IMAGE_REF}:${RELEASE_VERSION}")
-          if [[ "$RELEASE_VERSION" != *-* ]]; then
-            tags+=(--tag "${IMAGE_REF}:latest")
-          fi
-          docker buildx imagetools create --prefer-index=false "${tags[@]}" "${IMAGE_REF}@${IMAGE_DIGEST}"
-          for ((i=1; i<${#tags[@]}; i+=2)); do
-            actual=$(docker buildx imagetools inspect "${tags[i]}" --format '{{json .Manifest}}' | jq -r .digest)
-            test "$actual" = "$IMAGE_DIGEST"
-          done
+          actual=$(docker buildx imagetools inspect "${IMAGE_REF}@${IMAGE_DIGEST}" --format '{{json .Manifest}}' | jq -r .digest)
+          test "$actual" = "$IMAGE_DIGEST"

@@ -246,11 +246,10 @@ def test_checksum_sidecar_cannot_replace_signed_archive_binding(artifact_payload
 async def test_task_cancellation_reports_actual_staged_publication(
     tmp_path, monkeypatch, mode, timing
 ):
-    from types import SimpleNamespace
-
     from mcp.types import TaskMetadata
 
     from mcp_server.cli.task_reindex import run_reindex_task
+    from mcp_server.dispatcher.dispatcher_enhanced import IndexResult, IndexResultStatus
     from mcp_server.storage.mcp_task_registry import MCPTaskRegistry
     from tests.fixtures.multi_repo import boot_test_server, build_temp_repo
     from tests.test_mcptasks_reindex import _FakeTask
@@ -270,7 +269,9 @@ async def test_task_cancellation_reports_actual_staged_publication(
                 connection.execute("UPDATE files SET language = 'synthetic'")
             if timing == "during_work":
                 task.request_cancellation()
-            return SimpleNamespace(error=None) if mode == "file" else {"indexed_files": 1}
+            if mode == "file":
+                return IndexResult(IndexResultStatus.INDEXED, target, None, None)
+            return {"indexed_files": 1}
 
         dispatcher.index_directory.side_effect = index
         dispatcher.index_file.side_effect = index

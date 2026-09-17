@@ -207,6 +207,50 @@ class TestGatewayStartupShutdown:
         assert watcher.stop_watching_all.call_count == (0 if boundary == "watcher_construct" else 1)
         assert poller.stop.call_count == (1 if boundary in {"watcher_start", "poller_start"} else 0)
 
+    @pytest.mark.parametrize("boundary", ["health", "metrics", "plugin_status", "malformed_status"])
+    @patch("mcp_server.gateway.format_preflight_report", return_value=[])
+    @patch("mcp_server.gateway.run_startup_preflight")
+    @patch("mcp_server.gateway.SQLiteStore")
+    @patch("mcp_server.gateway.EnhancedDispatcher")
+    @patch("mcp_server.gateway.RefPoller")
+    @patch("mcp_server.gateway.MultiRepositoryWatcher")
+    @patch("mcp_server.gateway.PluginManager")
+    def test_late_startup_failure_drains_started_services(
+        self,
+        plugins,
+        watchers,
+        pollers,
+        dispatcher,
+        store,
+        preflight,
+        report,
+        boundary,
+        startup_test_client,
+        monkeypatch,
+    ):
+        import mcp_server.gateway as gateway
+
+        preflight.return_value = type("PreflightResult", (), {"status": "warning", "checks": []})()
+        if boundary == "malformed_status":
+            plugins.return_value.get_detailed_plugin_status.return_value = {"fixture": {}}
+        else:
+            target = Mock(side_effect=RuntimeError("synthetic late startup failure"))
+            if boundary == "health":
+                monkeypatch.setattr(gateway.health_checker, "register_health_check", target)
+            elif boundary == "metrics":
+                monkeypatch.setattr(gateway.business_metrics, "update_system_metrics", target)
+            else:
+                plugins.return_value.get_detailed_plugin_status.side_effect = target.side_effect
+        with pytest.raises((RuntimeError, KeyError)):
+            with startup_test_client:
+                pass
+        watchers.return_value.start_watching_all.assert_called_once()
+        pollers.return_value.start.assert_called_once()
+        watchers.return_value.stop_watching_all.assert_called_once()
+        pollers.return_value.stop.assert_called_once()
+        dispatcher.return_value.shutdown.assert_called_once()
+        plugins.return_value.shutdown_safe.assert_called_once()
+
     @patch("mcp_server.gateway.EnhancedDispatcher")
     @patch("mcp_server.gateway.MultiRepositoryWatcher")
     def test_shutdown_stops_watcher(
@@ -438,6 +482,35 @@ class TestSearchEndpoint:
         assert options.source_type is not None and options.source_type.value == "friction"
         assert options.friction_categories == ("todo",)
         assert options.include_source_metadata is True
+
+    @pytest.mark.parametrize("mode", ["semantic", "hybrid"])
+    def test_semantic_cache_key_is_stable_and_profile_sensitive(
+        self, test_client_with_dispatcher, monkeypatch, mode
+    ):
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+
+        import mcp_server.gateway as gateway
+
+        profiles = {"fixture": {"provider": "local", "model_name": "first"}}
+        settings = SimpleNamespace(
+            get_semantic_default_profile=lambda: "fixture",
+            get_semantic_profiles_config=lambda: profiles,
+        )
+        cache = SimpleNamespace(
+            config=SimpleNamespace(enabled=True),
+            get_cached_result=AsyncMock(return_value=[]),
+        )
+        monkeypatch.setattr(gateway, "get_settings", lambda: settings)
+        monkeypatch.setattr(gateway, "query_cache", cache)
+        monkeypatch.setattr(gateway, "_search_backends_for_repo", lambda ctx: (None, None, None))
+        for _ in range(2):
+            assert test_client_with_dispatcher.get(f"/search?q=test&mode={mode}").status_code == 200
+        profiles["fixture"]["model_name"] = "second"
+        assert test_client_with_dispatcher.get(f"/search?q=test&mode={mode}").status_code == 200
+        keys = [call.kwargs["profile"] for call in cache.get_cached_result.call_args_list]
+        assert keys[0] == keys[1]
+        assert keys[1] != keys[2]
 
     def test_search_cache_key_includes_source_filters(
         self, test_client_with_dispatcher, monkeypatch

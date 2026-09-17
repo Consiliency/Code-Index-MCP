@@ -115,7 +115,8 @@ def test_workflow_runtime_warning_is_remediated_before_any_future_ga_dispatch():
 
     assert "prepare-release-pr:" in workflow
     assert "inputs.auto_merge == 'true'" in workflow
-    assert "softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b" in workflow
+    assert 'gh release create "$RELEASE_VERSION"' in workflow
+    assert "--verify-tag" in workflow
     assert "softprops/action-gh-release@v2" not in workflow
     assert "GitHub's latest published release is still" in decision
     assert "`v8.0.1`" in decision

@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import sqlite3
 import subprocess
+from contextlib import closing
 from dataclasses import replace
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -545,6 +546,10 @@ def test_real_semantic_generation_uses_its_own_backend_and_matching_summary_ids(
             row[0] for row in connection.execute("SELECT chunk_id FROM code_chunks")
         } == first_ids
     before_path = registry.get(repo_id).index_path
+    # Settle prior committed WAL frames before comparing physical archive bytes.
+    with closing(sqlite3.connect(before_path)) as connection:
+        assert connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()[0] == 0
+        before_dump = list(connection.iterdump())
     before_bytes = before_path.read_bytes()
     vectors_path = extracted / "semantic-vectors.jsonl"
     vectors = [json.loads(line) for line in vectors_path.read_text().splitlines()]
@@ -567,6 +572,9 @@ def test_real_semantic_generation_uses_its_own_backend_and_matching_summary_ids(
         extracted,
         expected_commit="0" * 40 if restore_fault == "commit" else _get_head_commit(repo),
     )
+    with closing(sqlite3.connect(before_path)) as connection:
+        after_dump = list(connection.iterdump())
+    assert after_dump == before_dump
     assert before_path.read_bytes() == before_bytes
     if restore_fault:
         assert result.action == "failed"

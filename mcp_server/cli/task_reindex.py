@@ -13,6 +13,7 @@ import mcp.types as types
 from mcp.server.experimental.task_context import ServerTaskContext
 
 from mcp_server.core.repo_resolver import RepositoryMutationCancelled, run_repository_mutation
+from mcp_server.dispatcher.dispatcher_enhanced import IndexResult, IndexResultStatus
 from mcp_server.indexing.checkpoint import ReindexCheckpoint
 from mcp_server.indexing.checkpoint import clear as clear_checkpoint
 from mcp_server.indexing.checkpoint import save
@@ -25,6 +26,20 @@ def _call_tool_result(payload: dict[str, Any], *, is_error: bool = False) -> typ
         structuredContent=payload,
         isError=is_error,
     )
+
+
+def _file_mutation_count(mutation: Any) -> int:
+    """Accept completed file mutations, including truthful no-op results."""
+    if not isinstance(mutation, IndexResult):
+        raise RuntimeError("File indexing did not return a completion result")
+    semantic = mutation.semantic or {}
+    if semantic.get("semantic_failed") or semantic.get("semantic_blocked"):
+        raise RuntimeError("Required semantic mutation did not complete")
+    if mutation.status == IndexResultStatus.SKIPPED_UNCHANGED:
+        return 0
+    if mutation.status != IndexResultStatus.INDEXED:
+        raise RuntimeError("File indexing did not complete")
+    return 1
 
 
 def _record_reindexed_files(active_store: Any, workspace_root: Path, target_path: Path) -> int:
@@ -178,17 +193,20 @@ async def run_reindex_task(
             return {"cancelled": True, "indexed_files": 0, "mutation_performed": False}
         if requested_path and target_path.is_file():
             mutation = dispatcher.index_file(current, target_path)
+            indexed_files = _file_mutation_count(mutation)
             durable_files = _record_reindexed_files(
                 current.sqlite_store, ctx.workspace_root, target_path
             )
             return {
                 "path": str(target_path),
                 "mode": "file",
-                "indexed_files": 1,
+                "indexed_files": indexed_files,
                 "durable_files": durable_files,
-                "mutation_performed": True,
+                "mutation_performed": bool(indexed_files),
                 "cancelled": task.is_cancelled,
-                "message": f"Reindexed file: {requested_path}",
+                "message": (
+                    f"Reindexed file: {requested_path}" if indexed_files else "File unchanged"
+                ),
                 "error": getattr(mutation, "error", None),
             }
 

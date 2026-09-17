@@ -149,6 +149,65 @@ def validate_receipt(receipt: dict, manifest: dict, kind: str) -> None:
             or not 0 < rss <= 2048
         ):
             raise PilotRefused("operational_limits_failed")
+    if kind in {"live", "rehearsal"}:
+        owners = receipt.get("resource_owners", [])
+        if (
+            receipt.get("qdrant_measured") is not True
+            or not isinstance(owners, list)
+            or len(owners) < 2
+            or any(not isinstance(owner, dict) for owner in owners)
+            or sum(owner.get("kind") == "qdrant" for owner in owners) != 1
+        ):
+            raise PilotRefused("resource_owners_incomplete")
+        identities, groups = set(), set()
+        for owner in owners:
+            identity, group = owner.get("identity"), owner.get("cgroup")
+            state = owner.get("exit_state", {})
+            duration, peak = owner.get("shutdown_seconds"), owner.get("peak_rss_mib")
+            if (
+                owner.get("kind") not in {"process", "qdrant"}
+                or not isinstance(identity, str)
+                or not isinstance(group, str)
+                or not group.startswith("/sys/fs/cgroup/")
+                or identity in identities
+                or group in groups
+                or type(owner.get("pid")) is not int
+                or owner["pid"] <= 0
+                or type(duration) not in (int, float)
+                or not math.isfinite(duration)
+                or not 0 <= duration <= 5
+                or type(peak) not in (int, float)
+                or not math.isfinite(peak)
+                or peak <= 0
+                or owner.get("survivors") != []
+                or not isinstance(state, dict)
+                or state.get("running") is not False
+                or state.get("oom_killed") is not False
+                or type(state.get("exit_code")) is not int
+                or state["exit_code"] not in (0, 143, -15)
+            ):
+                raise PilotRefused("resource_owner_invalid")
+            if owner["kind"] == "qdrant":
+                if (
+                    not re.fullmatch(r"[0-9a-f]{64}", identity)
+                    or identity not in group
+                    or owner.get("image") != QDRANT_IMAGE
+                    or state["exit_code"] not in (0, 143)
+                ):
+                    raise PilotRefused("qdrant_owner_invalid")
+            elif not re.fullmatch(
+                r"code-index-v13-[0-9a-f]{32}\.scope", identity
+            ) or not group.endswith("/" + identity):
+                raise PilotRefused("process_owner_invalid")
+            identities.add(identity)
+            groups.add(group)
+        if (
+            receipt["shutdown_seconds"] != [owner["shutdown_seconds"] for owner in owners]
+            or receipt["peak_rss_mib"] != sum(owner["peak_rss_mib"] for owner in owners)
+            or receipt["surviving_children"]
+            != [pid for owner in owners for pid in owner["survivors"]]
+        ):
+            raise PilotRefused("resource_aggregate_mismatch")
     if kind == "live":
         if receipt.get("rehearsal") is True:
             raise PilotRefused("rehearsal_is_not_live_acceptance")
@@ -267,6 +326,12 @@ def prepare(root: Path, wheel_path: Path | None = None, expected_sha256: str | N
         not re.fullmatch(r"[0-9a-f]{64}", expected_sha256) or digest_file(wheel) != expected_sha256
     ):
         raise PilotRefused("delivered_wheel_digest_mismatch")
+    if __package__:
+        from .release_smoke import validate_wheel_source
+    else:
+        from release_smoke import validate_wheel_source
+
+    wheel_contract = validate_wheel_source(wheel, REPO)
     run_command(
         [
             "uv",
@@ -310,11 +375,14 @@ def prepare(root: Path, wheel_path: Path | None = None, expected_sha256: str | N
             "installed-identity",
         )
     )
+    if installed.get("version") != wheel_contract["version"]:
+        raise PilotRefused("installed_version_mismatch")
     manifest = {
         "schema": "v13-pilot-manifest.v1",
         **identity,
         "wheel": wheel.name,
         "wheel_sha256": digest_file(wheel),
+        "wheel_source_contract": wheel_contract,
         "artifact_origin": "registry" if wheel_path is not None else "local_build",
         "constraints_sha256": digest_file(root / "constraints.txt"),
         "installed": installed,
@@ -334,6 +402,8 @@ def installed_identity(wheel: Path) -> dict:
     package = Path(mcp_server.__file__).resolve().parent
     if "site-packages" not in package.parts or sys.version_info[:2] != (3, 12):
         raise PilotRefused("installed_identity_failed")
+    if mcp_server.__version__ != version("index-it-mcp"):
+        raise PilotRefused("installed_version_mismatch")
     checked = 0
     with zipfile.ZipFile(wheel) as archive:
         for name in archive.namelist():
@@ -605,6 +675,8 @@ class OwnedContainer:
                 timeout=5,
             )
         )
+        self.pid = pid
+        self.exit_state = None
         entries = (Path("/proc") / str(pid) / "cgroup").read_text().splitlines()
         group = next((entry[3:] for entry in entries if entry.startswith("0::/")), None)
         if not group:
@@ -645,6 +717,11 @@ class OwnedContainer:
             )
             self.exit_seconds = time.monotonic() - started
             self.survivors = [process.pid for process in cgroup_processes(self.group)]
+            self.exit_state = {
+                "running": state["Running"],
+                "exit_code": state["ExitCode"],
+                "oom_killed": state["OOMKilled"],
+            }
             if state["Running"] or state["ExitCode"] not in (0, 143) or state["OOMKilled"]:
                 self.survivors.append("qdrant_unclean_exit")
         finally:
@@ -1134,7 +1211,15 @@ def verify_saved_receipt(
             "browser_actions",
             "browser_session",
         },
-        "live": {"allowance_ledger", "runtime_provenance", "runtime_metadata", "workload"},
+        "live": {
+            "allowance_ledger",
+            "runtime_provenance",
+            "runtime_metadata",
+            "workload",
+            "resource_measurements",
+            "qdrant_start",
+            "qdrant_stop_state",
+        },
     }["live" if kind == "rehearsal" else kind]
     artifacts = result.get("artifacts", [])
     if not required_roles <= {item.get("role") for item in artifacts}:
@@ -1224,15 +1309,45 @@ def _verify_live_records(
 
     try:
         paths = {}
-        for role in ("allowance_ledger", "runtime_provenance", "runtime_metadata", "workload"):
+        for role in (
+            "allowance_ledger",
+            "runtime_provenance",
+            "runtime_metadata",
+            "workload",
+            "resource_measurements",
+            "qdrant_start",
+            "qdrant_stop_state",
+        ):
             matches = [
                 copies[root / item["path"]] for item in result["artifacts"] if item["role"] == role
             ]
             if len(matches) != 1:
                 raise PilotRefused("live_artifact_ambiguous")
             paths[role] = matches[0]
-        if len(set(paths.values())) != 4 or paths["allowance_ledger"].name != "ledger.sqlite":
+        if (
+            len(set(paths.values())) != len(paths)
+            or paths["allowance_ledger"].name != "ledger.sqlite"
+        ):
             raise PilotRefused("live_artifact_invalid")
+        resources = json.loads(paths["resource_measurements"].read_text())
+        if (
+            any(
+                resources.get(key) != result[key]
+                for key in ("source", "wheel_sha256", "manifest_sha256")
+            )
+            or resources.get("owners") != result["resource_owners"]
+        ):
+            raise PilotRefused("resource_measurements_mismatch")
+        qdrant = next(owner for owner in resources["owners"] if owner["kind"] == "qdrant")
+        stopped = json.loads(paths["qdrant_stop_state"].read_text())
+        if paths["qdrant_start"].read_text().strip() != qdrant["identity"] or qdrant[
+            "exit_state"
+        ] != {
+            "running": stopped.get("Running"),
+            "exit_code": stopped.get("ExitCode"),
+            "oom_killed": stopped.get("OOMKilled"),
+        }:
+            raise PilotRefused("qdrant_measurements_mismatch")
         ledger = BudgetLedger(
             paths["allowance_ledger"].parent,
             digest_json(manifest),
@@ -1595,7 +1710,7 @@ async def inference_pilot(root: Path, manifest: dict, *, rehearsal: bool) -> dic
     ledger = None
     servers = []
     threads = []
-    container = None
+    container = "mcp-v13-pilot-" + secrets.token_hex(16)
     container_owner = None
     sampling = None
     finished = asyncio.Event()
@@ -1688,12 +1803,14 @@ async def inference_pilot(root: Path, manifest: dict, *, rehearsal: bool) -> dic
 
     try:
         port = free_port()
-        container = (
+        container_id = (
             await asyncio.to_thread(
                 run_command,
                 [
                     "docker",
                     "run",
+                    "--name",
+                    container,
                     "-d",
                     "-p",
                     f"127.0.0.1:{port}:6333",
@@ -1705,9 +1822,9 @@ async def inference_pilot(root: Path, manifest: dict, *, rehearsal: bool) -> dic
                 "qdrant-start",
             )
         ).strip()
-        if len(container) != 64 or any(c not in "0123456789abcdef" for c in container):
+        if len(container_id) != 64 or any(c not in "0123456789abcdef" for c in container_id):
             raise PilotRefused("qdrant_owner_identity")
-        container_owner = await asyncio.to_thread(OwnedContainer, container, directory)
+        container_owner = await asyncio.to_thread(OwnedContainer, container_id, directory)
         qdrant_url = f"http://127.0.0.1:{port}"
         async with httpx.AsyncClient(trust_env=False) as http:
             for _ in range(100):
@@ -1726,7 +1843,10 @@ async def inference_pilot(root: Path, manifest: dict, *, rehearsal: bool) -> dic
             endpoints = dict.fromkeys(
                 ("embedding", "enrichment"), f"http://127.0.0.1:{fake.server_port}/v1"
             )
-        BudgetLedger.initialize(allowance, digest_json(manifest), approval=approval)
+        try:
+            BudgetLedger.initialize(allowance, digest_json(manifest), approval=approval)
+        except FileExistsError as exc:
+            raise PilotRefused("allowance_root_already_initialized") from exc
         ledger = BudgetLedger(allowance, digest_json(manifest), approval=approval)
         token = secrets.token_urlsafe(36)
         guard = LocalForwarder(
@@ -1934,11 +2054,50 @@ async def inference_pilot(root: Path, manifest: dict, *, rehearsal: bool) -> dic
             )
         processes = fixture.get("processes", [])
         owned = [*processes, *([container_owner] if container_owner is not None else [])]
+        resources = [
+            {
+                "kind": "process",
+                "identity": process.unit,
+                "pid": process.proc.pid,
+                "cgroup": str(process.group),
+                "shutdown_seconds": process.exit_seconds,
+                "peak_rss_mib": process.peak_rss_mib,
+                "survivors": process.survivors,
+                "exit_state": {
+                    "running": process.proc.poll() is None,
+                    "exit_code": process.proc.returncode,
+                    "oom_killed": False,
+                },
+            }
+            for process in processes
+        ]
+        if container_owner is not None:
+            resources.append(
+                {
+                    "kind": "qdrant",
+                    "identity": container_owner.container,
+                    "pid": container_owner.pid,
+                    "cgroup": str(container_owner.group),
+                    "image": QDRANT_IMAGE,
+                    "shutdown_seconds": container_owner.exit_seconds,
+                    "peak_rss_mib": container_owner.peak_rss_mib,
+                    "survivors": container_owner.survivors,
+                    "exit_state": container_owner.exit_state,
+                }
+            )
+        write_json(
+            directory / "resource-measurements.json",
+            {
+                **{key: result[key] for key in ("source", "wheel_sha256", "manifest_sha256")},
+                "owners": resources,
+            },
+        )
         result.update(
             shutdown_seconds=[p.exit_seconds for p in owned],
             surviving_children=[pid for p in owned for pid in p.survivors],
             peak_rss_mib=sum(p.peak_rss_mib for p in owned),
             qdrant_measured=container_owner is not None,
+            resource_owners=resources,
         )
         result["latencies_ms"] = {
             kind: [
@@ -1978,6 +2137,9 @@ async def inference_pilot(root: Path, manifest: dict, *, rehearsal: bool) -> dic
             ("allowance_ledger", directory / "allowance-ledger/ledger.sqlite"),
             ("runtime_metadata", directory / "runtime-metadata.json"),
             ("workload", directory / "workload.json"),
+            ("resource_measurements", directory / "resource-measurements.json"),
+            ("qdrant_start", directory / "qdrant-start.stdout"),
+            ("qdrant_stop_state", directory / "qdrant-stopped-state.stdout"),
         )
     ]
     verify_saved_receipt(

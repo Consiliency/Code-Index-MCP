@@ -8,6 +8,7 @@ import json
 import os
 import re
 import subprocess
+import tempfile
 import tomllib
 from datetime import datetime
 from pathlib import Path
@@ -149,11 +150,15 @@ def _signing_context(repo: Path, root: Path) -> dict:
 def claim_signing_dispatch(repo: Path, root: Path) -> dict:
     """Record one intent before an operator dispatch; never dispatch or retry here."""
     intent = _signing_context(repo, root)
+    temporary = None
     try:
-        with (root / "dispatch-intent.json").open("x", encoding="utf-8") as stream:
+        descriptor, name = tempfile.mkstemp(prefix=".dispatch-intent-", dir=root)
+        temporary = Path(name)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
             json.dump(intent, stream, indent=2, sort_keys=True)
             stream.flush()
             os.fsync(stream.fileno())
+        os.link(temporary, root / "dispatch-intent.json")
         descriptor = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
         try:
             os.fsync(descriptor)
@@ -161,7 +166,31 @@ def claim_signing_dispatch(repo: Path, root: Path) -> dict:
             os.close(descriptor)
     except FileExistsError:
         raise CandidateRefused("signing_dispatch_already_claimed") from None
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
     return intent
+
+
+def inspect_signing_claim(repo: Path, root: Path) -> dict:
+    """Inspect exact persisted intent without resetting it or authorizing a dispatch."""
+    expected = _signing_context(repo, root)
+    path = root / "dispatch-intent.json"
+    try:
+        with evidence_snapshot([path]) as copies:
+            raw = copies[path].read_bytes()
+            if json.loads(raw) != expected:
+                raise CandidateRefused("signing_claim_mismatch")
+            return {
+                "claim_matches_current_inputs": True,
+                "intent_sha256": hashlib.sha256(raw).hexdigest(),
+                "source": expected["source"],
+                "dispatch_status": "not_inspected",
+                "authorizes_dispatch": False,
+                "claim_modified": False,
+            }
+    except (OSError, ValueError, PilotRefused) as exc:
+        raise CandidateRefused("signing_claim_missing_or_invalid") from exc
 
 
 def verify_signing_proof(repo: Path, root: Path) -> dict:
@@ -541,8 +570,19 @@ def main() -> None:
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--renewed-pilot-root", type=Path)
     mode.add_argument("--claim-signing-dispatch", action="store_true")
+    mode.add_argument("--inspect-signing-claim", action="store_true")
     args = parser.parse_args()
     try:
+        if args.inspect_signing_claim:
+            print(
+                json.dumps(
+                    inspect_signing_claim(
+                        REPO, REPO / ".phase-loop/runs/v13-PREP-signing-20260915"
+                    ),
+                    indent=2,
+                )
+            )
+            return
         if args.claim_signing_dispatch:
             print(
                 json.dumps(

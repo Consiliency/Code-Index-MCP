@@ -221,7 +221,7 @@ def test_artifact_sync_bootstraps_local_indexes(monkeypatch, tmp_path):
     assert "guidance" in result.output
 
 
-def test_artifact_sync_reports_existing_local_drift(monkeypatch, tmp_path):
+def test_artifact_sync_refuses_existing_unregistered_drift(monkeypatch, tmp_path):
     runner = CliRunner()
     monkeypatch.setattr(
         "mcp_server.cli.artifact_commands._print_reconcile_guidance",
@@ -240,9 +240,11 @@ def test_artifact_sync_reports_existing_local_drift(monkeypatch, tmp_path):
         Path(".mcp-index/current.db").write_text("db", encoding="utf-8")
         result = runner.invoke(artifact, ["sync"])
 
-    assert result.exit_code == 0
+    assert result.exit_code != 0
     assert "guidance" in result.output
-    assert "too large for automatic incremental sync" in result.output.lower()
+    assert "mcp-index repository register <path>" in result.output
+    assert "artifact sync --repository <name>" in result.output
+    assert "Sync check complete" not in result.output
 
 
 def test_incremental_reconcile_requires_committed_registered_generation(monkeypatch, tmp_path):

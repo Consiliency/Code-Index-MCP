@@ -27,6 +27,7 @@ from mcp_server.artifacts.attestation import AttestationError, attest
 from mcp_server.cli.tool_handlers import handle_reindex
 from mcp_server.core.repo_resolver import RepoResolver
 from mcp_server.storage.git_index_manager import IndexSyncResult
+from mcp_server.storage.sqlite_store import SQLiteStore
 from mcp_server.storage.store_registry import StoreRegistry
 from mcp_server.watcher_multi_repo import MultiRepositoryHandler
 from tests.test_v13_data_storage import runtime
@@ -66,6 +67,90 @@ def test_losing_generation_writer_cannot_poison_new_registration(runtime, monkey
     assert after.registration_id == replacement[0].registration_id
     assert after.staleness_reason == replacement[0].staleness_reason
     assert after.last_sync_error == replacement[0].last_sync_error
+
+
+@pytest.mark.parametrize("fail_stage", [False, True])
+@pytest.mark.parametrize("replacement_kind", ["registration", "generation"])
+def test_stale_rebuild_retirement_preserves_replacement_resources(
+    runtime, monkeypatch, fail_stage, replacement_kind
+):
+    repo, registry, repo_id, _store, manager = runtime
+    assert manager.rebuild_repository_index(repo_id).action == "full_index"
+    manager._resolve_ctx(repo_id)
+    replacement = []
+    dispatcher = manager.dispatcher
+    plugin_eviction = MagicMock()
+    monkeypatch.setattr(dispatcher._plugin_set_registry, "evict", plugin_eviction)
+
+    def replace_before_retirement(stage):
+        if stage != "before_replacement":
+            return
+        if replacement_kind == "registration":
+            registry.unregister_repository(repo_id)
+            registry.register_repository(str(repo))
+        else:
+            registry.update_indexed_commit(
+                repo_id, registry.get(repo_id).last_indexed_commit, branch="main"
+            )
+        ctx = manager._resolve_ctx(repo_id)
+        graph = object()
+        key = dispatcher._graph_key(ctx)
+        dispatcher._graph_state[key] = graph
+        dispatcher._file_cache[str(repo / "hello.py")] = (1, 2, "replacement")
+        replacement.append((ctx, key, graph))
+        if fail_stage:
+            raise RuntimeError("synthetic stage failure")
+
+    monkeypatch.setattr(manager, "_rebuild_checkpoint", replace_before_retirement)
+    assert manager.rebuild_repository_index(repo_id).action == "failed"
+    ctx, key, graph = replacement[0]
+    assert manager.store_registry.get(repo_id) is ctx.sqlite_store
+    with ctx.sqlite_store._get_connection() as connection:
+        assert connection.execute("SELECT 1").fetchone()[0] == 1
+    assert dispatcher._graph_state[key] is graph
+    assert dispatcher._file_cache[str(repo / "hello.py")][2] == "replacement"
+    plugin_eviction.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fail_operation", [False, True])
+@pytest.mark.parametrize(
+    "endpoint,operation,arguments,value",
+    [
+        ("get_symbol_dependencies", "find_symbol_dependencies", {"symbol": "hello"}, []),
+        ("get_symbol_dependents", "find_symbol_dependents", {"symbol": "hello"}, []),
+        ("get_code_hotspots", "get_code_hotspots", {}, []),
+        ("get_context_for_symbols", "get_context_for_symbols", {"symbols": ["hello"]}, None),
+        ("graph_search", "graph_search", {"q": "hello"}, []),
+        ("get_graph_status", "get_runtime_feature_status", {}, {}),
+        ("initialize_graph", "_ensure_graph_initialized", {"file_paths": []}, False),
+    ],
+)
+async def test_graph_http_refuses_generation_transition(
+    runtime, monkeypatch, endpoint, operation, arguments, value, fail_operation
+):
+    repo, registry, repo_id, _store, manager = runtime
+    assert manager.rebuild_repository_index(repo_id).action == "full_index"
+    ctx = manager._resolve_ctx(repo_id)
+    resolver = RepoResolver(registry, manager.store_registry)
+    mocked = MagicMock()
+
+    def publish_during_query(*args, **kwargs):
+        assert manager.rebuild_repository_index(repo_id).action == "full_index"
+        assert registry.get(repo_id).index_generation != ctx.registry_entry.index_generation
+        if fail_operation:
+            raise RuntimeError("synthetic retired resource")
+        return value
+
+    getattr(mocked, operation).side_effect = publish_during_query
+    monkeypatch.setattr(gateway, "dispatcher", mocked)
+    monkeypatch.setattr(gateway, "repo_resolver", resolver)
+    monkeypatch.setattr(gateway, "get_repo_ctx", lambda request: ctx)
+    with pytest.raises(gateway.HTTPException) as error:
+        await getattr(gateway, endpoint)(request=MagicMock(), **arguments)
+    assert error.value.status_code == 503
+    assert error.value.detail["code"] == "index_unavailable"
+    assert error.value.detail["safe_fallback"] == "native_search"
 
 
 @pytest.mark.parametrize("operation", ["add", "modify", "delete", "rename_in", "rename_out"])
@@ -161,7 +246,10 @@ async def test_full_generation_task_request_never_runs_synchronously(
         stores.shutdown()
 
 
-def test_post_publication_trace_failure_preserves_committed_success(runtime, monkeypatch):
+@pytest.mark.parametrize("error_type", [OSError, RuntimeError])
+def test_post_publication_trace_failure_preserves_committed_success(
+    runtime, monkeypatch, error_type
+):
     _repo, registry, repo_id, _store, manager = runtime
     original = manager._write_force_full_exit_trace
     entered = []
@@ -169,7 +257,7 @@ def test_post_publication_trace_failure_preserves_committed_success(runtime, mon
     def fail_final_trace(info, update):
         if update.get("stage") == "force_full_completed":
             entered.append(True)
-            raise OSError("synthetic trace write failure")
+            raise error_type("synthetic trace write failure")
         return original(info, update)
 
     monkeypatch.setattr(manager, "_write_force_full_exit_trace", fail_final_trace)
@@ -695,7 +783,8 @@ def test_repository_retirement_joins_observer_before_closing_resources(tmp_path)
     assert calls == ["stop", "joined", "store", "vectors", "dispatcher"]
 
 
-def test_retired_watcher_cannot_close_replacement_store_or_run_queued_sync(runtime):
+@pytest.mark.parametrize("full_rescan", [False, True])
+def test_retired_watcher_cannot_close_replacement_store_or_run_queued_sync(runtime, full_rescan):
     from concurrent.futures import ThreadPoolExecutor
 
     from mcp_server.indexing.lock_registry import lock_registry
@@ -724,7 +813,10 @@ def test_retired_watcher_cannot_close_replacement_store_or_run_queued_sync(runti
     watcher.executor = ThreadPoolExecutor(max_workers=1)
     try:
         with lock_registry.acquire(repo_id, repo_path=repo):
-            watcher.on_git_commit(repo_id, old.last_indexed_commit)
+            if full_rescan:
+                watcher.enqueue_full_rescan(repo_id)
+            else:
+                watcher.on_git_commit(repo_id, old.last_indexed_commit)
             pending, retired = watcher._pending_syncs[repo_id][0]
             registry.unregister_repository(repo_id)
             registry.register_repository(str(repo))
@@ -743,6 +835,189 @@ def test_retired_watcher_cannot_close_replacement_store_or_run_queued_sync(runti
     finally:
         watcher.executor.shutdown(wait=True, cancel_futures=True)
         stores.shutdown()
+
+
+@pytest.mark.parametrize("policy", ["auto_sync", "active"])
+def test_automatic_sync_rechecks_policy_at_mutation_admission(runtime, monkeypatch, policy):
+    _repo, registry, repo_id, _store, manager = runtime
+    assert manager.rebuild_repository_index(repo_id).action == "full_index"
+    before = registry.get(repo_id)
+    begin = registry.begin_generation_mutation
+
+    def disable_before_begin(*args, **kwargs):
+        with registry._transaction(write=True):
+            registry._registry[repo_id][policy] = False
+        return begin(*args, **kwargs)
+
+    monkeypatch.setattr(registry, "begin_generation_mutation", disable_before_begin)
+    result = manager.sync_repository_index(
+        repo_id,
+        force_full=True,
+        expected_registration_id=before.registration_id,
+        require_auto_sync=True,
+    )
+    assert result.action == "failed"
+    after = registry.get(repo_id)
+    assert after.index_generation == before.index_generation
+    assert after.staleness_reason == before.staleness_reason
+    assert after.last_sync_error == before.last_sync_error
+
+
+def test_sync_rebuild_cannot_adopt_replacement_registration(runtime, monkeypatch):
+    repo, registry, repo_id, _store, manager = runtime
+    assert manager.rebuild_repository_index(repo_id).action == "full_index"
+    before = registry.get(repo_id)
+    rebuild = manager._rebuild_repository_index_locked
+    replacements = []
+
+    def replace_before_rebuild(*args, **kwargs):
+        registry.unregister_repository(repo_id)
+        registry.register_repository(str(repo))
+        replacements.append(registry.get(repo_id))
+        return rebuild(*args, **kwargs)
+
+    monkeypatch.setattr(manager, "_rebuild_repository_index_locked", replace_before_rebuild)
+    result = manager.sync_repository_index(
+        repo_id,
+        force_full=True,
+        expected_registration_id=before.registration_id,
+        require_auto_sync=True,
+    )
+    assert result.action == "refused"
+    assert registry.get(repo_id).index_generation == replacements[0].index_generation
+    assert registry.get(repo_id).staleness_reason == replacements[0].staleness_reason
+
+
+@pytest.mark.parametrize("change", ["registration", "auto_sync", "active"])
+def test_retired_handler_and_sweep_do_not_adopt_replacement(runtime, change):
+    from mcp_server.watcher_multi_repo import MultiRepositoryWatcher
+
+    repo, registry, repo_id, _store, manager = runtime
+    assert manager.rebuild_repository_index(repo_id).action == "full_index"
+    ctx = manager._resolve_ctx(repo_id)
+    watcher = MultiRepositoryWatcher.__new__(MultiRepositoryWatcher)
+    watcher.registry = registry
+    watcher.repo_resolver = RepoResolver(registry, manager.store_registry)
+    watcher.index_manager = MagicMock(store_registry=manager.store_registry)
+    watcher.mark_repository_changed = MagicMock()
+    handler = MultiRepositoryHandler.__new__(MultiRepositoryHandler)
+    handler.repo_id, handler.repo_path, handler.ctx = repo_id, repo, ctx
+    handler.parent_watcher = watcher
+    sweeper = watcher._build_default_sweeper()
+    assert sweeper._repo_roots_provider() == {repo_id: repo}
+    if change == "registration":
+        registry.unregister_repository(repo_id)
+        registry.register_repository(str(repo))
+    else:
+        with registry._transaction(write=True):
+            registry._registry[repo_id][change] = False
+    assert not handler._reconcile_committed_event(repo / "hello.py")
+    sweeper._on_repository_drift(repo_id)
+    watcher.index_manager.sync_repository_index.assert_not_called()
+    assert handler.ctx is ctx
+
+
+def test_sync_all_binds_snapshot_owner_and_respects_active(runtime, monkeypatch):
+    _repo, registry, repo_id, _store, manager = runtime
+    info = registry.get(repo_id)
+    monkeypatch.setattr(registry, "get_repositories_needing_update", lambda: [(repo_id, info)])
+    sync = MagicMock(return_value=IndexSyncResult(action="up_to_date", commit=""))
+    monkeypatch.setattr(manager, "sync_repository_index", sync)
+    manager.sync_all_repositories()
+    sync.assert_called_once_with(
+        repo_id, expected_registration_id=info.registration_id, require_auto_sync=True
+    )
+    sync.reset_mock()
+    info.active = False
+    assert manager.sync_all_repositories() == {}
+    sync.assert_not_called()
+
+
+def test_background_admission_timeout_is_logged_and_does_not_escape(tmp_path, monkeypatch, caplog):
+    from mcp_server.watcher_multi_repo import MultiRepositoryWatcher
+
+    owner = SimpleNamespace(path=str(tmp_path))
+    monkeypatch.setattr(
+        "mcp_server.watcher_multi_repo.lock_registry.acquire",
+        MagicMock(side_effect=TimeoutError("synthetic private path")),
+    )
+    watcher = MultiRepositoryWatcher.__new__(MultiRepositoryWatcher)
+    watcher._sync_admitted_repository("repo", "commit", owner, threading.Event())
+    assert "Admitted sync failed for repo: TimeoutError" in caplog.text
+    assert "synthetic private path" not in caplog.text
+
+
+@pytest.mark.parametrize("boundary", ["download", "admission", "publication", "completion"])
+@pytest.mark.parametrize("change", ["registration", "generation"])
+def test_artifact_restore_cannot_adopt_replacement_owner(runtime, monkeypatch, boundary, change):
+    from mcp_server.artifacts.freshness import FreshnessVerdict
+
+    repo, registry, repo_id, _store, manager = runtime
+    assert manager.rebuild_repository_index(repo_id).action == "full_index"
+    before = registry.get(repo_id)
+    extracted = repo.parent / "downloaded"
+    extracted.mkdir()
+    SQLiteStore.snapshot_database(before.index_path, extracted / "current.db")
+    downloader = IndexArtifactDownloader(repo="synthetic/example", index_manager=manager)
+    replacements = []
+
+    def replace_owner():
+        if change == "registration":
+            registry.unregister_repository(repo_id)
+            registry.register_repository(str(repo))
+        else:
+            registry.update_indexed_commit(repo_id, before.last_indexed_commit, branch="main")
+        replacements.append(registry.get(repo_id))
+
+    def download(*args, **kwargs):
+        if boundary == "download":
+            replace_owner()
+        return extracted
+
+    monkeypatch.setattr(downloader, "download_artifact", download)
+    monkeypatch.setattr(
+        "mcp_server.artifacts.artifact_download.verify_artifact_freshness",
+        lambda *args, **kwargs: FreshnessVerdict.FRESH,
+    )
+    if boundary == "admission":
+        begin = registry.begin_generation_mutation
+
+        def before_begin(*args, **kwargs):
+            replace_owner()
+            return begin(*args, **kwargs)
+
+        monkeypatch.setattr(registry, "begin_generation_mutation", before_begin)
+    elif boundary == "publication":
+        monkeypatch.setattr(
+            manager,
+            "_rebuild_checkpoint",
+            lambda stage: replace_owner() if stage == "before_provenance" else None,
+        )
+    elif boundary == "completion":
+        restore = manager.restore_verified_artifact
+
+        def after_restore(*args, **kwargs):
+            result = restore(*args, **kwargs)
+            assert result.action == "full_index"
+            replace_owner()
+            return result
+
+        monkeypatch.setattr(manager, "restore_verified_artifact", after_restore)
+    with pytest.raises(ValueError):
+        downloader.download_selected_artifact(
+            {"id": 1},
+            output_dir=repo.parent / "output",
+            repo_id=repo_id,
+            repo_path=repo,
+            target_commit=before.current_commit,
+            expected_owner=before,
+        )
+    assert replacements
+    after = registry.get(repo_id)
+    assert after.registration_id == replacements[-1].registration_id
+    assert after.index_generation == replacements[-1].index_generation
+    assert after.staleness_reason == replacements[-1].staleness_reason
+    assert after.last_sync_error == replacements[-1].last_sync_error
 
 
 def test_dispatcher_shutdown_drains_every_owner():

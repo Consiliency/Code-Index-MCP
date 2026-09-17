@@ -71,7 +71,7 @@ SL-0 — Publication And Post-Dispatch Documentation Sweep
     candidate. Verify 1.4.1 package/lock/workflow inputs and clean synced state.
     Any content drift routes to PREP before dispatch.
   - test: Immediately recheck `v1.4.1`, PyPI `index-it-mcp==1.4.1`, GitHub release
-    and `ghcr.io/consiliency/code-index-mcp:v1.4.1`, including partial prior runs.
+    and GHCR candidate/digest metadata, including partial prior runs.
     Record collision/partial-effect state. Do not overwrite existing artifacts.
   - impl: Write a durable dispatch-intent record outside the publication worktree,
     with accepted source/tree, default-branch SHA, version, exact workflow hash,
@@ -86,8 +86,11 @@ SL-0 — Publication And Post-Dispatch Documentation Sweep
     read-only enumeration/reconciliation; no automatic redispatch.
   - verify: Read all workflow jobs to terminal states, retain failed/partial
     outcomes, and verify the protected source and final tag/asset identities.
-    Stable image promotion must follow signed candidate-image verification and
-    successful Python/GitHub publication. Never substitute a local image for a
+    Container release identity is the signed digest in the GitHub release's
+    `image-reference.txt`/`image-digest.txt` assets. Version/latest GHCR tags
+    must remain untouched; no check-then-retag or tag fallback is allowed.
+    Verify the read-only final job and successful Python/GitHub publication.
+    Never substitute a local image for a
     registry-delivered image or infer publication from a green prepare job.
   - verify: Download the actual registry-delivered wheel/sdist and pull the exact
     published image digest into owned disposable validation locations. Record

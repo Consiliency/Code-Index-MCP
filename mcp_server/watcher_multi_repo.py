@@ -142,6 +142,9 @@ class MultiRepositoryHandler(FileSystemEventHandler):
             if (
                 ctx is None
                 or ctx.repo_id != self.repo_id
+                or not ctx.registry_entry.auto_sync
+                or not ctx.registry_entry.active
+                or ctx.registry_entry.registration_id != self.ctx.registry_entry.registration_id
                 or ctx.registry_entry.staleness_reason
                 in {
                     "index_publication_pending",
@@ -349,7 +352,11 @@ class MultiRepositoryHandler(FileSystemEventHandler):
         if not self._refresh_context() or build_walker_filter(self.repo_path)(path):
             return False
         try:
-            result = self.parent_watcher.index_manager.sync_repository_index(self.repo_id)
+            result = self.parent_watcher.index_manager.sync_repository_index(
+                self.repo_id,
+                expected_registration_id=self.ctx.registry_entry.registration_id,
+                require_auto_sync=True,
+            )
         except Exception as exc:
             logger.warning("Committed event reconciliation deferred (%s)", type(exc).__name__)
             return False
@@ -462,12 +469,18 @@ class MultiRepositoryWatcher:
             logger.warning("WatcherSweeper default wiring unavailable: no store registry")
             return None
 
+        owners = {}
+
         def _repo_roots() -> Dict[str, Path]:
-            return {
-                repo_id: Path(repo.path)
-                for repo_id, repo in self.registry.get_all_repositories().items()
-                if repo.auto_sync and getattr(repo, "active", True)
-            }
+            owners.clear()
+            owners.update(
+                {
+                    repo_id: repo
+                    for repo_id, repo in self.registry.get_all_repositories().items()
+                    if repo.auto_sync and getattr(repo, "active", True)
+                }
+            )
+            return {repo_id: Path(repo.path) for repo_id, repo in owners.items()}
 
         if not self.registry.get_all_repositories():
             return None
@@ -479,24 +492,49 @@ class MultiRepositoryWatcher:
             on_missed_create=self._on_missed_create,
             on_missed_delete=self._on_missed_delete,
             on_missed_rename=self._on_missed_rename,
-            on_repository_drift=self._reconcile_repository_drift,
+            on_repository_drift=lambda repo_id: self._reconcile_repository_drift(
+                repo_id, owner=owners.get(repo_id)
+            ),
         )
 
-    def _reconcile_repository_drift(self, repo_id: str) -> None:
+    def _reconcile_repository_drift(self, repo_id: str, *, owner=None) -> None:
         repo = self.registry.get_repository(repo_id)
         if repo is None or not repo.auto_sync or not getattr(repo, "active", True):
             return
-        result = self.index_manager.sync_repository_index(repo_id, force_full=True)
+        if owner is not None and owner.registration_id != repo.registration_id:
+            return
+        result = self.index_manager.sync_repository_index(
+            repo_id,
+            force_full=True,
+            expected_registration_id=repo.registration_id,
+            require_auto_sync=True,
+        )
         if result.action in {"full_index", "incremental_update"}:
             self.mark_repository_changed(repo_id)
 
     def enqueue_full_rescan(self, repo_id: str) -> None:
         """Submit a force-full reindex to the thread pool; returns immediately."""
 
-        def _rescan():
-            self.index_manager.sync_repository_index(repo_id, force_full=True)
-
-        self.executor.submit(_rescan)
+        with self._watch_lock:
+            if not self.running or repo_id not in self.watchers:
+                return
+            owner = self.watchers[repo_id].ctx.registry_entry
+            retired = threading.Event()
+            pending = self._pending_syncs.setdefault(repo_id, [])
+            pending[:] = [(future, token) for future, token in pending if not future.done()]
+            pending.append(
+                (
+                    self.executor.submit(
+                        self._sync_admitted_repository,
+                        repo_id,
+                        None,
+                        owner,
+                        retired,
+                        force_full=True,
+                    ),
+                    retired,
+                )
+            )
 
     def _handler_for_missed_event(self, repo_id: str) -> Optional[MultiRepositoryHandler]:
         handler = self.watchers.get(repo_id)
@@ -622,7 +660,10 @@ class MultiRepositoryWatcher:
                 observer.join()
         for future, _retired in pending:
             if not future.cancelled():
-                future.result()
+                try:
+                    future.result()
+                except Exception as exc:
+                    logger.warning("Retired sync failed for %s: %s", repo_id, type(exc).__name__)
         repo_root = (
             Path(repo_info.path)
             if repo_info is not None
@@ -723,12 +764,15 @@ class MultiRepositoryWatcher:
                 )
             )
 
-    def _sync_admitted_repository(self, repo_id, commit, owner, retired):
-        with lock_registry.acquire(repo_id, repo_path=Path(owner.path)):
-            if not retired.is_set():
-                self._sync_repository(repo_id, commit, owner=owner)
+    def _sync_admitted_repository(self, repo_id, commit, owner, retired, *, force_full=False):
+        try:
+            with lock_registry.acquire(repo_id, repo_path=Path(owner.path)):
+                if not retired.is_set():
+                    self._sync_repository(repo_id, commit, owner=owner, force_full=force_full)
+        except Exception as exc:
+            logger.warning("Admitted sync failed for %s: %s", repo_id, type(exc).__name__)
 
-    def _sync_repository(self, repo_id: str, commit: str, *, owner=None):
+    def _sync_repository(self, repo_id: str, commit: str, *, owner=None, force_full=False):
         """Sync repository index with new commit.
 
         Args:
@@ -738,8 +782,12 @@ class MultiRepositoryWatcher:
         try:
             # Sync the index
             kwargs = (
-                {"expected_registration_id": owner.registration_id} if owner is not None else {}
+                {"expected_registration_id": owner.registration_id, "require_auto_sync": True}
+                if owner is not None
+                else {}
             )
+            if force_full:
+                kwargs["force_full"] = True
             result = self.index_manager.sync_repository_index(repo_id, **kwargs)
 
             successful_mutation = result.action in {"full_index", "incremental_update"}

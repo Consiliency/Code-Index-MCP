@@ -45,6 +45,11 @@ MAX_ACTIONS_ZIP_BYTES = 2 * 1024**3
 MAX_ACTIONS_PAYLOAD_BYTES = 2 * 1024**3
 MAX_EXTRACTED_INDEX_BYTES = 2 * 1024**3
 MAX_INDEX_MEMBERS = 100_000
+MAX_IDENTITY_CANDIDATES = 10
+
+
+class ArtifactIdentityMismatch(ValueError):
+    """Authenticated artifact metadata does not describe the requested target."""
 
 
 def _download_bounded(command: List[str], target, limit: int, deadline: float) -> None:
@@ -132,6 +137,20 @@ class IndexArtifactDownloader:
         from .artifact_upload import IndexArtifactUploader
 
         return IndexArtifactUploader._detect_repository(self, repo_path)
+
+    def _registered_owner(self, repo_id):
+        from mcp_server.storage.repository_registry import RepositoryRegistry
+
+        if self._index_manager is not None:
+            registry = self._index_manager.registry
+        else:
+            if self._registry is None:
+                self._registry = RepositoryRegistry()
+            registry = self._registry
+        owner = registry.get(repo_id)
+        if owner is None:
+            raise ValueError("Artifact destination is not registered")
+        return owner
 
     def list_artifacts(self, name_filter: Optional[str] = None) -> List[Dict[str, Any]]:
         print("🔍 Fetching available artifacts...")
@@ -398,7 +417,9 @@ class IndexArtifactDownloader:
             semantic_profile_hash=semantic_profile_hash,
         )
         if identity_reasons and not allow_unsafe:
-            raise ValueError("Artifact identity validation failed: " + "; ".join(identity_reasons))
+            raise ArtifactIdentityMismatch(
+                "Artifact identity validation failed: " + "; ".join(identity_reasons)
+            )
         if identity_reasons:
             logger.warning(
                 "Unsafe artifact identity override accepted: %s",
@@ -761,7 +782,10 @@ class IndexArtifactDownloader:
             or index_root.is_symlink()
             or any(path.exists() or path.is_symlink() for path in destinations)
         ):
-            raise FileExistsError("Artifact installation requires an unused staging destination")
+            raise FileExistsError(
+                "Artifact installation requires an unused staging destination; "
+                "register the repository and use --repository for generation-safe recovery"
+            )
         for item in sources:
             if item.is_symlink() or (
                 item.is_dir() and any(child.is_symlink() for child in item.rglob("*"))
@@ -800,7 +824,8 @@ class IndexArtifactDownloader:
                 os.close(directory)
             if index_root.exists() or index_root.is_symlink():
                 raise FileExistsError(
-                    "Artifact installation requires an unused staging destination"
+                    "Artifact installation requires an unused staging destination; "
+                    "register the repository and use --repository for generation-safe recovery"
                 )
             stage.rename(index_root)
             directory = os.open(index_root.parent, os.O_RDONLY)
@@ -824,11 +849,14 @@ class IndexArtifactDownloader:
         index_path: Path | str | None = None,
         semantic_profile_hash: Optional[str] = None,
         allow_unsafe: bool = False,
+        expected_owner=None,
     ) -> ArtifactDownloadResult:
         if allow_unsafe and repo_id is not None:
             raise ValueError(
                 "Registered generations require artifact identity and freshness verification"
             )
+        if repo_id is not None and expected_owner is None:
+            expected_owner = self._registered_owner(repo_id)
         try:
             release = artifact.get("artifact_backend") == "github_release"
             download = self.download_release_artifact if release else self.download_artifact
@@ -843,7 +871,8 @@ class IndexArtifactDownloader:
             )
         except (subprocess.CalledProcessError, urllib.error.URLError, RuntimeError) as exc:
             logger.warning(
-                "GitHub outage detected, keeping local index (artifact download failed: %s)", exc
+                "GitHub outage detected, keeping local index (artifact download failed: %s)",
+                type(exc).__name__,
             )
             return ArtifactDownloadResult(artifact=artifact, installed_items=[])
 
@@ -881,7 +910,7 @@ class IndexArtifactDownloader:
                     "Mismatched artifacts cannot be admitted as registered generations"
                 )
             installed_items = self._install_verified_generation(
-                repo_id, extracted_dir, head_commit, repo_path
+                repo_id, extracted_dir, head_commit, repo_path, expected_owner=expected_owner
             )
         else:
             installed_items = self.install_indexes(
@@ -897,7 +926,7 @@ class IndexArtifactDownloader:
         )
 
     def _install_verified_generation(
-        self, repo_id: str, extracted: Path, commit: str, repo_path
+        self, repo_id: str, extracted: Path, commit: str, repo_path, *, expected_owner=None
     ) -> List[str]:
         from mcp_server.dispatcher.dispatcher_enhanced import EnhancedDispatcher
         from mcp_server.storage.git_index_manager import GitAwareIndexManager
@@ -906,6 +935,8 @@ class IndexArtifactDownloader:
         manager = self._index_manager
         owned = manager is None
         dispatcher = None
+        if expected_owner is None:
+            expected_owner = self._registered_owner(repo_id)
         try:
             if owned:
                 registry = self._registry if self._registry is not None else RepositoryRegistry()
@@ -922,10 +953,20 @@ class IndexArtifactDownloader:
                 repo_path is not None and Path(info.path).resolve() != Path(repo_path).resolve()
             ):
                 raise ValueError("Artifact destination is not the registered repository")
-            result = manager.restore_verified_artifact(repo_id, extracted, expected_commit=commit)
+            result = manager.restore_verified_artifact(
+                repo_id, extracted, expected_commit=commit, expected_owner=expected_owner
+            )
             if result.action != "full_index":
                 raise ValueError(result.error or "Artifact generation was not admitted")
-            return [str(manager.registry.get(repo_id).index_path)]
+            current = manager.registry.get(repo_id)
+            published = result.readiness
+            if current is None or (
+                current.registration_id != expected_owner.registration_id
+                or current.index_generation != published["index_generation"]
+                or str(current.index_path) != published["index_path"]
+            ):
+                raise ValueError("Artifact generation was superseded after publication")
+            return [published["index_path"]]
         finally:
             if owned:
                 try:
@@ -940,17 +981,43 @@ class IndexArtifactDownloader:
         *,
         output_dir: Path,
         backup: bool = True,
-        full_only: bool = False,
+        full_only: bool = True,
         **kwargs: Any,
     ) -> ArtifactDownloadResult:
+        if kwargs.get("repo_id") is not None and kwargs.get("expected_owner") is None:
+            kwargs["expected_owner"] = self._registered_owner(kwargs["repo_id"])
         artifacts = self.list_artifacts()
         if full_only:
             artifacts = [a for a in artifacts if not re.search(r"-delta(?:-|$)", a.get("name", ""))]
         best = self.find_best_artifact(artifacts)
         if not best:
             raise RuntimeError("No compatible artifacts found")
-        print(f"\n✅ Selected: {best['name']}")
-        return self.download_selected_artifact(best, output_dir=output_dir, backup=backup, **kwargs)
+        targeted = any(kwargs.get(key) for key in ("repo_id", "tracked_branch", "target_commit"))
+        if not targeted or kwargs.get("allow_unsafe"):
+            return self.download_selected_artifact(
+                best, output_dir=output_dir, backup=backup, **kwargs
+            )
+        candidates = [best, *[artifact for artifact in artifacts if artifact is not best]]
+        commit = kwargs.get("target_commit")
+        if commit:
+            # Discovery hints affect priority only; authenticated metadata still gates install.
+            candidates.sort(
+                key=lambda artifact: not (
+                    artifact.get("workflow_run", {}).get("head_sha") == commit
+                    or commit in artifact.get("name", "")
+                )
+            )
+        for candidate in candidates[:MAX_IDENTITY_CANDIDATES]:
+            try:
+                return self.download_selected_artifact(
+                    candidate, output_dir=output_dir, backup=backup, **kwargs
+                )
+            except ArtifactIdentityMismatch:
+                continue
+        raise ArtifactIdentityMismatch(
+            "No authenticated artifact matched the requested identity within the candidate limit; "
+            "select an explicit --artifact-id or recover --branch/--commit"
+        )
 
     def recover(
         self,
@@ -961,6 +1028,8 @@ class IndexArtifactDownloader:
         backup: bool = True,
         **kwargs: Any,
     ) -> ArtifactDownloadResult:
+        if kwargs.get("repo_id") is not None and kwargs.get("expected_owner") is None:
+            kwargs["expected_owner"] = self._registered_owner(kwargs["repo_id"])
         artifacts = self.list_artifacts()
         selected = self.find_recovery_artifact(artifacts, branch=branch, commit=commit)
         if not selected:

@@ -63,6 +63,39 @@ def release_backend(monkeypatch):
     return uploader, releases, calls
 
 
+def test_upload_verifies_staged_sidecar_not_replaced_source(tmp_path, release_backend, monkeypatch):
+    from datetime import datetime, timezone
+
+    uploader, releases, calls = release_backend
+    monkeypatch.setenv("MCP_ATTESTATION_MODE", "enforce")
+    archive = tmp_path / "archive.tar.gz"
+    archive.write_bytes(b"prepared bytes")
+    sidecar = tmp_path / "source.jsonl"
+    sidecar.write_bytes(b"invalid staged signature")
+    attestation = Attestation("", sidecar, "", datetime.now(timezone.utc))
+    build = uploader._build_release_asset_bundle
+
+    def replace_source(*args, **kwargs):
+        bundle = build(*args, **kwargs)
+        sidecar.write_bytes(b"valid replacement signature")
+        return bundle
+
+    def verify(metadata, attestation, **kwargs):
+        assert attestation.bundle_path != sidecar
+        assert attestation.bundle_path.parent == metadata.parent
+        if attestation.bundle_path.read_bytes() != b"valid replacement signature":
+            raise AttestationError("Invalid staged signature")
+
+    monkeypatch.setattr(uploader, "_build_release_asset_bundle", replace_source)
+    monkeypatch.setattr("mcp_server.artifacts.artifact_upload.verify_attestation", verify)
+    with pytest.raises(AttestationError, match="Invalid staged signature"):
+        uploader.upload_direct(
+            archive, {"checksum": uploader._calculate_checksum(archive)}, attestation=attestation
+        )
+    assert not calls
+    assert not releases
+
+
 def test_repeated_prepared_upload_is_idempotent_across_local_filenames(tmp_path, release_backend):
     from mcp_server.artifacts.artifact_download import _payload_limits
 

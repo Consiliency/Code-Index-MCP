@@ -476,6 +476,7 @@ def pull(
                     backup=not no_backup,
                     allow_unsafe=unsafe_allow_mismatched_artifact,
                     repo_id=repo_info.repository_id if repo_info else None,
+                    expected_owner=repo_info,
                     repo_path=repo_info.path if repo_info else None,
                     tracked_branch=repo_info.tracked_branch if repo_info else None,
                     target_commit=repo_info.current_commit if repo_info else None,
@@ -494,6 +495,7 @@ def pull(
                     backup=not no_backup,
                     allow_unsafe=unsafe_allow_mismatched_artifact,
                     repo_id=repo_info.repository_id if repo_info else None,
+                    expected_owner=repo_info,
                     repo_path=repo_info.path if repo_info else None,
                     tracked_branch=repo_info.tracked_branch if repo_info else None,
                     target_commit=repo_info.current_commit if repo_info else None,
@@ -595,10 +597,12 @@ def sync(repository: Optional[str]):
             _print_runtime_restore_note()
             _print_reconcile_guidance()
 
-            detector, changes = _get_local_drift()
-            if changes and detector.should_use_incremental(changes):
-                if not _run_incremental_reconcile(changes):
-                    raise click.Abort()
+            _detector, changes = _get_local_drift()
+            if changes:
+                raise click.ClickException(
+                    "Register this repository with `mcp-index repository register <path>` "
+                    "and retry `mcp-index artifact sync --repository <name>` to reconcile drift."
+                )
 
         else:
             click.echo("📊 Local indexes found:")
@@ -629,14 +633,12 @@ def sync(repository: Optional[str]):
 
             _print_reconcile_guidance()
 
-            detector, changes = _get_local_drift()
+            _detector, changes = _get_local_drift()
             if changes:
-                if detector.should_use_incremental(changes):
-                    if not _run_incremental_reconcile(changes):
-                        raise click.Abort()
-                else:
-                    click.echo("\n⚠️  Local drift is too large for automatic incremental sync.")
-                    click.echo("   Recommended: run `mcp-index index rebuild --force`")
+                raise click.ClickException(
+                    "Register this repository with `mcp-index repository register <path>` "
+                    "and retry `mcp-index artifact sync --repository <name>` to reconcile drift."
+                )
             else:
                 click.echo("\n✅ Local artifact baseline is already in sync.")
 
@@ -732,6 +734,7 @@ def recover(
                 backup=not no_backup,
                 allow_unsafe=unsafe_allow_mismatched_artifact,
                 repo_id=repo_info.repository_id if repo_info else None,
+                expected_owner=repo_info,
                 repo_path=repo_info.path if repo_info else None,
                 tracked_branch=repo_info.tracked_branch if repo_info else branch,
                 target_commit=repo_info.current_commit if repo_info else commit,

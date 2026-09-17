@@ -5,6 +5,8 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import subprocess
+import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -51,7 +53,7 @@ OWNER_DERIVED_WORKFLOWS = (
 # container jobs derived while the others silently resolved an empty namespace.
 OWNER_DERIVED_STEP_COUNTS = {
     ".github/workflows/container-registry.yml": 3,  # alpha-build, push-manifests, sign
-    ".github/workflows/release-automation.yml": 2,  # build-release, promote-container
+    ".github/workflows/release-automation.yml": 2,  # build-release, verify-container
 }
 _DERIVE_STEP = 'owner="${GITHUB_REPOSITORY_OWNER,,}"'
 
@@ -92,6 +94,7 @@ def test_delivered_wheel_never_builds_and_checks_registry_digest(tmp_path, monke
     wheel.write_bytes(b"registry fixture")
     calls = []
     monkeypatch.setattr(smoke, "_run", lambda command, **kwargs: calls.append(command))
+    monkeypatch.setattr(smoke, "validate_wheel_source", lambda *args: {"version": "1.4.1"})
 
     def reached_install(_):
         raise RuntimeError("reached install without build")
@@ -107,22 +110,114 @@ def test_delivered_wheel_never_builds_and_checks_registry_digest(tmp_path, monke
     assert calls and all(command[:2] != ["uv", "build"] for command in calls)
 
 
-def test_delivered_image_never_builds_and_requires_immutable_reference(tmp_path, monkeypatch):
+@pytest.fixture(scope="module")
+def reviewed_wheel(tmp_path_factory):
+    root = tmp_path_factory.mktemp("reviewed-wheel")
+    subprocess.run(
+        ["uv", "build", "--wheel", "--out-dir", str(root)],
+        cwd=REPO,
+        check=True,
+        capture_output=True,
+        timeout=180,
+    )
+    return next(root.glob("*.whl"))
+
+
+@pytest.mark.parametrize(
+    "damage", [None, "name", "version", "dependency", "entrypoint", "code", "missing", "extra"]
+)
+def test_wheel_source_binding(reviewed_wheel, tmp_path, damage):
+    from scripts import release_smoke as smoke
+
+    with zipfile.ZipFile(reviewed_wheel) as archive:
+        content = {name: archive.read(name) for name in archive.namelist()}
+    metadata = next(name for name in content if name.endswith(".dist-info/METADATA"))
+    entrypoints = next(name for name in content if name.endswith(".dist-info/entry_points.txt"))
+    if damage == "name":
+        content[metadata] = content[metadata].replace(b"Name: index-it-mcp", b"Name: other-package")
+    elif damage == "version":
+        content[metadata] = content[metadata].replace(b"Version: 1.4.1", b"Version: 1.4.0")
+    elif damage == "dependency":
+        content[metadata] = content[metadata].replace(b"Requires-Dist: mcp>=1.0.0\n", b"")
+    elif damage == "entrypoint":
+        content[entrypoints] = content[entrypoints].replace(
+            b"mcp_server.cli:cli", b"mcp_server.old:cli"
+        )
+    elif damage == "code":
+        content["mcp_server/__init__.py"] += b"\n# unrelated build\n"
+    elif damage == "missing":
+        del content["mcp_server/__init__.py"]
+    elif damage == "extra":
+        content["injected.pth"] = b"import injected\n"
+    wheel = tmp_path / reviewed_wheel.name
+    with zipfile.ZipFile(wheel, "w") as archive:
+        for name, data in content.items():
+            archive.writestr(name, data)
+    if damage:
+        with pytest.raises(ValueError, match="differs|differ"):
+            smoke.validate_wheel_source(wheel)
+    else:
+        result = smoke.validate_wheel_source(wheel)
+        assert result["version"] == "1.4.1"
+        assert result["source_files_verified"] > 290
+
+
+def test_ambiguous_smoke_container_creation_cleans_owned_name(monkeypatch):
+    from scripts import release_smoke as smoke
+
+    calls = []
+    monkeypatch.setattr(smoke.shutil, "which", lambda _: "/usr/bin/docker")
+    monkeypatch.setattr(smoke, "_run", lambda *args, **kwargs: None)
+
+    def output(command, **kwargs):
+        if command[:2] == ["docker", "run"]:
+            calls.append(command)
+            raise subprocess.TimeoutExpired(command, 1)
+        return "sha256:" + "a" * 64
+
+    monkeypatch.setattr(smoke.subprocess, "check_output", output)
+    monkeypatch.setattr(smoke.subprocess, "run", lambda command, **kwargs: calls.append(command))
+    with pytest.raises(subprocess.TimeoutExpired):
+        smoke.smoke_container()
+    name = calls[0][calls[0].index("--name") + 1]
+    assert name.startswith("mcp-release-smoke-")
+    assert calls[-1] == ["docker", "rm", "-f", name]
+
+
+@pytest.mark.parametrize("damage", [None, "version", "revision", "missing", "signature"])
+def test_delivered_image_never_builds_and_requires_immutable_reference(
+    tmp_path, monkeypatch, damage
+):
     from scripts import release_smoke as smoke
 
     image = GHCR_IMAGE + "@sha256:" + "a" * 64
     calls = []
     monkeypatch.setattr(smoke.shutil, "which", lambda _: "/usr/bin/docker")
-    monkeypatch.setattr(
-        smoke.subprocess,
-        "check_output",
-        lambda command, **kwargs: (
-            json.dumps([image]) if "{{json .RepoDigests}}" in command else "sha256:" + "b" * 64
-        ),
-    )
+    source = "c" * 40
+    labels = {
+        "org.opencontainers.image.version": "v1.4.1",
+        "org.opencontainers.image.revision": source,
+    }
+    if damage in {"version", "revision"}:
+        labels["org.opencontainers.image." + damage] = "wrong"
+    elif damage == "missing":
+        labels = None
+
+    def output(command, **kwargs):
+        if command[0] == "git":
+            return source
+        if "{{json .RepoDigests}}" in command:
+            return json.dumps([image])
+        if "{{json .Config.Labels}}" in command:
+            return json.dumps(labels)
+        return "sha256:" + "b" * 64
+
+    monkeypatch.setattr(smoke.subprocess, "check_output", output)
 
     def run(command, **kwargs):
         calls.append(command)
+        if command[0] == "cosign" and damage == "signature":
+            raise subprocess.CalledProcessError(1, command)
         if command[:2] == ["docker", "run"]:
             raise RuntimeError("reached delivered runtime")
 
@@ -130,8 +225,20 @@ def test_delivered_image_never_builds_and_requires_immutable_reference(tmp_path,
     with pytest.raises(ValueError, match="immutable"):
         smoke.smoke_container(GHCR_IMAGE + ":latest")
     assert not calls
-    with pytest.raises(RuntimeError, match="delivered runtime"):
-        smoke.smoke_container(image)
+    if damage in {"version", "revision", "missing"}:
+        with pytest.raises(ValueError, match="labels differ"):
+            smoke.smoke_container(image)
+        assert calls == [["docker", "pull", image]]
+    elif damage == "signature":
+        with pytest.raises(subprocess.CalledProcessError):
+            smoke.smoke_container(image)
+        assert not any(command[:2] == ["docker", "run"] for command in calls)
+    else:
+        with pytest.raises(RuntimeError, match="delivered runtime"):
+            smoke.smoke_container(image)
+    if damage not in {"version", "revision", "missing"}:
+        signature = next(command for command in calls if command[0] == "cosign")
+        assert signature[-2:] == ["--certificate-github-workflow-sha", source]
     assert calls[0] == ["docker", "pull", image]
     assert all(command[:2] != ["docker", "build"] for command in calls)
 

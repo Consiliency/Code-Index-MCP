@@ -199,6 +199,7 @@ class GitAwareIndexManager:
         bypass_branch_guard: bool = False,
         *,
         expected_registration_id: Optional[str] = None,
+        require_auto_sync: bool = False,
     ) -> IndexSyncResult:
         """Serialize repository synchronization through the shared per-repo lock."""
         repo = self.registry.get_repository(repo_id)
@@ -208,6 +209,7 @@ class GitAwareIndexManager:
                 force_full=force_full,
                 bypass_branch_guard=bypass_branch_guard,
                 expected_registration_id=expected_registration_id,
+                require_auto_sync=require_auto_sync,
             )
 
     def _sync_repository_index_locked(
@@ -217,6 +219,7 @@ class GitAwareIndexManager:
         bypass_branch_guard: bool = False,
         *,
         expected_registration_id: Optional[str] = None,
+        require_auto_sync: bool = False,
     ) -> IndexSyncResult:
         """Sync index with repository's current git state.
 
@@ -245,6 +248,8 @@ class GitAwareIndexManager:
             )
 
         repo_path = Path(repo_info.path)
+        if require_auto_sync and (not repo_info.auto_sync or not repo_info.active):
+            return IndexSyncResult(action="refused", commit="", error="Automatic sync disabled")
         index_exists_before_mutation = self._index_exists(repo_info)
 
         # Update current git state
@@ -313,9 +318,22 @@ class GitAwareIndexManager:
                 duration_seconds=(datetime.now() - start_time).total_seconds(),
             )
 
-        # Check if already up to date
+        readiness = ReadinessClassifier.classify_registered(repo_info)
+        if readiness.state not in {
+            RepositoryReadinessState.READY,
+            RepositoryReadinessState.STALE_COMMIT,
+        }:
+            return self._rebuild_repository_index_locked(
+                repo_id,
+                force_full=force_full,
+                expected_registration_id=repo_info.registration_id,
+                require_auto_sync=require_auto_sync,
+            )
+
+        # Matching provenance is insufficient when the database is not ready.
         if (
             current_commit == last_indexed_commit
+            and readiness.ready
             and not force_full
             and not repo_info.staleness_reason
             and index_exists_before_mutation
@@ -355,7 +373,11 @@ class GitAwareIndexManager:
             except (OSError, subprocess.SubprocessError):
                 logger.info("Change inventory unavailable; staging a full rebuild")
         return self._rebuild_repository_index_locked(
-            repo_id, changes=changes, force_full=force_full
+            repo_id,
+            changes=changes,
+            force_full=force_full,
+            expected_registration_id=repo_info.registration_id,
+            require_auto_sync=require_auto_sync,
         )
 
     def rebuild_repository_index(self, repo_id: str) -> IndexSyncResult:
@@ -365,12 +387,14 @@ class GitAwareIndexManager:
             return self._rebuild_repository_index_locked(repo_id)
 
     def restore_verified_artifact(
-        self, repo_id: str, extracted: Path, *, expected_commit: str
+        self, repo_id: str, extracted: Path, *, expected_commit: str, expected_owner=None
     ) -> IndexSyncResult:
         """Admit an integrity/identity/signature-verified archive through generation publication."""
         repo = self.registry.get_repository(repo_id)
         if repo is None:
             raise KeyError(repo_id)
+        if expected_owner is None:
+            expected_owner = repo
         database = extracted / "current.db"
         if not database.is_file():
             raise ValueError("Artifact has no portable current.db generation")
@@ -387,7 +411,10 @@ class GitAwareIndexManager:
 
         with lock_registry.acquire(repo_id, repo_path=repo.path):
             return self._rebuild_repository_index_locked(
-                repo_id, stage_operation=restore, replace_derived=True
+                repo_id,
+                stage_operation=restore,
+                replace_derived=True,
+                expected_owner=expected_owner,
             )
 
     def _restore_artifact_vectors(
@@ -512,11 +539,28 @@ class GitAwareIndexManager:
         force_full: bool = False,
         stage_operation=None,
         replace_derived: bool = False,
+        expected_registration_id: Optional[str] = None,
+        require_auto_sync: bool = False,
+        expected_owner=None,
     ) -> IndexSyncResult:
         start_time = datetime.now()
         repo_info = self.registry.get_repository(repo_id)
         if repo_info is None:
             return IndexSyncResult(action="failed", commit="", error="Repository not found")
+        if expected_owner is not None and (
+            repo_info.registration_id != expected_owner.registration_id
+            or repo_info.index_generation != expected_owner.index_generation
+        ):
+            return IndexSyncResult(action="refused", commit="", error="Artifact owner changed")
+        if (
+            expected_registration_id is not None
+            and repo_info.registration_id != expected_registration_id
+        ):
+            return IndexSyncResult(
+                action="refused", commit="", error="Repository registration changed"
+            )
+        if require_auto_sync and (not repo_info.auto_sync or not repo_info.active):
+            return IndexSyncResult(action="refused", commit="", error="Automatic sync disabled")
 
         git_state = self.registry.update_git_state(repo_id)
         current_commit = git_state.get("commit") if git_state else None
@@ -560,17 +604,21 @@ class GitAwareIndexManager:
         generation_path = generation_dir / f"{generation}.db"
         stage_dir = None
         stage_store = None
+        stage_ctx = None
         result = UpdateResult()
         indexed_before = repo_info.last_indexed_commit
         full_call_started = False
         full_call_completed = False
+        admitted = False
 
         try:
             self.registry.begin_generation_mutation(
                 repo_id,
                 expected_registration_id=repo_info.registration_id,
                 expected_generation=repo_info.index_generation,
+                **({"require_auto_sync": True} if require_auto_sync else {}),
             )
+            admitted = True
             if force_full:
                 self._write_force_full_exit_trace(
                     repo_info,
@@ -740,7 +788,7 @@ class GitAwareIndexManager:
                             "blocker_source": "final_closeout",
                         },
                     )
-                except OSError as exc:
+                except Exception as exc:
                     logger.warning(
                         "Published generation trace unavailable (%s)", type(exc).__name__
                     )
@@ -749,6 +797,8 @@ class GitAwareIndexManager:
                 commit=current_commit,
                 files_processed=result.files_processed,
                 readiness={
+                    "index_generation": generation,
+                    "index_path": str(generation_path),
                     "previous_state": readiness.state.value,
                     "quarantine_path": str(quarantine_path) if quarantine_path else None,
                 },
@@ -757,12 +807,13 @@ class GitAwareIndexManager:
             )
         except Exception as exc:
             error = f"Staged rebuild failed ({type(exc).__name__})"
-            self.registry.fail_generation_mutation(
-                repo_id,
-                error=error,
-                expected_registration_id=repo_info.registration_id,
-                expected_generation=repo_info.index_generation,
-            )
+            if admitted:
+                self.registry.fail_generation_mutation(
+                    repo_id,
+                    error=error,
+                    expected_registration_id=repo_info.registration_id,
+                    expected_generation=repo_info.index_generation,
+                )
             if force_full and full_call_started and not full_call_completed:
                 raise
             if force_full:
@@ -796,7 +847,7 @@ class GitAwareIndexManager:
                 )
             if stage_store is not None:
                 try:
-                    self._release_runtime_handles(repo_id, repo_info, None)
+                    self._release_runtime_handles(repo_id, repo_info, stage_ctx)
                 except Exception as exc:
                     logger.warning(
                         "Failed-stage retirement remains pending: %s", type(exc).__name__
@@ -1696,12 +1747,18 @@ class GitAwareIndexManager:
         ctx: Optional[RepoContext],
     ) -> None:
         if self.store_registry is not None:
-            self.store_registry.close(repo_id)
+            self.store_registry.close(repo_id, expected_owner=repo_info)
         sqlite_store = getattr(ctx, "sqlite_store", None) if ctx is not None else None
         if sqlite_store is not None:
             sqlite_store.close()
         if self.dispatcher is not None and hasattr(self.dispatcher, "evict_repository_state"):
-            self.dispatcher.evict_repository_state(repo_id, repo_info.path)
+            self.dispatcher.evict_repository_state(
+                repo_id, repo_info.path, expected_owner=repo_info
+            )
+            if ctx is not None and ctx.staging:
+                self.dispatcher.evict_repository_state(
+                    repo_id, repo_info.path, expected_owner=ctx.registry_entry
+                )
 
     def _cleanup_runtime_snapshot(self, snapshot: RuntimeSnapshot) -> None:
         shutil.rmtree(snapshot.backup_dir, ignore_errors=True)
@@ -1888,9 +1945,13 @@ class GitAwareIndexManager:
         logger.info(f"Found {len(stale_repos)} repositories needing update")
 
         for repo_id, repo_info in stale_repos:
-            if repo_info.auto_sync:
+            if repo_info.auto_sync and repo_info.active:
                 logger.info(f"Syncing {repo_info.name}...")
-                results[repo_id] = self.sync_repository_index(repo_id)
+                results[repo_id] = self.sync_repository_index(
+                    repo_id,
+                    expected_registration_id=repo_info.registration_id,
+                    require_auto_sync=True,
+                )
             else:
                 logger.info(f"Skipping {repo_info.name} (auto-sync disabled)")
 

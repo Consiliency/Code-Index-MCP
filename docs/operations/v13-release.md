@@ -9,10 +9,12 @@ The canonical source plan is `specs/phase-plans-v13.md`; execution progress is
 `docs/status/V13_EXECUTION.md`.
 
 Distribution: `index-it-mcp`; commands: `mcp-index` and `index-it-mcp`.
-Container: `ghcr.io/consiliency/code-index-mcp:v1.4.1`. The installer and Docker
-examples target that exact tag and require its publication. Until then, use
+Container: the signed `ghcr.io/consiliency/code-index-mcp@sha256:...` reference
+published in the `v1.4.1` GitHub release's `image-reference.txt` asset. Installers
+pin that exact reference; version/latest GHCR tags are left untouched. Until then, use
 `uv sync --locked` or the locally built `index_it_mcp-1.4.1-py3-none-any.whl`.
-Never assume `latest` identifies this candidate before delivered acceptance.
+The installer's `latest` selector means the latest GitHub release, not a mutable
+GHCR tag. It refuses a missing or malformed reference without falling back.
 
 ## Evidence Boundary
 
@@ -45,6 +47,17 @@ effect; neither permits an automatic retry after failure or uncertain acceptance
 canonical metadata/schema/identity/size/checksum validation, then durably claims
 the one attempt. It does not dispatch. Changed or invalid local inputs must
 leave no claim, and an existing claim is never replaced or reset.
+`--inspect-signing-claim` checks a persisted complete claim read-only against the
+current candidate and inputs after an ambiguous local write/directory-sync
+failure. It reports no dispatch authority and does not query GitHub. Reconcile
+actual remote dispatch state and the owner's one-shot allowance separately;
+matching local bytes are never permission for an automatic second attempt.
+
+Live and loopback-provider receipts require a hash-bound resource measurement
+artifact with each owned process and exactly one Qdrant container, including
+identity, cgroup, shutdown duration, peak RSS, exit state and survivor census.
+Aggregates must match those records and Qdrant's native start/stop output. A
+missing container record cannot pass by retaining only aggregate goal flags.
 
 Fresh candidate-specific local full, installed PMCP, container, Qdrant,
 loopback-provider and browser checks are required in PREP. Real inference is not
@@ -91,9 +104,17 @@ workflow creates `refs/tags/release-claims/<version>` once, recording run/source
 An existing claim prevents all downstream publication, including after a partial
 failure; never delete/update it to retry. The publish workflow then uploads a unique candidate image reference,
 signs and verifies its digest, and publishes the Python/GitHub artifacts. Only
-then does the final job promote that same digest to version/latest tags. A failed
+then does the final read-only job verify that exact digest again. GHCR tag
+promotion has no create-only/CAS guarantee, so this workflow never writes
+version/latest tags. Concurrent package writers cannot make this release
+overwrite their tags. The GitHub release includes `image-reference.txt` and
+`image-digest.txt`; digest signature verification also requires the accepted
+workflow commit. A failed
 intermediate step may leave a candidate image or partial release; it never
-authorizes automatic redispatch or promotion of an unsigned image.
+authorizes automatic redispatch or substitution of an unsigned image.
+GitHub release creation and asset upload are separate create-only operations:
+no update/clobber flags and no automatic draft deletion on upload failure.
+An incomplete published release is preserved for owner-directed recovery.
 
 Delivered acceptance uses `release_smoke.py --wheel-path <downloaded-wheel>
 --wheel-sha256 <registry-sha256> --image-ref <ghcr-name>@sha256:<registry-digest>`.

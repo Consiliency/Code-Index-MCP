@@ -1753,7 +1753,9 @@ class EnhancedDispatcher:
                 default=str,
             ).encode()
         ).hexdigest()
-        return f"{ctx.repo_id}:{root}:{generation}"
+        owner = getattr(ctx.registry_entry, "registration_id", None)
+        logical_generation = getattr(ctx.registry_entry, "index_generation", None)
+        return f"{ctx.repo_id}:{owner}:{logical_generation}:{root}:{generation}"
 
     @_semantic_operation
     def get_runtime_feature_status(self, ctx: RepoContext) -> Dict[str, Dict[str, Any]]:
@@ -1795,7 +1797,9 @@ class EnhancedDispatcher:
         evicted = {"file_cache": 0, "graph": 0, "plugins": 0, "semantic": 0}
         root: Optional[Path] = Path(repo_root).expanduser().resolve() if repo_root else None
         with self._file_cache_lock:
-            for key in list(self._file_cache.keys()):
+            # The legacy path cache has no owner binding. Owner-scoped retirement
+            # leaves these advisory entries alone; destination hashes gate reuse.
+            for key in list(self._file_cache.keys()) if expected_owner is None else []:
                 try:
                     path = Path(key).expanduser().resolve()
                     if root is not None and not path.is_relative_to(root):
@@ -1805,8 +1809,14 @@ class EnhancedDispatcher:
                         continue
                 self._file_cache.pop(key, None)
                 evicted["file_cache"] += 1
+        graph_prefix = f"{repo_id}:"
+        if expected_owner is not None:
+            graph_prefix += (
+                f"{getattr(expected_owner, 'registration_id', None)}:"
+                f"{getattr(expected_owner, 'index_generation', None)}:"
+            )
         for key in list(self._graph_state.keys()):
-            if key.startswith(f"{repo_id}:"):
+            if key.startswith(graph_prefix):
                 self._graph_state.pop(key, None)
                 evicted["graph"] += 1
         if expected_owner is None and hasattr(self._plugin_set_registry, "evict"):
@@ -2530,6 +2540,8 @@ class EnhancedDispatcher:
             bounded_python_shard = self._build_exact_bounded_python_shard(
                 path, content, ctx.workspace_root
             )
+            with self._file_cache_lock:
+                self._file_cache.pop(str(path), None)
             bounded_shell_shard = self._build_exact_bounded_shell_shard(
                 path, content, ctx.workspace_root
             )
@@ -2583,18 +2595,6 @@ class EnhancedDispatcher:
                     error=f"failed to persist index shard: {e}",
                 )
 
-            # Update file cache after successful indexing
-            try:
-                stat = path.stat()
-                with self._file_cache_lock:
-                    self._file_cache[str(path)] = (
-                        stat.st_mtime,
-                        stat.st_size,
-                        self._get_file_hash(content),
-                    )
-            except OSError:
-                pass
-
             # Record performance if advanced features enabled
             if (
                 self._enable_advanced
@@ -2623,6 +2623,28 @@ class EnhancedDispatcher:
                 except Exception as e:
                     logger.warning(f"Semantic indexing failed for {path}: {type(e).__name__}")
                     raise RuntimeError("Semantic indexing did not complete") from e
+
+            if semantic_stats and (
+                semantic_stats.get("semantic_failed") or semantic_stats.get("semantic_blocked")
+            ):
+                return IndexResult(
+                    IndexResultStatus.ERROR,
+                    path,
+                    None,
+                    None,
+                    "Required semantic mutation did not complete",
+                    semantic=semantic_stats,
+                )
+            try:
+                stat = path.stat()
+                with self._file_cache_lock:
+                    self._file_cache[str(path)] = (
+                        stat.st_mtime,
+                        stat.st_size,
+                        self._get_file_hash(content),
+                    )
+            except OSError:
+                pass
 
             return IndexResult(
                 status=IndexResultStatus.INDEXED,
@@ -2864,6 +2886,8 @@ class EnhancedDispatcher:
                 actual_hash=actual_hash,
             )
 
+        with self._file_cache_lock:
+            self._file_cache.pop(str(path), None)
         try:
             plugin = self._match_plugin(ctx, path)
         except RuntimeError as e:
@@ -2891,17 +2915,6 @@ class EnhancedDispatcher:
                     error=f"failed to persist index shard: {e}",
                 )
 
-            try:
-                stat = path.stat()
-                with self._file_cache_lock:
-                    self._file_cache[str(path)] = (
-                        stat.st_mtime,
-                        stat.st_size,
-                        self._get_file_hash(content),
-                    )
-            except OSError:
-                pass
-
             if self._enable_advanced and self._router:
                 self._router.record_performance(plugin, time.time() - start_time)
 
@@ -2916,6 +2929,28 @@ class EnhancedDispatcher:
                 except Exception as e:
                     logger.warning(f"Semantic indexing failed for {path}: {type(e).__name__}")
                     raise RuntimeError("Semantic indexing did not complete") from e
+
+            if semantic_stats and (
+                semantic_stats.get("semantic_failed") or semantic_stats.get("semantic_blocked")
+            ):
+                return IndexResult(
+                    IndexResultStatus.ERROR,
+                    path,
+                    expected_hash,
+                    actual_hash,
+                    "Required semantic mutation did not complete",
+                    semantic=semantic_stats,
+                )
+            try:
+                stat = path.stat()
+                with self._file_cache_lock:
+                    self._file_cache[str(path)] = (
+                        stat.st_mtime,
+                        stat.st_size,
+                        self._get_file_hash(content),
+                    )
+            except OSError:
+                pass
 
             return IndexResult(
                 status=IndexResultStatus.INDEXED,
@@ -4589,7 +4624,9 @@ class EnhancedDispatcher:
             logger.error(f"Failed to get cross-repository statistics: {type(e).__name__}")
             return {
                 "enabled": True,
-                "error": str(e),
+                "error": "Cross-repository statistics unavailable",
+                "code": "index_unavailable",
+                "safe_fallback": "native_search",
                 "total_repositories": 0,
                 "total_files": 0,
                 "total_symbols": 0,

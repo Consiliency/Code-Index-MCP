@@ -163,6 +163,10 @@ def test_multi_repo_workspace_hydration_restores_clean_state_and_query_truth(
 
         def _fake_download_latest(self, output_dir, backup=True, full_only=False, **kwargs):
             repo_path = Path(kwargs["repo_path"])
+            assert (
+                kwargs["expected_owner"].registration_id
+                == manager.registry.get(kwargs["repo_id"]).registration_id
+            )
             repo_snapshot = snapshots[repo_path.name]
             archive_path = output_dir / "index-archive.tar.gz"
             archive_path.write_bytes(repo_snapshot["archive_bytes"])
@@ -204,7 +208,7 @@ def test_multi_repo_workspace_hydration_restores_clean_state_and_query_truth(
                     "id": len(repo_path.name),
                     "head_sha": kwargs["target_commit"],
                 },
-                installed_items=[".mcp-index/current.db"],
+                installed_items=[str(manager.registry.get(kwargs["repo_id"]).index_path)],
                 validation_reasons=[],
             )
 

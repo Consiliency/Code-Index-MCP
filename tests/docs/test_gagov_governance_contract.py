@@ -132,7 +132,7 @@ def test_workflows_and_evidence_share_release_channel_policy():
 
     for expected in (
         "release_type=custom",
-        'tags+=(--tag "${IMAGE_REF}:latest")',
+        "Confirm immutable container identity without retagging",
         "Alpha Gate - Docker Build And Smoke",
         "Alpha Gate - Dependency Sync",
     ):

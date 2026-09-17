@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import configparser
 import hashlib
 import json
 import os
@@ -14,7 +15,11 @@ import subprocess
 import sys
 import tempfile
 import time
+import tomllib
+import uuid
 import venv
+import zipfile
+from email.parser import BytesParser
 from pathlib import Path
 from urllib.error import URLError
 from urllib.request import urlopen
@@ -56,6 +61,99 @@ def _free_port() -> int:
         return int(sock.getsockname()[1])
 
 
+def validate_wheel_source(wheel: Path, repo: Path = REPO) -> dict:
+    """Bind the wheel's install contract and payload to the accepted source checkout."""
+    from packaging.requirements import Requirement
+    from packaging.utils import canonicalize_name
+
+    project = tomllib.loads((repo / "pyproject.toml").read_text())["project"]
+
+    def requirement(value, extra=None):
+        parsed = Requirement(value)
+        marker = str(parsed.marker) if parsed.marker else ""
+        if extra is not None:
+            marker = f'({marker}) and extra == "{extra}"' if marker else f'extra == "{extra}"'
+            from packaging.markers import Marker
+
+            marker = str(Marker(marker))
+        return (
+            canonicalize_name(parsed.name),
+            tuple(sorted(canonicalize_name(e) for e in parsed.extras)),
+            str(parsed.specifier),
+            parsed.url,
+            marker,
+        )
+
+    expected_dependencies = {requirement(value) for value in project["dependencies"]}
+    for extra, values in project.get("optional-dependencies", {}).items():
+        expected_dependencies.update(requirement(value, extra) for value in values)
+    tracked = (
+        subprocess.check_output(["git", "ls-files", "-z", "--", "mcp_server"], cwd=repo, timeout=30)
+        .decode()
+        .split("\0")
+    )
+    payload = {
+        name
+        for name in tracked
+        if name.endswith(".py")
+        or name == "mcp_server/py.typed"
+        or name.startswith("mcp_server/storage/migrations/")
+        and name.endswith(".sql")
+    }
+    info = (
+        canonicalize_name(project["name"]).replace("-", "_") + f'-{project["version"]}.dist-info/'
+    )
+    metadata_files = {
+        info + name
+        for name in (
+            "METADATA",
+            "WHEEL",
+            "RECORD",
+            "entry_points.txt",
+            "top_level.txt",
+            "licenses/LICENSE",
+        )
+    }
+    with zipfile.ZipFile(wheel) as archive:
+        names = archive.namelist()
+        if not payload or len(names) != len(set(names)) or set(names) != payload | metadata_files:
+            raise ValueError("Wheel payload membership differs from reviewed source")
+        metadata = BytesParser().parsebytes(archive.read(info + "METADATA"))
+        for key, expected in (
+            ("Name", project["name"]),
+            ("Version", project["version"]),
+            ("Requires-Python", project["requires-python"]),
+        ):
+            if metadata.get_all(key) != [expected]:
+                raise ValueError(f"Wheel {key} differs from reviewed source")
+        actual_dependencies = {
+            requirement(value) for value in metadata.get_all("Requires-Dist", [])
+        }
+        if actual_dependencies != expected_dependencies:
+            raise ValueError("Wheel Requires-Dist differs from reviewed source")
+        if set(metadata.get_all("Provides-Extra", [])) != set(
+            project.get("optional-dependencies", {})
+        ):
+            raise ValueError("Wheel extras differ from reviewed source")
+        entrypoints = configparser.ConfigParser(interpolation=None)
+        entrypoints.read_string(archive.read(info + "entry_points.txt").decode())
+        if (
+            entrypoints.sections() != ["console_scripts"]
+            or dict(entrypoints["console_scripts"]) != project["scripts"]
+        ):
+            raise ValueError("Wheel entry points differ from reviewed source")
+        for name in sorted(payload):
+            if archive.read(name) != (repo / name).read_bytes():
+                raise ValueError(f"Wheel package content differs from reviewed source: {name}")
+        if archive.read(info + "licenses/LICENSE") != (repo / "LICENSE").read_bytes():
+            raise ValueError("Wheel license differs from reviewed source")
+    return {
+        "name": project["name"],
+        "version": project["version"],
+        "source_files_verified": len(payload),
+    }
+
+
 def smoke_wheel(wheel_path: Path | None = None, expected_sha256: str | None = None) -> None:
     if (wheel_path is None) != (expected_sha256 is None):
         raise ValueError("Delivered wheel requires its registry SHA256")
@@ -79,11 +177,13 @@ def smoke_wheel(wheel_path: Path | None = None, expected_sha256: str | None = No
             or hashlib.sha256(wheels[0].read_bytes()).hexdigest() != expected_sha256
         ):
             raise ValueError("Delivered wheel registry digest mismatch")
+        contract = validate_wheel_source(wheels[0])
         print(
             json.dumps(
                 {
                     "wheel": wheels[0].name,
                     "sha256": hashlib.sha256(wheels[0].read_bytes()).hexdigest(),
+                    "source_contract": contract,
                 }
             ),
             flush=True,
@@ -110,7 +210,7 @@ def smoke_wheel(wheel_path: Path | None = None, expected_sha256: str | None = No
                 "install",
                 "--python",
                 str(python),
-                "-r",
+                "-c",
                 str(requirements),
                 str(wheels[0]),
             ],
@@ -199,6 +299,42 @@ def smoke_container(image_ref: str | None = None) -> None:
         )
         if image_ref not in digests:
             raise ValueError("Delivered image registry digest mismatch")
+        source = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=REPO, text=True, timeout=30
+        ).strip()
+        labels = json.loads(
+            subprocess.check_output(
+                ["docker", "image", "inspect", "--format", "{{json .Config.Labels}}", image_ref],
+                text=True,
+                timeout=30,
+            )
+        )
+        project = tomllib.loads((REPO / "pyproject.toml").read_text())["project"]
+        expected_labels = {
+            "org.opencontainers.image.version": "v" + project["version"],
+            "org.opencontainers.image.revision": source,
+        }
+        if not isinstance(labels, dict) or any(
+            labels.get(key) != value for key, value in expected_labels.items()
+        ):
+            raise ValueError("Delivered image labels differ from accepted source")
+        if shutil.which("cosign") is None:
+            raise RuntimeError("cosign is required to verify delivered image provenance")
+        _run(
+            [
+                "cosign",
+                "verify",
+                image_ref,
+                "--certificate-identity",
+                "https://github.com/Consiliency/Code-Index-MCP/.github/workflows/"
+                "release-automation.yml@refs/heads/main",
+                "--certificate-oidc-issuer",
+                "https://token.actions.githubusercontent.com",
+                "--certificate-github-workflow-sha",
+                source,
+            ],
+            timeout=120,
+        )
     image_id = subprocess.check_output(
         ["docker", "image", "inspect", "--format", "{{.Id}}", image_ref or IMAGE],
         text=True,
@@ -233,12 +369,24 @@ def smoke_container(image_ref: str | None = None) -> None:
             "CORS_ORIGINS": "http://localhost",
         }
         args = [part for key, value in env.items() for part in ("-e", f"{key}={value}")]
-        container = subprocess.check_output(
-            ["docker", "run", "-d", *mount, "-p", f"127.0.0.1:{port}:8000", *args, image_id],
-            text=True,
-            timeout=60,
-        ).strip()
+        container = "mcp-release-smoke-" + uuid.uuid4().hex
         try:
+            subprocess.check_output(
+                [
+                    "docker",
+                    "run",
+                    "--name",
+                    container,
+                    "-d",
+                    *mount,
+                    "-p",
+                    f"127.0.0.1:{port}:8000",
+                    *args,
+                    image_id,
+                ],
+                text=True,
+                timeout=60,
+            )
             _poll_health(port)
             _run(["docker", "exec", container, *probe, "--mode", "http"])
             _run(["docker", "restart", container], timeout=60)

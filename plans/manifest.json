@@ -459,9 +459,10 @@
         "human_required": false,
         "lifecycle_warning": "failed_to_executing_unsupported",
         "pilot_consumed": false,
-        "plan_warning_disposition": "SL-0 prepares frozen operator contracts before SL-1 effects; it cannot depend on SL-1 without a cycle. SL-1 is the terminal evidence reducer. No later approval is claimed by SL-0 docs.",
+        "plan_warning_disposition": "SL-0 freezes pre-effect operator contracts; SL-1 remains the terminal evidence reducer after independent code approval, bounded effects and four reconciliations.",
+        "prior_candidate": "df5a96937a88429b9dda5fe229c66453c2a90e4f",
         "review_route": "owner_authorized_manual_pointer_reads",
-        "run_id": "20260917-fourth-panel-repairs",
+        "run_id": "20260917-fifth-panel-repairs",
         "signing_consumed": false,
         "status": "candidate_repairs_prepared"
       },
@@ -476,9 +477,9 @@
       },
       "slug": "phase-plan-v13-PREP",
       "status": "failed",
-      "task_summary": "Fourth diagnostic repairs prepared; 4f4e55e rejected. Source-bound publication, delivered smoke, evidence stability and resource ownership repaired. Fresh frozen checks and four-seat code/operational reconciliation pending; neither allowance used.",
+      "task_summary": "Fifth diagnostic repairs prepared; df5a969 not accepted. Artifact identity, file failure/retry, release rerun, readiness, graph/startup and owner-scoped retirement fixes under verification. Four-seat reviews pending; no operational effects.",
       "type": "phase",
-      "updated_at": "2026-09-17T10:11:03.319420+00:00"
+      "updated_at": "2026-09-17T12:11:53.396186+00:00"
     },
     {
       "acceptance_criteria_count": 4,

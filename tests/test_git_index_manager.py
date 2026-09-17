@@ -375,6 +375,51 @@ def test_staged_rebuild_bootstraps_missing_index(tmp_path):
     assert ReadinessClassifier.classify_registered(repo_info).ready is True
 
 
+@pytest.mark.parametrize(
+    "damage",
+    [
+        "corrupt_sqlite",
+        "index_empty",
+        "missing_schema",
+        "missing_provenance",
+        "scheme_mismatch",
+        "index_rebuilding",
+    ],
+)
+def test_unchanged_commit_sync_repairs_nonready_database(tmp_path, damage):
+    repo = _make_git_repo(tmp_path)
+    commit = _get_head_commit(repo)
+    info = _make_repo_info(repo, commit)
+    _seed_index(info.index_path, repo, "hello.py")
+    if damage == "corrupt_sqlite":
+        info.index_path.write_bytes(b"synthetic corrupt database")
+    elif damage == "missing_provenance":
+        info.last_indexed_commit = None
+    else:
+        with sqlite3.connect(info.index_path) as connection:
+            if damage == "index_empty":
+                connection.execute("UPDATE files SET is_deleted=1")
+            elif damage == "missing_schema":
+                connection.execute("DROP TABLE schema_version")
+            else:
+                key = (
+                    "chunk_identity_scheme"
+                    if damage == "scheme_mismatch"
+                    else "chunk_scheme_rebuild_target"
+                )
+                connection.execute(
+                    "INSERT OR REPLACE INTO index_config(config_key,config_value) VALUES (?,?)",
+                    (key, "synthetic-incompatible-scheme"),
+                )
+    assert ReadinessClassifier.classify_registered(info).state.value == damage
+    previous = info.index_path
+    manager, _registry = _make_rebuild_manager(info, commit)
+    result = manager.sync_repository_index(info.repository_id)
+    assert result.action == "full_index", result.error
+    assert info.index_path != previous
+    assert ReadinessClassifier.classify_registered(info).ready
+
+
 def test_staged_rebuild_populates_empty_index(tmp_path):
     repo = _make_git_repo(tmp_path)
     commit = _get_head_commit(repo)
@@ -594,7 +639,7 @@ def test_same_branch_advance_triggers_incremental(tmp_path):
     old_commit = _get_head_commit(repo)
 
     repo_info = _make_repo_info(repo, old_commit)
-    repo_info.index_path.touch()
+    _seed_index(repo_info.index_path, repo, "hello.py")
 
     # Make a new commit on main
     (repo / "hello.py").write_text("print('updated')\n")

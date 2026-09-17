@@ -12,6 +12,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Configuration
+# Canonical release image: ghcr.io/consiliency/code-index-mcp, pinned by digest.
 MCP_VERSION="${MCP_VERSION:-v1.4.1}"
 MCP_VARIANT="${MCP_VARIANT:-v1.4.1}"
 DOCKER_REGISTRY="${DOCKER_REGISTRY:-ghcr.io}"
@@ -117,7 +118,7 @@ choose_variant() {
     echo "Choose MCP Index variant:"
     echo "1) v1.4.1      - Versioned release image (requires publication)"
     echo "2) local-smoke - Locally built via make release-smoke-container"
-    echo "3) latest      - Stable channel (published)"
+    echo "3) latest      - Latest GitHub release, pinned by digest"
     echo
 
     read -p "Select variant [1-3] (default: 1): " -n 1 -r
@@ -141,6 +142,7 @@ choose_variant() {
 
 pull_image() {
     if [ "$MCP_VARIANT" = "local-smoke" ]; then
+        MCP_IMAGE_REF="${MCP_IMAGE}:local-smoke"
         print_info "Using the locally built smoke image (dev option)."
         if ! docker image inspect "${MCP_IMAGE}:local-smoke" >/dev/null 2>&1; then
             print_error "Local smoke image not found. Run 'make release-smoke-container' first."
@@ -148,8 +150,21 @@ pull_image() {
         fi
         return
     fi
-    print_info "Pulling MCP Index image: ${MCP_IMAGE}:${MCP_VARIANT}"
-    docker pull "${MCP_IMAGE}:${MCP_VARIANT}"
+    if [ "$MCP_VARIANT" = "latest" ]; then
+        release_path="latest/download"
+    elif [[ "$MCP_VARIANT" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?$ ]]; then
+        release_path="download/${MCP_VARIANT}"
+    else
+        print_error "Select a release version, latest release, or local-smoke."
+        return 1
+    fi
+    MCP_IMAGE_REF=$(curl -fsSL --max-time 30 "https://github.com/Consiliency/Code-Index-MCP/releases/${release_path}/image-reference.txt")
+    if [[ ! "$MCP_IMAGE_REF" =~ ^ghcr\.io/consiliency/code-index-mcp@sha256:[0-9a-f]{64}$ ]]; then
+        print_error "Release image reference is missing or invalid; no tag fallback is permitted."
+        return 1
+    fi
+    print_info "Pulling MCP Index image: ${MCP_IMAGE_REF}"
+    docker pull "$MCP_IMAGE_REF"
 }
 
 create_launcher() {
@@ -163,19 +178,18 @@ create_launcher() {
 # MCP Index Docker Launcher
 
 # Default settings
-MCP_VARIANT="${MCP_VARIANT:-v1.4.1}"
-MCP_IMAGE="${MCP_IMAGE:-ghcr.io/consiliency/code-index-mcp}"
+MCP_IMAGE_REF='@MCP_IMAGE_REF@'
 WORKSPACE="${WORKSPACE:-$(pwd)}"
 
 # Handle commands
 case "$1" in
     setup)
         echo "Running MCP Index setup wizard..."
-        docker run -it --rm -v "$WORKSPACE:/workspace" "${MCP_IMAGE}:${MCP_VARIANT}" --setup
+        docker run -it --rm -v "$WORKSPACE:/workspace" "$MCP_IMAGE_REF" index-it-mcp setup
         ;;
     upgrade)
-        echo "Upgrading MCP Index..."
-        docker pull "${MCP_IMAGE}:${MCP_VARIANT}"
+        echo "Refreshing the pinned image. Rerun the installer to select another release."
+        docker pull "$MCP_IMAGE_REF"
         ;;
     *)
         # Run MCP server with all arguments passed through
@@ -184,10 +198,11 @@ case "$1" in
             -v "$HOME/.mcp-index:/app/.mcp-index" \
             -e VOYAGE_API_KEY="${VOYAGE_API_KEY:-}" \
             -e MCP_ARTIFACT_SYNC="${MCP_ARTIFACT_SYNC:-true}" \
-            "${MCP_IMAGE}:${MCP_VARIANT}" "$@"
+            "$MCP_IMAGE_REF" index-it-mcp "${@:-stdio}"
         ;;
 esac
 EOF
+    sed -i.bak "s|@MCP_IMAGE_REF@|$MCP_IMAGE_REF|g" /tmp/mcp-index
     
     # Install the launcher
     if [ -w /usr/local/bin ]; then
@@ -217,7 +232,7 @@ setup_mcp_json() {
         "-v", "\${HOME}/.mcp-index:/app/.mcp-index",
         "-e", "VOYAGE_API_KEY=\${VOYAGE_API_KEY:-}",
         "-e", "MCP_ARTIFACT_SYNC=\${MCP_ARTIFACT_SYNC:-true}",
-        "${MCP_IMAGE}:${MCP_VARIANT}"
+        "${MCP_IMAGE_REF}", "index-it-mcp", "stdio"
       ]
     }
   }
@@ -284,4 +299,6 @@ main() {
 }
 
 # Run main function
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi

@@ -11,6 +11,7 @@ import pytest
 from mcp_server.artifacts.artifact_upload import IndexArtifactUploader, ReleaseAssetBundle
 from mcp_server.artifacts.attestation import Attestation
 from mcp_server.artifacts.publisher import ArtifactError, ArtifactPublisher
+from tests.test_artifact_publish_race import _mock_gh
 
 REPO = "owner/repo"
 COMMIT = "abcdef1234567890abcdef1234567890abcdef12"
@@ -98,7 +99,7 @@ class TestPublishRollback:
 
             return MagicMock(returncode=0, stdout="", stderr="")
 
-        with patch("subprocess.run", side_effect=side_effect):
+        with _mock_gh(side_effect):
             with pytest.raises((ArtifactError, subprocess.CalledProcessError)):
                 publisher.publish_on_reindex("repo", COMMIT)
 
@@ -123,7 +124,7 @@ class TestPublishRollback:
                 raise subprocess.CalledProcessError(1, args, b"", b"fail")
             return MagicMock(returncode=0, stdout="", stderr="")
 
-        with patch("subprocess.run", side_effect=side_effect):
+        with _mock_gh(side_effect):
             with pytest.raises((ArtifactError, subprocess.CalledProcessError)):
                 publisher.publish_on_reindex("repo", COMMIT)
 
@@ -146,7 +147,7 @@ class TestPublishRollback:
                 raise subprocess.CalledProcessError(1, args, b"", b"original error")
             return MagicMock(returncode=0, stdout="", stderr="")
 
-        with patch("subprocess.run", side_effect=side_effect):
+        with _mock_gh(side_effect):
             with pytest.raises((ArtifactError, subprocess.CalledProcessError)):
                 publisher.publish_on_reindex("repo", COMMIT)
 
@@ -173,7 +174,7 @@ class TestPublishRollback:
                 raise subprocess.CalledProcessError(1, args, b"", b"sha-create-fail")
             return MagicMock(returncode=0, stdout="", stderr="")
 
-        with patch("subprocess.run", side_effect=side_effect):
+        with _mock_gh(side_effect):
             with pytest.raises((ArtifactError, subprocess.CalledProcessError)):
                 publisher.publish_on_reindex("repo", COMMIT)
 
@@ -200,7 +201,7 @@ class TestPublishRollback:
                 return MagicMock(returncode=1, stdout="", stderr="not found")
             return MagicMock(returncode=0, stdout="", stderr="")
 
-        with patch("subprocess.run", side_effect=side_effect):
+        with _mock_gh(side_effect):
             with pytest.raises(ArtifactError):
                 publisher.publish_on_reindex("repo", COMMIT)
 

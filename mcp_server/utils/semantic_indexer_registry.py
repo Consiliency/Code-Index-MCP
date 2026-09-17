@@ -219,15 +219,14 @@ class SemanticIndexerRegistry:
 
     def evict(self, repo_id: str, *, expected_owner=None) -> bool:
         """Deny new leases; close retired resources after their last borrower."""
+        from ..storage.store_registry import StoreRegistry
+
+        expected = StoreRegistry.binding(expected_owner)[:5] if expected_owner is not None else None
         with self._lock:
             entries = [
                 (key, entry)
                 for key, entry in self._entries.items()
-                if key[0] == repo_id
-                and (
-                    expected_owner is None
-                    or key[1][0][0] == getattr(expected_owner, "registration_id", None)
-                )
+                if key[0] == repo_id and (expected is None or key[1][0][:5] == expected)
             ]
             for _, entry in entries:
                 entry.retired = True

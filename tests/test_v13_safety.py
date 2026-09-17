@@ -328,6 +328,28 @@ async def test_cross_repo_logs_omit_query_and_failed_provider_payload(
 
 
 @pytest.mark.asyncio
+async def test_cross_repo_statistics_scrubs_provider_failure(caplog):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from mcp_server.dispatcher.dispatcher_enhanced import EnhancedDispatcher
+
+    sentinel = "PRIVATE_STATISTICS_PAYLOAD_1825"
+    dispatcher = SimpleNamespace(
+        _cross_repo_coordinator=SimpleNamespace(
+            get_search_statistics=AsyncMock(side_effect=RuntimeError(sentinel))
+        )
+    )
+    with caplog.at_level("ERROR"):
+        result = await EnhancedDispatcher.get_cross_repo_statistics(dispatcher, [])
+    assert result["code"] == "index_unavailable"
+    assert result["safe_fallback"] == "native_search"
+    assert sentinel not in repr(result)
+    assert sentinel not in caplog.text
+    assert "RuntimeError" in caplog.text
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("failure", [False, True])
 async def test_summary_logs_omit_symbol_and_provider_payload(
     tmp_path, monkeypatch, caplog, failure

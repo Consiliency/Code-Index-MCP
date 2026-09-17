@@ -89,6 +89,55 @@ class _FakeDispatcher:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["error", "semantic_failed", "semantic_blocked", "unchanged"])
+async def test_file_task_preserves_failure_and_unchanged_result(tmp_path, failure):
+    from mcp_server.dispatcher.dispatcher_enhanced import IndexResult, IndexResultStatus
+
+    target = tmp_path / "example.py"
+    target.write_text("value = 1\n")
+    registry = MCPTaskRegistry()
+    state = await registry.create_task(TaskMetadata())
+    task = _FakeTask(state.taskId)
+    store = MagicMock()
+    store.path_resolver.normalize_path.return_value = "example.py"
+    store._get_connection.return_value.__enter__.return_value.execute.return_value.fetchone.return_value = (
+        1,
+    )
+    ctx = SimpleNamespace(repo_id="repo-1", workspace_root=tmp_path, sqlite_store=store)
+    status = (
+        IndexResultStatus.SKIPPED_UNCHANGED
+        if failure == "unchanged"
+        else (IndexResultStatus.ERROR if failure == "error" else IndexResultStatus.INDEXED)
+    )
+    dispatcher = MagicMock()
+    dispatcher.index_file.return_value = IndexResult(
+        status,
+        target,
+        None,
+        None,
+        semantic={failure: 1} if failure.startswith("semantic_") else None,
+    )
+    arguments = dict(
+        task=task,
+        registry=registry,
+        dispatcher=dispatcher,
+        ctx=ctx,
+        active_store=store,
+        target_path=target,
+        requested_path=str(target),
+    )
+    if failure == "unchanged":
+        result = await run_reindex_task(**arguments)
+        assert result.structuredContent["indexed_files"] == 0
+        assert result.structuredContent["mutation_performed"] is False
+    else:
+        with pytest.raises(Exception):
+            await run_reindex_task(**arguments)
+        store._get_connection.assert_not_called()
+        assert (tmp_path / ".reindex-state").exists()
+
+
+@pytest.mark.asyncio
 async def test_run_reindex_task_returns_merge_payload_and_clears_checkpoint(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()

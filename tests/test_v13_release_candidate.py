@@ -481,6 +481,73 @@ def test_signing_claim_checks_local_bytes_before_consuming_allowance(
     assert not intent.exists()
 
 
+@pytest.mark.parametrize("failure", ["write", "fsync", "link", "directory_fsync"])
+def test_signing_claim_is_not_installed_until_durable(signing_candidate, monkeypatch, failure):
+    repo, root, *_ = signing_candidate
+    intent = root / "dispatch-intent.json"
+    intent.unlink()
+    context = release._signing_context(repo, root)
+    monkeypatch.setattr(release, "_signing_context", lambda *args: context)
+
+    def fail_write(value, stream, **kwargs):
+        stream.write('{"partial":')
+        raise OSError("synthetic disk full")
+
+    fsync = release.os.fsync
+    syncs = []
+
+    def fail_sync(descriptor):
+        syncs.append(descriptor)
+        if failure == "directory_fsync" and len(syncs) == 1:
+            return fsync(descriptor)
+        raise OSError("synthetic fsync failure")
+
+    if failure == "write":
+        monkeypatch.setattr(release.json, "dump", fail_write)
+    elif failure == "link":
+        monkeypatch.setattr(
+            release.os,
+            "link",
+            lambda *args: (_ for _ in ()).throw(OSError("synthetic link failure")),
+        )
+    else:
+        monkeypatch.setattr(release.os, "fsync", fail_sync)
+    with pytest.raises(OSError):
+        release.claim_signing_dispatch(repo, root)
+    if failure == "directory_fsync":
+        before = intent.read_bytes()
+        inspected = release.inspect_signing_claim(repo, root)
+        assert inspected["claim_matches_current_inputs"] is True
+        assert inspected["authorizes_dispatch"] is False
+        assert intent.read_bytes() == before
+    else:
+        assert not intent.exists()
+    assert not list(root.glob(".dispatch-intent-*"))
+
+
+@pytest.mark.parametrize("damage", [None, "source", "partial", "missing"])
+def test_claim_inspection_is_read_only_and_never_authorizes_dispatch(
+    signing_candidate, monkeypatch, damage
+):
+    repo, root, *_ = signing_candidate
+    path = root / "dispatch-intent.json"
+    if damage == "source":
+        content = json.loads(path.read_text())
+        content["source"] = "0" * 40
+        path.write_text(json.dumps(content))
+    elif damage == "partial":
+        path.write_text('{"source":')
+    elif damage == "missing":
+        path.unlink()
+    before = path.read_bytes() if path.exists() else None
+    if damage:
+        with pytest.raises(release.CandidateRefused):
+            release.inspect_signing_claim(repo, root)
+    else:
+        assert release.inspect_signing_claim(repo, root)["authorizes_dispatch"] is False
+    assert (path.read_bytes() if path.exists() else None) == before
+
+
 def test_renewed_hashes_bind_the_receipt_bytes_actually_validated(renewed_candidate, monkeypatch):
     import hashlib
 
@@ -503,20 +570,23 @@ def test_renewed_hashes_bind_the_receipt_bytes_actually_validated(renewed_candid
     assert result["proof_sha256"]["live"] != digest_file(path)
 
 
-def test_signing_claim_cli_does_not_dispatch_or_consume_pilot(monkeypatch, tmp_path, capsys):
+@pytest.mark.parametrize("operation", ["claim_signing_dispatch", "inspect_signing_claim"])
+def test_signing_claim_cli_does_not_dispatch_or_consume_pilot(
+    monkeypatch, tmp_path, capsys, operation
+):
     import sys
 
-    monkeypatch.setattr(sys, "argv", ["validator", "--claim-signing-dispatch"])
+    monkeypatch.setattr(sys, "argv", ["validator", "--" + operation.replace("_", "-")])
     monkeypatch.setattr(release, "REPO", tmp_path)
     calls = []
     monkeypatch.setattr(
-        release, "claim_signing_dispatch", lambda *args: calls.append(args) or {"claimed": True}
+        release, operation, lambda *args: calls.append(args) or {"operation": operation}
     )
     monkeypatch.setattr(
         release, "verify_pilot", lambda *args: pytest.fail("claim must not consume pilot")
     )
     release.main()
-    assert json.loads(capsys.readouterr().out) == {"claimed": True}
+    assert json.loads(capsys.readouterr().out) == {"operation": operation}
     assert calls == [(tmp_path, tmp_path / ".phase-loop/runs/v13-PREP-signing-20260915")]
 
 

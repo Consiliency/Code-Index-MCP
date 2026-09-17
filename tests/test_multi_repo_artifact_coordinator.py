@@ -95,7 +95,8 @@ def test_repository_registry_persists_artifact_state(tmp_path: Path):
     assert stored.artifact_health == "ready"
 
 
-def test_coordinator_fetch_updates_registry(monkeypatch, tmp_path: Path):
+@pytest.mark.parametrize("superseded", [False, True])
+def test_coordinator_fetch_updates_registry(monkeypatch, tmp_path: Path, superseded):
     manager = MultiRepositoryManager(central_index_path=tmp_path / "registry.json")
     repo_path = tmp_path / "repo"
     repo_path.mkdir()
@@ -126,6 +127,11 @@ def test_coordinator_fetch_updates_registry(monkeypatch, tmp_path: Path):
     }
 
     def _fake_download_latest(self, output_dir, backup=True, full_only=False, **kwargs):
+        assert kwargs["repo_path"] == repo_path
+        assert (
+            kwargs["expected_owner"].registration_id
+            == manager.registry.get("repo-1").registration_id
+        )
         _write_ready_index(repo_info)
         (repo_path / ".mcp-index" / "artifact-metadata.json").write_text(
             json.dumps(artifact_metadata),
@@ -151,8 +157,16 @@ def test_coordinator_fetch_updates_registry(monkeypatch, tmp_path: Path):
     )
 
     coordinator = MultiRepoArtifactCoordinator(manager)
+    if superseded:
+        monkeypatch.setattr(
+            manager.registry, "update_artifact_state", lambda *args, **kwargs: False
+        )
     results = coordinator.fetch_workspace(["repo-1"])
 
+    if superseded:
+        assert not results[0].success
+        assert manager.registry.get("repo-1").last_recovered_commit is None
+        return
     assert results[0].success is True
     stored = manager.get_repository_info("repo-1")
     assert stored is not None
@@ -241,9 +255,17 @@ def test_publish_workspace_records_actual_upload_outcome(monkeypatch, tmp_path: 
         encoding="utf-8",
     )
 
+    archives = []
+
+    def compress(self, output_path, secure=True, **kwargs):
+        archive = Path(output_path)
+        archive.write_bytes(b"synthetic archive")
+        archives.append(archive)
+        return archive, "checksum", 123
+
     monkeypatch.setattr(
         "mcp_server.artifacts.multi_repo_artifact_coordinator.IndexArtifactUploader.compress_indexes",
-        lambda self, output_path, secure=True, **kwargs: (Path(output_path), "checksum", 123),
+        compress,
     )
     monkeypatch.setattr(
         "mcp_server.artifacts.multi_repo_artifact_coordinator.IndexArtifactUploader.create_metadata",
@@ -272,6 +294,8 @@ def test_publish_workspace_records_actual_upload_outcome(monkeypatch, tmp_path: 
     )
 
     results = MultiRepoArtifactCoordinator(manager).publish_workspace(["repo-1"])
+    assert len(archives) == 1
+    assert not archives[0].exists()
     stored = manager.registry.get_repository("repo-1")
     if upload_fails:
         assert results[0].success is False

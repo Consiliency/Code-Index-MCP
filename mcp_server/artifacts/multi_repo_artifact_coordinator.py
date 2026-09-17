@@ -216,6 +216,7 @@ class MultiRepoArtifactCoordinator:
     ) -> List[RepoArtifactLifecycleResult]:
         results = []
         for repo in self._iter_repositories(repository_ids):
+            archive_path = None
             try:
                 refused = self._refuse_if_not_ready(
                     repo,
@@ -317,6 +318,12 @@ class MultiRepoArtifactCoordinator:
                         error=f"Artifact publication failed ({type(exc).__name__})",
                     )
                 )
+            finally:
+                if archive_path is not None:
+                    try:
+                        archive_path.unlink(missing_ok=True)
+                    except OSError as exc:
+                        record_handled_error(__name__, exc)
         return results
 
     def fetch_workspace(
@@ -345,6 +352,7 @@ class MultiRepoArtifactCoordinator:
                         output_dir=output_dir,
                         backup=True,
                         repo_id=repo.repository_id,
+                        expected_owner=repo,
                         repo_path=repo.path,
                         tracked_branch=repo.tracked_branch or repo.current_branch or "main",
                         target_commit=repo.current_commit,
@@ -360,6 +368,8 @@ class MultiRepoArtifactCoordinator:
                 restored_repo = self.multi_repo_manager.registry.get(repo.repository_id)
                 if restored_repo is None or restored_repo.registration_id != repo.registration_id:
                     raise RuntimeError("Repository was removed during artifact restore")
+                if str(restored_repo.index_path) not in result.installed_items:
+                    raise RuntimeError("Restored generation was superseded")
                 repo = restored_repo
                 profiles = self._read_local_profiles(
                     repo.path, repo.index_location, repo.index_path
@@ -367,7 +377,7 @@ class MultiRepoArtifactCoordinator:
                 health = ReadinessClassifier.classify_registered(repo).state.value
                 if health != "ready":
                     raise RuntimeError(f"Artifact download did not hydrate {repo.index_path}")
-                self.multi_repo_manager.registry.update_artifact_state(
+                recorded = self.multi_repo_manager.registry.update_artifact_state(
                     repo.repository_id,
                     expected_owner=repo,
                     last_recovered_commit=repo.last_indexed_commit,
@@ -375,6 +385,8 @@ class MultiRepoArtifactCoordinator:
                     artifact_health=health,
                     available_semantic_profiles=profiles,
                 )
+                if not recorded:
+                    raise RuntimeError("Restored generation metadata was superseded")
                 recovered_commit = repo.last_indexed_commit
                 validation_reasons = getattr(result, "validation_reasons", []) or []
                 validation_details = self._build_validation_details(

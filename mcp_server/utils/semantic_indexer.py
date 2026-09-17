@@ -2522,11 +2522,10 @@ class SemanticIndexer:
                     )
         except Exception as e:
             logger.error(
-                f"Failed to upsert {len(points)} points for file {path}: "
-                f"{type(e).__name__}: {e}"
+                f"Failed to upsert {len(points)} points for file {path}: " f"{type(e).__name__}"
             )
             self._qdrant_available = False
-            raise RuntimeError(f"Failed to store embeddings for {path} in Qdrant: {e}")
+            raise RuntimeError("Failed to store embeddings in Qdrant") from None
 
         return {
             "file": str(path),
@@ -2803,15 +2802,15 @@ class SemanticIndexer:
             try:
                 response = self.embedding_client.embed_with_provenance([text], input_type="query")
                 embedding = self._validate_embedding_response(response, 1)[0]
-            except Exception as e:
-                raise RuntimeError(f"Failed to generate query embedding: {e}")
+            except Exception:
+                raise RuntimeError("Failed to generate query embedding") from None
             # Fail closed if the query model drifted from the indexed vectors.
             self._check_query_provenance(response)
         else:
             try:
                 embedding = self._embed_texts([text], input_type="query")[0]
-            except Exception as e:
-                raise RuntimeError(f"Failed to generate query embedding: {e}")
+            except Exception:
+                raise RuntimeError("Failed to generate query embedding") from None
 
         query_limit = limit
         if self._looks_like_code_intent(text):
@@ -2847,11 +2846,9 @@ class SemanticIndexer:
 
             yield from self._rerank_query_results(text, rerank_input, limit)
         except Exception as e:
-            logger.error(f"Qdrant search failed: {type(e).__name__}: {e}")
+            logger.error(f"Qdrant search failed: {type(e).__name__}")
             self._qdrant_available = False
-            raise RuntimeError(
-                f"Semantic search failed - Qdrant error: {e}. " "Connection may have been lost."
-            )
+            raise RuntimeError("Semantic search failed - Qdrant unavailable") from None
 
     # ------------------------------------------------------------------
     # INFERLIVEGATE Lane A: collection-resident provenance

@@ -244,7 +244,8 @@ def test_lease_drains_before_eviction_closes(tmp_path):
         registry.shutdown()
 
 
-def test_old_registration_retirement_leaves_replacement_semantics_open(tmp_path):
+@pytest.mark.parametrize("field", ["registration_id", "index_generation"])
+def test_old_registration_retirement_leaves_replacement_semantics_open(tmp_path, field):
     from dataclasses import replace
 
     from mcp_server.utils.semantic_indexer_registry import SemanticIndexerRegistry
@@ -256,7 +257,7 @@ def test_old_registration_retirement_leaves_replacement_semantics_open(tmp_path)
         registry = SemanticIndexerRegistry(repo_reg)
         with registry.lease("repo-a"):
             repo_reg.unregister("repo-a")
-            repo_reg.register(replace(old_owner, registration_id="replacement-owner"))
+            repo_reg.register(replace(old_owner, **{field: "replacement-owner"}))
             with registry.lease("repo-a") as replacement:
                 assert replacement is second
                 assert registry.evict("repo-a", expected_owner=old_owner)
@@ -326,6 +327,35 @@ def test_stage_lease_uses_supplied_store_and_unpublished_generation(tmp_path):
                 assert repo_reg.get("repo-a").index_generation != "unpublished"
             registry.shutdown()
     finally:
+        store.close()
+
+
+def test_server_staging_uses_distinct_collection_for_same_commit(
+    tmp_path, monkeypatch, mock_qdrant, mock_embedding_provider
+):
+    from dataclasses import replace
+
+    from mcp_server.core.repo_context import RepoContext
+    from mcp_server.storage.sqlite_store import SQLiteStore
+    from mcp_server.utils.semantic_indexer_registry import SemanticIndexerRegistry
+
+    monkeypatch.setenv("QDRANT_URL", "http://127.0.0.1:6333")
+    monkeypatch.setenv("QDRANT_USE_SERVER", "true")
+    repo_reg = _make_registry_with_repos(tmp_path)
+    active = repo_reg.get("repo-a")
+    store = SQLiteStore(str(tmp_path / "stage.db"))
+    staged = replace(active, index_path=Path(store.db_path), index_generation="unpublished")
+    registry = SemanticIndexerRegistry(repo_reg)
+    try:
+        ctx = RepoContext("repo-a", store, active.path, "main", staged, staging=True)
+        with registry.lease("repo-a") as live:
+            with registry.lease("repo-a", ctx=ctx) as pending:
+                assert live.qdrant_path == pending.qdrant_path == "http://127.0.0.1:6333"
+                assert live.commit == pending.commit
+                assert live.collection != pending.collection
+                assert repo_reg.get("repo-a").index_generation != "unpublished"
+    finally:
+        registry.shutdown()
         store.close()
 
 

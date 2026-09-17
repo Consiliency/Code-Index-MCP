@@ -18,7 +18,7 @@ PUBLISH_JOBS = (
     "claim-release",
     "build-release",
     "publish-release",
-    "promote-container",
+    "verify-container",
 )
 
 
@@ -66,7 +66,6 @@ def test_every_release_mutation_has_an_adjacent_protected_main_guard() -> None:
     )
     build_steps = _jobs()["build-release"]["steps"]
     mutation_steps = [(build_steps, "Build and push container images")]
-    mutation_steps.append((_jobs()["promote-container"]["steps"], "Promote stable container tags"))
     mutation_steps.extend((steps, name) for name in mutation_names)
 
     for job_steps, mutation_name in mutation_steps:
@@ -91,6 +90,7 @@ def _is_external_release_mutation(step: dict[str, object]) -> bool:
     return (
         ("docker/build-push-action@" in uses and push == "true")
         or "softprops/action-gh-release@" in uses
+        or "gh release create" in run
         or "pypa/gh-action-pypi-publish@" in uses
         or "actions/delete-package-versions@" in uses
         or "cosign sign" in run
@@ -189,15 +189,15 @@ def test_publish_permissions_are_job_scoped() -> None:
         "contents": "write",
         "id-token": "write",
     }
-    assert jobs["promote-container"]["permissions"] == {"contents": "read", "packages": "write"}
+    assert jobs["verify-container"]["permissions"] == {"contents": "read", "packages": "read"}
 
 
-def test_stable_tags_require_completed_publication_and_verified_digest():
+def test_container_release_uses_signed_digest_without_mutable_tag_promotion():
     workflow = _workflow()
     jobs = workflow["jobs"]
     assert workflow["concurrency"]["cancel-in-progress"] == "false"
     assert "'publish'" in workflow["concurrency"]["group"]
-    promote = jobs["promote-container"]
+    promote = jobs["verify-container"]
     assert promote["needs"] == ["build-release", "publish-release"]
     assert promote["env"]["IMAGE_DIGEST"] == "${{ needs.build-release.outputs.image_digest }}"
     build = jobs["build-release"]
@@ -207,18 +207,64 @@ def test_stable_tags_require_completed_publication_and_verified_digest():
     assert "github.run_id" in build_step["with"]["tags"]
     assert "github.run_attempt" in build_step["with"]["tags"]
     verify = next(
-        step for step in promote["steps"] if step["name"] == "Verify staged digest before promotion"
+        step
+        for step in promote["steps"]
+        if step["name"] == "Verify released digest and source signature"
     )
     assert "cosign verify" in verify["run"]
     assert (
         '--certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release-automation.yml@refs/heads/main"'
         in verify["run"]
     )
-    assert 'test "$existing" = "$IMAGE_DIGEST"' in verify["run"]
+    assert '--certificate-github-workflow-sha "${{ github.sha }}"' in verify["run"]
     mutation = promote["steps"][-1]["run"]
     assert '"${IMAGE_REF}@${IMAGE_DIGEST}"' in mutation
-    assert "--prefer-index=false" in mutation
+    assert "imagetools create" not in WORKFLOW_PATH.read_text()
+    assert "--tag" not in mutation
     assert 'test "$actual" = "$IMAGE_DIGEST"' in mutation
+    release = next(
+        step for step in jobs["publish-release"]["steps"] if step["name"] == "Create GitHub release"
+    )
+    assert "image-reference.txt" in release["run"]
+    assert "image-digest.txt" in release["run"]
+    assert "gh release create" in release["run"]
+    assert "--verify-tag" in release["run"]
+    assert "--clobber" not in release["run"]
+    create_line = next(
+        line for line in release["run"].splitlines() if line.startswith("gh release create")
+    )
+    assert create_line == 'gh release create "$RELEASE_VERSION" "${flags[@]}"'
+    assert "gh release upload" in release["run"]
+    assert "gh release delete" not in release["run"]
+
+
+def test_concurrent_version_tag_is_never_overwritten(tmp_path):
+    script = _jobs()["verify-container"]["steps"][-1]["run"]
+    digest = "sha256:" + "a" * 64
+    competitor = "sha256:" + "b" * 64
+    docker = tmp_path / "docker"
+    docker.write_text(
+        "#!/bin/bash\nset -eu\n"
+        'test "$1 $2 $3" = "buildx imagetools inspect"\n'
+        'test "$4" = "$IMAGE_REF@$IMAGE_DIGEST"\n'
+        f"printf '%s' '{competitor}' > version-tag\n"
+        f"printf '%s' '{{\"digest\":\"{digest}\"}}'\n"
+    )
+    docker.chmod(0o700)
+    result = subprocess.run(
+        ["bash", "-e", "-o", "pipefail", "-c", script],
+        cwd=tmp_path,
+        env={
+            **os.environ,
+            "PATH": str(tmp_path) + os.pathsep + os.environ["PATH"],
+            "IMAGE_REF": "ghcr.io/fixture/image",
+            "IMAGE_DIGEST": digest,
+        },
+        capture_output=True,
+        timeout=5,
+    )
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / "version-tag").read_text() == competitor
 
 
 def test_release_workflow_does_not_dispatch_downstream_workflows() -> None:
@@ -274,6 +320,21 @@ def test_release_claim_is_create_only_and_precedes_build_and_signing():
     assert "--method PATCH" not in script and "--method DELETE" not in script
     assert 'test "$GITHUB_RUN_ATTEMPT" = "1"' in script
     assert "set -euo pipefail" in script
+
+
+@pytest.mark.parametrize("job", PUBLISH_JOBS)
+@pytest.mark.parametrize("attempt", ["1", "2", "", "invalid"])
+def test_each_publish_job_rejects_reruns_before_any_other_step(job, attempt):
+    step = _jobs()[job]["steps"][0]
+    assert step["name"] == "Refuse publication retries"
+    assert "uses" not in step and "env" not in step
+    result = subprocess.run(
+        ["bash", "-c", step["run"]],
+        env={"PATH": os.defpath, "GITHUB_RUN_ATTEMPT": attempt},
+        capture_output=True,
+        timeout=5,
+    )
+    assert (result.returncode == 0) is (attempt == "1")
 
 
 def test_duplicate_release_claim_fails_without_replacing_first_owner(tmp_path):

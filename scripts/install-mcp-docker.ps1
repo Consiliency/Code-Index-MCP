@@ -7,6 +7,7 @@ param(
 )
 
 # Configuration
+# Canonical release image: ghcr.io/consiliency/code-index-mcp, pinned by digest.
 $MCPRegistry = "ghcr.io"
 $MCPImage = "$MCPRegistry/consiliency/code-index-mcp"
 $ErrorActionPreference = "Stop"
@@ -82,7 +83,7 @@ function Select-Variant {
     Write-Host "Choose MCP Index variant:"
     Write-Host "1) v1.4.1      - Versioned release image (requires publication)"
     Write-Host "2) local-smoke - Locally built via make release-smoke-container"
-    Write-Host "3) latest      - Stable channel (published)"
+    Write-Host "3) latest      - Latest GitHub release, pinned by digest"
     Write-Host ""
 
     $choice = Read-Host "Select variant [1-3] (default: 1)"
@@ -106,6 +107,7 @@ function Select-Variant {
 function Pull-Image {
     $imageTag = "${MCPImage}:${Variant}"
     if ($Variant -eq "local-smoke") {
+        $script:MCPImageRef = $imageTag
         Write-Host "[INFO] Using the locally built smoke image (dev option)." -ForegroundColor Green
         docker image inspect $imageTag *> $null
         if ($LASTEXITCODE -ne 0) {
@@ -113,8 +115,21 @@ function Pull-Image {
         }
         return
     }
-    Write-Host "[INFO] Pulling MCP Index image: $imageTag" -ForegroundColor Green
-    docker pull $imageTag
+    if ($Variant -eq "latest") {
+        $releasePath = "latest/download"
+    } elseif ($Variant -match '^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?$') {
+        $releasePath = "download/$Variant"
+    } else {
+        throw "Select a release version, latest release, or local-smoke."
+    }
+    $response = Invoke-WebRequest -UseBasicParsing -TimeoutSec 30 -Uri "https://github.com/Consiliency/Code-Index-MCP/releases/$releasePath/image-reference.txt"
+    $script:MCPImageRef = $response.Content.Trim()
+    if ($MCPImageRef -cnotmatch '^ghcr\.io/consiliency/code-index-mcp@sha256:[0-9a-f]{64}$') {
+        throw "Release image reference is missing or invalid; no tag fallback is permitted."
+    }
+    Write-Host "[INFO] Pulling MCP Index image: $MCPImageRef" -ForegroundColor Green
+    docker pull $MCPImageRef
+    if ($LASTEXITCODE -ne 0) { throw "Cannot pull the pinned release image." }
 }
 
 function Create-Launcher {
@@ -122,32 +137,34 @@ function Create-Launcher {
 @echo off
 REM MCP Index Docker Launcher for Windows
 
-SET MCP_VARIANT=%MCP_VARIANT%
-IF "%MCP_VARIANT%"=="" SET MCP_VARIANT=v1.4.1
-
-SET MCP_IMAGE=ghcr.io/consiliency/code-index-mcp
+SET MCP_IMAGE_REF=@MCP_IMAGE_REF@
 SET WORKSPACE=%CD%
 
 IF "%1"=="setup" (
     echo Running MCP Index setup wizard...
-    docker run -it --rm -v "%WORKSPACE%:/workspace" %MCP_IMAGE%:%MCP_VARIANT% --setup
+    docker run -it --rm -v "%WORKSPACE%:/workspace" %MCP_IMAGE_REF% index-it-mcp setup
     EXIT /B
 )
 
 IF "%1"=="upgrade" (
-    echo Upgrading MCP Index...
-    docker pull %MCP_IMAGE%:%MCP_VARIANT%
+    echo Refreshing pinned image. Rerun the installer to select another release.
+    docker pull %MCP_IMAGE_REF%
     EXIT /B
 )
 
 REM Run MCP server with all arguments
+IF "%1"=="" (
+    docker run -i --rm -v "%WORKSPACE%:/workspace" %MCP_IMAGE_REF% index-it-mcp stdio
+    EXIT /B
+)
 docker run -i --rm ^
     -v "%WORKSPACE%:/workspace" ^
     -v "%USERPROFILE%\.mcp-index:/app/.mcp-index" ^
     -e VOYAGE_AI_API_KEY=%VOYAGE_AI_API_KEY% ^
     -e MCP_ARTIFACT_SYNC=%MCP_ARTIFACT_SYNC% ^
-    %MCP_IMAGE%:%MCP_VARIANT% %*
+    %MCP_IMAGE_REF% index-it-mcp %*
 '@
+    $launcherContent = $launcherContent.Replace('@MCP_IMAGE_REF@', $MCPImageRef)
 
     $launcherPath = "$env:USERPROFILE\AppData\Local\Microsoft\WindowsApps\mcp-index.bat"
     
@@ -183,7 +200,7 @@ function Create-MCPJson {
                     "-v", "`${USERPROFILE}\.mcp-index:/app/.mcp-index",
                     "-e", "VOYAGE_AI_API_KEY=`${VOYAGE_AI_API_KEY:-}",
                     "-e", "MCP_ARTIFACT_SYNC=`${MCP_ARTIFACT_SYNC:-true}",
-                    "${MCPImage}:${Variant}"
+                    $MCPImageRef, "index-it-mcp", "stdio"
                 )
             }
         }

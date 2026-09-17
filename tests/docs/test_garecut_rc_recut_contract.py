@@ -28,7 +28,8 @@ def test_rc8_contract_surfaces_and_workflow_path_are_frozen():
     for expected in (
         EXPECTED_TAG,
         EXPECTED_VERSION,
-        "softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b",
+        'gh release create "$RELEASE_VERSION"',
+        "--verify-tag",
     ):
         assert expected in workflow
 

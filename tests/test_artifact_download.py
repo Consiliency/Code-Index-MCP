@@ -10,9 +10,95 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from mcp_server.artifacts.artifact_download import IndexArtifactDownloader
+from mcp_server.artifacts.artifact_download import ArtifactIdentityMismatch, IndexArtifactDownloader
 from mcp_server.artifacts.attestation import AttestationError
 from mcp_server.artifacts.freshness import FreshnessVerdict
+
+
+def test_latest_tries_authenticated_identity_after_stale_promoted_artifact(tmp_path, monkeypatch):
+    downloader = IndexArtifactDownloader(repo="owner/repo", registry=MagicMock())
+    artifacts = [
+        {"id": 1, "name": "mcp-index-promoted"},
+        {"id": 2, "name": "mcp-index-requested"},
+    ]
+    monkeypatch.setattr(downloader, "list_artifacts", lambda: artifacts)
+    accepted = object()
+    attempts = []
+
+    def restore(artifact, **kwargs):
+        attempts.append(artifact["id"])
+        assert kwargs["repo_id"] == "requested"
+        assert kwargs["target_commit"] == "a" * 40
+        if artifact["id"] == 1:
+            raise ArtifactIdentityMismatch("authenticated commit mismatch")
+        return accepted
+
+    monkeypatch.setattr(downloader, "download_selected_artifact", restore)
+    assert (
+        downloader.download_latest(output_dir=tmp_path, repo_id="requested", target_commit="a" * 40)
+        is accepted
+    )
+    assert attempts == [1, 2]
+
+
+@pytest.mark.parametrize("failure", [AttestationError, ValueError, OSError])
+def test_latest_does_not_hide_authenticity_integrity_or_install_failure(
+    tmp_path, monkeypatch, failure
+):
+    downloader = IndexArtifactDownloader(repo="owner/repo", registry=MagicMock())
+    monkeypatch.setattr(downloader, "list_artifacts", lambda: [{"id": 1, "name": "mcp-index-a"}])
+    restore = MagicMock(side_effect=failure("refused"))
+    monkeypatch.setattr(downloader, "download_selected_artifact", restore)
+    with pytest.raises(failure, match="refused"):
+        downloader.download_latest(output_dir=tmp_path, repo_id="requested")
+    restore.assert_called_once()
+
+
+def test_latest_identity_candidates_are_bounded_and_target_hint_is_not_trusted(
+    tmp_path, monkeypatch
+):
+    from mcp_server.artifacts.artifact_download import MAX_IDENTITY_CANDIDATES
+
+    downloader = IndexArtifactDownloader(repo="owner/repo", registry=MagicMock())
+    commit = "a" * 40
+    artifacts = [{"id": i, "name": f"mcp-index-{i}"} for i in range(20)]
+    artifacts[-1]["workflow_run"] = {"head_sha": commit}
+    monkeypatch.setattr(downloader, "list_artifacts", lambda: artifacts)
+    restore = MagicMock(side_effect=ArtifactIdentityMismatch("authenticated repo mismatch"))
+    monkeypatch.setattr(downloader, "download_selected_artifact", restore)
+    with pytest.raises(ArtifactIdentityMismatch, match="candidate limit"):
+        downloader.download_latest(output_dir=tmp_path, repo_id="requested", target_commit=commit)
+    assert restore.call_count == MAX_IDENTITY_CANDIDATES
+    assert restore.call_args_list[0].args[0]["id"] == 19
+
+
+@pytest.mark.parametrize("mode", ["latest", "recover"])
+def test_registered_restore_captures_owner_before_discovery(tmp_path, monkeypatch, mode):
+    registry = MagicMock()
+    original, replacement = object(), object()
+    registry.get.return_value = original
+    downloader = IndexArtifactDownloader(repo="owner/repo", registry=registry)
+
+    def discover():
+        registry.get.return_value = replacement
+        return [
+            {
+                "id": 1,
+                "name": "mcp-index-main-abcdef",
+                "workflow_run": {"head_sha": "abcdef", "head_branch": "main"},
+            }
+        ]
+
+    monkeypatch.setattr(downloader, "list_artifacts", discover)
+    restore = MagicMock()
+    monkeypatch.setattr(downloader, "download_selected_artifact", restore)
+    if mode == "latest":
+        downloader.download_latest(output_dir=tmp_path, repo_id="registered")
+    else:
+        downloader.recover(
+            branch="main", commit="abcdef", output_dir=tmp_path, repo_id="registered"
+        )
+    assert restore.call_args.kwargs["expected_owner"] is original
 
 
 def _metadata(**overrides) -> dict:

@@ -567,6 +567,7 @@ async def startup_event():
     global dispatcher, repo_resolver, sqlite_store, multi_watcher, ref_poller, plugin_manager, plugin_loader, auth_manager, security_config, cache_manager, query_cache, bm25_indexer, hybrid_search, fuzzy_indexer, git_index_manager, semantic_indexer, profile_hydration_status, semantic_setup_status, language_detection_status, _store_registry
 
     app.state.startup_time = time.monotonic()
+    background_startup_complete = False
 
     try:
         preflight_result = run_startup_preflight()
@@ -1085,6 +1086,7 @@ async def startup_event():
                 ref_poller = starting_poller
                 logger.info("MultiRepositoryWatcher and RefPoller started")
 
+        background_startup_complete = True
         # Store in app.state for potential future use
         app.state.dispatcher = dispatcher
         app.state.sqlite_store = sqlite_store
@@ -1155,6 +1157,8 @@ async def startup_event():
             "MCP Server initialized successfully with dynamic plugin system, SQLite persistence, and file watcher"
         )
     except Exception as e:
+        if background_startup_complete:
+            await shutdown_event()
         logger.error(f"Failed to initialize MCP Server: {type(e).__name__}")
         raise
 
@@ -1698,13 +1702,15 @@ async def search(
         }
         if effective_mode in {"semantic", "hybrid"}:
             settings = get_settings()
-            profile_registry = SemanticProfileRegistry.from_raw(
-                settings.get_semantic_profiles_config(),
-                settings.get_semantic_default_profile(),
-                tool_version=settings.app_version,
-            )
             cache_params["profile"] = hashlib.sha256(
-                json.dumps(profile_registry.to_dict(), sort_keys=True, default=str).encode()
+                json.dumps(
+                    [
+                        settings.get_semantic_default_profile(),
+                        settings.get_semantic_profiles_config(),
+                    ],
+                    sort_keys=True,
+                    default=str,
+                ).encode()
             ).hexdigest()
 
         cached_results = None
@@ -2881,9 +2887,13 @@ async def get_symbol_dependencies(
             "count": len(dependencies),
             "max_depth": max_depth,
         }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error("Dependency lookup failed (%s)", type(e).__name__)
         raise HTTPException(500, "Failed to get dependencies")
+    finally:
+        _require_current_generation(ctx)
 
 
 @app.get("/graph/dependents/{symbol}")
@@ -2907,9 +2917,13 @@ async def get_symbol_dependents(
             "count": len(dependents),
             "max_depth": max_depth,
         }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error("Dependent lookup failed (%s)", type(e).__name__)
         raise HTTPException(500, "Failed to get dependents")
+    finally:
+        _require_current_generation(ctx)
 
 
 @app.get("/graph/hotspots")
@@ -2931,9 +2945,13 @@ async def get_code_hotspots(
             "count": len(hotspots),
             "top_n": top_n,
         }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error getting hotspots: {type(e).__name__}")
         raise HTTPException(500, "Failed to get hotspots")
+    finally:
+        _require_current_generation(ctx)
 
 
 @app.post("/graph/context")
@@ -2993,9 +3011,13 @@ async def get_context_for_symbols(
                 "execution_time_ms": result.execution_time_ms,
             },
         }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error getting context for symbols: {type(e).__name__}")
         raise HTTPException(500, "Failed to get context")
+    finally:
+        _require_current_generation(ctx)
 
 
 @app.get("/graph/search")
@@ -3041,9 +3063,13 @@ async def graph_search(
                 "max_context_nodes": max_context_nodes,
             },
         }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error in graph search: {type(e).__name__}")
         raise HTTPException(500, "Graph search failed")
+    finally:
+        _require_current_generation(ctx)
 
 
 @app.get("/graph/status")
@@ -3078,9 +3104,13 @@ async def get_graph_status(
                 status.setdefault("reason", "graph_not_initialized")
 
         return status
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error getting graph status: {type(e).__name__}")
         raise HTTPException(500, "Failed to get graph status")
+    finally:
+        _require_current_generation(ctx)
 
 
 @app.post("/graph/initialize")
@@ -3125,6 +3155,10 @@ async def initialize_graph(
             "message": f"Graph initialized from {len(file_paths)} files",
             "graph_initialized": health.get("graph_initialized", False),
         }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error initializing graph: {type(e).__name__}")
         raise HTTPException(500, "Failed to initialize graph")
+    finally:
+        _require_current_generation(ctx)

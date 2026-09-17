@@ -70,6 +70,10 @@ environment refresh and the 314-test phase suite. Broad offline baseline:
 and restart. Artifact hashes and exclusions are in the DIST receipt. Earlier
 failed attempts remain preserved and are not accepted evidence.
 
+The DIST plan's unchecked gate/exit checklists are the historical pre-acceptance
+snapshot bound by its receipt. They are not the current closeout status. Preserve
+those hashed plan bytes; `docs/validation/v13/DIST.json` is the acceptance record.
+
 Read `docs/validation/v13/PILOT.json` and
 `.dev-skills/handoffs/codex-execute-phase/latest.md` in this worktree.
 Next phase: PREP, execute the approved diagnostic repair amendment and fresh checks.
@@ -77,6 +81,43 @@ Next command: manual `codex-execute-phase plans/phase-plan-v13-PREP.md`; keep th
 Do not restart v9 or infer v13 completion from old primary-checkout state.
 
 ## PREP Candidate
+
+### Fifth Diagnostic Repair Checkpoint
+
+The exact next freeze is recorded outside tracked source in
+`.phase-loop/runs/v13-PREP-fifth-repairs-20260917/panel/materials.json`, alongside
+the runner's source/tree hashes and immutable file inventory. It does not exist
+until freeze succeeds. Tracked progress prose cannot contain its own final Git
+commit without changing that commit; neither this checkpoint nor an older
+receipt substitutes for the exact-candidate runtime record.
+
+Frozen candidate `df5a969` is not accepted. Its broad offline run recorded 3587
+passes, 150 skips, 31 deselections and two stale release-topology assertions;
+the phase suite recorded 362 passes and separate Git checks 140 passes. Installed
+offline, synthetic-provider rehearsal and actual admin/PMCP Inspector browser
+checks passed. Browser proof included ready/no-match queries, sibling refusal,
+reindex, reconnect and shutdown with no owned child survivors. These receipts
+are source-bound and do not transfer automatically to the repair candidate.
+
+All original-candidate batches have finished with audited requested models and
+no out-of-snapshot reads; these are still batch reports, not whole-seat approval.
+Fifth repairs remain isolated until the next clean freeze. Findings cover copied-sidecar verification, bounded artifact selection
+and pointer commands, retry-safe file mutations, rerun guards, damaged-index
+sync, graph generation fencing and registration-scoped retirement. Targeted
+checks also cover artifact restore owner races, automatic-sync admission,
+wheel source/dependency binding, ambiguous container launch cleanup and atomic
+signing intent records. A broad intermediate run passed 3685 tests and exposed
+eight stale fixture/document expectations, now corrected. The cancellation,
+pilot, signing, metadata and rescan group subsequently passed 273 tests; wheel
+and signing checks passed 100, and digest-only workflow/installer checks 95.
+Container releases now use the signed digest asset, not mutable version/latest
+GHCR promotion. Both installer configurations pin that reference; delivered
+image checks bind labels and certificate workflow SHA to the accepted source.
+All four full-candidate approvals remain outstanding. Fresh complete-candidate
+verification and four independent
+seat verdicts are still required. No renewed inference, signing, merge or
+publication has occurred. The authoritative roadmap and historical accepted
+receipts remain unchanged.
 
 ### Fourth Diagnostic Repair Checkpoint
 

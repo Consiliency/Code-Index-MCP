@@ -321,6 +321,37 @@ def test_batch_preparation_errors_are_failures_not_skips(monkeypatch, tmp_path, 
     provenance.assert_not_called()
 
 
+@pytest.mark.parametrize("boundary", ["embedding", "qdrant", "upsert"])
+def test_semantic_provider_errors_do_not_leak_payloads(monkeypatch, tmp_path, caplog, boundary):
+    _patch_indexer_runtime(monkeypatch, tmp_path)
+    _patch_chunk_file(monkeypatch)
+    registry = SemanticProfileRegistry.from_raw(_sample_profiles(), "oss-high")
+    source = tmp_path / "sample.py"
+    source.write_text("def alpha(x):\n    return x + 1\n")
+    indexer = SemanticIndexer(
+        qdrant_path=":memory:",
+        profile_registry=registry,
+        semantic_profile="oss-high",
+        sqlite_store=_FakeSQLiteStore(summary_text="Synthetic summary"),
+    )
+    private = "synthetic-private-provider-payload"
+    failure = Mock(side_effect=RuntimeError(private))
+    if boundary == "upsert":
+        monkeypatch.setattr(indexer.qdrant, "upsert", failure)
+        operation = lambda: indexer.index_file(source)
+    else:
+        monkeypatch.setattr(indexer, "_provider_supports_provenance", lambda: False)
+        if boundary == "embedding":
+            monkeypatch.setattr(indexer, "_embed_texts", failure)
+        else:
+            indexer.qdrant.search = failure
+        operation = lambda: list(indexer.query("synthetic query"))
+    with pytest.raises(RuntimeError) as error:
+        operation()
+    assert private not in str(error.value)
+    assert private not in caplog.text
+
+
 def test_strict_preparation_includes_summary_text_in_embedding_input(monkeypatch, tmp_path):
     _patch_indexer_runtime(monkeypatch, tmp_path)
     _patch_chunk_file(monkeypatch)

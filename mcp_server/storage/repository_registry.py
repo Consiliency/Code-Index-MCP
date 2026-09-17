@@ -685,6 +685,7 @@ class RepositoryRegistry:
         *,
         expected_registration_id: Optional[str],
         expected_generation: Optional[str],
+        require_auto_sync: bool = False,
     ) -> None:
         """Fence reads only if the writer still owns its admitted registration."""
         with self._transaction(write=True):
@@ -694,6 +695,10 @@ class RepositoryRegistry:
                 or repo.get("index_generation") != expected_generation
             ):
                 raise ValueError("Repository registration or generation changed before mutation")
+            if require_auto_sync and (
+                not repo.get("auto_sync", True) or not repo.get("active", True)
+            ):
+                raise ValueError("Automatic sync disabled before mutation")
             repo["staleness_reason"] = "index_publication_pending"
 
     def fail_generation_mutation(
