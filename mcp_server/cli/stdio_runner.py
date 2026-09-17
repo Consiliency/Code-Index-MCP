@@ -1714,6 +1714,7 @@ async def _serve(registry_path=None) -> None:
                 )
     finally:
         _handle_signal()
+        cleanup_succeeded = False
         try:
             await _graceful_shutdown(
                 multi_watcher,
@@ -1722,11 +1723,12 @@ async def _serve(registry_path=None) -> None:
                 exporter,
                 dispatcher=_disp,
             )
+            cleanup_succeeded = True
         finally:
             for transport in transports:
                 transport.close()
             await _loop.shutdown_default_executor()
-            if watchdog is not None:
+            if cleanup_succeeded and watchdog is not None:
                 watchdog.cancel()
             for sig in (signal.SIGTERM, signal.SIGINT):
                 try:

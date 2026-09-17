@@ -427,7 +427,9 @@ class RepositoryRegistry:
             repo["artifact_enabled"] = enabled
             return True
 
-    def update_artifact_state(self, repository_id: str, **artifact_state: Any) -> bool:
+    def update_artifact_state(
+        self, repository_id: str, *, expected_owner: Any = None, **artifact_state: Any
+    ) -> bool:
         """Update artifact lifecycle metadata for a repository."""
         with self._transaction(write=True):
             repo = self._registry.get(repository_id)
@@ -435,8 +437,38 @@ class RepositoryRegistry:
                 logger.warning(f"Repository {repository_id} not found in registry")
                 return False
 
+            if expected_owner is not None and any(
+                repo.get(key) != getattr(expected_owner, key, None)
+                for key in ("registration_id", "index_generation", "last_indexed_commit")
+            ):
+                return False
+
             for key, value in artifact_state.items():
                 repo[key] = value
+            return True
+
+    def mark_artifact_published(
+        self,
+        repository_id: str,
+        *,
+        expected_registration_id: Optional[str],
+        expected_generation: Optional[str],
+        expected_commit: Optional[str],
+    ) -> bool:
+        """Record upload completion only for the generation that was uploaded."""
+        with self._transaction(write=True):
+            repo = self._registry.get(repository_id)
+            if repo is None or (
+                repo.get("registration_id") != expected_registration_id
+                or repo.get("index_generation") != expected_generation
+                or repo.get("last_indexed_commit") != expected_commit
+            ):
+                return False
+            repo.update(
+                last_published_commit=expected_commit,
+                artifact_backend="github_release",
+                artifact_health="published",
+            )
             return True
 
     def update_staleness_reason(self, repository_id: str, reason: Optional[str]) -> bool:

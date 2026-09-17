@@ -2274,7 +2274,12 @@ async def reindex(
                         "not_found",
                         "skipped_toctou",
                     }
-                    return {"indexed_files": int(not failed), "failed_files": int(failed)}
+                    semantic = getattr(result, "semantic", None)
+                    return {
+                        **(semantic if isinstance(semantic, dict) else {}),
+                        "indexed_files": int(not failed),
+                        "failed_files": int(failed),
+                    }
                 return dispatcher.index_directory(current, source_target, recursive=True)
 
             stats = await anyio.to_thread.run_sync(

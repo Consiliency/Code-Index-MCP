@@ -502,6 +502,7 @@ class TestArtifactPublishTriggers:
         )
         registry.update_artifact_state.assert_any_call(
             "repo-1",
+            expected_owner=registry.get_repository("repo-1"),
             last_published_commit="synced123",
             artifact_health="published",
         )
@@ -522,7 +523,11 @@ class TestArtifactPublishTriggers:
         watcher._sync_repository("repo-1", "callback123")
 
         artifact_manager.create_commit_artifact.assert_not_called()
-        registry.update_artifact_state.assert_any_call("repo-1", artifact_health="publish_failed")
+        registry.update_artifact_state.assert_any_call(
+            "repo-1",
+            expected_owner=registry.get_repository("repo-1"),
+            artifact_health="publish_failed",
+        )
 
     def test_local_only_health_is_reserved_for_no_remote_publisher(self, tmp_path):
         watcher, registry, artifact_manager = self._watcher_for_sync(tmp_path, "full_index")
@@ -533,6 +538,7 @@ class TestArtifactPublishTriggers:
         artifact_manager.create_commit_artifact.assert_not_called()
         registry.update_artifact_state.assert_any_call(
             "repo-1",
+            expected_owner=registry.get_repository("repo-1"),
             artifact_health="local_only",
         )
         assert all(

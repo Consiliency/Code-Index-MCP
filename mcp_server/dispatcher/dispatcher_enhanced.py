@@ -967,19 +967,23 @@ class EnhancedDispatcher:
 
     def shutdown(self) -> None:
         """Close managed plugin workers and any explicitly injected adapters."""
-        if self._semantic_registry is not None:
-            self._semantic_registry.shutdown()
-        if hasattr(self._plugin_set_registry, "shutdown"):
-            self._plugin_set_registry.shutdown()
-        if self._multi_repo_manager is not None:
-            self._multi_repo_manager.close()
-        for plugin in self._legacy_plugins:
-            close = getattr(plugin, "close", None)
-            if callable(close):
+        failures = []
+        owners = [
+            ("semantic", self._semantic_registry, "shutdown"),
+            ("plugins", self._plugin_set_registry, "shutdown"),
+            ("repositories", self._multi_repo_manager, "close"),
+            *(("legacy plugin", plugin, "close") for plugin in self._legacy_plugins),
+        ]
+        for name, owner, method in owners:
+            stop = getattr(owner, method, None)
+            if callable(stop):
                 try:
-                    close()
+                    stop()
                 except Exception as exc:
-                    logger.warning("Legacy plugin close failed: %s", type(exc).__name__)
+                    failures.append(f"{name} ({type(exc).__name__})")
+                    logger.warning("%s shutdown failed: %s", name, type(exc).__name__)
+        if failures:
+            raise RuntimeError("Dispatcher cleanup failed: " + ", ".join(failures))
         self._legacy_plugins.clear()
         self._lang_cache.clear()
 

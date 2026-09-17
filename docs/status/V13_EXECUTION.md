@@ -215,6 +215,51 @@ coverage gaps; none is final-candidate acceptance. The repaired source requires
 new full/installed/UI checks, complete four-seat coverage and reconciliation.
 Both approved one-shot effects remain unused. No merge or publication occurred.
 
+### Third PREP Repair Checkpoint
+
+Candidate `d748fcc` passed all eleven stamped commands, locked refresh and
+315 phase tests. Broad offline: 3506 passed, 150 skipped, 31 deselected;
+separate Git manager: 140 passed. Qdrant file/server, installed wheel, container,
+PMCP rehearsal and all eight interactive admin/Inspector goals passed. These
+receipts remain historical evidence, not final acceptance of later repairs.
+
+The first bounded review batches found additional defects. Sol reported a
+cleanup-exception watchdog gap, stale upload lifecycle writes, partial legacy
+installs and unbounded discovery/upload subprocesses. Five counterexamples
+failed as expected, including a real STDIO process that retained a non-daemon
+thread after cleanup failed. Fable also identified dropped semantic failure
+markers in single-file HTTP reindex. The repair preserves those markers, drains
+independent dispatcher owners, retains the hard-exit safeguard on failures,
+conditions delayed artifact state on registration/generation/commit, publishes
+validated lexical restores atomically and bounds listing/upload commands.
+
+Initial focused verification passed 141 tests. The expanded regression group,
+including record-count, expired-deadline, HTTP and real shutdown controls, passed
+285 tests. Known integer schema versions now follow the same normalization as
+identity validation. A legacy signed-upload fixture initially mocked the old
+subprocess boundary and attempted failing `gh` calls to `synthetic/example`;
+it now mocks the bounded helper and explicitly refuses real subprocesses.
+No successful release effect was reported by that failed test.
+
+The downstream SHIP plan is now materialized before the candidate freeze and
+passes structural validation with one serial lane and no warnings. It requires
+accepted external PREP evidence, guarded merge, clean equal-tree preflight,
+one dispatch and delivered artifact/UI acceptance. It is not execution approval
+before PREP, and neither SHIP nor publication has started.
+
+Reports and access audits are preserved under
+`.phase-loop/runs/v13-PREP-d748fcc-20260917/panel/`. Actual first-batch complete
+diff reads: Fable 13, Sol 8 conservatively, Grok 15 and Gemini 20. Fable's final
+report did not end with the required standalone verdict, so its TUI driver
+timed out after the completed message; its report is diagnostic only. Gemini's
+command/search attempts were denied and it returned no final report. A bounded
+same-ID follow-up reported no retained session context, not an approval or
+provider refusal. These attempts remain preserved; missing coverage and final
+verdicts cannot be inferred from successful CLI exit codes.
+
+No later batch or whole-candidate acceptance is claimed. Both renewed one-shot
+allowances remain unused; no merge, publication or issue closure occurred.
+
 ## PILOT Accepted
 
 Source `366f6bca7765d545498f41b02014ae8ba105d2e2` passed all 13 installed

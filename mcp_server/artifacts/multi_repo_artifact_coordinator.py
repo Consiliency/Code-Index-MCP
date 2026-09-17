@@ -267,17 +267,22 @@ class MultiRepoArtifactCoordinator:
                     uploader.upload_direct(archive_path, metadata)
                 except Exception:
                     self.multi_repo_manager.registry.update_artifact_state(
-                        repo.repository_id, artifact_health="publish_failed"
+                        repo.repository_id, expected_owner=repo, artifact_health="publish_failed"
                     )
                     raise
                 profiles = self._read_local_profiles(repo.path, index_location, repo.index_path)
-                self.multi_repo_manager.registry.update_artifact_state(
+                recorded = self.multi_repo_manager.registry.update_artifact_state(
                     repo.repository_id,
+                    expected_owner=repo,
                     last_published_commit=repo.last_indexed_commit,
                     artifact_backend="github_release",
                     artifact_health="published",
                     available_semantic_profiles=profiles,
                 )
+                if not recorded:
+                    raise RuntimeError(
+                        "Upload completed for an older generation; current state unchanged"
+                    )
                 validation_details = self._build_validation_details(
                     repo,
                     index_location=index_location,
@@ -363,6 +368,7 @@ class MultiRepoArtifactCoordinator:
                     raise RuntimeError(f"Artifact download did not hydrate {repo.index_path}")
                 self.multi_repo_manager.registry.update_artifact_state(
                     repo.repository_id,
+                    expected_owner=repo,
                     last_recovered_commit=repo.last_indexed_commit,
                     artifact_backend=artifact.get("artifact_backend") or "github_actions",
                     artifact_health=health,
@@ -422,6 +428,7 @@ class MultiRepoArtifactCoordinator:
                 health = "ready" if has_local_index else "missing"
             self.multi_repo_manager.registry.update_artifact_state(
                 repo.repository_id,
+                expected_owner=repo,
                 artifact_health=health,
                 available_semantic_profiles=self._read_local_profiles(
                     repo.path, repo.index_location, repo.index_path

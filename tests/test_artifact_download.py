@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import tarfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -83,7 +84,8 @@ def test_validate_artifact_identity_rejects_wrong_repo_branch_commit_and_profile
 def test_install_indexes_hydrates_repo_scoped_current_db(tmp_path: Path):
     source = tmp_path / "source"
     source.mkdir()
-    (source / "current.db").write_text("db", encoding="utf-8")
+    with sqlite3.connect(source / "current.db") as connection:
+        connection.execute("CREATE TABLE synthetic(value TEXT)")
     (source / ".index_metadata.json").write_text("{}", encoding="utf-8")
     (source / "artifact-metadata.json").write_text(json.dumps(_metadata()), encoding="utf-8")
 
@@ -99,7 +101,7 @@ def test_install_indexes_hydrates_repo_scoped_current_db(tmp_path: Path):
     )
 
     assert str(index_path) in installed
-    assert index_path.read_text(encoding="utf-8") == "db"
+    assert index_path.read_bytes() == (source / "current.db").read_bytes()
     assert (index_location / ".index_metadata.json").exists()
     assert (index_location / "artifact-metadata.json").exists()
     assert not (repo_root / "code_index.db").exists()
@@ -108,7 +110,8 @@ def test_install_indexes_hydrates_repo_scoped_current_db(tmp_path: Path):
 def test_install_indexes_accepts_legacy_code_index_after_validation(tmp_path: Path):
     source = tmp_path / "source"
     source.mkdir()
-    (source / "code_index.db").write_text("legacy-db", encoding="utf-8")
+    with sqlite3.connect(source / "code_index.db") as connection:
+        connection.execute("CREATE TABLE synthetic(value TEXT)")
     (source / "artifact-metadata.json").write_text(json.dumps(_metadata()), encoding="utf-8")
 
     index_location = tmp_path / "repo" / ".mcp-index"
@@ -121,7 +124,7 @@ def test_install_indexes_accepts_legacy_code_index_after_validation(tmp_path: Pa
         backup=False,
     )
 
-    assert index_path.read_text(encoding="utf-8") == "legacy-db"
+    assert index_path.read_bytes() == (source / "code_index.db").read_bytes()
 
 
 @pytest.mark.parametrize("collision", ["database", "sidecar", "metadata", "vectors"])

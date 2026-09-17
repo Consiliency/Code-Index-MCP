@@ -3,11 +3,14 @@
 import hashlib
 import io
 import json
+import os
+import sqlite3
 import stat
 import subprocess
 import sys
 import tarfile
 import threading
+import time
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -445,13 +448,12 @@ def test_uploaded_release_is_discovered_authenticated_and_restored(
         return subprocess.CompletedProcess(args, 0, "", "")
 
     def download(args, target, limit, deadline):
-        assert args[3] == release["tag_name"]
-        if args[:3] == ["gh", "release", "view"]:
-            data = json.dumps({"assets": release["assets"]}).encode()
-        else:
-            assert args[:3] == ["gh", "release", "download"]
+        if args[:3] == ["gh", "release", "download"]:
+            assert args[3] == release["tag_name"]
             assert args[-2:] == ["--output", "-"]
             data = uploaded[args[args.index("--pattern") + 1]]
+        else:
+            data = gh(args).stdout.encode()
         assert len(data) <= limit
         target.write(data)
 
@@ -674,3 +676,241 @@ def test_repository_retirement_joins_observer_before_closing_resources(tmp_path)
         owner, "synthetic", SimpleNamespace(path=str(tmp_path))
     )
     assert calls == ["stop", "joined", "store", "plugins", "vectors", "dispatcher"]
+
+
+def test_dispatcher_shutdown_drains_every_owner():
+    from mcp_server.dispatcher.dispatcher_enhanced import EnhancedDispatcher
+
+    dispatcher = EnhancedDispatcher.__new__(EnhancedDispatcher)
+    semantic, plugins, manager, legacy = (MagicMock() for _ in range(4))
+    dispatcher._semantic_registry = semantic
+    dispatcher._plugin_set_registry = plugins
+    dispatcher._multi_repo_manager = manager
+    dispatcher._legacy_plugins = [legacy]
+    dispatcher._lang_cache = {}
+    semantic.shutdown.side_effect = RuntimeError("synthetic private marker")
+    with pytest.raises(RuntimeError) as error:
+        dispatcher.shutdown()
+    assert "private marker" not in str(error.value)
+    plugins.shutdown.assert_called_once()
+    manager.close.assert_called_once()
+    legacy.close.assert_called_once()
+    assert dispatcher._legacy_plugins == [legacy]
+    semantic.shutdown.side_effect = None
+    dispatcher.shutdown()
+    assert not dispatcher._legacy_plugins
+
+
+def test_failed_stdio_shutdown_keeps_hard_exit_safeguard(tmp_path):
+    program = r"""
+import asyncio
+import threading
+from types import SimpleNamespace
+from unittest.mock import MagicMock
+from mcp_server.cli import stdio_runner as runner
+from mcp_server.artifacts import attestation
+
+def fail_shutdown():
+    threading.Thread(target=threading.Event().wait, daemon=False).start()
+    raise RuntimeError("synthetic cleanup failure")
+
+runner._SHUTDOWN_GRACE_SECONDS = 0.3
+runner.initialize_stateless_services = lambda **kwargs: (
+    MagicMock(), MagicMock(), SimpleNamespace(shutdown=fail_shutdown), MagicMock(), MagicMock()
+)
+runner.get_prometheus_exporter = MagicMock
+attestation.warn_if_gh_attestation_missing = lambda: None
+asyncio.run(runner._serve())
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", program],
+        input="",
+        capture_output=True,
+        text=True,
+        timeout=12,
+        env={**os.environ, "SEMANTIC_SEARCH_ENABLED": "false", "MCP_TEST_MODE": "1"},
+    )
+    assert result.returncode == 1
+
+
+@pytest.mark.parametrize("failure", ["copy", "integrity"])
+def test_failed_legacy_install_leaves_no_partial_database(tmp_path, monkeypatch, failure):
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "current.db").write_bytes(b"synthetic corrupt database")
+    destination = tmp_path / "target"
+
+    def fail_copy(reader, writer):
+        writer.write(b"partial")
+        raise OSError("synthetic disk full")
+
+    if failure == "copy":
+        monkeypatch.setattr("mcp_server.artifacts.artifact_download.shutil.copyfileobj", fail_copy)
+    with pytest.raises((OSError, sqlite3.DatabaseError)):
+        IndexArtifactDownloader(repo="synthetic/example").install_indexes(
+            source, index_location=destination
+        )
+    assert not destination.exists()
+    assert not list(tmp_path.glob(".mcp-restore-*"))
+
+
+@pytest.mark.parametrize("payload", ["semantic-vectors.jsonl", "vector_index.qdrant", "rows"])
+def test_legacy_install_refuses_unimported_vectors(tmp_path, payload):
+    source = tmp_path / "source"
+    source.mkdir()
+    with sqlite3.connect(source / "current.db") as connection:
+        connection.execute("CREATE TABLE semantic_points(point_id INTEGER)")
+        if payload == "rows":
+            connection.execute("INSERT INTO semantic_points VALUES(1)")
+    if payload != "rows":
+        (source / payload).write_text("{}\n")
+    destination = tmp_path / "target"
+    with pytest.raises(ValueError, match="registered"):
+        IndexArtifactDownloader(repo="synthetic/example").install_indexes(
+            source, index_location=destination
+        )
+    assert not destination.exists()
+
+
+def test_discovery_uses_bounded_response_reader(monkeypatch):
+    calls = []
+
+    def bounded(command, output, limit, deadline):
+        calls.append((command, limit, deadline))
+
+    def unbounded(*args, **kwargs):
+        raise AssertionError("Unbounded artifact discovery subprocess")
+
+    monkeypatch.setattr("mcp_server.artifacts.artifact_download._download_bounded", bounded)
+    monkeypatch.setattr("mcp_server.artifacts.artifact_download.subprocess.run", unbounded)
+    assert IndexArtifactDownloader(repo="synthetic/example").list_artifacts() == []
+    assert len(calls) == 2
+    assert all(0 < limit <= 8 * 1024**2 for _, limit, _ in calls)
+    assert calls[0][2] == calls[1][2]
+
+
+@pytest.mark.parametrize("change", ["registration", "generation", "commit"])
+def test_stale_upload_completion_cannot_mutate_current_owner(runtime, change):
+    repo, registry, repo_id, _store, manager = runtime
+    assert manager.rebuild_repository_index(repo_id).action == "full_index"
+    before = registry.get(repo_id)
+    if change == "registration":
+        registry.unregister_repository(repo_id)
+        registry.register_repository(str(repo))
+    elif change == "generation":
+        assert manager.rebuild_repository_index(repo_id).action == "full_index"
+    else:
+        registry.update_artifact_state(repo_id, last_indexed_commit="b" * 40)
+    current = registry.get(repo_id)
+    assert not registry.mark_artifact_published(
+        repo_id,
+        expected_registration_id=before.registration_id,
+        expected_generation=before.index_generation,
+        expected_commit=before.last_indexed_commit,
+    )
+    assert not registry.update_artifact_state(
+        repo_id, expected_owner=before, artifact_health="publish_failed"
+    )
+    assert registry.get(repo_id) == current
+    assert registry.mark_artifact_published(
+        repo_id,
+        expected_registration_id=current.registration_id,
+        expected_generation=current.index_generation,
+        expected_commit=current.last_indexed_commit,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("marker", ["semantic_blocked", "semantic_failed"])
+async def test_single_file_http_reindex_preserves_semantic_failure(runtime, monkeypatch, marker):
+    from fastapi import HTTPException
+    from starlette.requests import Request
+
+    from mcp_server.dispatcher.dispatcher_enhanced import IndexResult, IndexResultStatus
+
+    repo, registry, repo_id, _store, manager = runtime
+    assert manager.rebuild_repository_index(repo_id).action == "full_index"
+    before = registry.get(repo_id)
+    manager.store_registry = StoreRegistry.for_registry(registry)
+    resolver = RepoResolver(registry, manager.store_registry)
+    resolver._index_manager = manager
+    ctx = resolver.resolve_ready(repo)
+    monkeypatch.setattr(gateway, "repo_resolver", resolver)
+    monkeypatch.setattr(gateway, "dispatcher", manager.dispatcher)
+    monkeypatch.setattr(gateway, "get_repo_ctx", lambda request: ctx)
+    target = next(repo.glob("*.py"))
+    result = IndexResult(
+        status=IndexResultStatus.INDEXED,
+        path=target,
+        observed_hash=None,
+        actual_hash=None,
+        semantic={marker: 1},
+    )
+    index_file = MagicMock(return_value=result)
+    monkeypatch.setattr(manager.dispatcher, "index_file", index_file)
+    request = Request(
+        {"type": "http", "headers": [], "query_string": f"repository={repo_id}".encode()}
+    )
+    with pytest.raises(HTTPException):
+        await gateway.reindex(request, path=str(target))
+    index_file.assert_called_once()
+    assert registry.get(repo_id).index_generation == before.index_generation
+    assert registry.get(repo_id).staleness_reason == "partial_index_failure"
+
+
+@pytest.mark.parametrize("boundary", ["probe", "create", "upload", "verify"])
+def test_upload_deadlines_are_shared_and_failures_are_not_retried(tmp_path, monkeypatch, boundary):
+    monkeypatch.setenv("MCP_ATTESTATION_MODE", "skip")
+    archive = tmp_path / "index.tar.gz"
+    archive.write_bytes(b"synthetic archive")
+    uploader = IndexArtifactUploader(repo="synthetic/example")
+    calls = []
+
+    def bounded(command, output, limit, deadline):
+        step = {"--version": "probe", "create": "create", "upload": "upload", "view": "verify"}.get(
+            command[1] if command[1] == "--version" else command[2]
+        )
+        calls.append((step, limit, deadline))
+        assert limit == 1024**2
+        assert time.monotonic() < deadline <= time.monotonic() + 301
+        if step == boundary:
+            raise subprocess.TimeoutExpired(command, 300)
+
+    monkeypatch.setattr("mcp_server.artifacts.artifact_download._download_bounded", bounded)
+    with pytest.raises(subprocess.TimeoutExpired):
+        uploader.upload_direct(archive, {"checksum": uploader._calculate_checksum(archive)})
+    assert [step for step, _, _ in calls] == ["probe", "create", "upload", "verify"][: len(calls)]
+    assert len({deadline for step, _, deadline in calls if step != "probe"}) <= 1
+
+
+def test_integer_schema_version_matches_known_string_contract(monkeypatch):
+    from mcp_server.storage.sqlite_store import SQLiteStore
+
+    monkeypatch.setenv("INDEX_SCHEMA_VERSION", str(SQLiteStore.SCHEMA_VERSION))
+    compatible, issues = IndexArtifactDownloader(repo="synthetic/example").check_compatibility(
+        {"compatibility": {"schema_version": SQLiteStore.SCHEMA_VERSION, "embedding_model": None}}
+    )
+    assert compatible, issues
+
+
+def test_expired_deadline_refuses_before_starting_external_command(monkeypatch):
+    from mcp_server.artifacts.artifact_download import _download_bounded
+
+    start = MagicMock()
+    monkeypatch.setattr(subprocess, "Popen", start)
+    with pytest.raises(subprocess.TimeoutExpired):
+        _download_bounded(["gh", "release", "create", "synthetic"], io.BytesIO(), 1024, 0)
+    start.assert_not_called()
+
+
+@pytest.mark.parametrize("backend", ["actions", "releases"])
+def test_discovery_refuses_excessive_record_count(monkeypatch, backend):
+    def response(command, target, limit, deadline):
+        is_release = command[2].endswith("/releases")
+        if is_release == (backend == "releases"):
+            value = {"tag_name": "unrelated", "assets": []} if is_release else {"name": "unrelated"}
+            target.write(((json.dumps(value) + "\n") * 10_001).encode())
+
+    monkeypatch.setattr("mcp_server.artifacts.artifact_download._download_bounded", response)
+    with pytest.raises(ValueError, match="item limit"):
+        IndexArtifactDownloader(repo="synthetic/example").list_artifacts()

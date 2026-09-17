@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import gzip
 import hashlib
+import io
 import json
 import logging
 import os
@@ -20,6 +21,7 @@ import tempfile
 import time
 import urllib.error
 import zipfile
+from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -47,6 +49,8 @@ MAX_INDEX_MEMBERS = 100_000
 
 def _download_bounded(command: List[str], target, limit: int, deadline: float) -> None:
     """Stream a CLI response within a shared deadline and reap it on every exit."""
+    if deadline <= time.monotonic():
+        raise subprocess.TimeoutExpired(command, 0)
     with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL) as process:
         assert process.stdout is not None
         try:
@@ -131,8 +135,10 @@ class IndexArtifactDownloader:
 
     def list_artifacts(self, name_filter: Optional[str] = None) -> List[Dict[str, Any]]:
         print("🔍 Fetching available artifacts...")
+        deadline = time.monotonic() + 60
+        actions = io.BytesIO()
         try:
-            result = subprocess.run(
+            _download_bounded(
                 [
                     "gh",
                     "api",
@@ -141,9 +147,9 @@ class IndexArtifactDownloader:
                     "--jq",
                     ".artifacts[]",
                 ],
-                capture_output=True,
-                text=True,
-                check=True,
+                actions,
+                8 * 1024**2,
+                deadline,
             )
         except FileNotFoundError as exc:
             raise RuntimeError("gh CLI is required for artifact download flows") from exc
@@ -151,7 +157,9 @@ class IndexArtifactDownloader:
             raise RuntimeError(f"Failed to list artifacts: {exc.stderr or exc}") from exc
 
         artifacts = []
-        for line in result.stdout.strip().split("\n"):
+        for count, line in enumerate(actions.getvalue().decode("utf-8").splitlines(), 1):
+            if count > 10_000:
+                raise ValueError("Artifact discovery exceeds the item limit")
             if not line:
                 continue
             artifact = json.loads(line)
@@ -162,13 +170,16 @@ class IndexArtifactDownloader:
                     artifact["artifact_backend"] = "github_actions"
                     artifacts.append(artifact)
 
-        releases = subprocess.run(
+        releases = io.BytesIO()
+        _download_bounded(
             ["gh", "api", f"/repos/{self.repo}/releases", "--paginate", "--jq", ".[]"],
-            capture_output=True,
-            text=True,
-            check=True,
+            releases,
+            8 * 1024**2,
+            deadline,
         )
-        for line in releases.stdout.splitlines():
+        for count, line in enumerate(releases.getvalue().decode("utf-8").splitlines(), 1):
+            if count > 10_000:
+                raise ValueError("Release discovery exceeds the item limit")
             if not line:
                 continue
             release = json.loads(line)
@@ -470,7 +481,7 @@ class IndexArtifactDownloader:
         issues = []
         compatibility = metadata.get("compatibility", {})
         artifact_model = compatibility.get("embedding_model")
-        artifact_schema = compatibility.get("schema_version")
+        artifact_schema = str(compatibility.get("schema_version"))
         artifact_profiles = extract_semantic_profile_metadata(compatibility)
 
         required_schema = os.environ.get("INDEX_SCHEMA_VERSION")
@@ -736,12 +747,18 @@ class IndexArtifactDownloader:
         """
         index_root = Path(index_location) if index_location is not None else Path(".mcp-index")
         target_db = Path(index_path) if index_path is not None else index_root / "current.db"
+        if target_db.parent.resolve() != index_root.resolve():
+            raise ValueError("Artifact staging database must be inside its index directory")
+        if any(
+            (source_dir / name).exists()
+            for name in ("semantic-vectors.jsonl", "vector_index.qdrant")
+        ):
+            raise ValueError("Semantic artifacts require registered generation admission")
         install_map = {
             "current.db": target_db,
             "code_index.db": target_db,
             ".index_metadata.json": index_root / ".index_metadata.json",
             "artifact-metadata.json": index_root / "artifact-metadata.json",
-            "vector_index.qdrant": index_root / "vector_index.qdrant",
         }
         sources = [item for item in source_dir.iterdir() if item.name in install_map]
         databases = [item for item in sources if item.name in {"current.db", "code_index.db"}]
@@ -751,7 +768,11 @@ class IndexArtifactDownloader:
             Path(f"{target_db}-wal"),
             Path(f"{target_db}-shm"),
         }
-        if any(path.exists() or path.is_symlink() for path in destinations):
+        if (
+            index_root.exists()
+            or index_root.is_symlink()
+            or any(path.exists() or path.is_symlink() for path in destinations)
+        ):
             raise FileExistsError("Artifact installation requires an unused staging destination")
         for item in sources:
             if item.is_symlink() or (
@@ -759,19 +780,47 @@ class IndexArtifactDownloader:
             ):
                 raise ValueError("Artifact staging does not accept symbolic links")
 
-        installed_items = []
-        for item in sources:
-            dest = install_map[item.name]
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            if item.is_dir():
-                shutil.copytree(item, dest)
-            else:
+        index_root.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix=".mcp-restore-", dir=index_root.parent) as staging:
+            stage = Path(staging) / "index"
+            stage.mkdir()
+            for item in sources:
+                dest = stage / install_map[item.name].name
                 with item.open("rb") as reader, dest.open("xb") as writer:
                     shutil.copyfileobj(reader, writer)
                     writer.flush()
                     os.fsync(writer.fileno())
-            installed_items.append(str(dest))
-        return installed_items
+            with closing(
+                sqlite3.connect((stage / target_db.name).resolve().as_uri() + "?mode=ro", uri=True)
+            ) as connection:
+                if connection.execute("PRAGMA quick_check").fetchall() != [("ok",)]:
+                    raise ValueError("Artifact staging database failed integrity validation")
+                if connection.execute("PRAGMA foreign_key_check").fetchone():
+                    raise ValueError("Artifact staging database has invalid references")
+                semantic_table = connection.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='semantic_points'"
+                ).fetchone()
+                if (
+                    semantic_table
+                    and connection.execute("SELECT 1 FROM semantic_points LIMIT 1").fetchone()
+                ):
+                    raise ValueError("Semantic artifacts require registered generation admission")
+            directory = os.open(stage, os.O_RDONLY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+            if index_root.exists() or index_root.is_symlink():
+                raise FileExistsError(
+                    "Artifact installation requires an unused staging destination"
+                )
+            stage.rename(index_root)
+            directory = os.open(index_root.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+        return [str(install_map[item.name]) for item in sources]
 
     def download_selected_artifact(
         self,

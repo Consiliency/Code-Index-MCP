@@ -428,12 +428,14 @@ def push(
             uploader.upload_direct(archive_path, metadata)
         if repo_info is not None:
             with closing(MultiRepositoryManager()) as owner:
-                owner.registry.update_artifact_state(
+                recorded = owner.registry.mark_artifact_published(
                     repo_info.repository_id,
-                    last_published_commit=repo_info.last_indexed_commit,
-                    artifact_backend="github_release",
-                    artifact_health="published",
+                    expected_registration_id=repo_info.registration_id,
+                    expected_generation=repo_info.index_generation,
+                    expected_commit=repo_info.last_indexed_commit,
                 )
+                if not recorded:
+                    click.echo("Upload completed for an older generation; current state unchanged.")
 
     except Exception as e:
         click.echo(f"❌ Error: {e}", err=True)

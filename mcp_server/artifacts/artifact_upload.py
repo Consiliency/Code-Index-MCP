@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import io
 import json
 import os
 import re
@@ -11,6 +12,7 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import time
 from contextlib import closing
 from datetime import datetime
 from pathlib import Path
@@ -420,11 +422,20 @@ class IndexArtifactUploader:
     def _ensure_gh_cli(self) -> None:
         # Verify gh CLI is available
         try:
-            subprocess.run(["gh", "--version"], capture_output=True, check=True)
+            self._run_gh(["gh", "--version"], deadline=time.monotonic() + 5)
         except (FileNotFoundError, subprocess.CalledProcessError) as exc:
             raise RuntimeError(
                 "gh CLI is required for artifact upload. " "Install from https://cli.github.com"
             ) from exc
+
+    @staticmethod
+    def _run_gh(command: list[str], *, deadline: float) -> str:
+        """Bound CLI metadata and mutation responses without automatic retries."""
+        from .artifact_download import _download_bounded
+
+        output = io.BytesIO()
+        _download_bounded(command, output, 1024**2, deadline)
+        return output.getvalue().decode("utf-8")
 
     def _build_release_asset_bundle(
         self,
@@ -467,14 +478,14 @@ class IndexArtifactUploader:
             asset_paths=tuple(assets),
         )
 
-    def _verify_release_assets(self, tag: str, expected_names: set[str]) -> None:
-        result = subprocess.run(
+    def _verify_release_assets(
+        self, tag: str, expected_names: set[str], *, deadline: float
+    ) -> None:
+        result = self._run_gh(
             ["gh", "release", "view", tag, "--repo", self.repo, "--json", "assets"],
-            capture_output=True,
-            text=True,
-            check=True,
+            deadline=deadline,
         )
-        payload = json.loads(result.stdout or "{}")
+        payload = json.loads(result or "{}")
         assets = payload.get("assets")
         if not isinstance(assets, list):
             raise RuntimeError(f"Release {tag} returned malformed asset payload")
@@ -535,25 +546,34 @@ class IndexArtifactUploader:
 
         tag = str(release_tag or metadata.get("logical_artifact_id") or "index-latest")
         commit = str(metadata.get("commit", ""))[:8]
-        # Create the release if it doesn't exist (ignore failure if it already exists)
-        subprocess.run(
-            [
-                "gh",
-                "release",
-                "create",
-                tag,
-                "--repo",
-                self.repo,
-                "--title",
-                f"Index: latest ({commit})",
-                "--notes",
-                f"Auto-updated index artifact. Commit: {metadata.get('commit', 'unknown')}",
-            ],
-            capture_output=True,
-        )
+        deadline = time.monotonic() + 300
+        # Only a confirmed existing release permits proceeding after create fails.
+        try:
+            self._run_gh(
+                [
+                    "gh",
+                    "release",
+                    "create",
+                    tag,
+                    "--repo",
+                    self.repo,
+                    "--title",
+                    f"Index: latest ({commit})",
+                    "--notes",
+                    f"Auto-updated index artifact. Commit: {metadata.get('commit', 'unknown')}",
+                ],
+                deadline=deadline,
+            )
+        except subprocess.CalledProcessError:
+            existing = self._run_gh(
+                ["gh", "release", "view", tag, "--repo", self.repo, "--json", "tagName"],
+                deadline=deadline,
+            )
+            if json.loads(existing).get("tagName") != tag:
+                raise RuntimeError("Could not confirm the existing artifact release")
 
         # Upload (overwrite) the archive and metadata assets
-        subprocess.run(
+        self._run_gh(
             [
                 "gh",
                 "release",
@@ -564,9 +584,11 @@ class IndexArtifactUploader:
                 "--clobber",
                 *[str(asset_path) for asset_path in bundle.asset_paths],
             ],
-            check=True,
+            deadline=deadline,
         )
-        self._verify_release_assets(tag, {asset_path.name for asset_path in bundle.asset_paths})
+        self._verify_release_assets(
+            tag, {asset_path.name for asset_path in bundle.asset_paths}, deadline=deadline
+        )
 
         size_mb = archive_path.stat().st_size / 1024 / 1024
         print(

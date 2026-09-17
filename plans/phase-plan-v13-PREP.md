@@ -227,6 +227,34 @@ one-shot operational allowance has been consumed.
   reconciliation before acceptance. Repeat local, installed and UI gates after
   repairs, before either already-approved one-shot operation.
 
+## Third Diagnostic Repair Amendment - 2026-09-17
+
+Candidate d748fcc passed all eleven local verification nodes and the installed
+UI rehearsal, but its first review batches exposed additional release defects.
+Preserve the successful receipts and incomplete/failed review attempts; neither
+one-shot allowance was used. The existing SL-0 ownership covers these repairs.
+
+- test/impl: Keep the STDIO hard-exit safeguard armed after cleanup exceptions;
+  drain every dispatcher owner independently, aggregate redacted failures and
+  prove process exit with a real non-daemon thread left by a failing owner.
+- test/impl: Compare registration, generation and indexed commit before recording
+  upload completion. Stale completion must not mutate replacement state.
+- test/impl: Publish unregistered lexical restores from a complete sibling stage;
+  reject portable semantic payloads without registered generation admission.
+  Failure must leave no partially installed database or existing-data loss.
+- test/impl: Bound artifact discovery, release probing, creation, upload and
+  verification responses and deadlines. Reap stalled/flooding children; never
+  retry an ambiguous external mutation automatically.
+- test/impl: Preserve semantic failure markers from single-file HTTP reindex so
+  the existing staged mutation gate refuses publication. Normalize known integer
+  schema versions consistently with artifact identity validation.
+- verify: Repeat focused then full exact-candidate verification and pointer-based
+  review. Carry only audited identical-file coverage with the same seat's report.
+  No batch-level or missing verdict counts as complete candidate acceptance.
+- plan: Materialize the downstream SHIP plan before the final candidate freeze;
+  it remains gated by IF-0-PREP-1 and grants no premature merge or dispatch.
+  This prevents adding tracked planning files after the one-shot proofs.
+
 ## Lane Index & Dependencies
 
 SL-0 — Version, release docs and candidate proof
@@ -304,7 +332,7 @@ credential cannot mutate releases, rotate credentials, or test denial by attempt
 unauthorized mutations. Enforce the bounded operation through exact dispatch
 validation, recorded intent and read-only run/attestation verification.
 
-Control outputs: active PREP plan, `plans/manifest.json`, resolver-owned
+Control outputs: active PREP plan, downstream `plans/phase-plan-v13-SHIP.md`, `plans/manifest.json`, resolver-owned
 planner/executor handoffs and skill reflections. Final acceptance control
 updates remain outside the frozen candidate and never change its identity.
 No upstream roadmap, contract, audit input or accepted receipt edits.

@@ -735,6 +735,7 @@ class MultiRepositoryWatcher:
                         if hasattr(self.registry, "update_artifact_state"):
                             self.registry.update_artifact_state(
                                 repo_id,
+                                expected_owner=repo_info,
                                 last_published_commit=synced_commit,
                                 artifact_health="published",
                             )
@@ -747,6 +748,7 @@ class MultiRepositoryWatcher:
                         if repo_info and hasattr(self.registry, "update_artifact_state"):
                             self.registry.update_artifact_state(
                                 repo_id,
+                                expected_owner=repo_info,
                                 artifact_health="publish_failed",
                             )
                 elif (
@@ -756,6 +758,7 @@ class MultiRepositoryWatcher:
                 ):
                     self.registry.update_artifact_state(
                         repo_id,
+                        expected_owner=repo_info,
                         artifact_health="local_only",
                     )
 

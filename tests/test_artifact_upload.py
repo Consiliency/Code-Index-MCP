@@ -330,24 +330,20 @@ def test_upload_direct_uses_explicit_release_tag_and_clobber(tmp_path: Path, mon
 
     def side_effect(args, **kwargs):
         if args[:2] == ["gh", "--version"]:
-            return MagicMock(returncode=0)
+            return "synthetic version"
         if args[:4] == ["gh", "release", "view", "sha-tag"]:
-            return MagicMock(
-                returncode=0,
-                stdout=json.dumps(
-                    {
-                        "assets": [
-                            {"name": "archive.tar.gz"},
-                            {"name": "artifact-metadata.json"},
-                            {"name": "archive.tar.gz.sha256"},
-                        ]
-                    }
-                ),
-                stderr="",
+            return json.dumps(
+                {
+                    "assets": [
+                        {"name": "archive.tar.gz"},
+                        {"name": "artifact-metadata.json"},
+                        {"name": "archive.tar.gz.sha256"},
+                    ]
+                }
             )
-        return MagicMock(returncode=0, stdout="", stderr="")
+        return ""
 
-    with patch("subprocess.run", side_effect=side_effect) as mock_run:
+    with patch.object(uploader, "_run_gh", side_effect=side_effect) as mock_run:
         uploader.upload_direct(archive, metadata, release_tag="sha-tag")
 
     upload_call = next(

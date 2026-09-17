@@ -494,10 +494,12 @@ def test_prepared_upload_restore_preserves_signed_metadata_bytes(
         return subprocess.CompletedProcess(args, 0, "", "")
 
     monkeypatch.setattr(subprocess, "run", gh)
+    monkeypatch.setattr(subprocess, "Popen", MagicMock(side_effect=AssertionError("Offline test")))
     uploader = IndexArtifactUploader(repo="synthetic/example")
     monkeypatch.setattr(uploader, "_ensure_gh_cli", lambda: None)
+    monkeypatch.setattr(uploader, "_run_gh", lambda args, **kwargs: gh(args).stdout)
 
-    def verify_assets(tag, names):
+    def verify_assets(tag, names, *, deadline):
         assert names == {path.name for path in uploaded.iterdir()}
 
     monkeypatch.setattr(uploader, "_verify_release_assets", verify_assets)

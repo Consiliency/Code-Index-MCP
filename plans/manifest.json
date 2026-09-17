@@ -454,13 +454,13 @@
         }
       ],
       "manual_execution_checkpoint": {
-        "focused_tests_passed": 74,
+        "focused_tests_passed": 141,
         "human_required": false,
         "lifecycle_warning": "failed_to_executing_unsupported",
         "pilot_consumed": false,
-        "regression_tests_passed": 190,
+        "regression_tests_passed": 285,
         "review_route": "owner_authorized_manual_pointer_reads",
-        "run_id": "20260917T0755Z-second-panel-repairs",
+        "run_id": "20260917T0840Z-third-panel-repairs",
         "signing_consumed": false,
         "status": "candidate_repairs_prepared"
       },
@@ -475,9 +475,9 @@
       },
       "slug": "phase-plan-v13-PREP",
       "status": "failed",
-      "task_summary": "765f390 rejected after incomplete four-seat review and seven stale tests. Second bounded repairs pass 74 focused and 190 regression tests; fresh full/installed/UI, exact review and unused pilot/signing remain pending.",
+      "task_summary": "d748fcc local/installed/UI gates passed but batch review reproduced additional shutdown, lifecycle and restore defects. Third repairs pass 285 regression tests; SHIP plan prepared before freeze. Final code/panel/operational acceptance remains pending.",
       "type": "phase",
-      "updated_at": "2026-09-17T07:56:10.980791+00:00"
+      "updated_at": "2026-09-17T08:38:37.885146+00:00"
     },
     {
       "acceptance_criteria_count": 4,
@@ -534,6 +534,35 @@
       "task_summary": "Trust and process lifecycle under manual v13 execution",
       "type": "phase",
       "updated_at": "2026-09-11T13:26:01Z"
+    },
+    {
+      "acceptance_criteria_count": 6,
+      "created_at": "2026-09-17T08:38:37.885146+00:00",
+      "execution_started": false,
+      "file": "plans/phase-plan-v13-SHIP.md",
+      "handoff_ref": null,
+      "if_gates_produced": [],
+      "lanes": [
+        "SL-0"
+      ],
+      "lifecycle": [],
+      "owner_skill": "codex-plan-phase",
+      "phase_alias": "SHIP",
+      "prepared_before_prep_freeze": true,
+      "prerequisite_accepted": false,
+      "publication_dispatch_count": 0,
+      "reflection_ref": null,
+      "roadmap_ref": {
+        "file": "specs/phase-plans-v13.md",
+        "slug": "phase-plans-v13",
+        "status": "committed",
+        "type": "roadmap"
+      },
+      "slug": "phase-plan-v13-SHIP",
+      "status": "committed",
+      "task_summary": "Prepared before final PREP freeze; gated by external accepted IF-0-PREP-1. One serial merge/publication/post-dispatch reducer lane; no execution or effect yet.",
+      "type": "phase",
+      "updated_at": "2026-09-17T08:38:37.885146+00:00"
     },
     {
       "acceptance_criteria_count": 3,
