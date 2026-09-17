@@ -12,6 +12,8 @@ import anyio
 import mcp.types as types
 from mcp.server.experimental.task_context import ServerTaskContext
 
+from mcp_server.core.repo_resolver import RepositoryMutationCancelled, run_repository_mutation
+from mcp_server.dispatcher.dispatcher_enhanced import IndexResult, IndexResultStatus
 from mcp_server.indexing.checkpoint import ReindexCheckpoint
 from mcp_server.indexing.checkpoint import clear as clear_checkpoint
 from mcp_server.indexing.checkpoint import save
@@ -26,40 +28,40 @@ def _call_tool_result(payload: dict[str, Any], *, is_error: bool = False) -> typ
     )
 
 
+def _file_mutation_count(mutation: Any) -> int:
+    """Accept completed file mutations, including truthful no-op results."""
+    if not isinstance(mutation, IndexResult):
+        raise RuntimeError("File indexing did not return a completion result")
+    semantic = mutation.semantic or {}
+    if semantic.get("semantic_failed") or semantic.get("semantic_blocked"):
+        raise RuntimeError("Required semantic mutation did not complete")
+    if mutation.status == IndexResultStatus.SKIPPED_UNCHANGED:
+        return 0
+    if mutation.status != IndexResultStatus.INDEXED:
+        raise RuntimeError("File indexing did not complete")
+    return 1
+
+
 def _record_reindexed_files(active_store: Any, workspace_root: Path, target_path: Path) -> int:
+    """Count dispatcher-persisted rows without importing working-tree files."""
     if active_store is None:
         return 0
-
-    workspace_root = workspace_root.expanduser().resolve(strict=True)
-    repo_row = active_store.ensure_repository_row(workspace_root)
-    if target_path.is_file():
-        paths = [target_path]
-    else:
-        paths = [
-            path
-            for path in target_path.rglob("*")
-            if path.is_file() and ".git" not in path.parts and ".mcp-index" not in path.parts
-        ]
-
-    recorded = 0
-    for file_path in paths:
-        try:
-            resolved_file = file_path.expanduser().resolve(strict=True)
-            relative_path = resolved_file.relative_to(workspace_root).as_posix()
-        except (OSError, ValueError):
-            continue
-        try:
-            active_store.store_file(
-                repo_row,
-                path=resolved_file,
-                relative_path=relative_path,
-                language=file_path.suffix.lstrip(".") or None,
-                size=resolved_file.stat().st_size,
-            )
-            recorded += 1
-        except Exception:
-            continue
-    return recorded
+    try:
+        target_path.resolve().relative_to(workspace_root.resolve())
+    except ValueError:
+        return 0
+    relative = active_store.path_resolver.normalize_path(target_path)
+    with active_store._get_connection() as connection:
+        if relative == ".":
+            return connection.execute(
+                "SELECT COUNT(*) FROM files WHERE COALESCE(is_deleted, 0) = 0"
+            ).fetchone()[0]
+        prefix = relative.rstrip("/") + "/"
+        return connection.execute(
+            "SELECT COUNT(*) FROM files WHERE COALESCE(is_deleted, 0) = 0 "
+            "AND (relative_path = ? OR substr(relative_path, 1, ?) = ?)",
+            (relative, len(prefix), prefix),
+        ).fetchone()[0]
 
 
 def _candidate_checkpoint_paths(target_path: Path, workspace_root: Path) -> list[str]:
@@ -110,6 +112,7 @@ async def run_reindex_task(
     active_store: Any,
     target_path: Path,
     requested_path: str | None,
+    repo_resolver: Any = None,
 ) -> types.CallToolResult:
     repository_scope = str(ctx.workspace_root) if ctx is not None else str(target_path)
     await registry.bind_task(
@@ -185,31 +188,54 @@ async def run_reindex_task(
             loop,
         )
 
-    def do_work() -> dict[str, Any]:
+    def do_work(current) -> dict[str, Any]:
+        if task.is_cancelled:
+            return {"cancelled": True, "indexed_files": 0, "mutation_performed": False}
         if requested_path and target_path.is_file():
-            dispatcher.index_file(ctx, target_path)
-            durable_files = _record_reindexed_files(active_store, ctx.workspace_root, target_path)
+            mutation = dispatcher.index_file(current, target_path)
+            indexed_files = _file_mutation_count(mutation)
+            durable_files = _record_reindexed_files(
+                current.sqlite_store, ctx.workspace_root, target_path
+            )
             return {
                 "path": str(target_path),
                 "mode": "file",
-                "indexed_files": 1,
+                "indexed_files": indexed_files,
                 "durable_files": durable_files,
-                "mutation_performed": True,
-                "message": f"Reindexed file: {requested_path}",
+                "mutation_performed": bool(indexed_files),
+                "cancelled": task.is_cancelled,
+                "message": (
+                    f"Reindexed file: {requested_path}" if indexed_files else "File unchanged"
+                ),
+                "error": getattr(mutation, "error", None),
             }
 
-        return dispatcher.index_directory(
-            ctx,
+        outcome = dispatcher.index_directory(
+            current,
             target_path,
             recursive=True,
             progress_callback=publish_progress,
             cancel_check=lambda: task.is_cancelled,
         )
+        if not outcome.get("cancelled") and not task.is_cancelled:
+            outcome["durable_files"] = _record_reindexed_files(
+                current.sqlite_store, ctx.workspace_root, target_path
+            )
+            outcome["lexical_rows"] = current.sqlite_store.rebuild_fts_code()
+        outcome["cancelled"] = bool(outcome.get("cancelled") or task.is_cancelled)
+        outcome["mutation_performed"] = not getattr(current, "staging", False)
+        return outcome
 
     try:
         async with anyio.create_task_group() as tg:
             tg.start_soon(cancel_observer)
-            outcome = await asyncio.to_thread(do_work)
+            # Do not abandon a mutating worker when its request scope is cancelled.
+            try:
+                outcome = await anyio.to_thread.run_sync(
+                    run_repository_mutation, repo_resolver, ctx, do_work, abandon_on_cancel=False
+                )
+            except RepositoryMutationCancelled as exc:
+                outcome = exc.outcome
             tg.cancel_scope.cancel()
     except Exception:
         if ctx is not None:
@@ -220,15 +246,14 @@ async def run_reindex_task(
             )
         raise
 
-    if requested_path and target_path.is_file():
-        clear_checkpoint(ctx.workspace_root)
-        return _call_tool_result(outcome)
-
     if outcome.get("cancelled") or task.is_cancelled:
+        mutation_performed = bool(outcome.get("mutation_performed"))
+        if mutation_performed:
+            clear_checkpoint(ctx.workspace_root)
         payload = {
             "path": str(target_path),
-            "mode": "merge",
-            "mutation_performed": False,
+            "mode": "file" if requested_path and target_path.is_file() else "merge",
+            "mutation_performed": mutation_performed,
             "indexed_files": outcome.get("indexed_files"),
             "ignored_files": outcome.get("ignored_files"),
             "failed_files": outcome.get("failed_files"),
@@ -249,7 +274,11 @@ async def run_reindex_task(
             "semantic_blocker": outcome.get("semantic_blocker"),
             "semantic_paths_queued": outcome.get("semantic_paths_queued"),
             "semantic_indexer_present": outcome.get("semantic_indexer_present"),
-            "merge_note": "Reindex cancelled at a safe boundary before final closeout.",
+            "merge_note": (
+                "Cancellation observed after a mutation; published changes were not rolled back."
+                if mutation_performed
+                else "Reindex cancelled without publishing a generation."
+            ),
             "cancelled": True,
         }
         result = _call_tool_result(payload)
@@ -257,13 +286,15 @@ async def run_reindex_task(
         await registry.update_task(
             task.task_id,
             status="cancelled",
-            status_message="Cancelled at a safe lexical or semantic boundary.",
+            status_message=payload["merge_note"],
         )
         return result
 
     clear_checkpoint(ctx.workspace_root)
-    durable_files = _record_reindexed_files(active_store, ctx.workspace_root, target_path)
-    lexical_rows = active_store.rebuild_fts_code() if active_store else 0
+    if requested_path and target_path.is_file():
+        return _call_tool_result(outcome)
+    durable_files = outcome["durable_files"]
+    lexical_rows = outcome["lexical_rows"]
     return _call_tool_result(
         {
             "path": str(target_path),

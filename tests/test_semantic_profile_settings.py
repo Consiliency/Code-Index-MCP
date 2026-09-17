@@ -3,6 +3,8 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from mcp_server.config.settings import Settings, _expand_env_vars, _find_profiles_yaml
 
 
@@ -327,14 +329,14 @@ def test_find_profiles_yaml_uses_env_var_when_file_exists(monkeypatch, tmp_path)
     assert result == str(yaml_file)
 
 
-def test_find_profiles_yaml_skips_env_var_when_file_missing(monkeypatch, tmp_path):
-    """MCP_PROFILES_PATH pointing to a nonexistent file falls through to CWD."""
+def test_find_profiles_yaml_rejects_missing_explicit_file(monkeypatch, tmp_path):
+    """An explicit missing resource must not silently load a different profile."""
     monkeypatch.setenv("MCP_PROFILES_PATH", str(tmp_path / "nonexistent.yaml"))
     cwd_yaml = tmp_path / "code-index-mcp.profiles.yaml"
     cwd_yaml.write_text("profiles: {}")
     monkeypatch.chdir(tmp_path)
-    result = _find_profiles_yaml()
-    assert result == str(cwd_yaml)
+    with pytest.raises(FileNotFoundError, match="MCP_PROFILES_PATH"):
+        _find_profiles_yaml()
 
 
 def test_find_profiles_yaml_falls_back_to_cwd(monkeypatch, tmp_path):
@@ -400,3 +402,29 @@ def test_expand_env_vars_no_placeholders_unchanged():
 
 def test_expand_env_vars_empty_string_unchanged():
     assert _expand_env_vars("") == ""
+
+
+@pytest.mark.parametrize("with_enrichment", [False, True])
+def test_json_summarization_uses_only_explicit_profile_metadata(
+    monkeypatch, tmp_path, with_enrichment
+):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MCP_PROFILES_PATH", str(tmp_path / "missing.yaml"))
+    monkeypatch.setenv("SEMANTIC_ENRICHMENT_BASE_URL", "http://ambient.invalid/v1")
+    metadata = (
+        {
+            "enrichment_api_base": "http://127.0.0.1:9020/v1",
+            "enrichment_model_name": "synthetic-chat",
+            "enrichment_api_key_env": "SYNTHETIC_ENRICHMENT_KEY",
+        }
+        if with_enrichment
+        else {}
+    )
+    settings = Settings(semantic_profiles_json=json.dumps({"pilot": {"build_metadata": metadata}}))
+    summary = settings.get_profile_summarization_config("pilot")
+    if with_enrichment:
+        assert summary["base_url"] == metadata["enrichment_api_base"]
+        assert summary["model_name"] == metadata["enrichment_model_name"]
+        assert summary["api_key_env"] == metadata["enrichment_api_key_env"]
+    else:
+        assert "base_url" not in summary

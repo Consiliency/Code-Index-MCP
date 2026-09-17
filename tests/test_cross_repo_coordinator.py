@@ -105,12 +105,11 @@ class TestCrossRepositorySearchCoordinator:
 
     @pytest.mark.asyncio
     async def test_get_target_repositories_by_language(self, coordinator):
-        """Test filtering repositories by language."""
+        """Language filters belong to indexed rows, not stale registry statistics."""
         scope = SearchScope(languages=["java"])
         repos = await coordinator._get_target_repositories(scope)
 
-        assert len(repos) == 1
-        assert repos[0].repository_id == "repo2"  # Only repo2 has Java
+        assert {repo.repository_id for repo in repos} == {"repo1", "repo2"}
 
     @pytest.mark.asyncio
     async def test_get_target_repositories_priority_order(self, coordinator):
@@ -361,6 +360,9 @@ class TestCrossRepositorySearchCoordinator:
             {"symbol": "test_func", "file_path": "/test.py", "line_number": 10}
         ]
         mock_store_class.return_value = mock_store
+        coordinator.multi_repo_manager._search_repository.return_value = CrossRepoSearchResult(
+            "test_repo", "Test Repo", mock_store.search_symbols.return_value, 0.0
+        )
 
         repo = RepositoryInfo(
             repository_id="test_repo",
@@ -393,6 +395,11 @@ class TestCrossRepositorySearchCoordinator:
             {"content": "test code", "file_path": "/test.txt"},
         ]
         mock_store_class.return_value = mock_store
+        coordinator.multi_repo_manager._query_ready.return_value = True
+        coordinator.multi_repo_manager._search_code_in_repository.side_effect = [
+            CrossRepoSearchResult("test_repo", "Test Repo", [row], 0.0)
+            for row in mock_store.search_content.return_value[:2]
+        ]
 
         repo = RepositoryInfo(
             repository_id="test_repo",

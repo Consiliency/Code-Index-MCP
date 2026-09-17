@@ -110,10 +110,11 @@ def test_release_automation_refuses_before_mutating_or_publishing():
     assert _needs(jobs["prepare-release-pr"]) == {"validate-dispatch"}
     assert _needs(jobs["create-release-pr"]) == {"prepare-release-pr"}
     assert _needs(jobs["preflight-publish"]) == {"validate-dispatch"}
-    assert _needs(jobs["build-release"]) == {"preflight-publish"}
+    assert _needs(jobs["claim-release"]) == {"preflight-publish"}
+    assert _needs(jobs["build-release"]) == {"claim-release"}
     assert _needs(jobs["publish-release"]) == {"build-release"}
 
-    for job_id in ("preflight-publish", "build-release", "publish-release"):
+    for job_id in ("preflight-publish", "claim-release", "build-release", "publish-release"):
         condition = jobs[job_id]["if"]
         assert "inputs.mode == 'publish'" in condition
         assert "github.ref == 'refs/heads/main'" in condition
@@ -131,13 +132,20 @@ def test_release_automation_refuses_before_mutating_or_publishing():
     assert "release_type" not in workflow_text
 
 
-def test_release_automation_marks_prerelease_and_keeps_latest_stable_only():
+def test_release_automation_marks_prerelease_and_leaves_mutable_image_tags_untouched():
     workflow_text = _read(".github/workflows/release-automation.yml")
 
-    assert "prerelease: ${{ contains(inputs.version, '-') }}" in workflow_text
-    assert "${{ env.IMAGE_REF }}:${{ inputs.version }}" in workflow_text
-    assert "!contains(inputs.version, '-')" in workflow_text
-    assert "format('{0}:latest', env.IMAGE_REF)" in workflow_text
+    assert 'if [[ "$RELEASE_VERSION" == *-* ]]; then flags+=(--prerelease); fi' in workflow_text
+    promotion = yaml.safe_load(workflow_text)["jobs"]["verify-container"]
+    assert "publish-release" in promotion["needs"]
+    step = next(
+        step
+        for step in promotion["steps"]
+        if step["name"] == "Confirm immutable container identity without retagging"
+    )
+    assert '"${IMAGE_REF}@${IMAGE_DIGEST}"' in step["run"]
+    assert "imagetools create" not in workflow_text
+    assert "--tag" not in step["run"]
     assert 'owner="${GITHUB_REPOSITORY_OWNER,,}"' in workflow_text
     assert 'find docs -name "*.md" -exec sed -i' not in workflow_text
 

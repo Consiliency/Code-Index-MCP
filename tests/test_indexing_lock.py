@@ -1,5 +1,6 @@
 """Tests for SL-2: per-repo reentrant indexing lock registry (IF-0-P12-2)."""
 
+import multiprocessing
 import threading
 from contextlib import AbstractContextManager
 
@@ -151,3 +152,33 @@ class TestModuleLevelSingleton:
         with lock_registry.acquire("singleton-repo"):
             with lock_registry.acquire("singleton-repo"):
                 pass  # must not deadlock
+
+
+def _hold_process_writer(repo_path, entered, release):
+    registry = IndexingLockRegistry()
+    with registry.acquire("shared", repo_path=repo_path):
+        with registry.acquire("shared", repo_path=repo_path):
+            entered.set()
+            assert release.wait(10)
+
+
+def test_process_writer_exclusion_and_crash_release(tmp_path):
+    context = multiprocessing.get_context("spawn")
+    entered, release = context.Event(), context.Event()
+    worker = context.Process(target=_hold_process_writer, args=(tmp_path, entered, release))
+    worker.start()
+    registry = IndexingLockRegistry()
+    try:
+        assert entered.wait(5)
+        with pytest.raises(TimeoutError, match="writer busy"):
+            with registry.acquire("shared", repo_path=tmp_path, timeout=0):
+                pytest.fail("two processes entered the same writer boundary")
+        worker.terminate()
+        worker.join(5)
+        with registry.acquire("shared", repo_path=tmp_path, timeout=1):
+            assert (tmp_path / ".mcp-index" / "writer.lock").exists()
+    finally:
+        if worker.is_alive():
+            worker.terminate()
+        worker.join(5)
+        worker.close()

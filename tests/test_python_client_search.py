@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from mcp_server import ClientSearchOptions, open_client
 from tests.fixtures.multi_repo import boot_test_server, build_temp_repo
 
@@ -65,3 +67,48 @@ def test_direct_client_search_includes_source_metadata_only_when_requested(tmp_p
     assert plain.results[0].source_metadata is None
     assert enriched.results[0].source_metadata is not None
     assert enriched.results[0].source_metadata["records"][0]["category"] == "todo"
+
+
+@pytest.mark.parametrize("operation", ["search", "symbol"])
+@pytest.mark.parametrize("transition", ["generation", "unregister"])
+def test_client_withholds_results_after_concurrent_transition(
+    tmp_path, monkeypatch, operation, transition
+):
+    repo_path, repo_id = build_temp_repo(
+        tmp_path,
+        "generation_repo",
+        seed_files={"seed.py": "def generation_token():\n    return 42\n"},
+    )
+    with boot_test_server(tmp_path, [repo_path]) as server:
+        with open_client(
+            workspace_root=repo_path, registry_path=tmp_path / "registry.json"
+        ) as client:
+            method = "search" if operation == "search" else "lookup"
+            original = getattr(client.dispatcher, method)
+
+            def changing(ctx, *args, **kwargs):
+                result = original(ctx, *args, **kwargs)
+                if operation == "search":
+                    result = list(result)
+                assert result, "positive control must produce a real match before the transition"
+                if transition == "generation":
+                    info = server.registry.get(repo_id)
+                    server.registry.update_indexed_commit(
+                        repo_id, info.last_indexed_commit, branch="main"
+                    )
+                else:
+                    server.registry.unregister(repo_id)
+                return result
+
+            monkeypatch.setattr(client.dispatcher, method, changing)
+            result = (
+                client.search_code(ClientSearchOptions(query="generation_token"))
+                if operation == "search"
+                else client.symbol_lookup("generation_token")
+            )
+            assert result.index_unavailable is not None
+            assert result.index_unavailable.safe_fallback == "native_search"
+            if operation == "search":
+                assert not result.results
+            else:
+                assert not result.found

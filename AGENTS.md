@@ -10,6 +10,11 @@ This file defines the capabilities and constraints for AI agents working with th
 **Support matrix**: Customer-facing language/runtime support claims live in `docs/SUPPORT_MATRIX.md`.
 **Dependency truth**: Use `uv sync --locked`; `pyproject.toml` and `uv.lock` are canonical.
 
+**Current verification boundary**: `docs/status/V13_EXECUTION.md` tracks active
+hardening. Language registry inventory and earlier implementation summaries
+are not installed-runtime, platform, or fleet acceptance. Keep the existing
+support tiers in `docs/SUPPORT_MATRIX.md` and record untested combinations.
+
 > **Beta status**: Multi-repo support and the STDIO interface are in beta. STDIO is the primary surface for LLM tool calls; FastAPI is a secondary admin surface for diagnostics and manual operations. Expect API surface changes before stable release.
 >
 > **Public alpha repository model**: v3 supports many unrelated repositories on
@@ -363,7 +368,8 @@ from mcp_server.utils.treesitter_wrapper import TreeSitterWrapper
 # Error Handling: All functions return structured responses
 {"status": "success|error", "data": {...}, "timestamp": "..."}
 
-# Testing: pytest with fixtures, >80% coverage required
+# Testing: pytest with fixtures; normal discovery enforces the current 35% floor.
+# 80% is a target, not measured or enforced by the bounded reporting commands.
 def test_plugin_functionality(plugin_fixture):
 ```
 
@@ -391,7 +397,7 @@ mcp_server/, plugin_system/, tree_sitter_wrapper/
 ```bash
 # Python Version: 3.12+ (from pyproject.toml requires-python = ">=3.12")
 # Virtual Environment: Required (managed by uv)
-uv sync            # install all core + dev dependencies
+uv sync --locked --extra dev  # install locked core + development dependencies
 # Or for a specific extras set:
 uv sync --locked --extra dev --extra semantic
 
@@ -417,7 +423,7 @@ make test-all
 # Code Review: Focus on
 # - Type hints for all functions
 # - Comprehensive error handling  
-# - Test coverage >80%
+# - Coverage scope and exclusions reported honestly; do not lower existing gates
 # - Documentation updates
 ``` 
 ## DOCUMENTATION_MAINTENANCE_COMMANDS

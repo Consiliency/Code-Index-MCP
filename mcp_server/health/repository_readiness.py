@@ -245,18 +245,22 @@ class ReadinessClassifier:
         )
         cached_branch = getattr(repo_info, "current_branch", None)
         cached_commit = getattr(repo_info, "current_commit", None)
+        live_branch, live_commit, tracked_tree_clean = _git_state(registered_path)
         live_git_required = bool(
-            getattr(repo_info, "git_common_dir", None)
-            and isinstance(cached_commit, str)
-            and len(cached_commit) == 40
-            and all(char in "0123456789abcdef" for char in cached_commit.lower())
+            live_commit
+            or (
+                getattr(repo_info, "git_common_dir", None)
+                and isinstance(cached_commit, str)
+                and len(cached_commit) in {40, 64}
+                and all(char in "0123456789abcdef" for char in cached_commit.lower())
+            )
         )
         if live_git_required:
-            current_branch = _git_branch(registered_path)
-            current_commit = _git_commit(registered_path)
+            current_branch = live_branch
+            current_commit = live_commit
         else:
-            current_branch = cached_branch or _git_branch(registered_path)
-            current_commit = cached_commit or _git_commit(registered_path)
+            current_branch = cached_branch or live_branch
+            current_commit = cached_commit or live_commit
         tracked_branch = getattr(repo_info, "tracked_branch", None)
         last_indexed_commit = getattr(repo_info, "last_indexed_commit", None)
         staleness_reason = getattr(repo_info, "staleness_reason", None)
@@ -318,6 +322,9 @@ class ReadinessClassifier:
             elif current_commit and last_indexed_commit and current_commit != last_indexed_commit:
                 state = RepositoryReadinessState.STALE_COMMIT
                 remediation = "Run reindex to update the repository index to the current commit."
+            elif live_git_required and not tracked_tree_clean:
+                state = RepositoryReadinessState.STALE_COMMIT
+                remediation = "Commit or discard tracked edits before querying the committed index."
 
         return RepositoryReadiness(
             state=state,
@@ -472,8 +479,20 @@ class ReadinessClassifier:
                 remediation="Configure a semantic profile before treating semantic search as ready.",
             )
 
-        metadata = _load_index_metadata(Path(repo_info.path))
+        metadata_root = Path(repo_info.path)
         expected_collection = _profile_collection_name(profile)
+        generation = getattr(repo_info, "index_generation", None)
+        if generation:
+            from ..artifacts.semantic_namespace import SemanticNamespaceResolver
+            from ..utils.semantic_indexer_registry import SemanticIndexerRegistry
+
+            metadata_root = SemanticIndexerRegistry.generation_root(repo_info)
+            expected_collection = SemanticNamespaceResolver().resolve_collection_name(
+                repo_identifier=repo_info.repo_id,
+                profile_id=profile.profile_id,
+                lineage_id=metadata_root.name,
+            )
+        metadata = _load_index_metadata(metadata_root)
         evidence = _semantic_evidence(sqlite_store, profile.profile_id, expected_collection)
         metadata_profile = _current_profile_metadata(metadata, profile.profile_id)
         discovered_fingerprint = _metadata_fingerprint(metadata_profile)
@@ -545,8 +564,20 @@ class ReadinessClassifier:
                 evidence=evidence,
             )
 
-        if metadata_profile is None or (
-            discovered_fingerprint and discovered_fingerprint != profile.compatibility_fingerprint
+        if (
+            metadata_profile is None
+            or (
+                discovered_fingerprint
+                and discovered_fingerprint != profile.compatibility_fingerprint
+            )
+            or (
+                generation
+                and (
+                    discovered_fingerprint != profile.compatibility_fingerprint
+                    or discovered_dimension != profile.vector_dimension
+                    or discovered_collection != expected_collection
+                )
+            )
         ):
             return SemanticReadiness(
                 state=SemanticReadinessState.SEMANTIC_STALE,
@@ -629,12 +660,52 @@ def _find_git_root(start: Path) -> Optional[Path]:
         current = current.parent
 
 
-def _git_branch(path: Path) -> Optional[str]:
-    return _run_git(["rev-parse", "--abbrev-ref", "HEAD"], path)
-
-
-def _git_commit(path: Path) -> Optional[str]:
-    return _run_git(["rev-parse", "HEAD"], path)
+def _git_state(path: Path) -> tuple[Optional[str], Optional[str], bool]:
+    """Read fresh HEAD, branch and tracked state without refreshing Git's index."""
+    try:
+        result = subprocess.run(
+            [
+                "git",
+                "--no-optional-locks",
+                "status",
+                "--porcelain=v2",
+                "--branch",
+                "--no-ahead-behind",
+                "--untracked-files=no",
+                "--ignore-submodules=none",
+                "--no-renames",
+                "-z",
+            ],
+            cwd=path,
+            capture_output=True,
+            check=True,
+            timeout=10,
+            env=get_full_env(),
+        )
+    except (OSError, subprocess.SubprocessError):
+        # Bare repositories retain metadata resolution, never ready query admission.
+        if (path / "HEAD").is_file() and (path / "objects").is_dir():
+            bare_head = (
+                _run_git(["rev-parse", "--is-bare-repository", "HEAD"], path) or ""
+            ).splitlines()
+            if len(bare_head) == 2 and bare_head[0] == "true":
+                branch = _run_git(["symbolic-ref", "--quiet", "--short", "HEAD"], path)
+                return branch, bare_head[1], False
+        return None, None, False
+    branch = commit = None
+    clean = True
+    for record in result.stdout.split(b"\0"):
+        if record.startswith(b"# branch.oid "):
+            oid = record.removeprefix(b"# branch.oid ")
+            if len(oid) in {40, 64} and all(char in b"0123456789abcdef" for char in oid):
+                commit = oid.decode("ascii")
+        elif record.startswith(b"# branch.head "):
+            head = record.removeprefix(b"# branch.head ")
+            if head and head != b"(detached)":
+                branch = os.fsdecode(head)
+        elif record and not record.startswith(b"# "):
+            clean = False
+    return branch, commit, clean
 
 
 def _run_git(args: list[str], cwd: Path) -> Optional[str]:
@@ -646,10 +717,11 @@ def _run_git(args: list[str], cwd: Path) -> Optional[str]:
             text=True,
             check=True,
             env=get_full_env(),
+            timeout=10,
         )
         value = result.stdout.strip()
         return value if value and value != "HEAD" else None
-    except (FileNotFoundError, subprocess.CalledProcessError):
+    except (OSError, subprocess.SubprocessError):
         return None
 
 

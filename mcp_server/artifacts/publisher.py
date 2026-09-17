@@ -1,16 +1,17 @@
-"""ArtifactPublisher — commit-SHA-keyed release creation with atomic latest pointer (IF-0-P13-4)."""
+"""Commit-SHA-keyed publication with a best-effort latest pointer (IF-0-P13-4)."""
 
 from __future__ import annotations
 
 import json
 import logging
 import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
+from uuid import uuid4
 
-from mcp_server.artifacts.attestation import attest
-from mcp_server.artifacts.delta_policy import DeltaPolicy
+from mcp_server.artifacts.attestation import _attestation_mode
 from mcp_server.core.errors import MCPError
 
 try:
@@ -41,7 +42,7 @@ class ArtifactRef:
 
 
 class ArtifactPublisher:
-    """Publish commit-SHA-keyed GitHub releases and atomically update index-latest."""
+    """Publish immutable releases; latest is advisory and not a remote CAS."""
 
     def __init__(self, uploader: "IndexArtifactUploader", *, gh_cmd: str = "gh") -> None:
         self._uploader = uploader
@@ -58,68 +59,74 @@ class ArtifactPublisher:
         *,
         tracked_branch: str = "main",
         index_location: Path | str | None = None,
+        index_path: Path | str | None = None,
+        repo_path: Path | str | None = None,
+        semantic_indexer=None,
     ) -> ArtifactRef:
-        """Idempotent publish: creates a SHA-keyed release and atomically moves index-latest.
+        """Publish one immutable full snapshot and move index-latest after verification.
 
-        Calling twice with the same (repo_id, commit) returns the same ArtifactRef.
-        The losing side of a concurrent race still has its SHA-keyed release reachable;
-        only is_latest differs.
+        Re-preparing the same commit with different bytes refuses to overwrite its
+        release. Retry existing prepared bytes through the uploader instead.
         """
         short_sha = commit[:7]
         safe_repo = repo_id.replace("/", "_").replace(":", "_")
         safe_branch = tracked_branch.replace("/", "_").replace(":", "_")
-        sha_tag = f"index-{safe_repo}-{safe_branch}-{short_sha}"
+        sha_tag = f"index-{safe_repo}-{safe_branch}-{commit}"
         repo = self._uploader.repo
         release_url = f"https://github.com/{repo}/releases/tag/{sha_tag}"
 
         try:
-            previous_artifact_id = self._get_latest_commit(repo)
+            if _attestation_mode() == "enforce":
+                raise ArtifactError(
+                    "ATTESTATION_PREREQ: automatic publication requires manual metadata signing; "
+                    "use artifact_upload --prepare-only, sign, then --prepared-archive "
+                    "with --prepared-metadata"
+                )
+            if repo_path is not None:
+                from .artifact_upload import IndexArtifactUploader
+
+                selected_repo = IndexArtifactUploader._detect_repository(self._uploader, repo_path)
+                if selected_repo.casefold() != repo.casefold():
+                    raise ArtifactError(
+                        "Publisher destination does not match the selected repository"
+                    )
             archive_path, checksum, size = self._uploader.compress_indexes(
-                Path(f"index-archive-{safe_repo}-{safe_branch}-{short_sha}.tar.gz"),
+                Path(f"index-archive-{safe_repo}-{safe_branch}-{short_sha}-{uuid4().hex}.tar.gz"),
                 index_location=index_location,
-            )
-            attestation = attest(archive_path, repo=repo, gh_cmd=self._gh_cmd)
-            policy = DeltaPolicy()
-            decision = policy.decide(
-                compressed_size_bytes=size,
-                previous_artifact_id=previous_artifact_id,
+                index_path=index_path,
+                repo_path=repo_path or ".",
+                semantic_indexer=semantic_indexer,
             )
             metadata = self._uploader.create_metadata(
                 checksum,
                 size,
-                artifact_type=decision.strategy,
-                delta_from=decision.base_artifact_id,
-                attestation=attestation,
+                artifact_type="full",
+                delta_from=None,
                 repo_id=repo_id,
                 tracked_branch=tracked_branch,
                 commit=commit,
                 index_location=index_location,
+                index_path=index_path,
             )
-            created_sha_release = self._ensure_sha_release(sha_tag, commit, repo)
-            try:
-                self._uploader.upload_direct(
-                    archive_path,
-                    metadata,
-                    release_tag=sha_tag,
-                    attestation=attestation,
-                )
-                self._move_latest_pointer(sha_tag, commit, repo)
-            except Exception:
-                if created_sha_release:
-                    subprocess.run(
-                        [self._gh_cmd, "release", "delete", sha_tag, "--yes", "--repo", repo],
-                        capture_output=True,
-                    )
-                raise
-            is_latest = self._check_is_latest(commit, repo)
+            # Retain failed publication evidence for explicit owner-authorized recovery.
+            self._uploader.upload_direct(
+                archive_path,
+                metadata,
+                release_tag=sha_tag,
+            )
+            deadline = time.monotonic() + 300
+            self._move_latest_pointer(sha_tag, commit, repo, deadline=deadline)
+            is_latest = self._check_is_latest(commit, repo, deadline=deadline)
         except ArtifactError:
             raise
         except subprocess.CalledProcessError as exc:
             raise ArtifactError(
-                f"gh CLI returned non-zero exit {exc.returncode}: {exc.stderr}"
+                f"gh CLI returned non-zero exit {exc.returncode}; publication evidence retained"
             ) from exc
         except Exception as exc:
-            raise ArtifactError(f"publish_on_reindex failed: {exc}") from exc
+            raise ArtifactError(
+                f"publish_on_reindex failed ({type(exc).__name__}); prepared archive retained"
+            ) from exc
 
         return ArtifactRef(
             repo_id=repo_id,
@@ -136,9 +143,8 @@ class ArtifactPublisher:
 
     def _get_latest_commit(self, repo: str) -> Optional[str]:
         """Return the target commit of index-latest, or None if it doesn't exist."""
-        result = subprocess.run(
+        result = self._run(
             [
-                self._gh_cmd,
                 "release",
                 "view",
                 "index-latest",
@@ -147,8 +153,7 @@ class ArtifactPublisher:
                 "--json",
                 "targetCommitish",
             ],
-            capture_output=True,
-            text=True,
+            check=False,
         )
         if result.returncode != 0:
             return None
@@ -158,26 +163,32 @@ class ArtifactPublisher:
         except (json.JSONDecodeError, AttributeError):
             return None
 
-    def _run(self, args: list[str], *, check: bool = True) -> subprocess.CompletedProcess:
-        """Run a gh sub-command, wrapping CalledProcessError in ArtifactError."""
+    def _run(
+        self, args: list[str], *, check: bool = True, deadline: float | None = None
+    ) -> subprocess.CompletedProcess:
+        """Bound CLI output and lifetime with the uploader's kill-and-reap path."""
+        from .artifact_upload import IndexArtifactUploader
+
+        command = [self._gh_cmd, *args]
         try:
-            return subprocess.run(
-                [self._gh_cmd] + args,
-                capture_output=True,
-                text=True,
-                check=check,
+            output = IndexArtifactUploader._run_gh(
+                command, deadline=deadline if deadline is not None else time.monotonic() + 300
             )
+            return subprocess.CompletedProcess(command, 0, stdout=output, stderr="")
         except subprocess.CalledProcessError as exc:
+            if not check:
+                return subprocess.CompletedProcess(command, exc.returncode, stdout="", stderr="")
             raise ArtifactError(
-                f"gh CLI returned non-zero exit {exc.returncode}: {exc.stderr}"
+                f"gh CLI returned non-zero exit {exc.returncode}; publication evidence retained"
             ) from exc
 
     def _ensure_sha_release(self, sha_tag: str, commit: str, repo: str) -> bool:
         """Create the SHA-keyed release if it doesn't already exist (idempotent)."""
-        result = subprocess.run(
-            [self._gh_cmd, "release", "view", sha_tag, "--repo", repo],
-            capture_output=True,
-            text=True,
+        deadline = time.monotonic() + 300
+        result = self._run(
+            ["release", "view", sha_tag, "--repo", repo],
+            check=False,
+            deadline=deadline,
         )
         if result.returncode == 0:
             return False  # Already exists — idempotent short-circuit
@@ -196,16 +207,20 @@ class ArtifactPublisher:
                 f"Index: {sha_tag}",
                 "--notes",
                 f"Auto-published index artifact for commit {commit}",
-            ]
+            ],
+            deadline=deadline,
         )
         return True
 
-    def _move_latest_pointer(self, sha_tag: str, commit: str, repo: str) -> None:
-        """Atomically move index-latest to point at commit via gh release edit (or create)."""
-        result = subprocess.run(
-            [self._gh_cmd, "release", "view", "index-latest", "--repo", repo],
-            capture_output=True,
-            text=True,
+    def _move_latest_pointer(
+        self, sha_tag: str, commit: str, repo: str, *, deadline: float | None = None
+    ) -> None:
+        """Update the advisory pointer only after immutable assets are verified."""
+        deadline = time.monotonic() + 300 if deadline is None else deadline
+        result = self._run(
+            ["release", "view", "index-latest", "--repo", repo],
+            check=False,
+            deadline=deadline,
         )
         if result.returncode != 0:
             # First-ever publish: create index-latest
@@ -222,7 +237,8 @@ class ArtifactPublisher:
                     "Index: latest",
                     "--notes",
                     f"Auto-updated index artifact. Commit: {commit}",
-                ]
+                ],
+                deadline=deadline,
             )
         else:
             self._run(
@@ -236,14 +252,14 @@ class ArtifactPublisher:
                     commit,
                     "--title",
                     f"Index: latest ({commit[:8]})",
-                ]
+                ],
+                deadline=deadline,
             )
 
-    def _check_is_latest(self, commit: str, repo: str) -> bool:
-        """Return True iff index-latest currently points at our commit."""
-        result = subprocess.run(
+    def _check_is_latest(self, commit: str, repo: str, *, deadline: float | None = None) -> bool:
+        """Report this read's pointer value, not an exclusive publication claim."""
+        result = self._run(
             [
-                self._gh_cmd,
                 "release",
                 "view",
                 "index-latest",
@@ -252,8 +268,8 @@ class ArtifactPublisher:
                 "--json",
                 "targetCommitish",
             ],
-            capture_output=True,
-            text=True,
+            check=False,
+            deadline=deadline,
         )
         if result.returncode != 0:
             return False

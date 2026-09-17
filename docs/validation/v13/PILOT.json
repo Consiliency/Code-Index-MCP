@@ -1,0 +1,359 @@
+{
+  "schema_version": "v13.phase-receipt.v1",
+  "phase": "PILOT",
+  "execution_mode": "manual",
+  "source_commit": "366f6bca7765d545498f41b02014ae8ba105d2e2",
+  "source_tree": "42fe035c048f8f2b3c6a6a378e97ab17a9f133a7",
+  "manifest_path": ".phase-loop/runs/v13-PILOT-366f6bca7765/manifest.json",
+  "manifest_file_sha256": "b3bb67abaa07c602700f994c3874db324e5be74e1b7a479e3af7b8f8d164d58f",
+  "manifest_binding_sha256": "8b4fd962873ce9f38a3bdfb3edd8dfbfd772193c79da00218dd6cbad6fdad7e5",
+  "roadmap_sha256": "178b8328d8e7dc76ddc0804d7b72d3ccddb55e23577a3d52cb7cbd70d5fd5308",
+  "plan_sha256": "8a56590dd6f9636f18d7852f0b88b78ca148fd7f1fdbb7e83dcb229e490c20b4",
+  "timestamp": "2026-09-12T08:15:56Z",
+  "terminal_status": "complete",
+  "verification_status": "passed",
+  "human_required": false,
+  "blocker_class": null,
+  "verification_artifact_path": ".phase-loop/runs/v13-PILOT-366f6bca7765/acceptance-verification/verification.json",
+  "verification_artifact_sha256": "f5fde39c1b65fcb639b7508b11413ef78fbfff26c0e8857f73e593184aa668bd",
+  "verification_log_sha256": "4e824d984d04ccad1ed6a23b04afef7249955d706d2d406405446c2c0c7b111a",
+  "verification_summary": "All 15 full-gate commands, locked refresh and 558 phase tests passed. Broad: 3308 passed, 150 skipped, 31 deselected. Separate Git manager: 140 passed. Qdrant: 19 passed per mode. Post-live read-only acceptance: six commands and 558 phase tests passed; both ledger files unchanged.",
+  "full_gate": {
+    "path": ".phase-loop/runs/v13-PILOT-366f6bca7765/offline-verification-observed/verification.json",
+    "sha256": "637fe8c89ab378c7b7ef9a65b709a65f9bdf256be996c990d23da72c7240a2c1",
+    "log_sha256": "0b2f200058c12881e270421300318fb82aeee86fa7bfe5188540e98176f0ac3c",
+    "artifact_seal": "bd85072331bc9c8c4299f614c8b7d3453869f5fc2398c6cec7a1d1d8fd606179",
+    "commands": [
+      {
+        "exit_code": 0,
+        "duration_s": 0.004092
+      },
+      {
+        "exit_code": 0,
+        "duration_s": 0.422244
+      },
+      {
+        "exit_code": 0,
+        "duration_s": 0.058244
+      },
+      {
+        "exit_code": 0,
+        "duration_s": 0.34492
+      },
+      {
+        "exit_code": 0,
+        "duration_s": 0.276405
+      },
+      {
+        "exit_code": 0,
+        "duration_s": 65.491839
+      },
+      {
+        "exit_code": 0,
+        "duration_s": 8.000293
+      },
+      {
+        "exit_code": 0,
+        "duration_s": 140.359237
+      },
+      {
+        "exit_code": 0,
+        "duration_s": 249.342467
+      },
+      {
+        "exit_code": 0,
+        "duration_s": 30.645166
+      },
+      {
+        "exit_code": 0,
+        "duration_s": 595.012001
+      },
+      {
+        "exit_code": 0,
+        "duration_s": 1.059884
+      },
+      {
+        "exit_code": 0,
+        "duration_s": 0.252119
+      },
+      {
+        "exit_code": 0,
+        "duration_s": 0.00679
+      },
+      {
+        "exit_code": 0,
+        "duration_s": 0.007639
+      }
+    ],
+    "phase_test_count": 558
+  },
+  "finding_dispositions": [
+    {
+      "id": "R07",
+      "status": "fixed_in_scope",
+      "evidence": "One fresh Git probe per readiness classification, with corruption/generation fences retained; real PMCP warm successful queries under indexing contention satisfy unchanged p95 limits."
+    }
+  ],
+  "phase_followups": [
+    "Explicit local summary policy and JSON resources; no commercial, BAML-default or unbounded sampling fallback.",
+    "Five-second installed owned shutdown with interrupted mutation fence retained.",
+    "Admin Swagger repository inputs and installed version exposed without auth/readiness changes.",
+    "Disabled/inactive RefPoller registrations do not start unrequested indexing.",
+    "Staged corpus file-set digest and distinct mapping/point counts preserved.",
+    "Durable input/time/envelope admission and strict read-only raw-evidence reduction."
+  ],
+  "environment_identity": {
+    "os": "Linux",
+    "python": "3.12.12",
+    "pmcp": "pmcp 2.7.3",
+    "inspector": "2.6.0",
+    "dependency_lock_sha256": "3573d446aa88e3358cab0682153d72bc47760137ca4ed726a7a33f1c658079e0",
+    "wheel_sha256": "46a14f8f3f9fe21d9dba6b338bb9288f1e597afae071826579c700d11e2d2dd5",
+    "constraints_sha256": "8f46e56ca9390eb84135cd492bd2dc97d1d4294eb71b3315dfb03524f028cee8",
+    "installed_module_files_verified": 305,
+    "production_extra_metrics_version": "0.25.0",
+    "local_container_image": "sha256:4ee3863beea7cb7f5ed061690e87443e05080bc3f256167cbed1a13bd10cfb57",
+    "container_uid": 999,
+    "dimension": 4096,
+    "endpoints": {
+      "embedding": "http://ai:8001/v1",
+      "enrichment": "http://ai:8002/v1"
+    },
+    "immutable_revision": "unreported",
+    "models": {
+      "embedding": "Qwen/Qwen3-Embedding-8B",
+      "enrichment": "cyankiwi/gemma-4-26B-A4B-it-AWQ-4bit"
+    },
+    "qdrant_image": "qdrant/qdrant@sha256:f1c7272cdac52b38c1a0e89313922d940ba50afd90d593a1605dbbc214e66ffb",
+    "workload_sha256": "51ac0e2fb4533f2a502e4d6c51d1952a240df2dbb1850bc734ab2d8118e99f37"
+  },
+  "operational_proofs": {
+    "offline": {
+      "path": ".phase-loop/runs/v13-PILOT-366f6bca7765/offline.json",
+      "sha256": "3d7b8f09360d2f8772c699741a6dafe31114abf2ae79d900090210f33950ced0",
+      "goals": {
+        "handshake": true,
+        "installed_identity": true,
+        "installed_lifecycle": true,
+        "metrics_contention": true,
+        "no_match": true,
+        "privacy": true,
+        "provisioning": true,
+        "reconnect": true,
+        "repeat_provisioning": true,
+        "sibling_refusal": true,
+        "stale_refusal": true,
+        "two_repositories": true,
+        "wrong_branch_refusal": true
+      },
+      "max_shutdown_seconds": 3.073,
+      "peak_rss_mib": 332.3671875,
+      "surviving_children": []
+    },
+    "browser": {
+      "path": ".phase-loop/runs/v13-PILOT-366f6bca7765/browser.json",
+      "sha256": "7ea87ca15be3d444677c0abdedb0969378051cbbc886ff70d4eb2ba2575b5c64",
+      "goals": {
+        "admin_queries": true,
+        "admin_refusals": true,
+        "admin_reindex": true,
+        "console_checked": true,
+        "inspector_queries": true,
+        "inspector_reconnect": true,
+        "inspector_refusals": true,
+        "screenshots": true
+      },
+      "artifacts": [
+        {
+          "path": "browser/session.json",
+          "role": "browser_session",
+          "sha256": "7466df69d3916d3bec531bc4b5ef12a4913ab9fcfba68e9f653629be30feeb4f"
+        },
+        {
+          "path": "browser/actions.json",
+          "role": "browser_actions",
+          "sha256": "b3783411557a833e8b1484ddf92efa459265bbda8b732150d2cdd0bb56a5d81f"
+        },
+        {
+          "path": "browser/v13-admin-366f6bc.png",
+          "role": "admin_screenshot",
+          "sha256": "1ae2620efde03c825d908defa345fb8d28abdfb1635a42c3bf8433aedef5c572"
+        },
+        {
+          "path": "browser/v13-inspector-reconnect-366f6bc.png",
+          "role": "inspector_screenshot",
+          "sha256": "f58fc0ed652f766c05b90df68d62b099eb0d844088d4e97a42004c777c56dad6"
+        }
+      ],
+      "max_shutdown_seconds": 1.0664521330036223,
+      "peak_rss_mib": 1820.2890625,
+      "surviving_children": [],
+      "console": "Inspector zero errors/warnings; one expected admin HTTP 503 for sibling refusal; browser closed before owned services stopped.",
+      "tested_surfaces": [
+        "MCP Inspector through installed PMCP gateway",
+        "Authenticated FastAPI Swagger admin"
+      ],
+      "not_tested": "No PMCP-owned dashboard exists in this tested setup."
+    },
+    "rehearsal": {
+      "path": ".phase-loop/runs/v13-PILOT-366f6bca7765/rehearsal.json",
+      "sha256": "05f28e1b2487ed2dcba99dd229fb21e8951e16d113ff9978bceb6d6f2646ea3d",
+      "provider": "loopback synthetic only",
+      "accepted_as_live": false
+    },
+    "live": {
+      "path": ".phase-loop/runs/v13-PILOT-366f6bca7765/live.json",
+      "sha256": "ae00ff186983ed3a9f17512bd58f4cf521d2a2234d97b3b8c2811eb2ce213069",
+      "goals": {
+        "budget_enforced": true,
+        "contention": true,
+        "delete": true,
+        "local_only": true,
+        "provenance": true,
+        "rebuild": true,
+        "rename": true,
+        "restart": true,
+        "retrieval": true,
+        "synthetic_only": true
+      },
+      "budget": {
+        "approval": "v13-freeze-178b8328-20260911-synthetic-local",
+        "blocked": null,
+        "elapsed_seconds": 44.579028844833374,
+        "input_limit": 100000,
+        "last_monotonic": 199627.728722954,
+        "last_wall": 1789200586.5914714,
+        "manifest_sha256": "8b4fd962873ce9f38a3bdfb3edd8dfbfd772193c79da00218dd6cbad6fdad7e5",
+        "request_count": 82,
+        "reserved_input_units": 24267,
+        "schema": "v13-pilot-budget.v1",
+        "seconds_limit": 900,
+        "started_monotonic": 199585.80692561,
+        "started_wall": 1789200544.6696737
+      },
+      "measurements": {
+        "lexical": {
+          "sample_count": 40,
+          "p95_ms": 94.60649901302531,
+          "contention_successes": 22
+        },
+        "semantic": {
+          "sample_count": 40,
+          "p95_ms": 470.5108900088817,
+          "contention_successes": 26
+        },
+        "symbol": {
+          "sample_count": 40,
+          "p95_ms": 74.902603024384,
+          "contention_successes": 26
+        }
+      },
+      "peak_rss_mib": 430.75,
+      "shutdown_seconds": [
+        1.1665127240121365,
+        2.1701651710027363
+      ],
+      "surviving_children": [],
+      "artifacts": [
+        {
+          "path": "live/runtime-provenance.json",
+          "role": "runtime_provenance",
+          "sha256": "68556e73fad293feaefa96348742c468b0a6e68fc5a5c8767637a11721263411"
+        },
+        {
+          "path": "live/allowance-ledger/ledger.sqlite",
+          "role": "allowance_ledger",
+          "sha256": "98b1eb2128f5a4edbfa0af26aca474712c2bc5cf7a7de7c2ec527c7b8537793b"
+        },
+        {
+          "path": "live/runtime-metadata.json",
+          "role": "runtime_metadata",
+          "sha256": "d684606dc46acc5722c6c6888f0c2ef2b1f613800b475f5da633b112139ed9a4"
+        },
+        {
+          "path": "live/workload.json",
+          "role": "workload",
+          "sha256": "accc545701c070442379db3d53a48a69a378107c88c2931aaaff7197e47be8cd"
+        }
+      ],
+      "canonical_allowance_root": ".phase-loop/runs/v13-PILOT-allowance",
+      "ledger_sha256": "98b1eb2128f5a4edbfa0af26aca474712c2bc5cf7a7de7c2ec527c7b8537793b",
+      "read_only_proof": {
+        "path": ".phase-loop/runs/v13-PILOT-366f6bca7765/ledger-read-only.json",
+        "sha256": "a761403f1d3ec93d88437c1ff3d82212327f26ed4021a5de0317dd0c70f162ba",
+        "unchanged": true
+      }
+    }
+  },
+  "prior_attempts": [
+    {
+      "path": ".phase-loop/runs/v13-PILOT-cc795c88cfe4/offline-verification-resolved/",
+      "accepted": false,
+      "reason": "Product suites passed; incorrect formatting selection included immutable audit evidence. Input was preserved, selection corrected."
+    },
+    {
+      "path": ".phase-loop/runs/v13-PILOT-6d024ea9e923/rehearsal.partial.json",
+      "accepted": false,
+      "reason": "Loopback workflow completed; strict provenance reduction exposed mapping-count versus unique-point-count producer bug. RED test reproduced; repaired before live admission."
+    },
+    {
+      "path": ".phase-loop/runs/v13-PILOT-366f6bca7765/offline-interruption.json",
+      "sha256": "c442bf64970ca84b93ce6599812ed1443eaea72592cb0be16816d0d473f8bc17",
+      "accepted": false,
+      "reason": "SIGTERM interrupted full gate during container node; sender unknown, no final verification artifact. Owned synthetic container stopped and retained. Fresh observed run passed every node."
+    }
+  ],
+  "acceptance_criteria": [
+    {
+      "id": "EC-PILOT-1",
+      "accepted": true,
+      "evidence": "offline 13/13 goals, exact installed wheel and PMCP provisioning/configuration/query/refusal controls"
+    },
+    {
+      "id": "EC-PILOT-2",
+      "accepted": true,
+      "evidence": "live 10/10 goals, approved cumulative budget, raw provenance/accounting and latency/contention/resource limits"
+    },
+    {
+      "id": "EC-PILOT-3",
+      "accepted": true,
+      "evidence": "browser 8/8 goals, actual Inspector/admin actions and inspected hashed screenshots"
+    },
+    {
+      "id": "EC-PILOT-4",
+      "accepted": true,
+      "evidence": "installed six lifecycle cases, pending fence, no survivors, metrics contention/reuse and reconnect/reprovision"
+    }
+  ],
+  "if_gates_produced": [
+    "IF-0-PILOT-1"
+  ],
+  "issue_inventory": [],
+  "issue_dispositions": [],
+  "required_human_inputs": [],
+  "limits": [
+    "Controlled rollout only; no fleet corpus indexed or cohort promotion authorized.",
+    "Linux/Python 3.12 and two tiny synthetic Python repositories; not all-platform/language or broad retrieval-quality proof.",
+    "Immutable provider revision unreported; reported model/dimension and collection bindings are not immutable serving-build attestation.",
+    "Budget guard is operational admission, not OS egress confinement. No additional inference is an automatic verification step.",
+    "Existing support tiers, explicit lexical/local policies, reranking opt-in and semantic-readiness fences remain unchanged.",
+    "No new signing dispatch, final implementation panel, version bump, merge or publication in PILOT."
+  ],
+  "doc_delta_decision": "docs_updated",
+  "spec_delta_closeout": {
+    "schema": "spec_delta_closeout.v1",
+    "decision": "canonical_spec_update",
+    "target_surfaces": [
+      "docs/operations/v13-pmcp-pilot.md",
+      "docs/SUPPORT_MATRIX.md",
+      "docs/status/V13_EXECUTION.md"
+    ],
+    "evidence_paths": [
+      "docs/validation/v13/PILOT.json"
+    ],
+    "redaction_posture": "metadata_only"
+  },
+  "next_phase": "PREP",
+  "next_skill": "codex-plan-phase",
+  "next_command": "codex-plan-phase specs/phase-plans-v13.md PREP"
+}

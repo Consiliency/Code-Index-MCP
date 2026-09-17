@@ -57,7 +57,7 @@ def test_direct_client_supports_friction_filters(tmp_path: Path):
         ) as client:
             result = client.search_code(
                 ClientSearchOptions(
-                    query="ignored",
+                    query="filtering",
                     source_type="friction",  # type: ignore[arg-type]
                     friction_categories=("todo",),
                     include_source_metadata=True,
@@ -87,7 +87,7 @@ def test_direct_client_supports_history_filters(tmp_path: Path):
         ) as client:
             result = client.search_code(
                 ClientSearchOptions(
-                    query="ignored",
+                    query="Reflection",
                     source_type="history",  # type: ignore[arg-type]
                     history_labels=("reflection",),
                     history_repos=("owner/repo",),

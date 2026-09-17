@@ -9,6 +9,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import pytest
+
 from mcp_server.health.repository_readiness import (
     RepositoryReadiness,
     RepositoryReadinessState,
@@ -650,6 +652,11 @@ def test_reindex_reports_additive_semantic_stage_metadata(tmp_path, monkeypatch)
     ctx.sqlite_store = MagicMock()
     ctx.sqlite_store.db_path = str(tmp_path / "index.db")
     ctx.sqlite_store.rebuild_fts_code.return_value = 1
+    ctx.staging = False
+    ctx.sqlite_store.path_resolver.normalize_path.return_value = "."
+    ctx.sqlite_store._get_connection.return_value.__enter__.return_value.execute.return_value.fetchone.return_value = (
+        1,
+    )
     resolver = FakeResolver(
         RepositoryReadiness(
             state=RepositoryReadinessState.READY,
@@ -669,7 +676,7 @@ def test_reindex_reports_additive_semantic_stage_metadata(tmp_path, monkeypatch)
     )
 
     data = _parsed(result)
-    assert data["summaries_written"] == 1
+    assert data.get("summaries_written") == 1, data
     assert data["summary_chunks_attempted"] == 2
     assert data["summary_missing_chunks"] == 1
     assert data["semantic_blocked"] == 1
@@ -678,6 +685,7 @@ def test_reindex_reports_additive_semantic_stage_metadata(tmp_path, monkeypatch)
 
 def test_reindex_single_file_success_returns_object_payload(tmp_path, monkeypatch):
     from mcp_server.cli.tool_handlers import handle_reindex
+    from mcp_server.dispatcher.dispatcher_enhanced import IndexResult, IndexResultStatus
 
     monkeypatch.setenv("MCP_ALLOWED_ROOTS", str(tmp_path))
     worktree = tmp_path / "repo"
@@ -686,9 +694,17 @@ def test_reindex_single_file_success_returns_object_payload(tmp_path, monkeypatc
     source_file.write_text("def demo():\n    return 1\n", encoding="utf-8")
 
     dispatcher = MagicMock()
+    dispatcher.index_file.return_value = IndexResult(
+        IndexResultStatus.INDEXED, source_file, None, None
+    )
     ctx = MagicMock()
     ctx.workspace_root = worktree
     ctx.sqlite_store = MagicMock()
+    ctx.staging = False
+    ctx.sqlite_store.path_resolver.normalize_path.return_value = "demo.py"
+    ctx.sqlite_store._get_connection.return_value.__enter__.return_value.execute.return_value.fetchone.return_value = (
+        1,
+    )
     resolver = FakeResolver(
         RepositoryReadiness(
             state=RepositoryReadinessState.READY,
@@ -708,15 +724,17 @@ def test_reindex_single_file_success_returns_object_payload(tmp_path, monkeypatc
     )
 
     data = _parsed(result)
-    assert data["path"] == str(source_file)
+    assert data.get("path") == str(source_file), data
     assert data["mode"] == "file"
     assert data["indexed_files"] == 1
     assert data["mutation_performed"] is True
     assert "Reindexed file:" in data["message"]
 
 
-def test_reindex_single_file_failure_returns_structured_error(tmp_path, monkeypatch):
+@pytest.mark.parametrize("failure", ["raise", "error", "semantic_failed", "semantic_blocked"])
+def test_reindex_single_file_failure_returns_structured_error(tmp_path, monkeypatch, failure):
     from mcp_server.cli.tool_handlers import handle_reindex
+    from mcp_server.dispatcher.dispatcher_enhanced import IndexResult, IndexResultStatus
 
     monkeypatch.setenv("MCP_ALLOWED_ROOTS", str(tmp_path))
     worktree = tmp_path / "repo"
@@ -725,7 +743,16 @@ def test_reindex_single_file_failure_returns_structured_error(tmp_path, monkeypa
     source_file.write_text("def broken():\n    return 1\n", encoding="utf-8")
 
     dispatcher = MagicMock()
-    dispatcher.index_file.side_effect = RuntimeError("boom")
+    if failure == "raise":
+        dispatcher.index_file.side_effect = RuntimeError("boom")
+    else:
+        dispatcher.index_file.return_value = IndexResult(
+            IndexResultStatus.ERROR if failure == "error" else IndexResultStatus.INDEXED,
+            source_file,
+            None,
+            None,
+            semantic={failure: 1} if failure.startswith("semantic_") else None,
+        )
     ctx = MagicMock()
     ctx.workspace_root = worktree
     ctx.sqlite_store = MagicMock()
@@ -752,7 +779,16 @@ def test_reindex_single_file_failure_returns_structured_error(tmp_path, monkeypa
     assert data["code"] == "reindex_failed"
     assert data["path"] == str(source_file)
     assert data["mutation_performed"] is False
-    assert data["details"] == "boom"
+    assert data["details"] == (
+        "boom"
+        if failure == "raise"
+        else (
+            "File indexing did not complete"
+            if failure == "error"
+            else "Required semantic mutation did not complete"
+        )
+    )
+    ctx.sqlite_store._get_connection.assert_not_called()
 
 
 def test_write_summaries_remains_summary_only(tmp_path, monkeypatch):

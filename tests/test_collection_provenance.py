@@ -27,7 +27,6 @@ from mcp_server.utils.semantic_indexer import (
     read_collection_provenance,
 )
 
-
 # ---------------------------------------------------------------------------
 # In-memory doubles (no network, no SDK)
 # ---------------------------------------------------------------------------
@@ -54,7 +53,7 @@ class FakeQdrant:
         self.points: dict = {}
         self.upserts: list = []
 
-    def upsert(self, *, collection_name, points):
+    def upsert(self, *, collection_name, points, wait=False):
         for point in points:
             self.upserts.append((collection_name, point.id))
             self.points[point.id] = SimpleNamespace(
@@ -62,6 +61,7 @@ class FakeQdrant:
                 vector=list(point.vector),
                 payload=dict(point.payload or {}),
             )
+        return SimpleNamespace(status="completed")
 
     def retrieve(self, *, collection_name, ids, with_payload=True, with_vectors=False):
         out = []
@@ -94,21 +94,30 @@ class FakeQdrant:
         for stored in self.points.values():
             if not _payload_matches(flt, stored.payload):
                 continue
-            results.append(
-                SimpleNamespace(id=stored.id, score=1.0, payload=dict(stored.payload))
-            )
+            results.append(SimpleNamespace(id=stored.id, score=1.0, payload=dict(stored.payload)))
         return results[:limit]
 
-    def delete(self, *, collection_name, points_selector):
+    def scroll(self, *, collection_name, scroll_filter=None, limit=256, offset=None, **kwargs):
+        points = [
+            point
+            for point in self.points.values()
+            if _payload_matches(scroll_filter, point.payload)
+        ]
+        start = offset or 0
+        batch = points[start : start + limit]
+        return batch, (start + limit if start + limit < len(points) else None)
+
+    def delete(self, *, collection_name, points_selector, wait=False):
         ids = getattr(points_selector, "points", None)
         if ids is None:
             ids = points_selector
         for pid in ids:
             self.points.pop(pid, None)
+        return SimpleNamespace(status="completed")
 
 
 class _RaisingUpsertQdrant(FakeQdrant):
-    def upsert(self, *, collection_name, points):
+    def upsert(self, *, collection_name, points, wait=False):
         raise RuntimeError("qdrant backend unreachable during provenance upsert")
 
 
@@ -140,11 +149,10 @@ def _profile(dim=8, model="srv-model", **overrides):
     return SemanticProfile.from_dict("oss-high", payload)
 
 
-def _make_indexer(
-    qdrant, *, profile=None, attestation=None, provider=None, available=True
-):
+def _make_indexer(qdrant, *, profile=None, attestation=None, provider=None, available=True):
     profile = profile or _profile()
     ix = SemanticIndexer.__new__(SemanticIndexer)
+    ix.staging = False
     ix.semantic_profile = profile
     ix._profile_active = True
     ix.embedding_model = profile.model_name
@@ -420,9 +428,7 @@ def test_index_files_batch_writes_non_null_corpus_sha256():
 
 
 def _relative_path_resolver():
-    return SimpleNamespace(
-        normalize_path=lambda p: str(p).replace("\\", "/")
-    )
+    return SimpleNamespace(normalize_path=lambda p: str(p).replace("\\", "/"))
 
 
 def test_remove_file_invalidates_sentinel():
@@ -528,9 +534,7 @@ def test_derived_ids_never_occupy_reserved_id(monkeypatch):
         def digest(self):
             return b"\x00" * 8
 
-    monkeypatch.setattr(
-        semantic_indexer_module.hashlib, "sha1", lambda *a, **k: _ZeroDigest()
-    )
+    monkeypatch.setattr(semantic_indexer_module.hashlib, "sha1", lambda *a, **k: _ZeroDigest())
 
     sid = ix._symbol_id("pkg/a.py", "foo", 1, None)
     did = ix._document_section_id("pkg/a.py", "Intro", 1)

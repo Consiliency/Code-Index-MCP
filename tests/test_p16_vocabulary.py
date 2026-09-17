@@ -198,7 +198,6 @@ def test_validate_production_config_reexported():
 # ---------------------------------------------------------------------------
 
 SINGLETON_TABLE = [
-    ("mcp_server.metrics.prometheus_exporter", "_exporter"),
     ("mcp_server.gateway", "_repo_registry"),
     ("mcp_server.plugin_system.loader", "_loader"),
     ("mcp_server.plugin_system.discovery", "_discovery"),
@@ -208,12 +207,12 @@ SINGLETON_TABLE = [
 
 
 @pytest.mark.parametrize("module_path,attr_name", SINGLETON_TABLE)
-def test_reset_process_singletons_nulls_all(module_path, attr_name):
+def test_reset_process_singletons_nulls_all(module_path, attr_name, monkeypatch):
     """reset_process_singletons must null each registered singleton attr."""
     from mcp_server.cli.bootstrap import reset_process_singletons
 
     mod = importlib.import_module(module_path)
-    setattr(mod, attr_name, object())  # sentinel non-None value
+    monkeypatch.setattr(mod, attr_name, object())
 
     reset_process_singletons()
 

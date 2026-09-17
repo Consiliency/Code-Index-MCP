@@ -1,7 +1,9 @@
 """FastAPI security middleware for authentication and authorization."""
 
 import logging
+import os
 import re
+from ipaddress import ip_address, ip_network
 from typing import Awaitable, Callable, Dict, List, Literal, Optional, cast
 from urllib.parse import unquote
 
@@ -26,6 +28,31 @@ from .models import (
 
 logger = logging.getLogger(__name__)
 _bearer_scheme = HTTPBearer(auto_error=False)
+
+
+def _client_ip(request: Request) -> str:
+    """Use forwarded identity only through an explicitly trusted proxy chain."""
+    peer = str(request.client.host) if request.client else "unknown"
+    try:
+        networks = [
+            ip_network(value.strip())
+            for value in os.getenv("MCP_TRUSTED_PROXIES", "").split(",")
+            if value.strip()
+        ]
+        address = ip_address(peer)
+        if not any(address in network for network in networks):
+            return peer
+        header = request.headers.get("X-Forwarded-For") or request.headers.get("X-Real-IP")
+        if not header:
+            return peer
+        chain = [ip_address(value.strip()) for value in header.split(",")]
+        for candidate in reversed(chain):
+            if not any(address in network for network in networks):
+                break
+            address = candidate
+        return str(address)
+    except ValueError:
+        return peer
 
 
 class SecurityHeaders:
@@ -83,18 +110,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         return response
 
     def _get_client_ip(self, request: Request) -> str:
-        """Extract client IP address from request."""
-        # Check for forwarded headers first
-        forwarded_for = request.headers.get("X-Forwarded-For")
-        if forwarded_for:
-            return str(forwarded_for.split(",")[0].strip())
-
-        real_ip = request.headers.get("X-Real-IP")
-        if real_ip:
-            return str(real_ip.strip())
-
-        # Fallback to client IP
-        return str(request.client.host) if request.client else "unknown"
+        return _client_ip(request)
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
@@ -203,16 +219,7 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
         return str(auth_header[7:])  # Remove "Bearer " prefix
 
     def _get_client_ip(self, request: Request) -> str:
-        """Extract client IP address from request."""
-        forwarded_for = request.headers.get("X-Forwarded-For")
-        if forwarded_for:
-            return str(forwarded_for.split(",")[0].strip())
-
-        real_ip = request.headers.get("X-Real-IP")
-        if real_ip:
-            return str(real_ip.strip())
-
-        return str(request.client.host) if request.client else "unknown"
+        return _client_ip(request)
 
 
 class AuthorizationMiddleware(BaseHTTPMiddleware):
@@ -305,16 +312,7 @@ class AuthorizationMiddleware(BaseHTTPMiddleware):
         return method_mapping.get(method.upper(), Permission.READ)
 
     def _get_client_ip(self, request: Request) -> str:
-        """Extract client IP address from request."""
-        forwarded_for = request.headers.get("X-Forwarded-For")
-        if forwarded_for:
-            return str(forwarded_for.split(",")[0].strip())
-
-        real_ip = request.headers.get("X-Real-IP")
-        if real_ip:
-            return str(real_ip.strip())
-
-        return str(request.client.host) if request.client else "unknown"
+        return _client_ip(request)
 
 
 class RequestValidationMiddleware(BaseHTTPMiddleware):

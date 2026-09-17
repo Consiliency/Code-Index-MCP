@@ -5,6 +5,7 @@ from __future__ import annotations
 import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, call, patch
@@ -28,21 +29,49 @@ _SYNTHETIC_ATTESTATION = Attestation(
 
 @pytest.fixture(autouse=True)
 def _stub_attest(monkeypatch):
-    """Patch mcp_server.artifacts.publisher.attest so publish tests don't shell out."""
-    monkeypatch.setattr(
-        "mcp_server.artifacts.publisher.attest",
-        MagicMock(return_value=_SYNTHETIC_ATTESTATION),
-    )
+    """Exercise mocked publication orchestration under explicit test-only opt-out."""
+    monkeypatch.setenv("MCP_ATTESTATION_MODE", "skip")
 
 
 SHORT_SHA = COMMIT[:7]
-TAG = f"index-my-repo-main-{SHORT_SHA}"
+TAG = f"index-my-repo-main-{COMMIT}"
 RELEASE_URL = f"https://github.com/{REPO}/releases/tag/{TAG}"
 LATEST_URL = f"https://github.com/{REPO}/releases/tag/index-latest"
 
 
+@contextmanager
+def _mock_gh(side_effect):
+    def bounded(command, *, deadline):
+        assert deadline > time.monotonic()
+        result = side_effect(command)
+        if result.returncode:
+            raise subprocess.CalledProcessError(result.returncode, command)
+        return result.stdout
+
+    with patch.object(IndexArtifactUploader, "_run_gh", side_effect=bounded) as transport:
+        yield transport
+
+
+def test_publisher_pointer_calls_share_one_deadline():
+    publisher = ArtifactPublisher(_make_uploader())
+    with _mock_gh(_default_gh_dispatch) as transport:
+        publisher.publish_on_reindex("my-repo", COMMIT)
+    assert len(transport.call_args_list) == 3
+    assert len({call.kwargs["deadline"] for call in transport.call_args_list}) == 1
+
+
+def test_publisher_reaps_timed_out_command():
+    import sys
+
+    publisher = ArtifactPublisher(_make_uploader(), gh_cmd=sys.executable)
+    started = time.monotonic()
+    with pytest.raises(subprocess.TimeoutExpired):
+        publisher._run(["-c", "import time; time.sleep(30)"], deadline=started + 0.15)
+    assert time.monotonic() - started < 2
+
+
 def _canonical_tag(repo_id: str, commit: str, tracked_branch: str = "main") -> str:
-    return f"index-{repo_id.replace('/', '_').replace(':', '_')}-{tracked_branch}-{commit[:7]}"
+    return f"index-{repo_id.replace('/', '_').replace(':', '_')}-{tracked_branch}-{commit}"
 
 
 def _make_uploader() -> IndexArtifactUploader:
@@ -143,7 +172,7 @@ class TestIdempotency:
                 return MagicMock(returncode=0, stdout="", stderr="")
             return MagicMock(returncode=0, stdout="", stderr="")
 
-        with patch("subprocess.run", side_effect=side_effect):
+        with _mock_gh(side_effect):
             ref1 = publisher.publish_on_reindex("my-repo", COMMIT)
             ref2 = publisher.publish_on_reindex("my-repo", COMMIT)
 
@@ -164,7 +193,7 @@ class TestIdempotency:
                 )
             return MagicMock(returncode=0, stdout="", stderr="")
 
-        with patch("subprocess.run", side_effect=side_effect):
+        with _mock_gh(side_effect):
             ref = publisher.publish_on_reindex("repo-x", COMMIT)
 
         assert ref.tag == _canonical_tag("repo-x", COMMIT)
@@ -206,7 +235,7 @@ class TestConcurrentRace:
         pub_a = ArtifactPublisher(uploader_a, gh_cmd="gh")
         pub_b = ArtifactPublisher(uploader_b, gh_cmd="gh")
 
-        with patch("subprocess.run", side_effect=side_effect):
+        with _mock_gh(side_effect):
             with ThreadPoolExecutor(max_workers=2) as pool:
                 fut_a = pool.submit(pub_a.publish_on_reindex, "repo", commit_a)
                 fut_b = pool.submit(pub_b.publish_on_reindex, "repo", commit_b)
@@ -240,7 +269,7 @@ class TestConcurrentRace:
         uploader = _make_uploader()
         pub = ArtifactPublisher(uploader, gh_cmd="gh")
 
-        with patch("subprocess.run", side_effect=side_effect):
+        with _mock_gh(side_effect):
             ref_b = pub.publish_on_reindex("repo", commit_b)
 
         assert ref_b.is_latest is False
@@ -261,7 +290,7 @@ class TestGhErrorHandling:
         def side_effect(args, **kwargs):
             raise subprocess.CalledProcessError(1, args, stderr="permission denied")
 
-        with patch("subprocess.run", side_effect=side_effect):
+        with _mock_gh(side_effect):
             with pytest.raises(ArtifactError):
                 publisher.publish_on_reindex("repo", COMMIT)
 
@@ -323,7 +352,7 @@ class TestPublishLatency:
             return MagicMock(returncode=0, stdout="", stderr="")
 
         start = time.monotonic()
-        with patch("subprocess.run", side_effect=fast_side_effect):
+        with _mock_gh(fast_side_effect):
             publisher.publish_on_reindex("repo", COMMIT)
         elapsed = time.monotonic() - start
 
@@ -341,6 +370,9 @@ class TestCallOrder:
         uploader = _make_uploader()
         publisher = ArtifactPublisher(uploader, gh_cmd="gh")
         observed: list[str] = []
+        uploader.upload_direct.side_effect = lambda *args, **kwargs: observed.append(
+            "verified-upload"
+        )
 
         def side_effect(args, **kwargs):
             # args = ["gh", "release", <subcommand>, <tag>, ...]
@@ -358,17 +390,17 @@ class TestCallOrder:
                 )
             return MagicMock(returncode=0, stdout="", stderr="")
 
-        with patch("subprocess.run", side_effect=side_effect):
+        with _mock_gh(side_effect):
             publisher.publish_on_reindex("repo", COMMIT)
 
         upload_call = uploader.upload_direct.call_args
         assert upload_call is not None
         assert upload_call.kwargs["release_tag"] == _canonical_tag("repo", COMMIT)
-        assert upload_call.kwargs["attestation"].bundle_url == _SYNTHETIC_ATTESTATION.bundle_url
+        assert "attestation" not in upload_call.kwargs
 
-        # SHA-keyed create must precede index-latest edit
+        # The uploader owns draft creation and verifies publication before returning.
         sha_create_idx = next(
-            (i for i, s in enumerate(observed) if f"create:{_canonical_tag('repo', COMMIT)}" == s),
+            (i for i, s in enumerate(observed) if s == "verified-upload"),
             None,
         )
         latest_edit_idx = next(

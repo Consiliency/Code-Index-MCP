@@ -6,16 +6,16 @@ Code-Index-MCP is a fast, **local-first** search index for your code. It plugs i
 
 > **New to Code-Index-MCP?** Start with the [Getting Started Guide](docs/GETTING_STARTED.md).
 >
-> **Status:** v1.4.0 stable surface prepared — MCP tools (`search_code`, `symbol_lookup`) are the primary interface; a FastAPI admin gateway is available for diagnostics.
+> **Status:** v1.4.1 stable surface prepared — MCP tools (`search_code`, `symbol_lookup`) are the primary interface; a FastAPI admin gateway is available for diagnostics.
 
-> **Stable-surface prep status**: This guide targets the repo-owned `1.4.0`
-> hardening release candidate. MCP STDIO remains the primary LLM surface and
-> FastAPI remains a secondary admin surface. A July 10, 2026 collision check
-> found no live `index-it-mcp==1.4.0`, so this guide uses source and local-wheel
-> proof instead of claiming that the prepared `1.4.0` surface is published.
+> **Stable-surface prep status**: This guide targets the `1.4.1` prepared candidate.
+> Published `1.4.0` (2026-07-19) does not include these v13 repairs.
+> MCP STDIO is primary; FastAPI is secondary admin only.
+> See [release preparation and acceptance](docs/operations/v13-release.md).
+> Publication and fleet rollout remain separate acceptance gates.
 
 ## Project Status
-**Version**: 1.4.0 (repo-owned prepared surface; unpublished as of July 10, 2026)
+**Version**: 1.4.1 (prepared candidate; publication tracked separately)
 **Python distribution**: `index-it-mcp`
 **Container image**: `ghcr.io/consiliency/code-index-mcp`
 **Primary surface**: MCP tools (`search_code`, `symbol_lookup`) via the STDIO runner when repository readiness is `ready`
@@ -79,8 +79,8 @@ Benchmarks in this repository show large token/cost reductions when an assistant
 - **🎯 Query-Intent Routing**: Symbol-pattern queries (`class Foo`, `def bar`, CamelCase) bypass BM25 and hit the symbols table directly for sub-5ms lookups
 - **🔒 Security-Aware Export**: Automatic filtering of sensitive files from shared indexes
 - **🔍 Hybrid Search**: BM25 + semantic search with configurable fusion
-- **🔐 Index Everything Locally**: Search .env files and secrets on your machine
-- **🚫 Smart Filtering on Share**: .gitignore and .mcp-index-ignore patterns applied only during export
+- **🔐 Filtered Local Indexes**: Default secret-file exclusions apply to lexical and semantic indexing
+- **🚫 Ignore Rules**: .gitignore and .mcp-index-ignore filter indexing and export; patterns are not a secret scanner
 - **🌐 Multi-Language Indexing**: Index entire repositories with mixed languages
 
 ## 🏗️ Architecture
@@ -122,7 +122,7 @@ The Code-Index-MCP follows a modular, plugin-based architecture designed for ext
 Code-Index-MCP implements defense-in-depth security hardening (Phase 15):
 
 - **Plugin Sandboxing**: Plugins execute in isolated worker processes with capability-based restrictions. See [docs/security/sandbox.md](docs/security/sandbox.md).
-- **Artifact Attestation**: Published indexes are signed with GitHub SLSA attestations and verified at download. See [docs/security/attestation.md](docs/security/attestation.md).
+- **Artifact Attestation**: Enforced publication requires GitHub-signed custom metadata digest attestations, verified at download. These are not SLSA build provenance. See [docs/security/attestation.md](docs/security/attestation.md).
 - **Path Traversal Guard**: Search results are validated to prevent escaping configured repository roots. See [docs/security/path-guard.md](docs/security/path-guard.md).
 - **Token Validation**: GitHub tokens are validated for required scopes at startup (`contents:read`, `metadata:read`, `actions:read`, `actions:write`, `attestations:write`). See [docs/security/token-scopes.md](docs/security/token-scopes.md).
 - **Metrics Authentication**: The `/metrics` endpoint requires bearer token authentication.
@@ -158,9 +158,10 @@ quality or default sandbox behavior.
 
 ## 🚀 Quick Start
 
-Supported install paths are the published container image
-`ghcr.io/consiliency/code-index-mcp:v1.4.0` (or `:latest`), native Python/STDIO
-with `uv sync --locked`, and a locally built `index-it-mcp` wheel. The
+Supported install paths are the digest-pinned container image published with
+the `v1.4.1` GitHub release, native Python/STDIO with `uv sync --locked`, and a
+locally built `index-it-mcp` wheel. Use the registry image only after protected-main publication and delivered
+artifact acceptance; until then use the candidate source or local wheel. The
 `ghcr.io/consiliency/code-index-mcp:local-smoke` image remains an optional dev
 path built from this checkout with `make release-smoke-container`.
 Language coverage is bounded by [docs/SUPPORT_MATRIX.md](docs/SUPPORT_MATRIX.md),
@@ -168,7 +169,7 @@ GA-hardening evidence ownership is frozen in
 [docs/validation/ga-readiness-checklist.md](docs/validation/ga-readiness-checklist.md),
 and rollback procedures live in
 [docs/operations/deployment-runbook.md](docs/operations/deployment-runbook.md).
-Do not treat this published stable surface as a universal language support
+Do not treat this prepared surface as a universal language support
 claim; row-level support tiers still live in the support matrix.
 
 ### 🎯 Automatic Setup for Claude Code/Desktop (Recommended)
@@ -184,14 +185,19 @@ This automatically detects your environment and creates the appropriate `.mcp.js
 
 ### 🐳 Docker Setup
 
-Pull the published `v1.4.0` image from GHCR. The installer defaults to this
-published image; the `local-smoke` tag remains an optional dev image you can
+The installer targets `v1.4.1` and resolves its `image-reference.txt` release
+asset to a signed GHCR digest. Version and `latest` image tags are not updated;
+the installer's `latest` option selects the latest GitHub release, then pins
+that release's digest. A missing release asset is an error, never a tag fallback.
+Before that gate, the `local-smoke` tag is an optional dev image you can
 build from this checkout with `make release-smoke-container`.
 
 #### Option 1: Basic Search (No API Keys) - 2 Minutes
 ```bash
-# Index your current directory with the published image
-docker run -it -v $(pwd):/workspace ghcr.io/consiliency/code-index-mcp:v1.4.0
+# After release acceptance, start STDIO with the published image reference
+export MCP_IMAGE_REF=$(curl -fsSL https://github.com/Consiliency/Code-Index-MCP/releases/download/v1.4.1/image-reference.txt)
+[[ "$MCP_IMAGE_REF" =~ ^ghcr\.io/consiliency/code-index-mcp@sha256:[0-9a-f]{64}$ ]] || exit 1
+docker run -i --rm -v "$(pwd):/workspace" "$MCP_IMAGE_REF" index-it-mcp stdio
 ```
 
 #### Option 2: AI-Powered Search
@@ -200,7 +206,7 @@ docker run -it -v $(pwd):/workspace ghcr.io/consiliency/code-index-mcp:v1.4.0
 export VOYAGE_API_KEY=your-key
 
 # Run with semantic search enabled explicitly
-docker run -it -v $(pwd):/workspace -e SEMANTIC_SEARCH_ENABLED=true -e VOYAGE_API_KEY ghcr.io/consiliency/code-index-mcp:v1.4.0
+docker run -i --rm -v "$(pwd):/workspace" -e SEMANTIC_SEARCH_ENABLED=true -e VOYAGE_API_KEY "$MCP_IMAGE_REF" index-it-mcp stdio
 ```
 
 ### 💻 Environment-Specific Setup
@@ -210,8 +216,8 @@ docker run -it -v $(pwd):/workspace -e SEMANTIC_SEARCH_ENABLED=true -e VOYAGE_AP
 # PowerShell
 .\scripts\setup-mcp-json.ps1
 
-# Or manually with Docker Desktop
-docker run -it -v ${PWD}:/workspace ghcr.io/consiliency/code-index-mcp:v1.4.0
+# Or use the digest-pinning Docker installer after publication
+.\scripts\install-mcp-docker.ps1
 ```
 
 #### 🍎 macOS
@@ -280,6 +286,8 @@ The setup script creates the appropriate `.mcp.json` for your environment. Manua
 ```
 
 #### Docker (Windows/Mac/Linux)
+Replace the digest placeholder with the full `image-reference.txt` release asset,
+or use the installer's generated configuration, which already pins that value.
 ```json
 {
   "mcpServers": {
@@ -288,7 +296,8 @@ The setup script creates the appropriate `.mcp.json` for your environment. Manua
       "args": [
         "run", "-i", "--rm",
         "-v", "${workspace}:/workspace",
-        "ghcr.io/consiliency/code-index-mcp:v1.4.0"
+        "ghcr.io/consiliency/code-index-mcp@sha256:<published-digest>",
+        "index-it-mcp", "stdio"
       ]
     }
   }
@@ -451,14 +460,14 @@ uv run mcp-index --version
 ```bash
 # From the repo root
 uv run --extra dev python -m build --wheel
-python -m pip install dist/index_it_mcp-1.4.0-py3-none-any.whl
+python -m pip install dist/index_it_mcp-1.4.1-py3-none-any.whl
 index-it-mcp --version
 ```
 
-The canonical Python distribution name remains `index-it-mcp`, but the live
-PyPI currently has no published artifact for this repo's prepared `1.4.0` surface.
-Use the local wheel or source install above until a later release-evidence
-phase re-proves live package parity.
+The canonical Python distribution remains `index-it-mcp`. The commands above
+install this prepared candidate, not the older published release. Use
+`pip install index-it-mcp==1.4.1` only after the protected-main publication and
+independent delivered-package checks recorded in the release receipt.
 
 ### Quick Start After Installation
 
@@ -547,6 +556,9 @@ synchronous path or include a `task` object in `tools/call` and then use
 terminal payload retrieval, and best-effort cancellation. Readiness refusals,
 path sandbox failures, conflicting scope errors, and
 summarizer-unavailable preflights still fail synchronously before any task is created.
+Whole-repository generation rebuilds, including readiness recovery, require the
+synchronous path. A task request for that scope returns `task_scope_unsupported`
+without mutation; it never silently runs a long synchronous rebuild instead.
 
 Current verified MCP client posture is summarized in the
 [MCP compatibility matrix](docs/status/MCP_COMPATIBILITY_EVALUATION.md). The
@@ -1321,15 +1333,21 @@ python scripts/download-release.py --tag v2024.01.15 --output ./my-index
 
 ### Creating Releases
 
-Maintainers can create new releases with pre-built indexes:
+Maintainers can publish reviewed package and image releases; index artifacts
+have a separate preparation and signing workflow:
 
 ```bash
-# Prepare or update the release PR from the feature branch
-gh workflow run "Release Automation" --ref <release-branch> -f mode=prepare -f version=v1.4.0 -f auto_merge=false
+# Prepare locally and reconcile Code-Index-MCP#97 before merging
+make agent-gate
 
-# After that PR merges, publish only from protected main
-gh workflow run "Release Automation" --ref main -f mode=publish -f version=v1.4.0 -f auto_merge=false
+# Only after accepted review, merge identity and publication authorization
+gh workflow run "Release Automation" --ref main \
+  -f mode=publish -f version=v1.4.1 -f auto_merge=false \
+  -f expected_commit="$ACCEPTED_MERGE_COMMIT" -f expected_tree="$ACCEPTED_MERGE_TREE"
 ```
+
+Both identity variables must come from the accepted merge record, not an
+unreviewed moving branch. See [release gates](docs/operations/v13-release.md).
 
 ### Automatic Index Synchronization
 
@@ -1398,7 +1416,7 @@ For detailed architectural documentation, see the [architecture/](architecture/)
 
 See [ROADMAP.md](ROADMAP.md) for detailed development plans and current progress.
 
-**Current Status**: 1.4.0 hardening surface prepared; protected-main publication is still pending
+**Current Status**: 1.4.1 hardening surface prepared; protected-main publication is still pending
 - ✅ **Core Indexing**: SQLite + FTS5 for fast local search
 - ✅ **Multi-Language**: Specialized and registry-backed language coverage; see `docs/SUPPORT_MATRIX.md`
 - ✅ **MCP Protocol**: Verified official Python SDK compatibility over STDIO; see `docs/status/MCP_COMPATIBILITY_EVALUATION.md` for named client posture
@@ -1427,7 +1445,7 @@ Performance optimization features are implemented and available:
 - **Local-first**: All processing happens locally by default
 - **Path validation**: Prevents directory traversal attacks
 - **Input sanitization**: All queries are sanitized
-- **Secret detection**: Automatic redaction of detected secrets
+- **Sensitive-file exclusions**: Indexing honors ignore policies; this is not a secret scanner. Review source and exports before sharing.
 - **Plugin isolation**: Plugins run in restricted environments
 - **⚠️ Semantic Summary Risks**: If you enable LLM-generated semantic summaries (lazy or comprehensive), be aware of **prompt injection vulnerabilities**. Malicious actors could place hidden instructions in code comments (e.g., in an open-source dependency) that the summarizer LLM might execute. Always review generated index metadata if summarizing untrusted code.
 

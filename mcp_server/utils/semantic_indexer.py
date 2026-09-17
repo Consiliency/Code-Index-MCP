@@ -7,6 +7,9 @@ import json
 import logging
 import os
 import re
+import threading
+import uuid
+from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -269,8 +272,8 @@ class SemanticIndexer:
     # WITHOUT reading the local ``.index_metadata.json`` file.
     PROVENANCE_VERSION = "collection-provenance.v1"
     # Reserved point id for the provenance sentinel. Ordinary points use
-    # content-hash-derived 64-bit ids (``_symbol_id`` / ``_document_section_id``).
-    # A real point hashing to this id is astronomically unlikely (~2**-64) but
+    # content-hash-derived 63-bit ids (``_symbol_id`` / ``_document_section_id``).
+    # A real point hashing to this id is astronomically unlikely (~2**-63) but
     # NOT impossible, so both id-derivations route through ``_reserve_safe_id``,
     # which relocates any real id that lands on the reserved value — guaranteeing
     # id 0 is never occupied by a real chunk and is safe to reserve.
@@ -304,8 +307,12 @@ class SemanticIndexer:
         commit: Optional[str] = None,
         lineage_id: Optional[str] = None,
         sqlite_store: Optional[Any] = None,
+        metadata_file: Optional[Union[str, Path]] = None,
+        staging: bool = False,
     ) -> None:
         self.sqlite_store = sqlite_store
+        self.commit = commit
+        self.staging = staging
         self.profile_registry = profile_registry
         self._profile_active = bool(profile or profile_registry or semantic_profile)
         self.semantic_profile = self._resolve_semantic_profile(
@@ -336,13 +343,15 @@ class SemanticIndexer:
             commit=commit,
         )
         self.qdrant_path = qdrant_path
-        self.metadata_file = ".index_metadata.json"
+        self.metadata_file = (
+            str(metadata_file) if metadata_file is not None else ".index_metadata.json"
+        )
         self.path_resolver = path_resolver or PathResolver()
+        self._write_lock = threading.RLock()
 
-        # Initialize Qdrant client with server mode preference
+        # Own exactly the requested backend for this generation.
         self._qdrant_available = False
         self._connection_mode = None  # 'server', 'file', or 'memory'
-        self.qdrant = self._init_qdrant_client(qdrant_path)
 
         # Credentials must never be sourced from the on-disk profile payload.
         # Resolve the embedding API key from the process environment only; the
@@ -363,6 +372,7 @@ class SemanticIndexer:
             base_url=_build_metadata.get("openai_api_base"),
         )
         self.embedding_provider = self.embedding_client.provider_name
+        self.qdrant = self._init_qdrant_client(qdrant_path)
 
         # Assumed-profile bootstrap for construct-then-inspect back-compat. The
         # AUTHORITATIVE, provenance-attested profile the vectors are actually
@@ -379,8 +389,13 @@ class SemanticIndexer:
         # providers cannot be attested, so preserve their construct-time behavior
         # exactly — the write gate special-cases them as a no-op.
         if not self._provider_supports_provenance():
-            self._ensure_collection()
-            self._update_metadata()
+            try:
+                self._load_existing_metadata()
+                self._ensure_collection()
+                self._update_metadata()
+            except Exception:
+                self.qdrant.close()
+                raise
 
     def _resolve_semantic_profile(
         self,
@@ -507,9 +522,7 @@ class SemanticIndexer:
         client = getattr(self, "embedding_client", None)
         return callable(getattr(client, "embed_with_provenance", None))
 
-    def _validate_embedding_response(
-        self, response: Any, expected_count: int
-    ) -> List[List[float]]:
+    def _validate_embedding_response(self, response: Any, expected_count: int) -> List[List[float]]:
         """Fail-closed request↔response index validation for a batch embed.
 
         Enforces a one-to-one mapping between request position and response item:
@@ -569,7 +582,9 @@ class SemanticIndexer:
             response = self.embedding_client.embed_with_provenance(
                 texts_list, input_type=input_type
             )
-            return self._validate_embedding_response(response, len(texts_list))
+            vectors = self._validate_embedding_response(response, len(texts_list))
+            self._check_embedding_provenance(response, input_type=input_type)
+            return vectors
         return self.embedding_client.embed(texts_list, input_type=input_type)
 
     def _max_chunk_chars(self) -> int:
@@ -1046,143 +1061,40 @@ class SemanticIndexer:
 
         for start in range(0, len(points), batch_size):
             batch = points[start : start + batch_size]
-            self.qdrant.upsert(collection_name=self.collection, points=batch)
+            result = self.qdrant.upsert(collection_name=self.collection, points=batch, wait=True)
+            if self.staging and getattr(result, "status", None) not in {
+                "completed",
+                models.UpdateStatus.COMPLETED,
+            }:
+                raise RuntimeError("Staged vector write was not acknowledged")
 
     def _init_qdrant_client(self, qdrant_path: str) -> QdrantClient:
-        """Initialize Qdrant client with server mode preference.
-
-        Tries to connect in the following order:
-        1. Server mode (if QDRANT_USE_SERVER=true)
-        2. Explicit HTTP URL (if qdrant_path starts with http)
-        3. Memory mode (if qdrant_path is :memory:)
-        4. File-based mode (local storage)
-
-        Sets _qdrant_available and _connection_mode on success.
-
-        Returns:
-            Configured QdrantClient instance
-
-        Raises:
-            RuntimeError: If all connection methods fail
-        """
-        # Prefer explicit local/file-backed paths over server mode so callers that
-        # pass a concrete artifact path do not silently write to a running daemon.
-        if qdrant_path and not qdrant_path.startswith("http") and qdrant_path != ":memory:":
-            try:
-                logger.info(f"Using file-based Qdrant at explicit path: {qdrant_path}")
-                Path(qdrant_path).mkdir(parents=True, exist_ok=True)
-                client = QdrantClient(path=qdrant_path)
-                self._qdrant_available = True
-                self._connection_mode = "file"
-                return client
-            except Exception as e:
-                lock_path = Path(qdrant_path) / ".lock"
-                if lock_path.exists():
-                    try:
-                        logger.warning(
-                            f"Removing stale Qdrant lock file at {lock_path} and retrying"
-                        )
-                        lock_path.unlink()
-                        client = QdrantClient(path=qdrant_path)
-                        self._qdrant_available = True
-                        self._connection_mode = "file"
-                        return client
-                    except Exception as retry_error:
-                        e = retry_error
-                logger.warning(
-                    f"Explicit file-based Qdrant unavailable at {qdrant_path}: "
-                    f"{type(e).__name__}: {e}. Falling back to server mode."
-                )
-
-        # First, try server mode (recommended for concurrent access)
-        server_url = os.environ.get("QDRANT_URL", "http://localhost:6333")
-
-        if os.environ.get("QDRANT_USE_SERVER", "true").lower() == "true":
-            try:
-                # Try connecting to Qdrant server
-                logger.info(f"Attempting to connect to Qdrant server at {server_url}")
-                client = QdrantClient(url=server_url, timeout=5)
-                # Test connection with actual API call
-                client.get_collections()
-                logger.info(f"Successfully connected to Qdrant server at {server_url}")
-                self._qdrant_available = True
-                self._connection_mode = "server"
-                return client
-            except Exception as e:
-                logger.warning(
-                    f"Qdrant server not available at {server_url}: {type(e).__name__}: {e}. "
-                    "Falling back to file-based mode."
-                )
-
-        # Support explicit HTTP URLs
-        if qdrant_path.startswith("http"):
-            try:
-                logger.info(f"Connecting to Qdrant at explicit URL: {qdrant_path}")
-                client = QdrantClient(url=qdrant_path, timeout=5)
-                # Test connection
-                client.get_collections()
-                logger.info(f"Successfully connected to Qdrant at {qdrant_path}")
-                self._qdrant_available = True
-                self._connection_mode = "server"
-                return client
-            except Exception as e:
-                logger.error(
-                    f"Failed to connect to Qdrant server at {qdrant_path}: {type(e).__name__}: {e}"
-                )
-                raise RuntimeError(
-                    f"Cannot connect to Qdrant server at {qdrant_path}. "
-                    f"Error: {e}. Please check the URL and ensure the server is running."
-                )
-
-        # Memory mode
+        """Open exactly the selected backend, without lock removal or fallback."""
+        client = None
+        self._qdrant_available = False
         if qdrant_path == ":memory:":
-            try:
-                logger.info("Initializing Qdrant in memory mode")
-                client = QdrantClient(location=":memory:")
-                self._qdrant_available = True
-                self._connection_mode = "memory"
-                logger.info("Qdrant memory mode initialized successfully")
-                return client
-            except Exception as e:
-                logger.error(f"Failed to initialize Qdrant in memory mode: {e}")
-                raise RuntimeError(f"Failed to initialize Qdrant in memory mode: {e}")
-
-        # Local file path with lock cleanup
+            mode, kwargs = "memory", {"location": ":memory:"}
+        elif qdrant_path.startswith(("http://", "https://")):
+            mode, kwargs = "server", {"url": qdrant_path, "timeout": 5}
+        elif qdrant_path:
+            mode, kwargs = "file", {"path": qdrant_path}
+        else:
+            raise ValueError("An explicit Qdrant backend is required")
         try:
-            logger.info(f"Initializing file-based Qdrant at {qdrant_path}")
-
-            # Clean up any stale locks
-            lock_file = Path(qdrant_path) / ".lock"
-            if lock_file.exists():
-                logger.warning(f"Removing stale Qdrant lock file: {lock_file}")
-                try:
-                    lock_file.unlink()
-                except Exception as lock_error:
-                    logger.error(f"Failed to remove lock file: {lock_error}")
-                    # Continue anyway - Qdrant might handle it
-
-            client = QdrantClient(path=qdrant_path)
-            # Test that client is functional
-            try:
-                client.get_collections()
-            except Exception as test_error:
-                logger.warning(f"Initial collection check failed: {test_error}")
-                # This is okay - collection might not exist yet
-
-            self._qdrant_available = True
-            self._connection_mode = "file"
-            logger.info(f"File-based Qdrant initialized successfully at {qdrant_path}")
-            return client
-        except Exception as e:
-            logger.error(
-                f"Failed to initialize file-based Qdrant at {qdrant_path}: "
-                f"{type(e).__name__}: {e}"
-            )
+            client = QdrantClient(**kwargs)
+            client.get_collections()
+        except Exception as exc:
+            if client is not None:
+                client.close()
+            self._connection_mode = None
             raise RuntimeError(
-                f"Failed to initialize Qdrant vector store. "
-                f"Attempted path: {qdrant_path}. Error: {e}. "
-                f"Please check file permissions and disk space."
-            )
+                f"Selected Qdrant {mode} backend unavailable ({type(exc).__name__}); "
+                "release its owning process or repair the endpoint, then retry."
+            ) from None
+        self._qdrant_available = True
+        self._connection_mode = mode
+        logger.info("Opened Qdrant backend (mode=%s)", mode)
+        return client
 
     @property
     def is_available(self) -> bool:
@@ -1363,36 +1275,31 @@ class SemanticIndexer:
     # ------------------------------------------------------------------
     def _update_metadata(self) -> None:
         """Update index metadata with current model and configuration."""
-        metadata = self._build_metadata()
-
-        try:
-            with open(self.metadata_file, "w") as f:
-                json.dump(metadata, f, indent=2)
-        except Exception:
-            # Don't fail if metadata can't be written
-            pass
+        self._atomic_write_metadata(self._build_metadata())
 
     # ------------------------------------------------------------------
     def _atomic_write_metadata(self, metadata: Dict[str, Any]) -> None:
-        """Persist metadata atomically, RAISING on failure (unlike _update_metadata).
+        """Persist metadata with atomic replace and explicit durability checks.
 
-        Writes to a sibling temp file then ``os.replace`` so a crash or an I/O
-        error leaves the previous ``.index_metadata.json`` byte-for-byte intact —
-        the metadata-write step therefore mutates ZERO durable state on failure,
-        which the lifecycle ordering invariant depends on.
+        Failures before replace preserve old bytes. A directory-fsync failure
+        after replace is unacknowledged durability and must still refuse writes.
         """
-        target = self.metadata_file
-        tmp = f"{target}.attest.tmp"
+        target = Path(self.metadata_file)
+        tmp = target.with_name(f".{target.name}.{uuid.uuid4().hex}.tmp")
         try:
-            with open(tmp, "w", encoding="utf-8") as handle:
+            with tmp.open("x", encoding="utf-8") as handle:
                 json.dump(metadata, handle, indent=2)
+                handle.flush()
+                os.fsync(handle.fileno())
             os.replace(tmp, target)
+            if os.name != "nt":
+                directory = os.open(target.parent, os.O_RDONLY | os.O_DIRECTORY)
+                try:
+                    os.fsync(directory)
+                finally:
+                    os.close(directory)
         except Exception:
-            try:
-                if os.path.exists(tmp):
-                    os.remove(tmp)
-            except Exception:
-                pass
+            tmp.unlink(missing_ok=True)
             raise
 
     def _attest_active_profile(
@@ -1426,8 +1333,7 @@ class SemanticIndexer:
         if not attestation.ok:
             raise RuntimeError(
                 "_attested_metadata refuses to stamp attested metadata from a "
-                "failed attestation (attestation.ok is False): "
-                + attestation.failure_reason()
+                "failed attestation (attestation.ok is False): " + attestation.failure_reason()
             )
         metadata = self._build_metadata()
         attestation_block = attestation.to_dict()
@@ -1447,14 +1353,17 @@ class SemanticIndexer:
         return metadata
 
     def _prepare_for_writes(self) -> None:
+        """Serialize the first attestation and metadata publication for this indexer."""
+        with getattr(self, "_write_lock", nullcontext()):
+            self._prepare_for_writes_locked()
+
+    def _prepare_for_writes_locked(self) -> None:
         """Ordered write gate: attest -> persist -> ensure_collection (once).
 
         Enforces the lifecycle invariant that provider attestation and atomic
         profile persistence happen BEFORE collection create/validate and any point
-        write. If the provider fails, or the derived profile fails validation, or
-        the metadata write fails, this raises and mutates ZERO collection/metadata
-        state (``_ensure_collection`` is only reached after a successful, durable
-        attested-profile write). Idempotent: runs its work at most once.
+        write. Failure denies vector writes, including a durability failure after
+        atomic metadata replacement. Idempotent after successful preparation.
 
         Providers that predate the provenance contract (bare ``embed`` test
         doubles) cannot be attested; the gate degrades to the INFERSAFE-stabilized
@@ -1475,10 +1384,10 @@ class SemanticIndexer:
         if not attestation.ok:
             # Fail closed, naming the remediation (INFERSAFE blocked-path parity).
             raise RuntimeError(
-                attestation.failure_reason(
-                    subject=f"collection '{self.collection}'"
-                )
+                attestation.failure_reason(subject=f"collection '{self.collection}'")
             )
+
+        self._check_indexed_profile(attestation)
 
         # 2. Validate the LIVE collection shape (read-only) BEFORE persisting
         #    attested metadata. Persisting first would stamp attested=True at the
@@ -1513,7 +1422,11 @@ class SemanticIndexer:
         return record
 
     def _check_query_provenance(self, response: Any) -> None:
-        """Fail closed when a query embedding is incompatible with the index.
+        """Validate query provenance using the shared batch admission contract."""
+        self._check_embedding_provenance(response, input_type="query")
+
+    def _check_embedding_provenance(self, response: Any, *, input_type: str) -> None:
+        """Fail closed when any embedding batch is incompatible with the index.
 
         Attests the query-time ``embedding-response.v1`` and compares its derived
         provenance against what the vectors were actually indexed under (the
@@ -1522,16 +1435,20 @@ class SemanticIndexer:
         returning silently wrong nearest neighbours.
         """
         attestation = attest_embedding_response(
-            self.semantic_profile, response, role=EmbeddingRole.QUERY
+            self.semantic_profile,
+            response,
+            role=EmbeddingRole.QUERY if input_type == "query" else EmbeddingRole.DOCUMENT,
         )
         if not attestation.ok:
             raise RuntimeError(
-                attestation.failure_reason(
-                    subject=f"query against collection '{self.collection}'"
-                )
+                attestation.failure_reason(subject=f"query against collection '{self.collection}'")
             )
 
-        record = self._indexed_profile_record()
+        self._check_indexed_profile(attestation)
+
+    def _check_indexed_profile(self, attestation: ProfileAttestation, *, record=None) -> None:
+        """Refuse mixed vector spaces before metadata restamping or batch writes."""
+        record = self._indexed_profile_record() if record is None else record
         # Only cross-check against a persisted record that was itself attested;
         # an un-attested/legacy record is not authoritative, so step 1's live
         # attestation is the guard.
@@ -1540,11 +1457,7 @@ class SemanticIndexer:
 
         indexed_dim = record.get("model_dimension")
         query_dim = attestation.derived.get("dimension", {}).get("value")
-        if (
-            isinstance(indexed_dim, int)
-            and isinstance(query_dim, int)
-            and indexed_dim != query_dim
-        ):
+        if isinstance(indexed_dim, int) and isinstance(query_dim, int) and indexed_dim != query_dim:
             raise RuntimeError(
                 "Query embedding provenance is incompatible with the indexed "
                 f"vectors: index was built at dimension {indexed_dim} but the query "
@@ -1665,8 +1578,7 @@ class SemanticIndexer:
                 return True  # Unreadable config: never treat as compatible reuse.
             expected_distance = self.resolve_qdrant_distance(self.distance_metric)
             return (
-                actual_dimension != self.embedding_dimension
-                or actual_distance != expected_distance
+                actual_dimension != self.embedding_dimension or actual_distance != expected_distance
             )
         except Exception as exc:
             if _is_transient_qdrant_read_error(exc):
@@ -1834,18 +1746,28 @@ class SemanticIndexer:
         try:
             with open(self.metadata_file, "r", encoding="utf-8") as handle:
                 payload = json.load(handle)
-            return payload if isinstance(payload, dict) else {}
-        except Exception:
+        except FileNotFoundError:
             return {}
+        except Exception:
+            raise RuntimeError("Semantic metadata cannot be read or decoded") from None
+        if not isinstance(payload, dict):
+            raise RuntimeError("Semantic metadata must be an object")
+        return payload
 
     # ------------------------------------------------------------------
     def _get_git_commit_hash(self) -> Optional[str]:
-        """Get current git commit hash if available."""
+        """Use captured indexing provenance, or resolve Git at the repository root."""
+        if getattr(self, "commit", None):
+            return self.commit
         try:
             import subprocess
 
             result = subprocess.run(
-                ["git", "rev-parse", "HEAD"], capture_output=True, text=True, cwd="."
+                ["git", "rev-parse", "HEAD"],
+                capture_output=True,
+                text=True,
+                cwd=self.path_resolver.repository_root,
+                timeout=10,
             )
             if result.returncode == 0:
                 return result.stdout.strip()
@@ -1901,16 +1823,11 @@ class SemanticIndexer:
         return self._reserve_safe_id(int.from_bytes(h, "big", signed=False))
 
     def _reserve_safe_id(self, value: int) -> int:
-        """Keep a derived point id off the reserved provenance sentinel id.
-
-        ``_symbol_id`` / ``_document_section_id`` truncate a hash to 64 bits, so a
-        real point could (with probability ~2**-64) derive an id equal to the
-        reserved ``PROVENANCE_POINT_ID``. Fail-safe: relocate such a collision to a
-        fixed non-reserved id so a real point can never occupy — and thereby
-        clobber — the provenance sentinel.
-        """
+        """Fit SQLite's signed integer links without occupying the Qdrant sentinel."""
+        maximum = (1 << 63) - 1
+        value &= maximum
         if value == self.PROVENANCE_POINT_ID:
-            return 0xFFFFFFFFFFFFFFFF
+            return maximum
         return value
 
     def _looks_like_code_intent(self, query: str) -> bool:
@@ -2318,26 +2235,41 @@ class SemanticIndexer:
         relative_path = self.path_resolver.normalize_path(path)
         language = self._infer_chunk_language(path)
         used_fallback_chunks = False
-        try:
-            chunk_results = chunk_file(
-                path,
-                language,
-                extract_metadata=True,
-                include_retrieval_metadata=True,
-            )
-        except TypeError:
+        if self.staging:
+            # SQLite owns the exact chunks summarized for this unpublished generation.
+            file_row = self.sqlite_store.get_file_by_path(path)
+            if file_row is None:
+                raise RuntimeError("Staged semantic input has no stored file")
+            chunk_results = [
+                SimpleNamespace(
+                    content=row["content"],
+                    chunk_id=row["chunk_id"],
+                    node_id=row["node_id"],
+                    metadata=json.loads(row["metadata"] or "{}"),
+                    node_type=row["node_type"],
+                    start_line=row["line_start"],
+                    end_line=row["line_end"],
+                )
+                for row in self.sqlite_store.get_chunks_for_file(file_row["id"])
+                if row["chunk_type"] != "document" and not row["chunk_id"].startswith("history:")
+            ]
+        else:
             try:
                 chunk_results = chunk_file(
                     path,
                     language,
                     extract_metadata=True,
+                    include_retrieval_metadata=True,
                 )
+            except TypeError:
+                try:
+                    chunk_results = chunk_file(path, language, extract_metadata=True)
+                except Exception:
+                    used_fallback_chunks = True
+                    chunk_results = self._fallback_text_chunks(path, relative_path)
             except Exception:
                 used_fallback_chunks = True
                 chunk_results = self._fallback_text_chunks(path, relative_path)
-        except Exception:
-            used_fallback_chunks = True
-            chunk_results = self._fallback_text_chunks(path, relative_path)
 
         chunks = [chunk for chunk in chunk_results if chunk.content.strip()]
         symbols: List[Dict[str, Any]] = []
@@ -2467,6 +2399,7 @@ class SemanticIndexer:
         file_embedding_text = prep["file_embedding_text"]
         language = prep["language"]
         relative_path = prep["relative_path"]
+        canonical_path = str(self.path_resolver.resolve_path(relative_path))
 
         chunk_embeds = embeds[: len(normalized_chunks)]
         file_embed = None
@@ -2483,7 +2416,7 @@ class SemanticIndexer:
             chunk_id = str(chunk.chunk_id or chunk.node_id)
 
             payload = {
-                "file": str(path),
+                "file": canonical_path,
                 "relative_path": relative_path,
                 "content_hash": content_hash,
                 "chunk_id": normalized["derived_chunk_id"],
@@ -2519,7 +2452,7 @@ class SemanticIndexer:
             points.append(
                 models.PointStruct(
                     id=self._symbol_id(
-                        str(path),
+                        canonical_path,
                         f"{normalized['symbol']}#{normalized['derived_chunk_id']}",
                         normalized["start_line"],
                         content_hash,
@@ -2532,7 +2465,7 @@ class SemanticIndexer:
         if file_embed is not None:
             file_summary_chunk_id = self._file_summary_chunk_id(relative_path)
             file_summary_payload = {
-                "file": str(path),
+                "file": canonical_path,
                 "relative_path": relative_path,
                 "content_hash": None,
                 "chunk_id": file_summary_chunk_id,
@@ -2552,7 +2485,7 @@ class SemanticIndexer:
             }
             points.append(
                 models.PointStruct(
-                    id=self._symbol_id(str(path), "file_summary", 1),
+                    id=self._symbol_id(canonical_path, "file_summary", 1),
                     vector=file_embed,
                     payload=file_summary_payload,
                 )
@@ -2589,11 +2522,10 @@ class SemanticIndexer:
                     )
         except Exception as e:
             logger.error(
-                f"Failed to upsert {len(points)} points for file {path}: "
-                f"{type(e).__name__}: {e}"
+                f"Failed to upsert {len(points)} points for file {path}: " f"{type(e).__name__}"
             )
             self._qdrant_available = False
-            raise RuntimeError(f"Failed to store embeddings for {path} in Qdrant: {e}")
+            raise RuntimeError("Failed to store embeddings in Qdrant") from None
 
         return {
             "file": str(path),
@@ -2695,6 +2627,7 @@ class SemanticIndexer:
         # Phase 1: prepare all files — chunking + build embedding texts, no API calls
         preparations: List[tuple] = []
         skipped = 0
+        failed = 0
         blocked_files: List[str] = []
         missing_summary_chunk_ids: List[str] = []
         for path in paths:
@@ -2710,13 +2643,13 @@ class SemanticIndexer:
                 else:
                     skipped += 1
             except Exception as exc:
-                logger.warning("Failed to prepare %s for semantic indexing: %s", path, exc)
-                skipped += 1
+                logger.warning("Failed to prepare semantic input: %s", type(exc).__name__)
+                failed += 1
 
         if not preparations:
             return {
                 "files_indexed": 0,
-                "files_failed": 0,
+                "files_failed": failed,
                 "files_skipped": skipped,
                 "files_blocked": len(blocked_files),
                 "blocked_files": blocked_files,
@@ -2782,7 +2715,6 @@ class SemanticIndexer:
 
         # Phase 4: store per-file using pre-computed embeddings
         indexed = 0
-        failed = 0
         built_point_ids: List[int] = []
         indexed_relative_paths: List[str] = []
         for path, prep, start, end in file_slices:
@@ -2793,7 +2725,7 @@ class SemanticIndexer:
                 indexed_relative_paths.append(prep["relative_path"])
                 indexed += 1
             except Exception as exc:
-                logger.error("Failed to store embeddings for %s: %s", path, exc)
+                logger.error("Failed to store semantic embeddings: %s", type(exc).__name__)
                 failed += 1
 
         # Phase 5: stamp collection-resident provenance for this successful build.
@@ -2804,7 +2736,7 @@ class SemanticIndexer:
         # included relative paths joined by '\n', no trailing newline) so a
         # collection built from the frozen corpus emits a ``corpus_sha256`` that
         # verifies against the benchmark's recorded value.
-        if indexed:
+        if indexed and not failed and not blocked_files:
             corpus_sha256 = self._compute_corpus_sha256(indexed_relative_paths)
             self._write_collection_provenance_best_effort(
                 point_ids=built_point_ids, corpus_sha256=corpus_sha256
@@ -2827,12 +2759,15 @@ class SemanticIndexer:
         }
 
     # ------------------------------------------------------------------
-    def query(self, text: str, limit: int = 5) -> Iterable[dict[str, Any]]:
+    def query(
+        self, text: str, limit: int = 5, *, source_chunk_ids: Optional[List[str]] = None
+    ) -> Iterable[dict[str, Any]]:
         """Query indexed code snippets using a natural language description.
 
         Args:
             text: Natural language query
             limit: Maximum number of results
+            source_chunk_ids: Restrict retrieval to these source chunks before ranking.
 
         Yields:
             Search results with metadata and scores
@@ -2845,22 +2780,37 @@ class SemanticIndexer:
                 "Qdrant is not available - cannot perform semantic search. "
                 "Check connection status with validate_connection()."
             )
+        if limit <= 0 or source_chunk_ids == []:
+            return
+
+        query_filter = models.Filter(
+            must_not=[
+                models.FieldCondition(key=self.PROVENANCE_TAG, match=models.MatchValue(value=True)),
+                models.FieldCondition(key="is_deleted", match=models.MatchValue(value=True)),
+            ],
+            should=(
+                [
+                    models.FieldCondition(key=key, match=models.MatchAny(any=source_chunk_ids))
+                    for key in ("source_chunk_id", "chunk_id")
+                ]
+                if source_chunk_ids is not None
+                else None
+            ),
+        )
 
         if self._provider_supports_provenance():
             try:
-                response = self.embedding_client.embed_with_provenance(
-                    [text], input_type="query"
-                )
+                response = self.embedding_client.embed_with_provenance([text], input_type="query")
                 embedding = self._validate_embedding_response(response, 1)[0]
-            except Exception as e:
-                raise RuntimeError(f"Failed to generate query embedding: {e}")
+            except Exception:
+                raise RuntimeError("Failed to generate query embedding") from None
             # Fail closed if the query model drifted from the indexed vectors.
             self._check_query_provenance(response)
         else:
             try:
                 embedding = self._embed_texts([text], input_type="query")[0]
-            except Exception as e:
-                raise RuntimeError(f"Failed to generate query embedding: {e}")
+            except Exception:
+                raise RuntimeError("Failed to generate query embedding") from None
 
         query_limit = limit
         if self._looks_like_code_intent(text):
@@ -2871,12 +2821,14 @@ class SemanticIndexer:
                 results = self.qdrant.search(
                     collection_name=self.collection,
                     query_vector=embedding,
+                    query_filter=query_filter,
                     limit=query_limit,
                 )
             else:
                 response = self.qdrant.query_points(
                     collection_name=self.collection,
                     query=embedding,
+                    query_filter=query_filter,
                     limit=query_limit,
                     with_payload=True,
                 )
@@ -2886,7 +2838,7 @@ class SemanticIndexer:
             for res in results:
                 payload = dict(res.payload or {})
                 # Never surface the reserved collection-provenance sentinel.
-                if payload.get(self.PROVENANCE_TAG):
+                if payload.get(self.PROVENANCE_TAG) or payload.get("is_deleted"):
                     continue
                 payload["score"] = res.score
                 payload.update(self._semantic_result_metadata())
@@ -2894,11 +2846,9 @@ class SemanticIndexer:
 
             yield from self._rerank_query_results(text, rerank_input, limit)
         except Exception as e:
-            logger.error(f"Qdrant search failed: {type(e).__name__}: {e}")
+            logger.error(f"Qdrant search failed: {type(e).__name__}")
             self._qdrant_available = False
-            raise RuntimeError(
-                f"Semantic search failed - Qdrant error: {e}. " "Connection may have been lost."
-            )
+            raise RuntimeError("Semantic search failed - Qdrant unavailable") from None
 
     # ------------------------------------------------------------------
     # INFERLIVEGATE Lane A: collection-resident provenance
@@ -2997,9 +2947,7 @@ class SemanticIndexer:
         """
         if not getattr(self, "_qdrant_available", False):
             return None
-        manifest = self.build_collection_provenance_manifest(
-            point_ids, corpus_sha256=corpus_sha256
-        )
+        manifest = self.build_collection_provenance_manifest(point_ids, corpus_sha256=corpus_sha256)
         payload = {self.PROVENANCE_TAG: True, **manifest}
         dimension = int(self.embedding_dimension)
         # A unit-norm sentinel vector (never a zero vector, which cosine-distance
@@ -3007,10 +2955,13 @@ class SemanticIndexer:
         vector = [0.0] * dimension
         if dimension:
             vector[0] = 1.0
-        point = models.PointStruct(
-            id=self.PROVENANCE_POINT_ID, vector=vector, payload=payload
-        )
-        self.qdrant.upsert(collection_name=self.collection, points=[point])
+        point = models.PointStruct(id=self.PROVENANCE_POINT_ID, vector=vector, payload=payload)
+        result = self.qdrant.upsert(collection_name=self.collection, points=[point], wait=True)
+        if self.staging and getattr(result, "status", None) not in {
+            "completed",
+            models.UpdateStatus.COMPLETED,
+        }:
+            raise RuntimeError("Staged provenance write was not acknowledged")
         logger.info(
             "Wrote collection-provenance sentinel to '%s' (point_set_id=%s)",
             self.collection,
@@ -3031,9 +2982,7 @@ class SemanticIndexer:
         but never propagates an exception.
         """
         try:
-            return self.write_collection_provenance(
-                point_ids, corpus_sha256=corpus_sha256
-            )
+            return self.write_collection_provenance(point_ids, corpus_sha256=corpus_sha256)
         except Exception as exc:  # pragma: no cover - defensive best-effort guard
             logger.warning(
                 "Failed to write collection provenance for '%s': %s: %s",
@@ -3043,7 +2992,9 @@ class SemanticIndexer:
             )
             return None
 
-    def _invalidate_collection_provenance(self) -> None:
+    def _invalidate_collection_provenance(
+        self, *, strict: bool = False, collection: Optional[str] = None
+    ) -> None:
         """Delete the reserved provenance sentinel after an incremental mutation.
 
         Any post-build incremental mutation (``index_file``, ``index_symbol``,
@@ -3056,18 +3007,22 @@ class SemanticIndexer:
         the mutation that triggered it.
         """
         if not getattr(self, "_qdrant_available", False):
+            if strict:
+                raise RuntimeError("Qdrant unavailable for provenance invalidation")
             return
         try:
             self.qdrant.delete(
-                collection_name=self.collection,
+                collection_name=collection or self.collection,
                 points_selector=models.PointIdsList(points=[self.PROVENANCE_POINT_ID]),
+                wait=True,
             )
         except Exception as exc:  # pragma: no cover - defensive best-effort guard
+            if strict:
+                raise RuntimeError("Collection provenance invalidation failed") from None
             logger.debug(
-                "Failed to invalidate collection provenance for '%s': %s: %s",
+                "Failed to invalidate collection provenance for '%s': %s",
                 self.collection,
                 type(exc).__name__,
-                exc,
             )
 
     def read_collection_provenance(
@@ -3155,9 +3110,7 @@ class SemanticIndexer:
             # caller-supplied key would otherwise make a real point silently
             # invisible.
             if metadata:
-                payload.update(
-                    {k: v for k, v in metadata.items() if k != self.PROVENANCE_TAG}
-                )
+                payload.update({k: v for k, v in metadata.items() if k != self.PROVENANCE_TAG})
 
             point = models.PointStruct(id=point_id, vector=embedding, payload=payload)
 
@@ -3206,28 +3159,38 @@ class SemanticIndexer:
         sqlite_store: Optional["SQLiteStore"] = None,
     ) -> int:
         """Delete stale vectors for profile-scoped chunk ids and clear mappings."""
+        deleted, _ = self._delete_mapped_vectors(profile_id, chunk_ids, sqlite_store)
+        return deleted
+
+    def _delete_mapped_vectors(
+        self, profile_id: str, chunk_ids: List[str], sqlite_store: Optional["SQLiteStore"]
+    ) -> tuple[int, int]:
         if sqlite_store is None or not chunk_ids:
-            return 0
-
-        point_ids = list(dict.fromkeys(sqlite_store.get_semantic_point_ids(profile_id, chunk_ids)))
-
-        if point_ids and self._qdrant_available:
-            try:
-                self.qdrant.delete(
-                    collection_name=self.collection,
-                    points_selector=models.PointIdsList(points=point_ids),
-                )
-            except Exception as e:
-                logger.error(
-                    "Failed deleting stale vectors for profile '%s': %s",
-                    profile_id,
-                    e,
-                )
-                self._qdrant_available = False
-                raise RuntimeError(f"Failed to delete stale vectors from Qdrant: {e}")
-
-        sqlite_store.delete_semantic_point_mappings(profile_id, chunk_ids)
-        return len(point_ids)
+            return 0, 0
+        groups: Dict[str, list] = {}
+        # The legacy point-id lookup drops collection identity; preserve it here.
+        with sqlite_store._get_connection() as connection:
+            for start in range(0, len(chunk_ids), 500):
+                batch = chunk_ids[start : start + 500]
+                placeholders = ",".join("?" for _ in batch)
+                rows = connection.execute(
+                    "SELECT point_id, collection FROM semantic_points "
+                    f"WHERE profile_id = ? AND chunk_id IN ({placeholders})",
+                    [profile_id, *batch],
+                ).fetchall()
+                for point_id, collection in rows:
+                    if not collection:
+                        raise RuntimeError(
+                            "Semantic deletion requires recorded collection identity"
+                        )
+                    if getattr(self, "staging", False) and collection != self.collection:
+                        raise RuntimeError("Staged cleanup cannot mutate another generation")
+                    groups.setdefault(collection, []).append(point_id)
+        deleted = 0
+        for collection, point_ids in groups.items():
+            deleted += self.delete_remote_points(point_ids, collection=collection)
+        mappings = sqlite_store.delete_semantic_point_mappings(profile_id, chunk_ids)
+        return deleted, mappings
 
     def delete_remote_points(
         self,
@@ -3251,22 +3214,25 @@ class SemanticIndexer:
         if not self._qdrant_available:
             raise RuntimeError("Qdrant client unavailable for remote point deletion")
         target = collection or self.collection
+        if getattr(self, "staging", False) and target != self.collection:
+            raise RuntimeError("Staged cleanup cannot mutate another generation")
         try:
-            self.qdrant.delete(
-                collection_name=target,
-                points_selector=models.PointIdsList(points=point_ids),
-            )
-        except Exception as e:
-            logger.error(
-                "Failed deleting ledger points from collection '%s': %s", target, e
-            )
+            self._invalidate_collection_provenance(strict=True, collection=target)
+            for start in range(0, len(point_ids), 256):
+                self.qdrant.delete(
+                    collection_name=target,
+                    points_selector=models.PointIdsList(points=point_ids[start : start + 256]),
+                    wait=True,
+                )
+        except Exception as exc:
+            logger.error("Remote point deletion failed (%s)", type(exc).__name__)
             # NOTE: deliberately do NOT set ``self._qdrant_available = False`` here.
             # That flag is the upsert path's circuit breaker (``_batch_upsert``).
             # The drain runs at the FRONT of every reindex against the shared cached
             # indexer, so a transient DELETE blip must not degrade indexing
             # availability for the rest of the run.  We still raise so the caller
             # (the ledger drain) leaves the row for a later attempt.
-            raise RuntimeError(f"Failed to delete remote points from Qdrant: {e}")
+            raise RuntimeError("Failed to delete remote points from Qdrant") from None
         return len(point_ids)
 
     def cleanup_stale_semantic_artifacts(
@@ -3288,31 +3254,14 @@ class SemanticIndexer:
             }
 
         vector_chunk_ids = list(invalidation.get("vector_chunk_ids", []) or [])
-        point_ids = list(
-            dict.fromkeys(sqlite_store.get_semantic_point_ids(profile_id, vector_chunk_ids))
+        deleted_vectors, deleted_mappings = self._delete_mapped_vectors(
+            profile_id, vector_chunk_ids, sqlite_store
         )
-
-        if point_ids and self._qdrant_available:
-            try:
-                self.qdrant.delete(
-                    collection_name=self.collection,
-                    points_selector=models.PointIdsList(points=point_ids),
-                )
-            except Exception as e:
-                logger.error(
-                    "Failed deleting stale semantic artifacts for profile '%s': %s",
-                    profile_id,
-                    e,
-                )
-                self._qdrant_available = False
-                raise RuntimeError(f"Failed to delete stale semantic artifacts from Qdrant: {e}")
-
-        deleted_mappings = sqlite_store.delete_semantic_point_mappings(profile_id, vector_chunk_ids)
         deleted_summaries = sqlite_store.delete_chunk_summaries(
             list(invalidation.get("summary_chunk_ids_to_delete", []) or [])
         )
         return {
-            "vectors_deleted": len(point_ids),
+            "vectors_deleted": deleted_vectors,
             "mappings_deleted": deleted_mappings,
             "summaries_deleted": deleted_summaries,
             "summaries_preserved": len(invalidation.get("summary_chunk_ids_preserved", [])),
@@ -3322,12 +3271,15 @@ class SemanticIndexer:
         }
 
     # ------------------------------------------------------------------
-    def search(self, query: str, limit: int = 20) -> list[dict[str, Any]]:
+    def search(
+        self, query: str, limit: int = 20, *, source_chunk_ids: Optional[List[str]] = None
+    ) -> list[dict[str, Any]]:
         """Search for code using semantic similarity.
 
         Args:
             query: Natural language search query
             limit: Maximum number of results
+            source_chunk_ids: Restrict retrieval to these source chunks before ranking.
 
         Returns:
             List of search results with metadata and scores
@@ -3340,7 +3292,7 @@ class SemanticIndexer:
                 "Qdrant is not available - semantic search unavailable. "
                 "Use is_available property to check before calling."
             )
-        return list(self.query(query, limit))
+        return list(self.query(query, limit, source_chunk_ids=source_chunk_ids))
 
     # ------------------------------------------------------------------
     # Document-specific methods
@@ -3696,61 +3648,46 @@ class SemanticIndexer:
     # File operation methods for path management
     # ------------------------------------------------------------------
 
-    def remove_file(self, file_path: Union[str, Path]) -> int:
-        """Remove all embeddings for a file from the index.
-
-        Args:
-            file_path: File path (absolute or relative)
-
-        Returns:
-            Number of points removed
-
-        Raises:
-            RuntimeError: If Qdrant is unavailable or deletion fails
-        """
+    def _point_batches(
+        self, condition: Filter, *, collection: Optional[str] = None, with_vectors: bool = False
+    ) -> Iterable[List[Any]]:
+        """Scroll all matching points with bounded pages and stable point identities."""
         if not self._qdrant_available:
-            raise RuntimeError(f"Qdrant is not available - cannot remove file {file_path}")
+            raise RuntimeError("Qdrant unavailable for point maintenance")
+        offset = None
+        while True:
+            batch, offset = self.qdrant.scroll(
+                collection_name=collection or self.collection,
+                scroll_filter=condition,
+                limit=256,
+                offset=offset,
+                with_payload=True,
+                with_vectors=with_vectors,
+            )
+            if batch:
+                yield batch
+            if offset is None:
+                break
 
-        # Normalize to relative path
-        try:
-            relative_path = self.path_resolver.normalize_path(file_path)
-        except ValueError:
-            # Path might already be relative
-            relative_path = str(file_path).replace("\\", "/")
-
-        # Search for all points with this file
-        filter_condition = Filter(
+    def remove_file(self, file_path: Union[str, Path]) -> int:
+        """Delete every point for the file, with acknowledged, retryable batches."""
+        relative_path = self.path_resolver.normalize_path(file_path)
+        condition = Filter(
             must=[FieldCondition(key="relative_path", match=MatchValue(value=relative_path))]
         )
-
+        removed = 0
         try:
-            # Get count before deletion for logging
-            search_result = self.qdrant.search(
-                collection_name=self.collection,
-                query_vector=[0.0] * self.embedding_dimension,  # Dummy vector
-                filter=filter_condition,
-                limit=1000,  # Get all matches
-                with_payload=False,
-                with_vectors=False,
-            )
-
-            point_ids = [point.id for point in search_result]
-
-            if point_ids:
-                # Delete all points
+            for batch in self._point_batches(condition):
+                self._invalidate_collection_provenance(strict=True)
                 self.qdrant.delete(
                     collection_name=self.collection,
-                    points_selector=models.PointIdsList(points=point_ids),
+                    points_selector=models.PointIdsList(points=[point.id for point in batch]),
+                    wait=True,
                 )
-                logger.info(f"Removed {len(point_ids)} embeddings for file: {relative_path}")
-                # Incremental mutation: fail-closed by dropping the provenance sentinel.
-                self._invalidate_collection_provenance()
-
-            return len(point_ids)
-        except Exception as e:
-            logger.error(f"Failed to remove file {relative_path}: {type(e).__name__}: {e}")
-            self._qdrant_available = False
-            raise RuntimeError(f"Failed to remove file {relative_path} from Qdrant: {e}")
+                removed += len(batch)
+        except Exception as exc:
+            raise RuntimeError(f"File vector deletion failed ({type(exc).__name__})") from None
+        return removed
 
     def move_file(
         self,
@@ -3758,227 +3695,60 @@ class SemanticIndexer:
         new_path: Union[str, Path],
         content_hash: Optional[str] = None,
     ) -> int:
-        """Update all embeddings when a file is moved.
-
-        Args:
-            old_path: Old file path
-            new_path: New file path
-            content_hash: Optional content hash for verification
-
-        Returns:
-            Number of points updated
-
-        Raises:
-            RuntimeError: If Qdrant is unavailable or update fails
-        """
-        if not self._qdrant_available:
-            raise RuntimeError(
-                f"Qdrant is not available - cannot move file {old_path} -> {new_path}"
-            )
-
-        # Normalize paths
+        """Update payloads by stable ID without reordering or rewriting vectors."""
         old_relative = self.path_resolver.normalize_path(old_path)
         new_relative = self.path_resolver.normalize_path(new_path)
-
-        # Find all points for the old file
-        filter_condition = Filter(
-            must=[FieldCondition(key="relative_path", match=MatchValue(value=old_relative))]
-        )
-
+        conditions = [FieldCondition(key="relative_path", match=MatchValue(value=old_relative))]
+        if content_hash is not None:
+            conditions.append(
+                FieldCondition(key="content_hash", match=MatchValue(value=content_hash))
+            )
+        updated = 0
         try:
-            # Search for all points
-            search_result = self.qdrant.search(
-                collection_name=self.collection,
-                query_vector=[0.0] * self.embedding_dimension,  # Dummy vector
-                filter=filter_condition,
-                limit=1000,
-                with_payload=True,
-                with_vectors=False,
-            )
-
-            if not search_result:
-                logger.warning(f"No embeddings found for file: {old_relative}")
-                return 0
-
-            # Update payloads with new path
-            updated_points = []
-            for point in search_result:
-                # Update payload
-                new_payload = point.payload.copy()
-                new_payload["relative_path"] = new_relative
-                new_payload["file"] = str(new_path)  # Update absolute path too
-
-                # Verify content hash if provided
-                if content_hash and new_payload.get("content_hash") != content_hash:
-                    logger.warning(f"Content hash mismatch for {old_relative} -> {new_relative}")
-                    continue
-
-                updated_points.append(
-                    models.PointStruct(
-                        id=point.id,
-                        payload=new_payload,
-                        vector=[],  # Empty vector, we're only updating payload
-                    )
-                )
-
-            # Batch update payloads
-            if updated_points:
-                # PAYLOAD-ONLY update on EXISTING points: re-fetches the existing
-                # vectors and re-attaches them unchanged (no re-embed / no source
-                # egress), only the relative_path/file payload changes. This is
-                # metadata maintenance, not a new attested write, so it correctly
-                # does NOT go through the _prepare_for_writes attestation gate.
-                point_ids = [p.id for p in updated_points]
-
-                # Fetch full points with vectors
-                full_points = self.qdrant.retrieve(
+            for batch in self._point_batches(Filter(must=conditions)):
+                self._invalidate_collection_provenance(strict=True)
+                self.qdrant.set_payload(
                     collection_name=self.collection,
-                    ids=point_ids,
-                    with_payload=True,
-                    with_vectors=True,
+                    payload={"relative_path": new_relative, "file": str(new_path)},
+                    points=[point.id for point in batch],
+                    wait=True,
                 )
-
-                # Create new points with updated payloads
-                new_points = []
-                for i, full_point in enumerate(full_points):
-                    new_points.append(
-                        models.PointStruct(
-                            id=full_point.id,
-                            vector=full_point.vector,
-                            payload=updated_points[i].payload,
-                        )
-                    )
-
-                # Upsert updated points
-                self.qdrant.upsert(collection_name=self.collection, points=new_points)
-
-                logger.info(
-                    f"Updated {len(new_points)} embeddings: {old_relative} -> {new_relative}"
-                )
-                # Incremental mutation: fail-closed by dropping the provenance sentinel.
-                self._invalidate_collection_provenance()
-
-            return len(updated_points)
-        except Exception as e:
-            logger.error(
-                f"Failed to move file {old_relative} -> {new_relative}: " f"{type(e).__name__}: {e}"
-            )
-            self._qdrant_available = False
-            raise RuntimeError(
-                f"Failed to move file {old_relative} -> {new_relative} in Qdrant: {e}"
-            )
+                updated += len(batch)
+        except Exception as exc:
+            raise RuntimeError(f"File vector move failed ({type(exc).__name__})") from None
+        return updated
 
     def get_embeddings_by_content_hash(self, content_hash: str) -> List[Dict[str, Any]]:
-        """Get all embeddings with a specific content hash.
-
-        Args:
-            content_hash: Content hash to search for
-
-        Returns:
-            List of embedding metadata
-
-        Raises:
-            RuntimeError: If Qdrant is unavailable or query fails
-        """
-        if not self._qdrant_available:
-            raise RuntimeError("Qdrant is not available - cannot query embeddings by content hash")
-
-        filter_condition = Filter(
+        """Return all matching point metadata, including results past the first page."""
+        condition = Filter(
             must=[FieldCondition(key="content_hash", match=MatchValue(value=content_hash))]
         )
-
-        try:
-            results = self.qdrant.search(
-                collection_name=self.collection,
-                query_vector=[0.0] * self.embedding_dimension,  # Dummy vector
-                filter=filter_condition,
-                limit=1000,
-                with_payload=True,
-                with_vectors=False,
-            )
-
-            return [{"id": res.id, **res.payload} for res in results]
-        except Exception as e:
-            logger.error(f"Failed to get embeddings by content hash: {type(e).__name__}: {e}")
-            self._qdrant_available = False
-            raise RuntimeError(f"Failed to query embeddings by content hash in Qdrant: {e}")
+        return [
+            {**(point.payload or {}), "id": point.id}
+            for batch in self._point_batches(condition)
+            for point in batch
+        ]
 
     def mark_file_deleted(self, file_path: Union[str, Path]) -> int:
-        """Mark all embeddings for a file as deleted (soft delete).
-
-        Args:
-            file_path: File path to mark as deleted
-
-        Returns:
-            Number of points marked as deleted
-
-        Raises:
-            RuntimeError: If Qdrant is unavailable or update fails
-        """
-        if not self._qdrant_available:
-            raise RuntimeError(f"Qdrant is not available - cannot mark file {file_path} as deleted")
-
-        # This is similar to move_file but only updates is_deleted flag
+        """Mark every matching payload deleted without touching its vector."""
         relative_path = self.path_resolver.normalize_path(file_path)
-
-        filter_condition = Filter(
+        condition = Filter(
             must=[FieldCondition(key="relative_path", match=MatchValue(value=relative_path))]
         )
-
+        updated = 0
         try:
-            # Search and update
-            search_result = self.qdrant.search(
-                collection_name=self.collection,
-                query_vector=[0.0] * self.embedding_dimension,
-                filter=filter_condition,
-                limit=1000,
-                with_payload=True,
-                with_vectors=False,
-            )
-
-            if not search_result:
-                return 0
-
-            # Update is_deleted flag
-            point_ids = []
-            for point in search_result:
-                point.payload["is_deleted"] = True
-                point_ids.append(point.id)
-
-            # PAYLOAD-ONLY update on EXISTING points: re-fetches the existing
-            # vectors and re-attaches them unchanged (no re-embed / no source
-            # egress), only the is_deleted flag changes. Metadata maintenance, not
-            # a new attested write, so it correctly bypasses _prepare_for_writes.
-            # Re-fetch and update (same process as move_file)
-            full_points = self.qdrant.retrieve(
-                collection_name=self.collection,
-                ids=point_ids,
-                with_payload=True,
-                with_vectors=True,
-            )
-
-            updated_points = []
-            for i, full_point in enumerate(full_points):
-                updated_points.append(
-                    models.PointStruct(
-                        id=full_point.id,
-                        vector=full_point.vector,
-                        payload=search_result[i].payload,
-                    )
+            for batch in self._point_batches(condition):
+                self._invalidate_collection_provenance(strict=True)
+                self.qdrant.set_payload(
+                    collection_name=self.collection,
+                    payload={"is_deleted": True},
+                    points=[point.id for point in batch],
+                    wait=True,
                 )
-
-            self.qdrant.upsert(collection_name=self.collection, points=updated_points)
-
-            logger.info(f"Marked {len(updated_points)} embeddings as deleted for: {relative_path}")
-            # Incremental mutation: fail-closed by dropping the provenance sentinel.
-            self._invalidate_collection_provenance()
-            return len(updated_points)
-        except Exception as e:
-            logger.error(
-                f"Failed to mark file {relative_path} as deleted: " f"{type(e).__name__}: {e}"
-            )
-            self._qdrant_available = False
-            raise RuntimeError(f"Failed to mark file {relative_path} as deleted in Qdrant: {e}")
+                updated += len(batch)
+        except Exception as exc:
+            raise RuntimeError(f"File vector marking failed ({type(exc).__name__})") from None
+        return updated
 
     @staticmethod
     def _file_summary_chunk_id(relative_path: str) -> str:
@@ -3989,9 +3759,7 @@ class SemanticIndexer:
 # ---------------------------------------------------------------------------
 # INFERLIVEGATE Lane A: module-level provenance reader (Lane B integration seam)
 # ---------------------------------------------------------------------------
-def _read_collection_provenance_sentinel(
-    client: Any, collection: str
-) -> Optional[Dict[str, Any]]:
+def _read_collection_provenance_sentinel(client: Any, collection: str) -> Optional[Dict[str, Any]]:
     """Read + parse the reserved collection-provenance sentinel from a raw client.
 
     Retrieves the reserved sentinel point (``PROVENANCE_POINT_ID``) from ``client``,
@@ -4021,9 +3789,7 @@ def _read_collection_provenance_sentinel(
         if not payload.get(SemanticIndexer.PROVENANCE_TAG):
             continue
         manifest = {
-            key: value
-            for key, value in payload.items()
-            if key != SemanticIndexer.PROVENANCE_TAG
+            key: value for key, value in payload.items() if key != SemanticIndexer.PROVENANCE_TAG
         }
         if manifest.get("provenance_version") != SemanticIndexer.PROVENANCE_VERSION:
             return None
@@ -4031,9 +3797,7 @@ def _read_collection_provenance_sentinel(
     return None
 
 
-def read_collection_provenance(
-    client: Any, collection: str
-) -> Optional[Dict[str, Any]]:
+def read_collection_provenance(client: Any, collection: str) -> Optional[Dict[str, Any]]:
     """Canonical module-level reader for the collection-resident provenance manifest.
 
     A live-collection consumer (the INFERLIVEGATE benchmark) passes a raw Qdrant

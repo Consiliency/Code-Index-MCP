@@ -12,11 +12,13 @@ import json
 import logging
 import os
 import signal
+import sys
 import threading
 import time
 from pathlib import Path
-from typing import Any, Optional, Sequence
+from typing import Any, AsyncIterator, Callable, Optional, Sequence
 
+import anyio
 import mcp.types as types
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
@@ -28,7 +30,11 @@ from mcp_server.cli.handshake import HandshakeGate
 from mcp_server.dispatcher.dispatcher_enhanced import EnhancedDispatcher
 from mcp_server.dispatcher.simple_dispatcher import SimpleDispatcher
 from mcp_server.health.repository_readiness import ReadinessClassifier
-from mcp_server.metrics.prometheus_exporter import PrometheusExporter, record_tool_call
+from mcp_server.metrics.prometheus_exporter import (
+    PrometheusExporter,
+    get_prometheus_exporter,
+    record_tool_call,
+)
 from mcp_server.plugin_system import PluginManager
 from mcp_server.storage.mcp_task_registry import MCPTaskRegistry
 from mcp_server.storage.sqlite_store import SQLiteStore
@@ -41,6 +47,7 @@ logger = logging.getLogger(__name__)
 
 # Server-level constants
 _SERVER_NAME = "code-index-mcp-fast-search"
+_SHUTDOWN_GRACE_SECONDS = 3.0
 _SERVER_INSTRUCTIONS = (
     "This server provides a pre-built code index (BM25 + semantic vector search). "
     "Indexed search is authoritative when repository readiness is ready. "
@@ -610,6 +617,7 @@ def _build_tool_list() -> list[types.Tool]:
                 "oneOf": [
                     _HANDSHAKE_REQUIRED_SCHEMA,
                     _PATH_OUTSIDE_ALLOWED_ROOTS_SCHEMA,
+                    _INDEX_UNAVAILABLE_SCHEMA,
                     _SECONDARY_READINESS_REFUSAL_SCHEMA,
                     _CONFLICTING_SCOPE_SCHEMA,
                     _object_schema(
@@ -618,6 +626,29 @@ def _build_tool_list() -> list[types.Tool]:
                             "path": {"type": "string"},
                         },
                         required=("error", "path"),
+                        additional_properties=True,
+                    ),
+                    _object_schema(
+                        {
+                            "path": {"type": "string"},
+                            "mode": {"const": "staged_full"},
+                            "indexed_files": {"type": "integer"},
+                            "mutation_performed": {"const": True},
+                            "commit": {"type": ["string", "null"]},
+                            "recovery": {"type": ["object", "null"]},
+                            "semantic": {"type": ["object", "null"]},
+                        },
+                        required=("path", "mode", "indexed_files", "mutation_performed", "commit"),
+                        additional_properties=True,
+                    ),
+                    _object_schema(
+                        {
+                            "error": {"const": "Full repository rebuild required"},
+                            "code": {"const": "full_rebuild_required"},
+                            "readiness": {"type": "object"},
+                            "mutation_performed": {"const": False},
+                        },
+                        required=("error", "code", "readiness", "mutation_performed"),
                         additional_properties=True,
                     ),
                     _object_schema(
@@ -641,18 +672,15 @@ def _build_tool_list() -> list[types.Tool]:
                     _object_schema(
                         {
                             "error": {"const": "Reindex failed"},
-                            "code": {"const": "reindex_failed"},
+                            "code": {"type": "string"},
                             "path": {"type": "string"},
                             "message": {"type": "string"},
-                            "details": {"type": "string"},
+                            "details": {"type": ["string", "null"]},
                             "mutation_performed": {"const": False},
                         },
                         required=(
                             "error",
                             "code",
-                            "path",
-                            "message",
-                            "details",
                             "mutation_performed",
                         ),
                         additional_properties=True,
@@ -722,6 +750,7 @@ def _build_tool_list() -> list[types.Tool]:
                 "oneOf": [
                     _HANDSHAKE_REQUIRED_SCHEMA,
                     _PATH_OUTSIDE_ALLOWED_ROOTS_SCHEMA,
+                    _INDEX_UNAVAILABLE_SCHEMA,
                     _SECONDARY_READINESS_REFUSAL_SCHEMA,
                     _SUMMARIZATION_UNAVAILABLE_SCHEMA,
                     _SQLITE_NOT_INITIALIZED_SCHEMA,
@@ -791,6 +820,7 @@ def _build_tool_list() -> list[types.Tool]:
                 "oneOf": [
                     _HANDSHAKE_REQUIRED_SCHEMA,
                     _PATH_OUTSIDE_ALLOWED_ROOTS_SCHEMA,
+                    _INDEX_UNAVAILABLE_SCHEMA,
                     _SECONDARY_READINESS_REFUSAL_SCHEMA,
                     _CONFLICTING_SCOPE_SCHEMA,
                     _SUMMARIZATION_UNAVAILABLE_SCHEMA,
@@ -868,6 +898,7 @@ def _build_tool_list() -> list[types.Tool]:
 
 
 _shutdown_called = False
+_shutdown_task: asyncio.Task | None = None
 
 
 async def _graceful_shutdown(
@@ -876,62 +907,103 @@ async def _graceful_shutdown(
     store_registry: Any,
     exporter: Any,
     dispatcher: Any = None,
-    timeout: float = 5.0,
+    timeout: float = 1.0,
 ) -> None:
-    """Stop watcher, poller, dispatcher, store, and exporter with bounded waits."""
-    global _shutdown_called
-    if _shutdown_called:
-        logger.debug("_graceful_shutdown: already called, skipping")
-        return
-    _shutdown_called = True
+    """Await one cleanup owner; a timeout never abandons a resource owner."""
+    global _shutdown_called, _shutdown_task
+    failures = []
 
-    if multi_watcher is not None:
-        try:
-            logger.info("Stopping MultiRepositoryWatcher...")
-            await asyncio.wait_for(asyncio.to_thread(multi_watcher.stop), timeout=timeout)
-            logger.info("MultiRepositoryWatcher stopped")
-        except asyncio.TimeoutError:
-            logger.warning("MultiRepositoryWatcher.stop timed out after %.1fs", timeout)
-        except Exception as exc:
-            logger.warning("MultiRepositoryWatcher.stop error: %s", exc)
+    def record_failure(name: str, exc: Exception) -> None:
+        failures.append(f"{name} ({type(exc).__name__})")
+        logger.error("%s cleanup failed (%s)", name, type(exc).__name__)
 
-    if ref_poller is not None:
-        try:
-            logger.info("Stopping RefPoller...")
-            await asyncio.wait_for(asyncio.to_thread(ref_poller.stop), timeout=timeout)
-            logger.info("RefPoller stopped")
-        except asyncio.TimeoutError:
-            logger.warning("RefPoller.stop timed out after %.1fs", timeout)
-        except Exception as exc:
-            logger.warning("RefPoller.stop error: %s", exc)
+    async def cleanup() -> None:
+        if _lazy_summarizer is not None:
+            try:
+                await _lazy_summarizer.stop()
+            except Exception as exc:
+                record_failure("LazySummarizer", exc)
+        components = [
+            ("MultiRepositoryWatcher", multi_watcher, "stop"),
+            ("RefPoller", ref_poller, "stop"),
+            ("FileWatcher", _file_watcher, "stop"),
+        ]
+        for name, component, method in components:
+            if component is not None:
+                await stop_component(name, getattr(component, method))
+        for thread in (_indexing_thread, _fts_rebuild_thread):
+            if thread is not None and thread.is_alive():
+                await stop_component("IndexWorker", thread.join)
+        for name, component, method in [
+            ("Dispatcher", dispatcher, "shutdown"),
+            ("StoreRegistry", store_registry, "shutdown"),
+            ("PrometheusExporter", exporter, "stop"),
+        ]:
+            if component is not None:
+                await stop_component(name, getattr(component, method))
+        if failures:
+            raise RuntimeError("Owned resource cleanup failed: " + ", ".join(failures))
 
-    if dispatcher is not None:
+    async def stop_component(name: str, stop: Callable[[], None]) -> None:
+        worker = asyncio.create_task(asyncio.to_thread(stop))
         try:
-            logger.info("Shutting down dispatcher plugin workers...")
-            await asyncio.wait_for(asyncio.to_thread(dispatcher.shutdown), timeout=timeout)
-            logger.info("Dispatcher plugin workers shut down")
-        except asyncio.TimeoutError:
-            logger.warning("Dispatcher.shutdown timed out after %.1fs", timeout)
+            try:
+                await asyncio.wait_for(asyncio.shield(worker), timeout)
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "%s cleanup exceeded %.1fs; awaiting its resource owner", name, timeout
+                )
+                await worker
+            logger.info("%s stopped", name)
         except Exception as exc:
-            logger.warning("Dispatcher.shutdown error: %s", exc)
+            record_failure(name, exc)
 
-    if store_registry is not None:
-        try:
-            logger.info("Shutting down StoreRegistry...")
-            await asyncio.wait_for(asyncio.to_thread(store_registry.shutdown), timeout=timeout)
-            logger.info("StoreRegistry shut down")
-        except asyncio.TimeoutError:
-            logger.warning("StoreRegistry.shutdown timed out after %.1fs", timeout)
-        except Exception as exc:
-            logger.warning("StoreRegistry.shutdown error: %s", exc)
+    if not _shutdown_called:
+        _shutdown_called = True
+        _shutdown_task = asyncio.create_task(cleanup())
+    if _shutdown_task is not None:
+        with anyio.CancelScope(shield=True):
+            await asyncio.shield(_shutdown_task)
 
-    if exporter is not None:
-        try:
-            logger.info("Stopping PrometheusExporter...")
-            exporter.stop()
-            logger.info("PrometheusExporter stopped")
-        except Exception as exc:
-            logger.warning("PrometheusExporter.stop error: %s", exc)
+
+def _force_shutdown() -> None:
+    """Last resort for an uncooperative worker: fail the entire owning service."""
+    # Do not acquire logging locks or write potentially blocked client pipes here.
+    try:
+        import psutil
+
+        children = psutil.Process().children(recursive=True)
+        for child in children:
+            try:
+                child.kill()
+            except psutil.Error:
+                pass
+        psutil.wait_procs(children, timeout=1)
+    finally:
+        os._exit(1)
+
+
+async def _stdio_input(
+    reader: asyncio.StreamReader, on_eof: Callable[[], None]
+) -> AsyncIterator[str]:
+    while True:
+        line = await reader.readline()
+        if not line:
+            on_eof()
+            return
+        yield line.decode("utf-8", errors="replace")
+
+
+class _StdioOutput:
+    def __init__(self, writer: asyncio.StreamWriter) -> None:
+        self.writer = writer
+
+    async def write(self, value: str) -> None:
+        self.writer.write(value.encode("utf-8"))
+        await self.writer.drain()
+
+    async def flush(self) -> None:
+        await self.writer.drain()
 
 
 # ---------------------------------------------------------------------------
@@ -984,7 +1056,9 @@ async def initialize_services() -> None:
                         rows = _heal_store.rebuild_fts_code()
                         logger.info(f"BM25 FTS rebuild complete: {rows} documents")
                     except Exception as _fts_err:
-                        logger.warning(f"BM25 FTS rebuild failed (non-fatal): {_fts_err}")
+                        logger.warning(
+                            f"BM25 FTS rebuild failed (non-fatal): {type(_fts_err).__name__}"
+                        )
 
                 _fts_rebuild_thread = threading.Thread(
                     target=_rebuild_fts, daemon=True, name="mcp-fts-rebuild"
@@ -1015,7 +1089,7 @@ async def initialize_services() -> None:
                         _gf.write("\n# MCP Index files\n")
                         _gf.write("\n".join(missing) + "\n")
             except Exception as _gi_err:
-                logger.debug(f"Could not update .gitignore: {_gi_err}")
+                logger.debug(f"Could not update .gitignore: {type(_gi_err).__name__}")
 
         # Initialize dispatcher (simple or enhanced with plugins)
         if USE_SIMPLE_DISPATCHER:
@@ -1053,7 +1127,7 @@ async def initialize_services() -> None:
 
                     semantic_registry = SemanticIndexerRegistry(_repo_resolver._registry)
             except Exception as _sem_reg_err:
-                logger.warning("Semantic registry unavailable: %s", _sem_reg_err)
+                logger.warning("Semantic registry unavailable: %s", type(_sem_reg_err).__name__)
             dispatcher = EnhancedDispatcher(
                 plugins=plugin_instances,
                 enable_advanced_features=True,
@@ -1115,7 +1189,9 @@ async def initialize_services() -> None:
                     registry_entry=_reg_entry,
                 )
             except Exception as _ctx_err:
-                logger.debug(f"Could not build local RepoContext (non-fatal): {_ctx_err}")
+                logger.debug(
+                    f"Could not build local RepoContext (non-fatal): {type(_ctx_err).__name__}"
+                )
 
         if isinstance(dispatcher, EnhancedDispatcher) and not (
             getattr(dispatcher, "_semantic_registry", None)
@@ -1130,13 +1206,18 @@ async def initialize_services() -> None:
         # Start FileWatcher — deferred until after auto-index when _auto_index is True
         if _file_watcher is None and isinstance(dispatcher, EnhancedDispatcher):
             try:
-                _file_watcher = FileWatcher(root=current_dir, dispatcher=dispatcher)
+                _file_watcher = FileWatcher(
+                    root=current_dir,
+                    dispatcher=dispatcher,
+                    ctx=_local_ctx,
+                    index_manager=_git_index_manager,
+                )
                 if not _auto_index:
                     _file_watcher.start()
                     logger.info(f"FileWatcher started, watching {current_dir}")
                 # else: started inside _run_initial_index() after indexing completes
             except Exception as _fw_err:
-                logger.warning(f"FileWatcher failed to start (non-fatal): {_fw_err}")
+                logger.warning(f"FileWatcher failed to start (non-fatal): {type(_fw_err).__name__}")
 
         # Guard: skip auto-index for very large repos
         if _auto_index:
@@ -1211,7 +1292,7 @@ async def initialize_services() -> None:
                         _captured_ctx.registry_entry.last_indexed = _dt.now()
                     logger.info(f"Background initial index complete: {stats}")
                 except Exception as _idx_err:
-                    logger.error(f"Background initial index failed: {_idx_err}")
+                    logger.error(f"Background initial index failed: {type(_idx_err).__name__}")
                 finally:
                     if _file_watcher is not None:
                         try:
@@ -1220,7 +1301,9 @@ async def initialize_services() -> None:
                                 f"FileWatcher started after initial index, watching {_captured_dir}"
                             )
                         except Exception as _fw_err:
-                            logger.warning(f"FileWatcher failed to start (non-fatal): {_fw_err}")
+                            logger.warning(
+                                f"FileWatcher failed to start (non-fatal): {type(_fw_err).__name__}"
+                            )
 
             _indexing_total_files = _file_count
             _indexing_started_at = time.time()
@@ -1231,7 +1314,7 @@ async def initialize_services() -> None:
             logger.info(f"Indexing {_captured_dir} in background")
 
     except Exception as e:
-        logger.error(f"Failed to initialize services: {e}", exc_info=True)
+        logger.error(f"Failed to initialize services: {type(e).__name__}")
         initialization_error = str(e)
 
 
@@ -1290,7 +1373,7 @@ async def call_tool(
         _params = getattr(_current_session, "client_params", None)
         _client_name = getattr(getattr(_params, "clientInfo", None), "name", None)
     except Exception as _e:
-        logger.debug("request_ctx not available: %s", _e)
+        logger.debug("request_ctx not available: %s", type(_e).__name__)
 
     # Lazy initialize on first call
     if dispatcher is None and sqlite_store is None and initialization_error is None:
@@ -1337,7 +1420,8 @@ async def call_tool(
     elif _lazy_summarizer is not None and _current_session is not None:
         _lazy_summarizer.update_session(_current_session)
 
-    logger.info("=== MCP Tool Call: %s args=%s ===", name, arguments)
+    log_name = name if name in {tool.name for tool in _build_tool_list()} else "unknown"
+    logger.info("MCP tool call: %s", log_name)
     start_time = time.time()
 
     _effective_resolver = (
@@ -1439,24 +1523,24 @@ async def call_tool(
         _tool_status = "error"
         if isinstance(e, McpError):
             raise
-        logger.error(f"Error in tool {name}: {e}", exc_info=True)
+        logger.error("MCP tool execution failed (%s)", type(e).__name__)
         response = [
             types.TextContent(
                 type="text",
                 text=tool_handlers._ensure_response(
                     {
                         "error": f"Tool execution failed: {name}",
-                        "details": str(e),
+                        "details": type(e).__name__,
                         "tool": name,
                     }
                 ),
             )
         ]
 
-    record_tool_call(name, _tool_status)
+    record_tool_call(log_name, _tool_status)
 
     elapsed = time.time() - start_time
-    logger.info(f"=== MCP Tool Response: {name} ({elapsed:.2f}s) ===")
+    logger.info("MCP tool response: %s (%.2fs)", log_name, elapsed)
 
     if isinstance(response, types.CreateTaskResult):
         return response
@@ -1485,6 +1569,9 @@ async def call_tool(
 
 async def _serve(registry_path=None) -> None:
     """Set up and run the MCP stdio server."""
+    from mcp_server.core.logging import configure_private_diagnostics
+
+    configure_private_diagnostics()
     global _shutdown_called, _gate, _repo_resolver, _store_registry, _task_registry
     global _git_index_manager, dispatcher
 
@@ -1521,8 +1608,9 @@ async def _serve(registry_path=None) -> None:
     dispatcher = _disp
 
     # Start Prometheus metrics exporter
-    exporter = PrometheusExporter()
-    exporter.start(int(os.getenv("MCP_METRICS_PORT", "9090")))
+    exporter: PrometheusExporter = get_prometheus_exporter()
+    if os.getenv("MCP_METRICS_PORT"):
+        exporter.start(int(os.environ["MCP_METRICS_PORT"]))
 
     # Start multi-repo watcher + ref poller eagerly, after registries are ready
     multi_watcher: Optional[MultiRepositoryWatcher] = None
@@ -1547,27 +1635,35 @@ async def _serve(registry_path=None) -> None:
             ref_poller.start()
             logger.info("MultiRepositoryWatcher and RefPoller started")
     except Exception as _watcher_err:
-        logger.warning(f"MultiRepositoryWatcher failed to start: {_watcher_err}")
+        from mcp_server.core.lifecycle import retirement_watchdog
+
+        with retirement_watchdog():
+            cleanup_errors = []
+            for owner, stop in ((ref_poller, "stop"), (multi_watcher, "stop_watching_all")):
+                if owner is not None:
+                    try:
+                        getattr(owner, stop)()
+                    except Exception as cleanup_error:
+                        cleanup_errors.append(cleanup_error)
+            if cleanup_errors:
+                raise RuntimeError("Watcher startup cleanup failed") from cleanup_errors[0]
         multi_watcher = None
         ref_poller = None
+        logger.warning("MultiRepositoryWatcher failed to start (%s)", type(_watcher_err).__name__)
 
     # Install SIGTERM/SIGINT handlers for graceful shutdown
     _loop = asyncio.get_running_loop()
-    _shutdown_tasks: list[asyncio.Task] = []
+    serve_scope = anyio.CancelScope()
+    watchdog: threading.Timer | None = None
 
     def _handle_signal() -> None:
-        logger.info("Signal received — initiating graceful shutdown")
-        task = asyncio.create_task(
-            _graceful_shutdown(
-                multi_watcher,
-                ref_poller,
-                store_registry,
-                exporter,
-                dispatcher=_disp,
-                timeout=5.0,
-            )
-        )
-        _shutdown_tasks.append(task)
+        nonlocal watchdog
+        if watchdog is None:
+            logger.info("Transport stopping; shutting down owned resources")
+            watchdog = threading.Timer(_SHUTDOWN_GRACE_SECONDS, _force_shutdown)
+            watchdog.daemon = True
+            watchdog.start()
+        serve_scope.cancel()
 
     try:
         _loop.add_signal_handler(signal.SIGTERM, _handle_signal)
@@ -1602,23 +1698,57 @@ async def _serve(registry_path=None) -> None:
     # Register module-level call_tool via imperative decorator application
     server.call_tool()(call_tool)
 
+    transports = []
     try:
-        async with stdio_server() as (read_stream, write_stream):
-            await server.run(
-                read_stream,
-                write_stream,
-                server.create_initialization_options(),
-                raise_exceptions=True,
-            )
+        with serve_scope:
+            transport_options = {}
+            if os.name == "posix":
+                # Cancellable pipes avoid an uninterruptible SDK readline worker
+                # when a client keeps stdin open after sending a termination signal.
+                reader = asyncio.StreamReader(limit=16 * 1024 * 1024)
+                transport, _ = await _loop.connect_read_pipe(
+                    lambda: asyncio.StreamReaderProtocol(reader), sys.stdin.buffer
+                )
+                transports.append(transport)
+                transport, protocol = await _loop.connect_write_pipe(
+                    lambda: asyncio.streams.FlowControlMixin(loop=_loop), sys.stdout.buffer
+                )
+                transports.append(transport)
+                writer = asyncio.StreamWriter(transport, protocol, None, _loop)
+                transport_options = {
+                    "stdin": _stdio_input(reader, _handle_signal),
+                    "stdout": _StdioOutput(writer),
+                }
+            async with stdio_server(**transport_options) as (read_stream, write_stream):
+                await server.run(
+                    read_stream,
+                    write_stream,
+                    server.create_initialization_options(),
+                    raise_exceptions=False,
+                )
     finally:
-        await _graceful_shutdown(
-            multi_watcher,
-            ref_poller,
-            store_registry,
-            exporter,
-            dispatcher=_disp,
-            timeout=5.0,
-        )
+        _handle_signal()
+        cleanup_succeeded = False
+        try:
+            await _graceful_shutdown(
+                multi_watcher,
+                ref_poller,
+                store_registry,
+                exporter,
+                dispatcher=_disp,
+            )
+            cleanup_succeeded = True
+        finally:
+            for transport in transports:
+                transport.close()
+            await _loop.shutdown_default_executor()
+            if cleanup_succeeded and watchdog is not None:
+                watchdog.cancel()
+            for sig in (signal.SIGTERM, signal.SIGINT):
+                try:
+                    _loop.remove_signal_handler(sig)
+                except NotImplementedError:
+                    pass
 
 
 def run() -> None:

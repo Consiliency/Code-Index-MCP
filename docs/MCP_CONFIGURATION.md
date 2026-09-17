@@ -2,9 +2,10 @@
 
 This guide provides comprehensive information on configuring the Code-Index-MCP for different environments and use cases.
 
-> **Stable-surface prep status**: This guide targets `1.4.0`. MCP STDIO is the primary
-> LLM surface. FastAPI remains a secondary admin surface. Docker examples use
-> `ghcr.io/consiliency/code-index-mcp`.
+> **Stable-surface prep status**: This guide targets the `1.4.1` prepared candidate.
+> MCP STDIO is primary; FastAPI is secondary admin only. Docker examples require
+> the matching registry publication. Published `1.4.0` lacks the v13 repairs.
+> See [release preparation and acceptance](operations/v13-release.md).
 > That container image name is a container identity surface, not the canonical
 > Python distribution name.
 > Language behavior is defined in [SUPPORT_MATRIX.md](SUPPORT_MATRIX.md), and
@@ -13,6 +14,12 @@ This guide provides comprehensive information on configuring the Code-Index-MCP 
 > Support tiers for native installs, package installs, Docker, and optional
 > extras live in [SUPPORT_MATRIX.md](SUPPORT_MATRIX.md); this guide does not
 > imply identical support for every configuration path.
+
+For release containers, replace every `<published-digest>` placeholder below
+with the digest from the accepted GitHub release's `image-reference.txt` asset,
+or use the Docker installer's generated configuration. Set `MCP_DOCKER_IMAGE`
+to that full digest reference when using a client that expands environment
+variables. There is no version-tag or `latest`-tag fallback for `1.4.1`.
 >
 > **Public alpha repository model**: one server can serve many unrelated
 > repositories, with one registered worktree per git common directory. Only the
@@ -140,7 +147,7 @@ For the current named-client and transport matrix, see
         "-e", "MCP_WORKSPACE_ROOT=/workspace",
         "-e", "LOG_LEVEL=${LOG_LEVEL:-INFO}",
         "-e", "MCP_ARTIFACT_SYNC=false",
-        "${MCP_DOCKER_IMAGE:-ghcr.io/consiliency/code-index-mcp:v1.4.0}",
+        "${MCP_DOCKER_IMAGE:-ghcr.io/consiliency/code-index-mcp@sha256:<published-digest>}",
         "mcp-index",
         "stdio"
       ]
@@ -175,7 +182,7 @@ For the current named-client and transport matrix, see
         "-e", "SEMANTIC_SEARCH_ENABLED=${SEMANTIC_SEARCH_ENABLED:-true}",
         "-e", "MCP_ARTIFACT_SYNC=${MCP_ARTIFACT_SYNC:-true}",
         "-e", "LOG_LEVEL=${LOG_LEVEL:-INFO}",
-        "${MCP_DOCKER_IMAGE:-ghcr.io/consiliency/code-index-mcp:v1.4.0}",
+        "${MCP_DOCKER_IMAGE:-ghcr.io/consiliency/code-index-mcp@sha256:<published-digest>}",
         "mcp-index",
         "stdio"
       ]
@@ -302,7 +309,7 @@ one worktree per git common directory, and check readiness before MCP tool use:
         "-v", "${HOME}/projects/repo-a:/repos/repo-a",
         "-v", "${HOME}/projects/repo-b:/repos/repo-b",
         "-e", "MCP_ALLOWED_ROOTS=/repos/repo-a:/repos/repo-b",
-        "ghcr.io/consiliency/code-index-mcp:v1.4.0"
+        "ghcr.io/consiliency/code-index-mcp@sha256:<published-digest>"
       ]
     }
   }
@@ -356,7 +363,7 @@ Add Docker resource constraints:
         "--memory", "2g",
         "--cpus", "2",
         "-v", "${workspace}:/workspace",
-        "ghcr.io/consiliency/code-index-mcp:v1.4.0"
+        "ghcr.io/consiliency/code-index-mcp@sha256:<published-digest>"
       ]
     }
   }
@@ -376,7 +383,7 @@ For maximum security:
         "run", "-i", "--rm",
         "--network", "none",
         "-v", "${workspace}:/workspace:ro",
-        "ghcr.io/consiliency/code-index-mcp:v1.4.0"
+        "ghcr.io/consiliency/code-index-mcp@sha256:<published-digest>"
       ],
       "env": {
         "MCP_ARTIFACT_SYNC": "false"
@@ -453,7 +460,7 @@ Enable debug logging:
         "-v", "${workspace}:/workspace",
         "-e", "LOG_LEVEL=DEBUG",
         "-e", "MCP_DEBUG=true",
-        "ghcr.io/consiliency/code-index-mcp:v1.4.0"
+        "ghcr.io/consiliency/code-index-mcp@sha256:<published-digest>"
       ]
     }
   }
@@ -466,7 +473,7 @@ Test your configuration:
 
 ```bash
 # Test MCP connection
-echo '{"jsonrpc":"2.0","method":"initialize","id":1,"params":{}}' | docker run -i --rm ghcr.io/consiliency/code-index-mcp:v1.4.0
+echo '{"jsonrpc":"2.0","method":"initialize","id":1,"params":{}}' | docker run -i --rm ghcr.io/consiliency/code-index-mcp@sha256:<published-digest>
 
 # Expected response:
 # {"jsonrpc":"2.0","id":1,"result":{"capabilities":...}}
@@ -542,7 +549,7 @@ Enable security audit logs:
         "-v", "${HOME}/mcp-audit:/app/logs",
         "-e", "MCP_AUDIT_LOG=/app/logs/audit.log",
         "-e", "MCP_SECURITY_MODE=strict",
-        "ghcr.io/consiliency/code-index-mcp:v1.4.0"
+        "ghcr.io/consiliency/code-index-mcp@sha256:<published-digest>"
       ]
     }
   }

@@ -42,6 +42,23 @@ def _store_file(store, repo_id_int: int, relative_path: str, content_hash: str =
 class TestSweeperRecoversMissedEvent:
     """Sweeper detects a file present on disk but absent from SQLite."""
 
+    def test_sweeper_detects_changed_content_at_an_existing_path(self, tmp_path):
+        root = tmp_path / "repo"
+        root.mkdir()
+        (root / "existing.py").write_text("new = 2\n")
+        store = _make_sqlite_store(tmp_path)
+        repo_row = store.create_repository(str(root), "repo")
+        _store_file(store, repo_row, "existing.py", hashlib.sha256(b"old = 1\n").hexdigest())
+        calls = []
+        sweeper = WatcherSweeper(
+            lambda repo, path: calls.append((repo, path)), lambda: {"repo": root}, store
+        )
+        try:
+            assert sweeper.sweep_once() == ["repo"]
+            assert calls == [("repo", "existing.py")]
+        finally:
+            store.close()
+
     def test_sweeper_recovers_missed_event(self, tmp_path):
         """Create a file without firing watchdog; sweep_once should call on_missed_path."""
         repo_id = "repo-abc"

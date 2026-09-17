@@ -1,0 +1,142 @@
+{
+  "schema_version": "v13.phase-receipt.v1",
+  "phase": "FREEZE",
+  "execution_mode": "manual",
+  "terminal_status": "complete",
+  "verification_status": "passed",
+  "blocker_class": null,
+  "human_required": false,
+  "timestamp": "2026-09-11T09:04:07Z",
+  "source_commit": "d4e09c54232fdddd76c393c4027d0f4c01fbd5a4",
+  "roadmap_sha256": "178b8328d8e7dc76ddc0804d7b72d3ccddb55e23577a3d52cb7cbd70d5fd5308",
+  "contract_sha256": "d1686bb23ca55e73ec54e8211de0269dd1332c593cef70f2e80d275f965573d8",
+  "plan_sha256": "bea9a1bff2f6df46c8b6ea96ad659f5c100e61bfb345261ebcca5efd865be279",
+  "verification_artifact_path": ".phase-loop/runs/v13-FREEZE-20260911/verification.json",
+  "verification_artifact_sha256": "ea62c4440f8807df785c43485ed3c88d55817983036b503143a662395f56d528",
+  "verification_summary": "13 passed in 1.98s; structural command exit 0; acceptance command exit 0; locked environment refresh exit 0.",
+  "owner_approval": "User reply 'Approved' on 2026-09-11 directly accepting both proposed limits and the signing approach in this conversation.",
+  "per_goal_results": [
+    {
+      "goal": "EC-FREEZE-1",
+      "status": "passed",
+      "evidence": "33 finding rows, source/probe existence, explicit owners and roadmap-only dispositions verified."
+    },
+    {
+      "goal": "EC-FREEZE-2",
+      "status": "passed",
+      "evidence": "19 application tables matched production DDL; retained/derived/cleanup-debt and generation/admission/rollback policies recorded."
+    },
+    {
+      "goal": "EC-FREEZE-3",
+      "status": "passed",
+      "evidence": "local_inference_budget and signing_mechanism explicitly approved; original acceptance check rerun successfully."
+    }
+  ],
+  "if_gates_produced": ["IF-0-FREEZE-1"],
+  "issue_inventory": [],
+  "issue_dispositions": [],
+  "required_human_inputs": [],
+  "commands": [
+    {
+      "argv": [
+        "uv",
+        "sync",
+        "--locked",
+        "--python",
+        "3.12",
+        "--extra",
+        "dev"
+      ],
+      "exit_code": 0
+    },
+    {
+      "argv": [
+        "uv",
+        "run",
+        "--locked",
+        "--extra",
+        "dev",
+        "pytest",
+        "tests/docs/test_v13_freeze_contract.py",
+        "-q",
+        "--no-cov"
+      ],
+      "exit_code": 0,
+      "passed": 13
+    },
+    {
+      "argv": [
+        "python3",
+        "scripts/validate_v13_freeze.py"
+      ],
+      "exit_code": 0
+    },
+    {
+      "argv": [
+        "python3",
+        "scripts/validate_v13_freeze.py",
+        "--acceptance"
+      ],
+      "exit_code": 0,
+      "reason": "both owner decisions explicitly approved"
+    },
+    {
+      "command": "Installed validate_plan_doc.py plans/phase-plan-v13-FREEZE.md",
+      "exit_code": 0,
+      "summary": "3 lanes, 0 warnings"
+    },
+    {
+      "command": "validate_plan_dispatch_hints and validate_verification_commands",
+      "exit_code": 0,
+      "summary": "No literal or IF-0-VC-2 findings"
+    }
+  ],
+  "tool_diagnostics": [
+    "Initial plan stanza formatting did not match the installed validator; corrected before acceptance verification.",
+    "Initial standalone verification helper used 3.12 as an executable pin and ran no commands. Corrected to the actual worktree .venv/bin/python; subsequent stamped evidence above is authoritative."
+  ],
+  "access_attempts": [
+    {
+      "source": "gh",
+      "probe": "Read-only repository and open issue/PR inventory",
+      "result": "authenticated",
+      "details": "Consiliency/Code-Index-MCP is public; no open issues or PRs at kickoff.",
+      "timestamp": "2026-09-11"
+    },
+    {
+      "source": "gh",
+      "probe": "gh attestation --help",
+      "result": "available",
+      "details": "Download/verify/trusted-root available; no local sign command.",
+      "timestamp": "2026-09-11"
+    },
+    {
+      "source": "repo_config",
+      "probe": "Read committed PMCP README and manifest",
+      "result": "available",
+      "details": "STDIO entrypoint and per-child configuration supported; exact pilot pin and shared registry require explicit config.",
+      "timestamp": "2026-09-11"
+    }
+  ],
+  "spec_delta_closeout": {
+    "schema": "spec_delta_closeout.v1",
+    "decision": "canonical_spec_update",
+    "targets": [
+      "docs/contracts/v13-freeze.json",
+      "docs/status/V13_EXECUTION.md"
+    ],
+    "evidence_paths": [
+      "docs/validation/v13/FREEZE.json"
+    ],
+    "redaction_posture": "metadata_only",
+    "note": "Interface contract accepted with explicit owner approvals and rerun verification; not production repair evidence."
+  },
+  "exclusions": [
+    "Production behavior unchanged",
+    "Historical product counterexamples not rerun",
+    "Full product suite not run in interface-only FREEZE",
+    "No container/Qdrant/browser/live inference/signing/publishing execution"
+  ],
+  "next_phase": "DIST",
+  "next_command": "codex-plan-phase specs/phase-plans-v13.md DIST"
+}

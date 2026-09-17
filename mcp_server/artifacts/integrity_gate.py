@@ -83,21 +83,6 @@ def _calculate_checksum(file_path: Path) -> str:
     return sha256.hexdigest()
 
 
-def _read_expected_checksum(
-    metadata: Dict[str, Any], checksum_path: Optional[Path]
-) -> Optional[str]:
-    """Resolve expected checksum from sidecar file first, then metadata."""
-    if checksum_path and checksum_path.exists():
-        contents = checksum_path.read_text().strip()
-        if not contents:
-            return None
-        return contents.split()[0]
-    checksum = metadata.get("checksum")
-    if checksum is None:
-        return None
-    return str(checksum)
-
-
 def _extract_manifest_v2_payload(metadata: Dict[str, Any]) -> Optional[Any]:
     """Extract optional manifest v2 payload from known metadata keys."""
     for key in ["manifest_v2", "artifact_manifest_v2"]:
@@ -114,7 +99,12 @@ def validate_artifact_integrity(
     """Validate metadata, checksum, and optional manifest v2 payload."""
     reasons = validate_required_metadata_fields(metadata)
 
-    expected_checksum = _read_expected_checksum(metadata, checksum_path)
+    expected_checksum = str(metadata.get("checksum") or "") or None
+    if checksum_path and checksum_path.exists():
+        fields = checksum_path.read_text().split()
+        sidecar_checksum = fields[0] if fields else None
+        if sidecar_checksum != expected_checksum:
+            reasons.append("checksum sidecar disagrees with signed metadata")
     actual_checksum: Optional[str] = None
     if not expected_checksum:
         reasons.append("artifact checksum is required but missing")

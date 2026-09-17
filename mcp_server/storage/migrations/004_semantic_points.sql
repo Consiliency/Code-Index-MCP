@@ -20,4 +20,5 @@ INSERT OR REPLACE INTO schema_version (version, description)
 VALUES (4, 'Semantic point mappings for profile-scoped stale vector cleanup');
 
 INSERT INTO migrations (version_from, version_to, status)
-VALUES (3, 4, 'completed');
+SELECT 3, 4, 'completed'
+WHERE NOT EXISTS (SELECT 1 FROM migrations WHERE version_to = 4 AND status = 'completed');

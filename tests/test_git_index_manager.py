@@ -1,6 +1,8 @@
 """Tests for GitAwareIndexManager branch-change reindex guard (SL-3)."""
 
 import json
+import multiprocessing
+import os
 import sqlite3
 import subprocess
 import threading
@@ -9,7 +11,7 @@ from datetime import datetime
 from inspect import signature
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import ANY, MagicMock
 
 import pytest
 
@@ -27,7 +29,9 @@ from mcp_server.storage.git_index_manager import (
     should_reindex_for_branch,
 )
 from mcp_server.storage.multi_repo_manager import RepositoryInfo
+from mcp_server.storage.repository_registry import RepositoryRegistry
 from mcp_server.storage.sqlite_store import SQLiteStore
+from mcp_server.storage.store_registry import StoreRegistry
 
 # ---------------------------------------------------------------------------
 # SL-3.1a: should_reindex_for_branch unit tests
@@ -240,9 +244,98 @@ def _make_rebuild_manager(repo_info: RepositoryInfo, commit: str):
         return True
 
     registry.update_staleness_reason.side_effect = update_staleness
+    registry.fail_generation_mutation.side_effect = lambda repo_id, **kwargs: update_staleness(
+        repo_id, "partial_index_failure"
+    )
     manager = GitAwareIndexManager(registry, DurableFullIndexDispatcher())
     manager._resolve_ctx = MagicMock(return_value=None)
     return manager, registry
+
+
+def _generation_reader(registry_path, repo_id, channel):
+    registry = RepositoryRegistry(registry_path)
+    stores = StoreRegistry.for_registry(registry)
+    old = stores.get(repo_id)
+    try:
+        with old._get_connection() as connection:
+            connection.execute("BEGIN")
+            before = [row[0] for row in connection.execute("SELECT relative_path FROM files")]
+            channel.send(before)
+            assert channel.poll(10)
+            assert channel.recv() == "published"
+            held = [row[0] for row in connection.execute("SELECT relative_path FROM files")]
+        new = stores.get(repo_id)
+        with new._get_connection() as connection:
+            after = [row[0] for row in connection.execute("SELECT relative_path FROM files")]
+        channel.send((held, after, new is not old))
+    finally:
+        stores.shutdown()
+        channel.close()
+
+
+def _crash_rebuild(registry_path, repo_id):
+    manager = GitAwareIndexManager(RepositoryRegistry(registry_path), DurableFullIndexDispatcher())
+
+    def checkpoint(stage):
+        if stage == "after_replacement":
+            os._exit(37)
+
+    manager._rebuild_checkpoint = checkpoint
+    manager.rebuild_repository_index(repo_id)
+
+
+@pytest.mark.parametrize("crash", [False, True])
+def test_generation_publication_with_external_reader_and_restart(tmp_path, crash):
+    repo = _make_git_repo(tmp_path)
+    registry = RepositoryRegistry(tmp_path / "registry.json")
+    repo_id = registry.register_repository(str(repo))
+    info = registry.get(repo_id)
+    info.index_path.parent.mkdir(parents=True, exist_ok=True)
+    _seed_index(info.index_path, repo, "old.py")
+    registry.update_indexed_commit(repo_id, _get_head_commit(repo), branch="main")
+    original_path = info.index_path
+    original_inode = original_path.stat().st_ino
+    context = multiprocessing.get_context("spawn")
+    parent, child = context.Pipe()
+    reader = context.Process(
+        target=_generation_reader, args=(registry.registry_path, repo_id, child)
+    )
+    reader.start()
+    child.close()
+    writer = None
+    try:
+        assert parent.poll(10)
+        assert parent.recv() == ["old.py"]
+        if crash:
+            writer = context.Process(target=_crash_rebuild, args=(registry.registry_path, repo_id))
+            writer.start()
+            writer.join(10)
+            assert writer.exitcode == 37
+            restarted = RepositoryRegistry(registry.registry_path).get(repo_id)
+            assert restarted.staleness_reason == "index_publication_pending"
+            assert not ReadinessClassifier.classify_registered(restarted).ready
+            assert restarted.index_path == original_path
+        else:
+            manager = GitAwareIndexManager(registry, DurableFullIndexDispatcher())
+            result = manager.rebuild_repository_index(repo_id)
+            assert result.action == "full_index", result.error
+            restarted = RepositoryRegistry(registry.registry_path).get(repo_id)
+            assert restarted.index_path != original_path
+            assert ReadinessClassifier.classify_registered(restarted).ready
+            parent.send("published")
+            assert parent.poll(10)
+            assert parent.recv() == (["old.py"], ["hello.py"], True)
+            reader.join(10)
+            assert reader.exitcode == 0
+        assert original_path.stat().st_ino == original_inode
+    finally:
+        parent.close()
+        for worker in (reader, writer):
+            if worker is not None:
+                if worker.is_alive():
+                    worker.terminate()
+                worker.join(10)
+                worker.close()
 
 
 def test_staged_rebuild_quarantines_unproven_index_and_publishes(tmp_path):
@@ -262,11 +355,10 @@ def test_staged_rebuild_quarantines_unproven_index_and_publishes(tmp_path):
     with sqlite3.connect(repo_info.index_path) as conn:
         paths = {row[0] for row in conn.execute("SELECT relative_path FROM files")}
     assert paths == {"hello.py"}
-    registry.update_indexed_commit.assert_called_once_with(
-        repo_info.repository_id,
-        commit,
-        branch="main",
-    )
+    registry.publish_generation.assert_called_once()
+    assert registry.publish_generation.call_args.kwargs["commit"] == commit
+    assert registry.publish_generation.call_args.kwargs["branch"] == "main"
+    assert repo_info.index_path.parent.name == "generations"
     assert not list(repo_info.index_path.parent.glob(".current.db.staging-*"))
 
 
@@ -281,6 +373,51 @@ def test_staged_rebuild_bootstraps_missing_index(tmp_path):
     assert result.action == "full_index", result.error
     assert result.readiness["previous_state"] == "missing_index"
     assert ReadinessClassifier.classify_registered(repo_info).ready is True
+
+
+@pytest.mark.parametrize(
+    "damage",
+    [
+        "corrupt_sqlite",
+        "index_empty",
+        "missing_schema",
+        "missing_provenance",
+        "scheme_mismatch",
+        "index_rebuilding",
+    ],
+)
+def test_unchanged_commit_sync_repairs_nonready_database(tmp_path, damage):
+    repo = _make_git_repo(tmp_path)
+    commit = _get_head_commit(repo)
+    info = _make_repo_info(repo, commit)
+    _seed_index(info.index_path, repo, "hello.py")
+    if damage == "corrupt_sqlite":
+        info.index_path.write_bytes(b"synthetic corrupt database")
+    elif damage == "missing_provenance":
+        info.last_indexed_commit = None
+    else:
+        with sqlite3.connect(info.index_path) as connection:
+            if damage == "index_empty":
+                connection.execute("UPDATE files SET is_deleted=1")
+            elif damage == "missing_schema":
+                connection.execute("DROP TABLE schema_version")
+            else:
+                key = (
+                    "chunk_identity_scheme"
+                    if damage == "scheme_mismatch"
+                    else "chunk_scheme_rebuild_target"
+                )
+                connection.execute(
+                    "INSERT OR REPLACE INTO index_config(config_key,config_value) VALUES (?,?)",
+                    (key, "synthetic-incompatible-scheme"),
+                )
+    assert ReadinessClassifier.classify_registered(info).state.value == damage
+    previous = info.index_path
+    manager, _registry = _make_rebuild_manager(info, commit)
+    result = manager.sync_repository_index(info.repository_id)
+    assert result.action == "full_index", result.error
+    assert info.index_path != previous
+    assert ReadinessClassifier.classify_registered(info).ready
 
 
 def test_staged_rebuild_populates_empty_index(tmp_path):
@@ -350,7 +487,7 @@ def test_staged_rebuild_failure_before_replacement_preserves_active_bytes(tmp_pa
     assert result.action == "failed"
     assert repo_info.index_path.read_bytes() == original
     registry.update_indexed_commit.assert_not_called()
-    assert repo_info.staleness_reason is None
+    assert repo_info.staleness_reason == "partial_index_failure"
 
 
 @pytest.mark.parametrize("failure_stage", ["after_replacement", "before_provenance"])
@@ -380,6 +517,7 @@ def test_staged_rebuild_interrupted_publication_remains_non_ready(tmp_path, fail
 def test_staged_rebuild_refuses_wrong_branch_without_mutation(tmp_path):
     repo = _make_git_repo(tmp_path)
     commit = _get_head_commit(repo)
+    subprocess.run(["git", "checkout", "-qb", "feature"], cwd=repo, check=True)
     repo_info = _make_repo_info(repo, commit)
     repo_info.current_branch = "feature"
     _seed_index(repo_info.index_path, repo, "old.py")
@@ -403,8 +541,7 @@ def test_staged_rebuild_requires_pending_marker_before_replacement(tmp_path):
     _seed_index(repo_info.index_path, repo, "old.py")
     original = repo_info.index_path.read_bytes()
     manager, registry = _make_rebuild_manager(repo_info, commit)
-    registry.update_staleness_reason.side_effect = None
-    registry.update_staleness_reason.return_value = False
+    registry.begin_generation_mutation.side_effect = OSError("injected pending fence failure")
 
     result = manager.rebuild_repository_index(repo_info.repository_id)
 
@@ -415,6 +552,7 @@ def test_staged_rebuild_requires_pending_marker_before_replacement(tmp_path):
 
 def test_rebuild_repository_index_serializes_same_repo(tmp_path):
     manager = GitAwareIndexManager(MagicMock(), MagicMock())
+    manager.registry.get_repository.return_value.path = tmp_path
     concurrent = 0
     max_concurrent = 0
     counter_lock = threading.Lock()
@@ -501,7 +639,7 @@ def test_same_branch_advance_triggers_incremental(tmp_path):
     old_commit = _get_head_commit(repo)
 
     repo_info = _make_repo_info(repo, old_commit)
-    repo_info.index_path.touch()
+    _seed_index(repo_info.index_path, repo, "hello.py")
 
     # Make a new commit on main
     (repo / "hello.py").write_text("print('updated')\n")
@@ -612,8 +750,16 @@ def test_sync_repository_index_persists_partial_index_failure(tmp_path):
     result = manager.sync_repository_index("test-repo-id")
 
     assert result.action == "failed"
-    registry.update_staleness_reason.assert_called_once_with(
-        "test-repo-id", "partial_index_failure"
+    registry.begin_generation_mutation.assert_called_once_with(
+        repo_info.repository_id,
+        expected_registration_id=repo_info.registration_id,
+        expected_generation=repo_info.index_generation,
+    )
+    registry.fail_generation_mutation.assert_called_once_with(
+        repo_info.repository_id,
+        error=ANY,
+        expected_registration_id=repo_info.registration_id,
+        expected_generation=repo_info.index_generation,
     )
 
 
@@ -637,8 +783,18 @@ def test_full_index_without_durable_rows_does_not_advance_commit(tmp_path):
     result = manager.sync_repository_index(repo_info.repository_id, force_full=True)
 
     assert result.action == "failed"
-    assert result.error == "Full index completed without durable SQLite file rows"
-    registry.update_staleness_reason.assert_called_once_with(repo_info.repository_id, "index_empty")
+    assert result.error == "Staged rebuild failed (RuntimeError)"
+    registry.begin_generation_mutation.assert_called_once_with(
+        repo_info.repository_id,
+        expected_registration_id=repo_info.registration_id,
+        expected_generation=repo_info.index_generation,
+    )
+    registry.fail_generation_mutation.assert_called_once_with(
+        repo_info.repository_id,
+        error=ANY,
+        expected_registration_id=repo_info.registration_id,
+        expected_generation=repo_info.index_generation,
+    )
     registry.update_indexed_commit.assert_not_called()
 
 
@@ -809,9 +965,12 @@ def test_clean_full_rebuild_advances_commit_only_with_durable_index(tmp_path):
     result = manager.sync_repository_index(repo_info.repository_id, force_full=True)
 
     assert result.action == "full_index"
-    registry.update_indexed_commit.assert_called_once_with(
-        repo_info.repository_id, old_commit, branch="main"
-    )
+    registry.publish_generation.assert_called_once()
+    publication = registry.publish_generation.call_args.kwargs
+    assert publication["commit"] == old_commit
+    assert publication["branch"] == "main"
+    assert publication["index_path"] == repo_info.index_path
+    assert publication["generation"] == repo_info.index_generation
 
 
 def test_full_index_returns_exact_semantic_blocker_when_summaries_still_missing(tmp_path):
@@ -937,7 +1096,7 @@ def test_full_index_preserves_exact_summary_call_timeout_details(tmp_path):
     assert result.semantic["semantic_stage"] == "blocked_summary_call_timeout"
 
 
-def test_force_full_timeout_restores_active_runtime_and_preserves_exact_blocker(tmp_path):
+def test_force_full_timeout_fences_active_runtime_and_preserves_exact_blocker(tmp_path):
     repo = _make_git_repo(tmp_path)
     commit = _get_head_commit(repo)
     repo_info = _make_repo_info(repo, commit)
@@ -961,6 +1120,8 @@ def test_force_full_timeout_restores_active_runtime_and_preserves_exact_blocker(
     manager._resolve_ctx = MagicMock(return_value=ctx)
 
     def _mutating_full_index(_repo_id, active_ctx):
+        assert active_ctx.staging
+        assert Path(active_ctx.sqlite_store.db_path) != repo_info.index_path
         mutated_store = active_ctx.sqlite_store
         mutated_repo_row = mutated_store.ensure_repository_row(repo, name="test-repo")
         mutated_store.store_file(
@@ -968,7 +1129,9 @@ def test_force_full_timeout_restores_active_runtime_and_preserves_exact_blocker(
             path=repo / "extra.py",
             relative_path="extra.py",
         )
-        (semantic_qdrant / "marker.txt").write_text("mutated", encoding="utf-8")
+        staged_vectors = Path(active_ctx.sqlite_store.db_path).with_suffix(".semantic")
+        staged_vectors.mkdir()
+        (staged_vectors / "marker.txt").write_text("mutated", encoding="utf-8")
         return UpdateResult(
             indexed=2,
             errors=[
@@ -999,12 +1162,11 @@ def test_force_full_timeout_restores_active_runtime_and_preserves_exact_blocker(
     result = manager.sync_repository_index(repo_info.repository_id, force_full=True)
 
     assert result.action == "failed"
-    assert "Authoritative summary call timed out after 30 seconds" in result.error
-    assert "runtime restored via" in result.error
+    assert result.error == "Staged rebuild failed (RuntimeError)"
+    assert "runtime restored via" not in result.error
     assert result.semantic is not None
-    assert result.semantic["runtime_restore_performed"] is True
-    assert result.semantic["runtime_counts_before"]["files"] == 1
-    assert result.semantic["runtime_counts_after"]["files"] == 1
+    assert result.semantic["summary_call_timed_out"] is True
+    assert result.semantic["semantic_stage"] == "blocked_summary_call_timeout"
     restored_store = SQLiteStore(str(repo_info.index_path))
     with restored_store._get_connection() as conn:
         files_count = conn.execute("SELECT COUNT(*) FROM files").fetchone()[0]
@@ -1016,9 +1178,15 @@ def test_force_full_timeout_restores_active_runtime_and_preserves_exact_blocker(
     assert semantic_points == 0
     assert (semantic_qdrant / "marker.txt").read_text(encoding="utf-8") == "original"
     registry.update_indexed_commit.assert_not_called()
+    registry.fail_generation_mutation.assert_called_once_with(
+        repo_info.repository_id,
+        error=ANY,
+        expected_registration_id=repo_info.registration_id,
+        expected_generation=repo_info.index_generation,
+    )
 
 
-def test_force_full_storage_closeout_restores_runtime_and_preserves_exact_blocker(tmp_path):
+def test_force_full_storage_closeout_fences_runtime_and_preserves_exact_blocker(tmp_path):
     repo = _make_git_repo(tmp_path)
     commit = _get_head_commit(repo)
     repo_info = _make_repo_info(repo, commit)
@@ -1046,6 +1214,8 @@ def test_force_full_storage_closeout_restores_runtime_and_preserves_exact_blocke
     manager._resolve_ctx = MagicMock(return_value=ctx)
 
     def _mutating_full_index(_repo_id, active_ctx):
+        assert active_ctx.staging
+        assert Path(active_ctx.sqlite_store.db_path) != repo_info.index_path
         mutated_store = active_ctx.sqlite_store
         mutated_repo_row = mutated_store.ensure_repository_row(repo, name="test-repo")
         mutated_store.store_file(
@@ -1053,7 +1223,9 @@ def test_force_full_storage_closeout_restores_runtime_and_preserves_exact_blocke
             path=repo / "extra.py",
             relative_path="extra.py",
         )
-        (semantic_qdrant / "marker.txt").write_text("mutated", encoding="utf-8")
+        staged_vectors = Path(active_ctx.sqlite_store.db_path).with_suffix(".semantic")
+        staged_vectors.mkdir()
+        (staged_vectors / "marker.txt").write_text("mutated", encoding="utf-8")
         return UpdateResult(
             indexed=2,
             failed=1,
@@ -1094,17 +1266,16 @@ def test_force_full_storage_closeout_restores_runtime_and_preserves_exact_blocke
     trace_path = Path(repo_info.index_location) / "force_full_exit_trace.json"
     trace = json.loads(trace_path.read_text(encoding="utf-8"))
     assert result.action == "failed"
-    assert "disk I/O error" in result.error
-    assert "runtime restored via" in result.error
+    assert result.error == "Staged rebuild failed (RuntimeError)"
+    assert "runtime restored via" not in result.error
     assert result.semantic is not None
-    assert result.semantic["runtime_restore_performed"] is True
-    assert result.semantic["runtime_restore_mode"].startswith("sqlite_restored")
-    assert trace["stage"] == "runtime_restore_completed"
+    assert result.semantic["storage_failure_reason"] == "disk_io_error"
+    assert trace["stage"] == "force_full_failed"
     assert trace["stage_family"] == "final_closeout"
     assert trace["blocker_source"] == "storage_closeout"
     assert trace["storage_failure_family"] == "sqlite_operational"
     assert trace["storage_failure_reason"] == "disk_io_error"
-    assert trace["runtime_restore_performed"] is True
+    assert trace["runtime_restore_performed"] is False
     restored_store = SQLiteStore(str(repo_info.index_path))
     with restored_store._get_connection() as conn:
         files_count = conn.execute("SELECT COUNT(*) FROM files").fetchone()[0]
@@ -1116,6 +1287,12 @@ def test_force_full_storage_closeout_restores_runtime_and_preserves_exact_blocke
     assert semantic_points == 0
     assert (semantic_qdrant / "marker.txt").read_text(encoding="utf-8") == "original"
     registry.update_indexed_commit.assert_not_called()
+    registry.fail_generation_mutation.assert_called_once_with(
+        repo_info.repository_id,
+        error=ANY,
+        expected_registration_id=repo_info.registration_id,
+        expected_generation=repo_info.index_generation,
+    )
 
 
 def test_full_index_preserves_bounded_summary_continuation_details(tmp_path):
@@ -1465,7 +1642,7 @@ def test_force_full_sync_does_not_advance_commit_when_semantic_stage_is_blocked(
     manager = GitAwareIndexManager(registry=registry, dispatcher=MagicMock())
     manager._resolve_ctx = MagicMock(return_value=ctx)
     manager._index_exists = MagicMock(return_value=True)
-    manager._index_has_durable_rows = MagicMock(return_value=True)
+    manager._index_path_has_durable_rows = MagicMock(return_value=True)
     manager._full_index = MagicMock(
         return_value=UpdateResult(
             indexed=1,
@@ -1489,11 +1666,18 @@ def test_force_full_sync_does_not_advance_commit_when_semantic_stage_is_blocked(
     result = manager.sync_repository_index(repo_info.repository_id, force_full=True)
 
     assert result.action == "failed"
-    assert (
-        result.error == "Summary generation plateaued before strict semantic indexing could start"
+    assert result.error == "Staged rebuild failed (RuntimeError)"
+    assert result.semantic["semantic_stage"] == "blocked_summary_plateau"
+    registry.begin_generation_mutation.assert_called_once_with(
+        repo_info.repository_id,
+        expected_registration_id=repo_info.registration_id,
+        expected_generation=repo_info.index_generation,
     )
-    registry.update_staleness_reason.assert_called_once_with(
-        repo_info.repository_id, "partial_index_failure"
+    registry.fail_generation_mutation.assert_called_once_with(
+        repo_info.repository_id,
+        error=ANY,
+        expected_registration_id=repo_info.registration_id,
+        expected_generation=repo_info.index_generation,
     )
     registry.update_indexed_commit.assert_not_called()
 
@@ -1511,7 +1695,7 @@ def test_force_full_sync_preserves_exact_summary_call_timeout_blocker(tmp_path):
     manager = GitAwareIndexManager(registry=registry, dispatcher=MagicMock())
     manager._resolve_ctx = MagicMock(return_value=ctx)
     manager._index_exists = MagicMock(return_value=True)
-    manager._index_has_durable_rows = MagicMock(return_value=True)
+    manager._index_path_has_durable_rows = MagicMock(return_value=True)
     manager._full_index = MagicMock(
         return_value=UpdateResult(
             indexed=1,
@@ -1552,8 +1736,16 @@ def test_force_full_sync_preserves_exact_summary_call_timeout_blocker(tmp_path):
     assert result.semantic["summary_call_file_path"] == str(repo / "README.md")
     assert result.semantic["summary_call_chunk_ids"] == ["chunk-1"]
     assert result.semantic["summary_call_timeout_seconds"] == 30.0
-    registry.update_staleness_reason.assert_called_once_with(
-        repo_info.repository_id, "partial_index_failure"
+    registry.begin_generation_mutation.assert_called_once_with(
+        repo_info.repository_id,
+        expected_registration_id=repo_info.registration_id,
+        expected_generation=repo_info.index_generation,
+    )
+    registry.fail_generation_mutation.assert_called_once_with(
+        repo_info.repository_id,
+        error=ANY,
+        expected_registration_id=repo_info.registration_id,
+        expected_generation=repo_info.index_generation,
     )
 
 
@@ -1572,7 +1764,7 @@ def test_force_full_sync_preserves_durable_exit_trace_on_interrupt(tmp_path):
     ctx = _make_ctx(repo_info.repository_id, repo, repo_info.index_path)
     manager._resolve_ctx = MagicMock(return_value=ctx)
     manager._index_exists = MagicMock(return_value=True)
-    manager._index_has_durable_rows = MagicMock(return_value=True)
+    manager._index_path_has_durable_rows = MagicMock(return_value=True)
 
     def _interrupting_full_index(repo_id, _ctx):
         manager._write_force_full_exit_trace(
@@ -1630,7 +1822,7 @@ def test_force_full_sync_terminalizes_running_trace_when_later_test_pair_crashes
     ctx = _make_ctx(repo_info.repository_id, repo, repo_info.index_path)
     manager._resolve_ctx = MagicMock(return_value=ctx)
     manager._index_exists = MagicMock(return_value=True)
-    manager._index_has_durable_rows = MagicMock(return_value=True)
+    manager._index_path_has_durable_rows = MagicMock(return_value=True)
 
     prior_file = repo / "tests" / "test_deployment_runbook_shape.py"
     blocked_file = repo / "tests" / "test_reindex_resume.py"
@@ -1692,7 +1884,7 @@ def test_force_full_sync_terminalizes_running_trace_when_later_root_test_pair_cr
     ctx = _make_ctx(repo_info.repository_id, repo, repo_info.index_path)
     manager._resolve_ctx = MagicMock(return_value=ctx)
     manager._index_exists = MagicMock(return_value=True)
-    manager._index_has_durable_rows = MagicMock(return_value=True)
+    manager._index_path_has_durable_rows = MagicMock(return_value=True)
 
     prior_file = repo / "tests" / "root_tests" / "test_voyage_api.py"
     blocked_file = repo / "tests" / "root_tests" / "run_reranking_tests.py"
@@ -1754,7 +1946,7 @@ def test_force_full_sync_marks_durable_exit_trace_completed_on_clean_closeout(tm
     ctx = _make_ctx(repo_info.repository_id, repo, repo_info.index_path)
     manager._resolve_ctx = MagicMock(return_value=ctx)
     manager._index_exists = MagicMock(return_value=True)
-    manager._index_has_durable_rows = MagicMock(return_value=True)
+    manager._index_path_has_durable_rows = MagicMock(return_value=True)
     manager._full_index = MagicMock(
         return_value=UpdateResult(
             indexed=1,
@@ -1774,9 +1966,11 @@ def test_force_full_sync_marks_durable_exit_trace_completed_on_clean_closeout(tm
     assert trace["stage_family"] == "final_closeout"
     assert trace["current_commit"] == commit
     assert trace["indexed_commit_before"] is None
-    registry.update_indexed_commit.assert_called_once_with(
-        repo_info.repository_id, commit, branch="main"
-    )
+    registry.publish_generation.assert_called_once()
+    publication = registry.publish_generation.call_args.kwargs
+    assert publication["commit"] == commit
+    assert publication["branch"] == "main"
+    assert publication["generation"] == repo_info.index_generation
 
 
 def test_force_full_progress_callback_persists_fresh_in_flight_snapshot(tmp_path):
@@ -2214,7 +2408,7 @@ def test_force_full_sync_terminalizes_running_trace_when_same_devcontainer_relap
     ctx = _make_ctx(repo_info.repository_id, repo, repo_info.index_path)
     manager._resolve_ctx = MagicMock(return_value=ctx)
     manager._index_exists = MagicMock(return_value=True)
-    manager._index_has_durable_rows = MagicMock(return_value=True)
+    manager._index_path_has_durable_rows = MagicMock(return_value=True)
 
     blocked_file = repo / ".devcontainer" / "devcontainer.json"
 
@@ -2276,7 +2470,7 @@ def test_force_full_sync_terminalizes_running_trace_with_exact_devcontainer_tail
     ctx = _make_ctx(repo_info.repository_id, repo, repo_info.index_path)
     manager._resolve_ctx = MagicMock(return_value=ctx)
     manager._index_exists = MagicMock(return_value=True)
-    manager._index_has_durable_rows = MagicMock(return_value=True)
+    manager._index_path_has_durable_rows = MagicMock(return_value=True)
 
     post_create = repo / ".devcontainer" / "post_create.sh"
     config_file = repo / ".devcontainer" / "devcontainer.json"
@@ -2453,7 +2647,7 @@ def test_force_full_sync_does_not_advance_commit_when_low_level_blocker_fires(tm
     manager = GitAwareIndexManager(registry=registry, dispatcher=MagicMock())
     manager._resolve_ctx = MagicMock(return_value=ctx)
     manager._index_exists = MagicMock(return_value=True)
-    manager._index_has_durable_rows = MagicMock(return_value=True)
+    manager._index_path_has_durable_rows = MagicMock(return_value=True)
     manager._full_index = MagicMock(
         return_value=UpdateResult(
             indexed=0,
@@ -2477,7 +2671,7 @@ def test_force_full_sync_does_not_advance_commit_when_low_level_blocker_fires(tm
     result = manager.sync_repository_index(repo_info.repository_id, force_full=True)
 
     assert result.action == "failed"
-    assert result.error == "Lexical indexing timed out while processing hello.py"
+    assert result.error == "Staged rebuild failed (RuntimeError)"
 
 
 def test_force_full_sync_does_not_advance_commit_when_later_script_pair_blocks(tmp_path):
@@ -2496,7 +2690,7 @@ def test_force_full_sync_does_not_advance_commit_when_later_script_pair_blocks(t
     ctx = _make_ctx(repo_info.repository_id, repo, repo_info.index_path)
     manager._resolve_ctx = MagicMock(return_value=ctx)
     manager._index_exists = MagicMock(return_value=True)
-    manager._index_has_durable_rows = MagicMock(return_value=True)
+    manager._index_path_has_durable_rows = MagicMock(return_value=True)
 
     prior_file = repo / "scripts" / "run_test_batch.py"
     blocked_file = repo / "scripts" / "validate_mcp_comprehensive.py"
@@ -2558,7 +2752,7 @@ def test_force_full_sync_does_not_advance_commit_when_later_root_test_pair_block
     ctx = _make_ctx(repo_info.repository_id, repo, repo_info.index_path)
     manager._resolve_ctx = MagicMock(return_value=ctx)
     manager._index_exists = MagicMock(return_value=True)
-    manager._index_has_durable_rows = MagicMock(return_value=True)
+    manager._index_path_has_durable_rows = MagicMock(return_value=True)
 
     prior_file = repo / "tests" / "root_tests" / "test_voyage_api.py"
     blocked_file = repo / "tests" / "root_tests" / "run_reranking_tests.py"
@@ -2633,7 +2827,7 @@ def test_force_full_sync_trace_moves_past_fast_report_family_after_boundary_repa
     manager = GitAwareIndexManager(registry=registry, dispatcher=MagicMock())
     manager._resolve_ctx = MagicMock(return_value=ctx)
     manager._index_exists = MagicMock(return_value=True)
-    manager._index_has_durable_rows = MagicMock(return_value=True)
+    manager._index_path_has_durable_rows = MagicMock(return_value=True)
     manager._full_index = MagicMock(
         return_value=UpdateResult(
             indexed=1,
@@ -2680,7 +2874,7 @@ def test_force_full_sync_trace_moves_past_pytest_overview_after_bounded_ai_docs_
     manager = GitAwareIndexManager(registry=registry, dispatcher=MagicMock())
     manager._resolve_ctx = MagicMock(return_value=ctx)
     manager._index_exists = MagicMock(return_value=True)
-    manager._index_has_durable_rows = MagicMock(return_value=True)
+    manager._index_path_has_durable_rows = MagicMock(return_value=True)
     manager._full_index = MagicMock(
         return_value=UpdateResult(
             indexed=2,
@@ -2733,7 +2927,7 @@ def test_force_full_sync_durable_trace_moves_past_jedi_ai_doc(tmp_path):
     manager = GitAwareIndexManager(registry=registry, dispatcher=MagicMock())
     manager._resolve_ctx = MagicMock(return_value=ctx)
     manager._index_exists = MagicMock(return_value=True)
-    manager._index_has_durable_rows = MagicMock(return_value=True)
+    manager._index_path_has_durable_rows = MagicMock(return_value=True)
     manager._full_index = MagicMock(
         return_value=UpdateResult(
             indexed=3,
@@ -2832,7 +3026,7 @@ def test_force_full_sync_durable_trace_moves_past_later_ai_docs_overview_pair(tm
     manager = GitAwareIndexManager(registry=registry, dispatcher=MagicMock())
     manager._resolve_ctx = MagicMock(return_value=ctx)
     manager._index_exists = MagicMock(return_value=True)
-    manager._index_has_durable_rows = MagicMock(return_value=True)
+    manager._index_path_has_durable_rows = MagicMock(return_value=True)
     manager._full_index = MagicMock(
         return_value=UpdateResult(
             indexed=5,
@@ -2927,7 +3121,7 @@ def test_force_full_sync_durable_trace_moves_past_exact_ai_docs_readme_tail_pair
     manager = GitAwareIndexManager(registry=registry, dispatcher=MagicMock())
     manager._resolve_ctx = MagicMock(return_value=ctx)
     manager._index_exists = MagicMock(return_value=True)
-    manager._index_has_durable_rows = MagicMock(return_value=True)
+    manager._index_path_has_durable_rows = MagicMock(return_value=True)
     manager._full_index = MagicMock(
         return_value=UpdateResult(
             indexed=4,
@@ -2983,7 +3177,7 @@ def test_force_full_sync_durable_trace_moves_past_validation_doc_pair(tmp_path):
     manager = GitAwareIndexManager(registry=registry, dispatcher=MagicMock())
     manager._resolve_ctx = MagicMock(return_value=ctx)
     manager._index_exists = MagicMock(return_value=True)
-    manager._index_has_durable_rows = MagicMock(return_value=True)
+    manager._index_path_has_durable_rows = MagicMock(return_value=True)
     manager._full_index = MagicMock(
         return_value=UpdateResult(
             indexed=3,
@@ -3052,7 +3246,7 @@ def test_force_full_sync_durable_trace_moves_past_benchmark_doc_pair(tmp_path):
     manager = GitAwareIndexManager(registry=registry, dispatcher=MagicMock())
     manager._resolve_ctx = MagicMock(return_value=ctx)
     manager._index_exists = MagicMock(return_value=True)
-    manager._index_has_durable_rows = MagicMock(return_value=True)
+    manager._index_path_has_durable_rows = MagicMock(return_value=True)
     manager._full_index = MagicMock(
         return_value=UpdateResult(
             indexed=3,
@@ -3108,7 +3302,7 @@ def test_force_full_sync_durable_trace_moves_past_docs_governance_pair(tmp_path)
     manager = GitAwareIndexManager(registry=registry, dispatcher=MagicMock())
     manager._resolve_ctx = MagicMock(return_value=ctx)
     manager._index_exists = MagicMock(return_value=True)
-    manager._index_has_durable_rows = MagicMock(return_value=True)
+    manager._index_path_has_durable_rows = MagicMock(return_value=True)
     manager._full_index = MagicMock(
         return_value=UpdateResult(
             indexed=3,
@@ -3172,7 +3366,7 @@ def test_force_full_sync_durable_trace_moves_past_docs_test_tail_pair(tmp_path):
     manager = GitAwareIndexManager(registry=registry, dispatcher=MagicMock())
     manager._resolve_ctx = MagicMock(return_value=ctx)
     manager._index_exists = MagicMock(return_value=True)
-    manager._index_has_durable_rows = MagicMock(return_value=True)
+    manager._index_path_has_durable_rows = MagicMock(return_value=True)
     manager._full_index = MagicMock(
         return_value=UpdateResult(
             indexed=3,
@@ -3236,7 +3430,7 @@ def test_force_full_sync_durable_trace_moves_past_mock_plugin_fixture_pair(tmp_p
     manager = GitAwareIndexManager(registry=registry, dispatcher=MagicMock())
     manager._resolve_ctx = MagicMock(return_value=ctx)
     manager._index_exists = MagicMock(return_value=True)
-    manager._index_has_durable_rows = MagicMock(return_value=True)
+    manager._index_path_has_durable_rows = MagicMock(return_value=True)
     manager._full_index = MagicMock(
         return_value=UpdateResult(
             indexed=3,
@@ -3299,7 +3493,7 @@ def test_force_full_sync_durable_trace_moves_past_docs_contract_tail_pair(tmp_pa
     manager = GitAwareIndexManager(registry=registry, dispatcher=MagicMock())
     manager._resolve_ctx = MagicMock(return_value=ctx)
     manager._index_exists = MagicMock(return_value=True)
-    manager._index_has_durable_rows = MagicMock(return_value=True)
+    manager._index_path_has_durable_rows = MagicMock(return_value=True)
     manager._full_index = MagicMock(
         return_value=UpdateResult(
             indexed=3,
@@ -3359,7 +3553,7 @@ def test_force_full_sync_durable_trace_moves_past_ga_release_docs_tail_pair(tmp_
     manager = GitAwareIndexManager(registry=registry, dispatcher=MagicMock())
     manager._resolve_ctx = MagicMock(return_value=ctx)
     manager._index_exists = MagicMock(return_value=True)
-    manager._index_has_durable_rows = MagicMock(return_value=True)
+    manager._index_path_has_durable_rows = MagicMock(return_value=True)
     manager._full_index = MagicMock(
         return_value=UpdateResult(
             indexed=3,
@@ -4220,7 +4414,7 @@ def test_force_full_sync_durable_trace_moves_past_late_v7_phase_plan_pair(tmp_pa
     manager = GitAwareIndexManager(registry=registry, dispatcher=MagicMock())
     manager._resolve_ctx = MagicMock(return_value=ctx)
     manager._index_exists = MagicMock(return_value=True)
-    manager._index_has_durable_rows = MagicMock(return_value=True)
+    manager._index_path_has_durable_rows = MagicMock(return_value=True)
     manager._full_index = MagicMock(
         return_value=UpdateResult(
             indexed=3,
@@ -4279,7 +4473,7 @@ def test_force_full_sync_durable_trace_moves_past_docs_truth_tail_pair(tmp_path)
     manager = GitAwareIndexManager(registry=registry, dispatcher=MagicMock())
     manager._resolve_ctx = MagicMock(return_value=ctx)
     manager._index_exists = MagicMock(return_value=True)
-    manager._index_has_durable_rows = MagicMock(return_value=True)
+    manager._index_path_has_durable_rows = MagicMock(return_value=True)
     manager._full_index = MagicMock(
         return_value=UpdateResult(
             indexed=3,
@@ -4336,7 +4530,7 @@ def test_force_full_sync_durable_trace_moves_past_historical_phase_plan_pair(tmp
     manager = GitAwareIndexManager(registry=registry, dispatcher=MagicMock())
     manager._resolve_ctx = MagicMock(return_value=ctx)
     manager._index_exists = MagicMock(return_value=True)
-    manager._index_has_durable_rows = MagicMock(return_value=True)
+    manager._index_path_has_durable_rows = MagicMock(return_value=True)
     manager._full_index = MagicMock(
         return_value=UpdateResult(
             indexed=3,
@@ -4490,7 +4684,7 @@ def test_force_full_sync_durable_trace_moves_past_historical_v1_phase_plan_pair(
     manager = GitAwareIndexManager(registry=registry, dispatcher=MagicMock())
     manager._resolve_ctx = MagicMock(return_value=ctx)
     manager._index_exists = MagicMock(return_value=True)
-    manager._index_has_durable_rows = MagicMock(return_value=True)
+    manager._index_path_has_durable_rows = MagicMock(return_value=True)
     manager._full_index = MagicMock(
         return_value=UpdateResult(
             indexed=3,
@@ -4546,7 +4740,7 @@ def test_force_full_sync_durable_trace_moves_past_optimized_final_report_pair(tm
     manager = GitAwareIndexManager(registry=registry, dispatcher=MagicMock())
     manager._resolve_ctx = MagicMock(return_value=ctx)
     manager._index_exists = MagicMock(return_value=True)
-    manager._index_has_durable_rows = MagicMock(return_value=True)
+    manager._index_path_has_durable_rows = MagicMock(return_value=True)
     manager._full_index = MagicMock(
         return_value=UpdateResult(
             indexed=3,
@@ -4649,7 +4843,7 @@ def test_force_full_sync_durable_trace_moves_past_semjedi_p4_phase_plan_pair(tmp
     manager = GitAwareIndexManager(registry=registry, dispatcher=MagicMock())
     manager._resolve_ctx = MagicMock(return_value=ctx)
     manager._index_exists = MagicMock(return_value=True)
-    manager._index_has_durable_rows = MagicMock(return_value=True)
+    manager._index_path_has_durable_rows = MagicMock(return_value=True)
     manager._full_index = MagicMock(
         return_value=UpdateResult(
             indexed=3,
@@ -4790,7 +4984,7 @@ def test_force_full_sync_durable_trace_moves_past_support_docs_pair(tmp_path):
     manager = GitAwareIndexManager(registry=registry, dispatcher=MagicMock())
     manager._resolve_ctx = MagicMock(return_value=ctx)
     manager._index_exists = MagicMock(return_value=True)
-    manager._index_has_durable_rows = MagicMock(return_value=True)
+    manager._index_path_has_durable_rows = MagicMock(return_value=True)
     manager._full_index = MagicMock(
         return_value=UpdateResult(
             indexed=3,
@@ -4931,7 +5125,7 @@ def test_force_full_sync_durable_trace_moves_past_optimized_upload_pair(tmp_path
     manager = GitAwareIndexManager(registry=registry, dispatcher=MagicMock())
     manager._resolve_ctx = MagicMock(return_value=ctx)
     manager._index_exists = MagicMock(return_value=True)
-    manager._index_has_durable_rows = MagicMock(return_value=True)
+    manager._index_path_has_durable_rows = MagicMock(return_value=True)
     manager._full_index = MagicMock(
         return_value=UpdateResult(
             indexed=3,
@@ -4985,7 +5179,7 @@ def test_force_full_sync_durable_trace_moves_past_edit_retrieval_pair(tmp_path):
     manager = GitAwareIndexManager(registry=registry, dispatcher=MagicMock())
     manager._resolve_ctx = MagicMock(return_value=ctx)
     manager._index_exists = MagicMock(return_value=True)
-    manager._index_has_durable_rows = MagicMock(return_value=True)
+    manager._index_path_has_durable_rows = MagicMock(return_value=True)
     manager._full_index = MagicMock(
         return_value=UpdateResult(
             indexed=3,
@@ -5219,7 +5413,7 @@ def test_force_full_sync_durable_trace_moves_past_comprehensive_query_pair(tmp_p
     manager = GitAwareIndexManager(registry=registry, dispatcher=MagicMock())
     manager._resolve_ctx = MagicMock(return_value=ctx)
     manager._index_exists = MagicMock(return_value=True)
-    manager._index_has_durable_rows = MagicMock(return_value=True)
+    manager._index_path_has_durable_rows = MagicMock(return_value=True)
     manager._full_index = MagicMock(
         return_value=UpdateResult(
             indexed=3,
@@ -5272,7 +5466,7 @@ def test_force_full_sync_terminalizes_running_trace_when_swift_database_efficien
     ctx = _make_ctx(repo_info.repository_id, repo, repo_info.index_path)
     manager._resolve_ctx = MagicMock(return_value=ctx)
     manager._index_exists = MagicMock(return_value=True)
-    manager._index_has_durable_rows = MagicMock(return_value=True)
+    manager._index_path_has_durable_rows = MagicMock(return_value=True)
 
     prior_file = repo / "tests" / "root_tests" / "test_swift_plugin.py"
     blocked_file = repo / "tests" / "root_tests" / "test_mcp_database_efficiency.py"
@@ -5334,7 +5528,7 @@ def test_force_full_sync_durable_trace_moves_past_centralization_pair(tmp_path):
     manager = GitAwareIndexManager(registry=registry, dispatcher=MagicMock())
     manager._resolve_ctx = MagicMock(return_value=ctx)
     manager._index_exists = MagicMock(return_value=True)
-    manager._index_has_durable_rows = MagicMock(return_value=True)
+    manager._index_path_has_durable_rows = MagicMock(return_value=True)
     manager._full_index = MagicMock(
         return_value=UpdateResult(
             indexed=3,
@@ -5388,7 +5582,7 @@ def test_force_full_sync_durable_trace_moves_past_swift_database_efficiency_pair
     manager = GitAwareIndexManager(registry=registry, dispatcher=MagicMock())
     manager._resolve_ctx = MagicMock(return_value=ctx)
     manager._index_exists = MagicMock(return_value=True)
-    manager._index_has_durable_rows = MagicMock(return_value=True)
+    manager._index_path_has_durable_rows = MagicMock(return_value=True)
     manager._full_index = MagicMock(
         return_value=UpdateResult(
             indexed=3,
@@ -5451,7 +5645,7 @@ def test_force_full_sync_durable_trace_moves_past_legacy_codex_phase_loop_heartb
     manager = GitAwareIndexManager(registry=registry, dispatcher=MagicMock())
     manager._resolve_ctx = MagicMock(return_value=ctx)
     manager._index_exists = MagicMock(return_value=True)
-    manager._index_has_durable_rows = MagicMock(return_value=True)
+    manager._index_path_has_durable_rows = MagicMock(return_value=True)
     manager._full_index = MagicMock(
         return_value=UpdateResult(
             indexed=3,
@@ -5592,7 +5786,7 @@ def test_force_full_sync_durable_trace_moves_past_legacy_codex_phase_loop_garecu
     manager = GitAwareIndexManager(registry=registry, dispatcher=MagicMock())
     manager._resolve_ctx = MagicMock(return_value=ctx)
     manager._index_exists = MagicMock(return_value=True)
-    manager._index_has_durable_rows = MagicMock(return_value=True)
+    manager._index_path_has_durable_rows = MagicMock(return_value=True)
     manager._full_index = MagicMock(
         return_value=UpdateResult(
             indexed=3,
@@ -5740,7 +5934,7 @@ def test_force_full_sync_durable_trace_moves_past_legacy_codex_phase_loop_ciflow
     manager = GitAwareIndexManager(registry=registry, dispatcher=MagicMock())
     manager._resolve_ctx = MagicMock(return_value=ctx)
     manager._index_exists = MagicMock(return_value=True)
-    manager._index_has_durable_rows = MagicMock(return_value=True)
+    manager._index_path_has_durable_rows = MagicMock(return_value=True)
     manager._full_index = MagicMock(
         return_value=UpdateResult(
             indexed=3,
@@ -5841,7 +6035,7 @@ def test_force_full_sync_durable_trace_moves_past_p24_plugin_tail_pair(tmp_path)
     manager = GitAwareIndexManager(registry=registry, dispatcher=MagicMock())
     manager._resolve_ctx = MagicMock(return_value=ctx)
     manager._index_exists = MagicMock(return_value=True)
-    manager._index_has_durable_rows = MagicMock(return_value=True)
+    manager._index_path_has_durable_rows = MagicMock(return_value=True)
     manager._full_index = MagicMock(
         return_value=UpdateResult(
             indexed=3,
@@ -5944,7 +6138,7 @@ def test_force_full_sync_durable_trace_moves_past_architecture_api_markdown_pair
     manager = GitAwareIndexManager(registry=registry, dispatcher=MagicMock())
     manager._resolve_ctx = MagicMock(return_value=ctx)
     manager._index_exists = MagicMock(return_value=True)
-    manager._index_has_durable_rows = MagicMock(return_value=True)
+    manager._index_path_has_durable_rows = MagicMock(return_value=True)
     manager._full_index = MagicMock(
         return_value=UpdateResult(
             indexed=3,
@@ -6089,7 +6283,7 @@ def test_force_full_sync_durable_trace_moves_past_rebound_phase_plan_pair(tmp_pa
     manager = GitAwareIndexManager(registry=registry, dispatcher=MagicMock())
     manager._resolve_ctx = MagicMock(return_value=ctx)
     manager._index_exists = MagicMock(return_value=True)
-    manager._index_has_durable_rows = MagicMock(return_value=True)
+    manager._index_path_has_durable_rows = MagicMock(return_value=True)
     manager._full_index = MagicMock(
         return_value=UpdateResult(
             indexed=3,
@@ -6149,7 +6343,7 @@ def test_force_full_sync_durable_trace_moves_past_mixed_version_phase_plan_pair(
     manager = GitAwareIndexManager(registry=registry, dispatcher=MagicMock())
     manager._resolve_ctx = MagicMock(return_value=ctx)
     manager._index_exists = MagicMock(return_value=True)
-    manager._index_has_durable_rows = MagicMock(return_value=True)
+    manager._index_path_has_durable_rows = MagicMock(return_value=True)
     manager._full_index = MagicMock(
         return_value=UpdateResult(
             indexed=3,
@@ -6198,7 +6392,7 @@ def test_force_full_sync_trace_moves_past_visual_report_script_after_exact_pytho
     manager = GitAwareIndexManager(registry=registry, dispatcher=MagicMock())
     manager._resolve_ctx = MagicMock(return_value=ctx)
     manager._index_exists = MagicMock(return_value=True)
-    manager._index_has_durable_rows = MagicMock(return_value=True)
+    manager._index_path_has_durable_rows = MagicMock(return_value=True)
     manager._full_index = MagicMock(
         return_value=UpdateResult(
             indexed=2,
@@ -6250,7 +6444,7 @@ def test_force_full_sync_trace_moves_past_preflight_upgrade_script_pair_after_ex
     manager = GitAwareIndexManager(registry=registry, dispatcher=MagicMock())
     manager._resolve_ctx = MagicMock(return_value=ctx)
     manager._index_exists = MagicMock(return_value=True)
-    manager._index_has_durable_rows = MagicMock(return_value=True)
+    manager._index_path_has_durable_rows = MagicMock(return_value=True)
     manager._full_index = MagicMock(
         return_value=UpdateResult(
             indexed=2,
@@ -6306,7 +6500,7 @@ def test_force_full_sync_trace_moves_past_verify_simulator_script_pair_after_exa
     manager = GitAwareIndexManager(registry=registry, dispatcher=MagicMock())
     manager._resolve_ctx = MagicMock(return_value=ctx)
     manager._index_exists = MagicMock(return_value=True)
-    manager._index_has_durable_rows = MagicMock(return_value=True)
+    manager._index_path_has_durable_rows = MagicMock(return_value=True)
     manager._full_index = MagicMock(
         return_value=UpdateResult(
             indexed=2,
@@ -6360,7 +6554,7 @@ def test_force_full_sync_trace_moves_past_script_language_audit_pair(tmp_path):
     manager = GitAwareIndexManager(registry=registry, dispatcher=MagicMock())
     manager._resolve_ctx = MagicMock(return_value=ctx)
     manager._index_exists = MagicMock(return_value=True)
-    manager._index_has_durable_rows = MagicMock(return_value=True)
+    manager._index_path_has_durable_rows = MagicMock(return_value=True)
     manager._full_index = MagicMock(
         return_value=UpdateResult(
             indexed=2,
@@ -6420,7 +6614,7 @@ def test_force_full_sync_trace_moves_past_embed_consolidation_pair(tmp_path):
     manager = GitAwareIndexManager(registry=registry, dispatcher=MagicMock())
     manager._resolve_ctx = MagicMock(return_value=ctx)
     manager._index_exists = MagicMock(return_value=True)
-    manager._index_has_durable_rows = MagicMock(return_value=True)
+    manager._index_path_has_durable_rows = MagicMock(return_value=True)
     manager._full_index = MagicMock(
         return_value=UpdateResult(
             indexed=2,

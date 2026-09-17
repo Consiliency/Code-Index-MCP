@@ -9,6 +9,8 @@ from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from mcp_server.health import repository_readiness
 from mcp_server.health.repository_readiness import (
     ReadinessClassifier,
@@ -54,6 +56,80 @@ def test_readiness_state_values_are_exact():
         "scheme_mismatch",
         "index_rebuilding",
     }
+
+
+@pytest.mark.parametrize("object_format", ["sha1", "sha256"])
+@pytest.mark.parametrize(
+    "change,expected",
+    [
+        ("none", "ready"),
+        ("untracked", "ready"),
+        ("unstaged", "stale_commit"),
+        ("staged", "stale_commit"),
+        ("staged_then_restored", "stale_commit"),
+        ("rename", "stale_commit"),
+        ("delete", "stale_commit"),
+        ("commit", "stale_commit"),
+        ("branch", "wrong_branch"),
+        ("detached", "unregistered_repository"),
+        ("missing_git", "unregistered_repository"),
+    ],
+)
+def test_fresh_single_git_probe_keeps_readiness_fences(
+    tmp_path, monkeypatch, object_format, change, expected
+):
+    monkeypatch.setenv("GIT_DEFAULT_HASH", object_format)
+    info = make_repo_info(tmp_path)
+    repo = make_git_repo(info.path)
+    commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
+    info.current_commit = info.last_indexed_commit = commit
+    assert len(commit) == (40 if object_format == "sha1" else 64)
+    assert ReadinessClassifier.classify_registered(info).ready
+    if change == "untracked":
+        (repo / "untracked.txt").write_text("not indexed")
+    elif change in {"unstaged", "staged", "staged_then_restored", "commit"}:
+        (repo / "README.md").write_text("changed")
+        if change != "unstaged":
+            git("add", "README.md", cwd=repo)
+        if change == "commit":
+            git("commit", "-m", "change", cwd=repo)
+        elif change == "staged_then_restored":
+            (repo / "README.md").write_text("hello")
+    elif change == "rename":
+        git("mv", "README.md", "renamed\n# branch.head main", cwd=repo)
+    elif change == "delete":
+        (repo / "README.md").unlink()
+    elif change == "branch":
+        git("checkout", "-b", "feature", cwd=repo)
+    elif change == "detached":
+        git("checkout", "--detach", cwd=repo)
+    elif change == "missing_git":
+        (repo / ".git").rename(repo / "removed-git")
+
+    run = subprocess.run
+    calls = []
+
+    def counted_run(args, **kwargs):
+        calls.append(args)
+        return run(args, **kwargs)
+
+    monkeypatch.setattr(repository_readiness.subprocess, "run", counted_run)
+    result = ReadinessClassifier.classify_registered(info)
+    assert result.state.value == expected
+    assert len(calls) == 1
+    assert "--no-optional-locks" in calls[0]
+
+
+@pytest.mark.parametrize("failure", [OSError("missing git"), subprocess.TimeoutExpired("git", 10)])
+def test_live_git_probe_failure_does_not_trust_cached_commit(tmp_path, monkeypatch, failure):
+    info = make_repo_info(tmp_path, current_commit="a" * 40)
+
+    def fail(*args, **kwargs):
+        raise failure
+
+    monkeypatch.setattr(repository_readiness.subprocess, "run", fail)
+    result = ReadinessClassifier.classify_registered(info)
+    assert result.state == RepositoryReadinessState.UNREGISTERED_REPOSITORY
 
 
 def test_semantic_readiness_state_values_are_exact():

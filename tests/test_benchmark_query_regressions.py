@@ -290,14 +290,21 @@ def test_index_file_uses_chunker_retrieval_metadata(monkeypatch, tmp_path):
     captured = {}
 
     class _QdrantStub:
-        def upsert(self, collection_name, points):
+        def upsert(self, collection_name, points, wait=False):
             captured["collection_name"] = collection_name
             captured["points"] = points
+            return SimpleNamespace(status="completed")
 
     monkeypatch.setattr(semantic_indexer_module, "chunk_file", lambda *args, **kwargs: [fake_chunk])
 
     indexer = object.__new__(SemanticIndexer)
-    indexer.path_resolver = cast(Any, SimpleNamespace(normalize_path=lambda _: "tmp/example.py"))
+    indexer.staging = False
+    indexer.path_resolver = cast(
+        Any,
+        SimpleNamespace(
+            normalize_path=lambda _: "tmp/example.py", resolve_path=lambda _: file_path
+        ),
+    )
     indexer.collection = "test-collection"
     indexer._qdrant_available = True
     indexer.qdrant = cast(Any, _QdrantStub())
@@ -359,12 +366,17 @@ def test_index_file_splits_oversize_embedding_units(monkeypatch, tmp_path):
     captured = {}
 
     class _QdrantStub:
-        def upsert(self, collection_name, points):
+        def upsert(self, collection_name, points, wait=False):
             captured["points"] = points
+            return SimpleNamespace(status="completed")
 
     indexer = object.__new__(SemanticIndexer)
+    indexer.staging = False
     indexer.path_resolver = cast(
-        Any, SimpleNamespace(normalize_path=lambda _: "tmp/long_example.py")
+        Any,
+        SimpleNamespace(
+            normalize_path=lambda _: "tmp/long_example.py", resolve_path=lambda _: file_path
+        ),
     )
     indexer.collection = "test-collection"
     indexer._qdrant_available = True
@@ -449,11 +461,16 @@ def test_index_file_falls_back_to_text_chunks_for_unknown_language(monkeypatch, 
     captured = {}
 
     class _QdrantStub:
-        def upsert(self, collection_name, points):
+        def upsert(self, collection_name, points, wait=False):
             captured["points"] = points
+            return SimpleNamespace(status="completed")
 
     indexer = object.__new__(SemanticIndexer)
-    indexer.path_resolver = cast(Any, SimpleNamespace(normalize_path=lambda _: "tmp/NOTES.md"))
+    indexer.staging = False
+    indexer.path_resolver = cast(
+        Any,
+        SimpleNamespace(normalize_path=lambda _: "tmp/NOTES.md", resolve_path=lambda _: file_path),
+    )
     indexer.collection = "test-collection"
     indexer._qdrant_available = True
     indexer.qdrant = cast(Any, _QdrantStub())
@@ -764,7 +781,11 @@ def test_semantic_query_results_include_stable_metadata():
             self.score = 0.91
 
     class _QdrantStub:
-        def search(self, collection_name, query_vector, limit):
+        def search(self, collection_name, query_vector, limit, query_filter):
+            assert {condition.key for condition in query_filter.must_not} == {
+                "__provenance__",
+                "is_deleted",
+            }
             return [_Point()]
 
     indexer.qdrant = cast(Any, _QdrantStub())

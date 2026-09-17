@@ -1,11 +1,4 @@
 from .friction import FRICTION_PATTERN_CONFIGS, FrictionPatternConfig, extract_friction_markers
-from .github_issues import (
-    GitHubIssueFetchOptions,
-    extract_issue_learnings,
-    fetch_github_issues,
-    issue_history_dedupe_key,
-    normalize_github_issue,
-)
 from .lock_registry import IndexingLockRegistry, lock_registry
 from .source_metadata import (
     FRICTION_CATEGORIES,
@@ -60,9 +53,20 @@ __all__ = [
 ]
 
 _CHECKPOINT_NAMES = {"ReindexCheckpoint", "save", "load", "clear"}
+_GITHUB_ISSUE_NAMES = {
+    "GitHubIssueFetchOptions",
+    "extract_issue_learnings",
+    "fetch_github_issues",
+    "issue_history_dedupe_key",
+    "normalize_github_issue",
+}
 
 
 def __getattr__(name: str):
+    if name in _GITHUB_ISSUE_NAMES:
+        from . import github_issues
+
+        return getattr(github_issues, name)
     if name in _CHECKPOINT_NAMES:
         from . import checkpoint
 

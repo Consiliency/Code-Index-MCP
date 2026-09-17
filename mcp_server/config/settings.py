@@ -28,7 +28,9 @@ def _find_profiles_yaml() -> Optional[str]:
     3. <package-root>/code-index-mcp.profiles.yaml (server installation fallback)
     """
     env_path = os.getenv("MCP_PROFILES_PATH")
-    if env_path and os.path.exists(env_path):
+    if env_path:
+        if not Path(env_path).is_file():
+            raise FileNotFoundError("MCP_PROFILES_PATH does not name an existing file")
         return env_path
     cwd_path = Path.cwd() / "code-index-mcp.profiles.yaml"
     if cwd_path.exists():
@@ -764,10 +766,21 @@ class Settings(BaseModel):
         included so ``ChunkWriter`` can use them without reading env vars directly.
         """
         profile_cfg: Dict[str, Any] = {}
-        payload = self._load_profiles_yaml()
-        profile_map = payload.get("profiles") or {}
-        profile_cfg = dict((profile_map.get(profile_id) or {}).get("summarization") or {})
-        if profile_cfg:
+        if self.semantic_profiles_json:
+            metadata = (
+                self.get_semantic_profiles_config().get(profile_id, {}).get("build_metadata") or {}
+            )
+            if metadata.get("enrichment_api_base"):
+                profile_cfg = {
+                    "base_url": metadata["enrichment_api_base"],
+                    "model_name": metadata.get("enrichment_model_name") or "chat",
+                    "api_key_env": metadata.get("enrichment_api_key_env") or "OPENAI_API_KEY",
+                }
+        else:
+            payload = self._load_profiles_yaml()
+            profile_map = payload.get("profiles") or {}
+            profile_cfg = dict((profile_map.get(profile_id) or {}).get("summarization") or {})
+        if profile_cfg and not self.semantic_profiles_json:
             profile_cfg["base_url"] = _resolve_semantic_base_url(
                 profile_cfg.get("base_url"),
                 primary_env="SEMANTIC_ENRICHMENT_BASE_URL",
@@ -857,7 +870,9 @@ class RerankerPath(str, Enum):
 #: implicitly (INFERGATE owns any default-enablement decision).
 DEFAULT_DEPLOYMENT_PROFILE = DeploymentProfile.LEXICAL_ONLY
 
-_NO_EGRESS_DISCLOSURE = "No source-code egress: inference stays on operator-controlled infrastructure."
+_NO_EGRESS_DISCLOSURE = (
+    "No source-code egress: inference stays on operator-controlled infrastructure."
+)
 
 
 class CommercialEgressNotOptedIn(ValueError):
@@ -1215,9 +1230,7 @@ def apply_degradation_policy(
         fallback_contract = DEPLOYMENT_PROFILES[fallback]
         # Invariant: degradation must never escalate into commercial egress.
         if fallback_contract.commercial_egress:
-            raise AssertionError(
-                "degradation fallback must never be a commercial-egress profile"
-            )
+            raise AssertionError("degradation fallback must never be a commercial-egress profile")
         actual_path = (
             f"{contract.profile.value} -> {fallback.value} "
             f"(component '{component}' unavailable)"

@@ -1,28 +1,34 @@
-"""Download and install index artifacts from GitHub Actions."""
+"""Download and install Release assets and legacy GitHub Actions index artifacts."""
 
 from __future__ import annotations
 
 import argparse
+import gzip
 import hashlib
+import io
 import json
 import logging
 import os
+import re
+import select
 import shutil
 import sqlite3
+import stat
 import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 import urllib.error
 import zipfile
+from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from mcp_server.config.settings import get_settings
-from mcp_server.core.errors import record_handled_error
-from mcp_server.storage.schema_migrator import SchemaMigrator, UnknownSchemaVersionError
+from mcp_server.core.errors import UnknownSchemaVersionError, record_handled_error
 
 from .attestation import Attestation, verify_attestation
 from .freshness import FreshnessVerdict, verify_artifact_freshness
@@ -35,6 +41,65 @@ from .manifest_v2 import validate_semantic_profile_hash
 from .semantic_profiles import extract_semantic_profile_metadata
 
 logger = logging.getLogger(__name__)
+MAX_ACTIONS_ZIP_BYTES = 2 * 1024**3
+MAX_ACTIONS_PAYLOAD_BYTES = 2 * 1024**3
+MAX_EXTRACTED_INDEX_BYTES = 2 * 1024**3
+MAX_INDEX_MEMBERS = 100_000
+MAX_IDENTITY_CANDIDATES = 10
+
+
+class ArtifactIdentityMismatch(ValueError):
+    """Authenticated artifact metadata does not describe the requested target."""
+
+
+def _download_bounded(command: List[str], target, limit: int, deadline: float) -> None:
+    """Stream a CLI response within a shared deadline and reap it on every exit."""
+    if deadline <= time.monotonic():
+        raise subprocess.TimeoutExpired(command, 0)
+    with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL) as process:
+        assert process.stdout is not None
+        try:
+            received = 0
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0 or not select.select([process.stdout], [], [], remaining)[0]:
+                    raise subprocess.TimeoutExpired(command, 300)
+                chunk = os.read(process.stdout.fileno(), 1024 * 1024)
+                if not chunk:
+                    break
+                received += len(chunk)
+                if received > limit:
+                    raise ValueError("Artifact response exceeds the download size limit")
+                target.write(chunk)
+            returncode = process.wait(timeout=max(0, deadline - time.monotonic()))
+            if returncode:
+                raise subprocess.CalledProcessError(returncode, command)
+        except BaseException:
+            process.kill()
+            process.wait()
+            raise
+
+
+def _payload_limits(names: List[str]) -> Dict[str, int]:
+    archives = [
+        name for name in names if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*\.tar\.gz", name)
+    ]
+    if (
+        not 2 <= len(names) <= 4
+        or len(set(names)) != len(names)
+        or len(archives) != 1
+        or "artifact-metadata.json" not in names
+    ):
+        raise ValueError("Artifact has an ambiguous payload")
+    limits = {
+        archives[0]: MAX_ACTIONS_PAYLOAD_BYTES,
+        "artifact-metadata.json": 1024**2,
+        "artifact-metadata.json.attestation.jsonl": 4 * 1024**2,
+        archives[0] + ".sha256": 1024,
+    }
+    if any(name not in limits for name in names):
+        raise ValueError("Artifact contains an invalid member")
+    return limits
 
 
 @dataclass
@@ -45,51 +110,65 @@ class ArtifactDownloadResult:
 
 
 class IndexArtifactDownloader:
-    """Handle downloading index files from GitHub Actions Artifacts."""
+    """Restore signed index payloads from GitHub Releases or legacy Actions artifacts."""
 
-    def __init__(self, repo: Optional[str] = None, token: Optional[str] = None):
-        self.repo = repo or self._detect_repository()
+    def __init__(
+        self,
+        repo: Optional[str] = None,
+        token: Optional[str] = None,
+        *,
+        index_manager=None,
+        registry=None,
+        repo_path: Path | str | None = None,
+    ):
+        self.repo = repo or (
+            self._detect_repository(repo_path)
+            if repo_path is not None
+            else self._detect_repository()
+        )
         self.token = token or os.environ.get("GITHUB_TOKEN", "")
         self.api_base = f"https://api.github.com/repos/{self.repo}"
+        self._index_manager = index_manager
+        self._registry = registry
         if not self.token:
             print("⚠️  No GitHub token found. Using gh CLI for authentication.")
 
-    def _detect_repository(self) -> str:
-        try:
-            result = subprocess.run(
-                ["git", "remote", "get-url", "origin"],
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            url = result.stdout.strip()
-            if "github.com" not in url:
-                raise ValueError(f"Not a GitHub repository: {url}")
-            if url.startswith("git@"):
-                parts = url.split(":", 1)[1]
-            else:
-                parts = url.split("github.com/", 1)[1]
-            return parts.rstrip(".git")
-        except Exception as exc:
-            raise RuntimeError(
-                "Failed to detect repository. Pass --repo owner/name or run inside a "
-                f"git clone with origin configured: {exc}"
-            ) from exc
+    def _detect_repository(self, repo_path: Path | str | None = None) -> str:
+        from .artifact_upload import IndexArtifactUploader
+
+        return IndexArtifactUploader._detect_repository(self, repo_path)
+
+    def _registered_owner(self, repo_id):
+        from mcp_server.storage.repository_registry import RepositoryRegistry
+
+        if self._index_manager is not None:
+            registry = self._index_manager.registry
+        else:
+            if self._registry is None:
+                self._registry = RepositoryRegistry()
+            registry = self._registry
+        owner = registry.get(repo_id)
+        if owner is None:
+            raise ValueError("Artifact destination is not registered")
+        return owner
 
     def list_artifacts(self, name_filter: Optional[str] = None) -> List[Dict[str, Any]]:
         print("🔍 Fetching available artifacts...")
+        deadline = time.monotonic() + 60
+        actions = io.BytesIO()
         try:
-            result = subprocess.run(
+            _download_bounded(
                 [
                     "gh",
                     "api",
                     f"/repos/{self.repo}/actions/artifacts",
+                    "--paginate",
                     "--jq",
                     ".artifacts[]",
                 ],
-                capture_output=True,
-                text=True,
-                check=True,
+                actions,
+                8 * 1024**2,
+                deadline,
             )
         except FileNotFoundError as exc:
             raise RuntimeError("gh CLI is required for artifact download flows") from exc
@@ -97,13 +176,54 @@ class IndexArtifactDownloader:
             raise RuntimeError(f"Failed to list artifacts: {exc.stderr or exc}") from exc
 
         artifacts = []
-        for line in result.stdout.strip().split("\n"):
+        for count, line in enumerate(actions.getvalue().decode("utf-8").splitlines(), 1):
+            if count > 10_000:
+                raise ValueError("Artifact discovery exceeds the item limit")
             if not line:
                 continue
             artifact = json.loads(line)
-            if artifact["name"].startswith(("index-", "mcp-index-")):
+            if not artifact.get("expired") and artifact["name"].startswith(
+                ("index-", "mcp-index-")
+            ):
                 if not name_filter or name_filter in artifact["name"]:
+                    artifact["artifact_backend"] = "github_actions"
                     artifacts.append(artifact)
+
+        releases = io.BytesIO()
+        _download_bounded(
+            ["gh", "api", f"/repos/{self.repo}/releases", "--paginate", "--jq", ".[]"],
+            releases,
+            8 * 1024**2,
+            deadline,
+        )
+        for count, line in enumerate(releases.getvalue().decode("utf-8").splitlines(), 1):
+            if count > 10_000:
+                raise ValueError("Release discovery exceeds the item limit")
+            if not line:
+                continue
+            release = json.loads(line)
+            tag = release["tag_name"]
+            assets = release.get("assets", [])
+            names = {asset["name"] for asset in assets}
+            if (
+                release.get("draft")
+                or not tag.startswith(("index-", "mcp-index-"))
+                or (name_filter and name_filter not in tag)
+                or "artifact-metadata.json" not in names
+                or not any(name.endswith(".tar.gz") for name in names)
+            ):
+                continue
+            artifacts.append(
+                {
+                    "id": f"release:{tag}",
+                    "name": tag,
+                    "release_tag": tag,
+                    "artifact_backend": "github_release",
+                    "created_at": release.get("published_at") or release["created_at"],
+                    "size_in_bytes": sum(asset["size"] for asset in assets),
+                    "workflow_run": {"head_sha": release.get("target_commitish") or "HEAD"},
+                }
+            )
 
         artifacts.sort(key=lambda item: item["created_at"], reverse=True)
         return artifacts
@@ -122,16 +242,9 @@ class IndexArtifactDownloader:
         print(f"📥 Downloading artifact {artifact_id}...")
         temp_dir = Path(tempfile.mkdtemp())
         try:
-            with (temp_dir / "artifact.zip").open("wb") as zip_file:
-                subprocess.run(
-                    [
-                        "gh",
-                        "api",
-                        f"/repos/{self.repo}/actions/artifacts/{artifact_id}/zip",
-                    ],
-                    check=True,
-                    stdout=zip_file,
-                )
+            with (temp_dir / "artifact.zip").open("xb") as zip_file:
+                command = ["gh", "api", f"/repos/{self.repo}/actions/artifacts/{artifact_id}/zip"]
+                _download_bounded(command, zip_file, MAX_ACTIONS_ZIP_BYTES, time.monotonic() + 300)
             self._extract_actions_artifact_zip(temp_dir)
             return self._restore_downloaded_payload(
                 temp_dir,
@@ -146,8 +259,32 @@ class IndexArtifactDownloader:
             shutil.rmtree(temp_dir, ignore_errors=True)
 
     def _extract_actions_artifact_zip(self, temp_dir: Path) -> None:
-        with zipfile.ZipFile(temp_dir / "artifact.zip", "r") as zip_ref:
-            zip_ref.extractall(temp_dir)  # nosec B202 - temp dir, contents re-validated below
+        archive_path = temp_dir / "artifact.zip"
+        if archive_path.stat().st_size > MAX_ACTIONS_ZIP_BYTES:
+            raise ValueError("Actions artifact ZIP exceeds the download limit")
+        with zipfile.ZipFile(archive_path, "r") as zip_ref:
+            members = zip_ref.infolist()
+            names = [member.filename for member in members]
+            limits = _payload_limits(names)
+            if sum(member.file_size for member in members) > MAX_ACTIONS_PAYLOAD_BYTES:
+                raise ValueError("Actions artifact ZIP exceeds the expanded-size limit")
+            for member in members:
+                if (
+                    member.filename not in limits
+                    or member.file_size > limits.get(member.filename, 0)
+                    or member.is_dir()
+                    or member.flag_bits & 1
+                    or stat.S_IFMT(member.external_attr >> 16) not in {0, stat.S_IFREG}
+                    or (temp_dir / member.filename).exists()
+                    or (temp_dir / member.filename).is_symlink()
+                ):
+                    raise ValueError("Actions artifact ZIP contains an invalid member")
+            for member in members:
+                with (
+                    zip_ref.open(member) as source,
+                    (temp_dir / member.filename).open("xb") as target,
+                ):
+                    shutil.copyfileobj(source, target, length=1024 * 1024)
 
     def download_release_artifact(
         self,
@@ -163,20 +300,48 @@ class IndexArtifactDownloader:
         print(f"📥 Downloading release artifact {release_tag}...")
         temp_dir = Path(tempfile.mkdtemp())
         try:
-            subprocess.run(
-                [
-                    "gh",
-                    "release",
-                    "download",
-                    release_tag,
-                    "--repo",
-                    self.repo,
-                    "--dir",
-                    str(temp_dir),
-                    "--clobber",
-                ],
-                check=True,
-            )
+            deadline = time.monotonic() + 300
+            with tempfile.TemporaryFile() as response:
+                _download_bounded(
+                    ["gh", "release", "view", release_tag, "--repo", self.repo, "--json", "assets"],
+                    response,
+                    1024**2,
+                    deadline,
+                )
+                response.seek(0)
+                assets = json.load(response)["assets"]
+            names = [asset["name"] for asset in assets]
+            limits = _payload_limits(names)
+            if (
+                any(
+                    type(asset["size"]) is not int
+                    or not 0 <= asset["size"] <= limits[asset["name"]]
+                    for asset in assets
+                )
+                or sum(asset["size"] for asset in assets) > MAX_ACTIONS_PAYLOAD_BYTES
+            ):
+                raise ValueError("Release assets exceed the payload size limit")
+            remaining = MAX_ACTIONS_PAYLOAD_BYTES
+            for name in names:
+                with (temp_dir / name).open("xb") as target:
+                    _download_bounded(
+                        [
+                            "gh",
+                            "release",
+                            "download",
+                            release_tag,
+                            "--repo",
+                            self.repo,
+                            "--pattern",
+                            name,
+                            "--output",
+                            "-",
+                        ],
+                        target,
+                        min(remaining, limits[name]),
+                        deadline,
+                    )
+                    remaining -= target.tell()
             return self._restore_downloaded_payload(
                 temp_dir,
                 output_dir,
@@ -192,25 +357,24 @@ class IndexArtifactDownloader:
     def _locate_download_payload(
         self, payload_dir: Path
     ) -> Tuple[Path, Path, Optional[Path], Optional[Path]]:
-        archive_path: Optional[Path] = None
-        metadata_path: Optional[Path] = None
-        checksum_path: Optional[Path] = None
-        attestation_path: Optional[Path] = None
-        for file in payload_dir.iterdir():
-            if file.name.endswith(".tar.gz"):
-                archive_path = file
-            elif file.name == "artifact-metadata.json":
-                metadata_path = file
-            elif file.name.endswith(".sha256"):
-                checksum_path = file
-            elif file.name.endswith(".attestation.jsonl"):
-                attestation_path = file
-
-        if archive_path is None:
-            raise ValueError("No archive found in artifact")
-        if metadata_path is None:
+        files = list(payload_dir.iterdir())
+        archives = [file for file in files if file.name.endswith(".tar.gz")]
+        checksums = [file for file in files if file.name.endswith(".sha256")]
+        attestations = [file for file in files if file.name.endswith(".attestation.jsonl")]
+        metadata_path = payload_dir / "artifact-metadata.json"
+        if len(archives) != 1 or len(checksums) > 1 or len(attestations) > 1:
+            raise ValueError("Artifact payload has missing or ambiguous archive/sidecars")
+        if not metadata_path.is_file():
             raise ValueError("Artifact metadata file is required but missing")
-        return archive_path, metadata_path, checksum_path, attestation_path
+        selected = [*archives, metadata_path, *checksums, *attestations]
+        if any(file.is_symlink() or not file.is_file() for file in selected):
+            raise ValueError("Artifact payload requires regular files")
+        return (
+            archives[0],
+            metadata_path,
+            next(iter(checksums), None),
+            next(iter(attestations), None),
+        )
 
     def _restore_downloaded_payload(
         self,
@@ -227,23 +391,21 @@ class IndexArtifactDownloader:
             self._locate_download_payload(payload_dir)
         )
 
-        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-        delta_base = metadata.get("delta_from")
-        if delta_base:
-            probe = subprocess.run(
-                ["gh", "release", "view", delta_base, "--repo", self.repo],
-                capture_output=True,
-                text=True,
-            )
-            if probe.returncode != 0:
-                logger.warning(
-                    "Delta base release %r not found in %s; treating artifact as full (delta_from cleared)",
-                    delta_base,
-                    self.repo,
-                )
-                metadata = dict(metadata)
-                metadata["delta_from"] = None
+        att = Attestation(
+            bundle_url="",
+            bundle_path=attestation_path,
+            subject_digest="",
+            signed_at=datetime.now(timezone.utc),
+        )
+        # The signed metadata binds identity and the archive checksum together.
+        verify_attestation(metadata_path, att, expected_repo=self.repo, gh_cmd="gh")
+        metadata_bytes = metadata_path.read_bytes()
+        metadata = json.loads(metadata_bytes)
         gate_result = self._run_integrity_gate(metadata, archive_path, checksum_path)
+        if metadata.get("artifact_type") == "delta" or metadata.get("delta_from"):
+            raise ValueError(
+                "Delta restore requires an authenticated base chain; download a full snapshot"
+            )
         if gate_result.manifest_v2_validated:
             print("✅ Manifest v2 verified")
 
@@ -255,7 +417,9 @@ class IndexArtifactDownloader:
             semantic_profile_hash=semantic_profile_hash,
         )
         if identity_reasons and not allow_unsafe:
-            raise ValueError("Artifact identity validation failed: " + "; ".join(identity_reasons))
+            raise ArtifactIdentityMismatch(
+                "Artifact identity validation failed: " + "; ".join(identity_reasons)
+            )
         if identity_reasons:
             logger.warning(
                 "Unsafe artifact identity override accepted: %s",
@@ -266,28 +430,49 @@ class IndexArtifactDownloader:
         if not compatible:
             raise ValueError("Artifact compatibility validation failed: " + "; ".join(issues))
 
-        att_url = metadata.get("attestation_url")
-        if att_url:
-            if attestation_path is None:
-                raise ValueError("Artifact attestation sidecar is required but missing")
-            att = Attestation(
-                bundle_url=att_url,
-                bundle_path=attestation_path,
-                subject_digest="",
-                signed_at=datetime.now(timezone.utc),
-            )
-            verify_attestation(archive_path, att, expected_repo=self.repo, gh_cmd="gh")
-
         print("📦 Extracting index files...")
-        with tarfile.open(archive_path, "r:gz") as tar:
-            members = tar.getmembers()
-            for member in members:
-                if not self._validate_tar_member(member, output_dir):
-                    raise ValueError(f"Unsafe archive member blocked: {member.name}")
-            tar.extractall(output_dir, members=members)  # nosec B202 - members validated above
-
-        shutil.copy2(metadata_path, output_dir / "artifact-metadata.json")
-        return output_dir
+        if output_dir.is_symlink():
+            raise ValueError("Artifact output must not be a symbolic link")
+        output_dir.mkdir(parents=True, exist_ok=True)
+        extracted = Path(tempfile.mkdtemp(prefix="verified-", dir=output_dir))
+        try:
+            deadline = time.monotonic() + 300
+            # Bound gzip expansion, including TAR headers, before parsing any members.
+            with tempfile.TemporaryFile(dir=output_dir) as expanded:
+                with gzip.open(archive_path, "rb") as compressed:
+                    while chunk := compressed.read(1024 * 1024):
+                        if time.monotonic() > deadline:
+                            raise TimeoutError("Artifact expansion exceeded the time limit")
+                        if expanded.tell() + len(chunk) > MAX_EXTRACTED_INDEX_BYTES:
+                            raise ValueError("Artifact exceeds the expanded size limit")
+                        expanded.write(chunk)
+                expanded.seek(0)
+                with tarfile.open(fileobj=expanded, mode="r:") as tar:
+                    names = set()
+                    total = 0
+                    for member in tar:
+                        if time.monotonic() > deadline:
+                            raise TimeoutError("Artifact extraction exceeded the time limit")
+                        name = Path(member.name).as_posix()
+                        total += member.size
+                        if len(names) >= MAX_INDEX_MEMBERS or total > MAX_EXTRACTED_INDEX_BYTES:
+                            raise ValueError("Artifact exceeds the member or expanded size limit")
+                        if (
+                            name in names
+                            or member.size < 0
+                            or member.issparse()
+                            or not self._validate_tar_member(member, extracted)
+                            or name == "artifact-metadata.json"
+                        ):
+                            raise ValueError(f"Unsafe archive member blocked: {member.name}")
+                        names.add(name)
+                        tar.extract(member, extracted, set_attrs=False)  # nosec B202 - owned output
+            with (extracted / "artifact-metadata.json").open("xb") as handle:
+                handle.write(metadata_bytes)
+            return extracted
+        except BaseException:
+            shutil.rmtree(extracted)
+            raise
 
     def _calculate_checksum(self, file_path: Path) -> str:
         sha256 = hashlib.sha256()
@@ -297,10 +482,15 @@ class IndexArtifactDownloader:
         return sha256.hexdigest()
 
     def check_compatibility(self, metadata: Dict[str, Any]) -> Tuple[bool, List[str]]:
+        from mcp_server.storage.sqlite_store import SQLiteStore
+
+        supported_schemas = tuple(
+            str(version) for version in range(1, SQLiteStore.SCHEMA_VERSION + 1)
+        )
         issues = []
         compatibility = metadata.get("compatibility", {})
         artifact_model = compatibility.get("embedding_model")
-        artifact_schema = compatibility.get("schema_version")
+        artifact_schema = str(compatibility.get("schema_version"))
         artifact_profiles = extract_semantic_profile_metadata(compatibility)
 
         required_schema = os.environ.get("INDEX_SCHEMA_VERSION")
@@ -320,15 +510,19 @@ class IndexArtifactDownloader:
                     if conn is not None:
                         conn.close()
         if not required_schema:
-            required_schema = "2"
-        if artifact_schema != required_schema:
-            migrator = SchemaMigrator(store=None)
-            if not migrator.is_known(artifact_schema):
-                raise UnknownSchemaVersionError(
-                    f"Artifact schema version {artifact_schema!r} is unknown; "
-                    f"supported: {migrator.SUPPORTED_VERSIONS}"
-                )
-            # Known older version — migration is possible; skip the hard mismatch issue.
+            required_schema = str(SQLiteStore.SCHEMA_VERSION)
+        if artifact_schema not in supported_schemas:
+            raise UnknownSchemaVersionError(
+                f"Artifact schema version {artifact_schema!r} is unknown; "
+                f"supported: {supported_schemas}"
+            )
+        if required_schema not in supported_schemas:
+            raise UnknownSchemaVersionError(
+                f"Required schema version {required_schema!r} is unknown"
+            )
+        if int(artifact_schema) > int(required_schema):
+            issues.append("Artifact schema is newer than the required SQLite schema")
+        # Older database versions are upgraded by SQLiteStore on admission.
 
         if artifact_profiles:
             try:
@@ -362,7 +556,7 @@ class IndexArtifactDownloader:
                             )
             except Exception as exc:
                 record_handled_error(__name__, exc)
-                pass
+                issues.append("Local semantic profile configuration is unavailable")
         elif artifact_model:
             try:
                 current_model = get_settings().semantic_embedding_model
@@ -372,7 +566,7 @@ class IndexArtifactDownloader:
                     )
             except Exception as exc:
                 record_handled_error(__name__, exc)
-                pass
+                issues.append("Local embedding model configuration is unavailable")
 
         return len(issues) == 0, issues
 
@@ -458,6 +652,8 @@ class IndexArtifactDownloader:
         semantic_profile_hash: Optional[str] = None,
     ) -> List[str]:
         """Validate artifact identity metadata against expected repository state."""
+        from mcp_server.storage.sqlite_store import SQLiteStore
+
         reasons = validate_required_metadata_fields(metadata)
         actual_repo_id = metadata.get("repo_id")
         actual_branch = metadata.get("tracked_branch") or metadata.get("branch")
@@ -483,8 +679,9 @@ class IndexArtifactDownloader:
         if actual_profile_hash and not validate_semantic_profile_hash(str(actual_profile_hash)):
             reasons.append(f"malformed semantic_profile_hash: {actual_profile_hash}")
         if actual_schema is not None:
-            migrator = SchemaMigrator(store=None)
-            if not migrator.is_known(str(actual_schema)):
+            if str(actual_schema) not in {
+                str(version) for version in range(1, SQLiteStore.SCHEMA_VERSION + 1)
+            }:
                 reasons.append(f"unknown schema_version: {actual_schema}")
 
         manifest = metadata.get("manifest_v2")
@@ -534,20 +731,16 @@ class IndexArtifactDownloader:
             return False
 
     def _validate_tar_member(self, member: tarfile.TarInfo, extraction_dir: Path) -> bool:
+        if (
+            not (member.isfile() or member.isdir())
+            or Path(member.name).is_absolute()
+            or ".." in Path(member.name).parts
+        ):
+            return False
         target_path = extraction_dir / member.name
         if not self._is_within_directory(extraction_dir, target_path):
             return False
-        if member.issym():
-            if not member.linkname:
-                return False
-            if not self._is_within_directory(extraction_dir, target_path.parent / member.linkname):
-                return False
-        if member.islnk():
-            if not member.linkname:
-                return False
-            if not self._is_within_directory(extraction_dir, extraction_dir / member.linkname):
-                return False
-        return not member.isdev()
+        return True
 
     def install_indexes(
         self,
@@ -556,68 +749,91 @@ class IndexArtifactDownloader:
         index_path: Path | str | None = None,
         backup: bool = True,
     ) -> List[str]:
-        print("\n📝 Installing indexes...")
+        """Hydrate a fresh staging destination; never replace a live generation.
+
+        The legacy backup argument is retained for caller compatibility. Existing
+        resources require generation publication, not an in-place backup/restore.
+        """
         index_root = Path(index_location) if index_location is not None else Path(".mcp-index")
         target_db = Path(index_path) if index_path is not None else index_root / "current.db"
-        index_root.mkdir(parents=True, exist_ok=True)
-        if backup:
-            backup_dir = index_root / f"index_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-            backup_dir.mkdir(exist_ok=True)
-            for src in [
-                target_db,
-                index_root / "vector_index.qdrant",
-                index_root / ".index_metadata.json",
-            ]:
-                if not src.exists():
-                    continue
-                print(f"  Backing up {src.name}...")
-                if src.is_dir():
-                    shutil.copytree(src, backup_dir / src.name)
-                else:
-                    shutil.copy2(src, backup_dir / src.name)
-            print(f"  ✅ Backup created in {backup_dir}")
-
-        installed_items: List[str] = []
+        if target_db.parent.resolve() != index_root.resolve():
+            raise ValueError("Artifact staging database must be inside its index directory")
+        if any(
+            (source_dir / name).exists()
+            for name in ("semantic-vectors.jsonl", "vector_index.qdrant")
+        ):
+            raise ValueError("Semantic artifacts require registered generation admission")
         install_map = {
             "current.db": target_db,
             "code_index.db": target_db,
             ".index_metadata.json": index_root / ".index_metadata.json",
             "artifact-metadata.json": index_root / "artifact-metadata.json",
-            "vector_index.qdrant": index_root / "vector_index.qdrant",
         }
-        for item in source_dir.iterdir():
-            dest = install_map.get(item.name)
-            if dest is None:
-                continue
-            if dest.exists():
-                if dest.is_dir():
-                    shutil.rmtree(dest)
-                else:
-                    dest.unlink()
-            print(f"  Installing {item.name}...")
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            if item.is_dir():
-                shutil.copytree(item, dest)
-            else:
-                shutil.copy2(item, dest)
-            installed_items.append(str(dest))
+        sources = [item for item in source_dir.iterdir() if item.name in install_map]
+        databases = [item for item in sources if item.name in {"current.db", "code_index.db"}]
+        if len(databases) != 1 or not databases[0].is_file():
+            raise ValueError("Artifact staging requires exactly one SQLite database")
+        destinations = set(install_map.values()) | {
+            Path(f"{target_db}-wal"),
+            Path(f"{target_db}-shm"),
+        }
+        if (
+            index_root.exists()
+            or index_root.is_symlink()
+            or any(path.exists() or path.is_symlink() for path in destinations)
+        ):
+            raise FileExistsError(
+                "Artifact installation requires an unused staging destination; "
+                "register the repository and use --repository for generation-safe recovery"
+            )
+        for item in sources:
+            if item.is_symlink() or (
+                item.is_dir() and any(child.is_symlink() for child in item.rglob("*"))
+            ):
+                raise ValueError("Artifact staging does not accept symbolic links")
 
-        print("✅ Indexes installed successfully!")
-        if installed_items:
-            print(f"📦 Restored items: {', '.join(installed_items)}")
-        metadata_path = index_root / "artifact-metadata.json"
-        if metadata_path.exists():
+        index_root.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix=".mcp-restore-", dir=index_root.parent) as staging:
+            stage = Path(staging) / "index"
+            stage.mkdir()
+            for item in sources:
+                dest = stage / install_map[item.name].name
+                with item.open("rb") as reader, dest.open("xb") as writer:
+                    shutil.copyfileobj(reader, writer)
+                    writer.flush()
+                    os.fsync(writer.fileno())
+            with closing(
+                sqlite3.connect((stage / target_db.name).resolve().as_uri() + "?mode=ro", uri=True)
+            ) as connection:
+                if connection.execute("PRAGMA quick_check").fetchall() != [("ok",)]:
+                    raise ValueError("Artifact staging database failed integrity validation")
+                if connection.execute("PRAGMA foreign_key_check").fetchone():
+                    raise ValueError("Artifact staging database has invalid references")
+                semantic_table = connection.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='semantic_points'"
+                ).fetchone()
+                if (
+                    semantic_table
+                    and connection.execute("SELECT 1 FROM semantic_points LIMIT 1").fetchone()
+                ):
+                    raise ValueError("Semantic artifacts require registered generation admission")
+            directory = os.open(stage, os.O_RDONLY)
             try:
-                metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-                commit = metadata.get("commit")
-                branch = metadata.get("tracked_branch") or metadata.get("branch")
-                if commit:
-                    label = f"{commit} ({branch})" if branch else commit
-                    print(f"🔖 Restored artifact commit: {label}")
-            except Exception as exc:
-                record_handled_error(__name__, exc)
-                pass
-        return installed_items
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+            if index_root.exists() or index_root.is_symlink():
+                raise FileExistsError(
+                    "Artifact installation requires an unused staging destination; "
+                    "register the repository and use --repository for generation-safe recovery"
+                )
+            stage.rename(index_root)
+            directory = os.open(index_root.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+        return [str(install_map[item.name]) for item in sources]
 
     def download_selected_artifact(
         self,
@@ -633,10 +849,19 @@ class IndexArtifactDownloader:
         index_path: Path | str | None = None,
         semantic_profile_hash: Optional[str] = None,
         allow_unsafe: bool = False,
+        expected_owner=None,
     ) -> ArtifactDownloadResult:
+        if allow_unsafe and repo_id is not None:
+            raise ValueError(
+                "Registered generations require artifact identity and freshness verification"
+            )
+        if repo_id is not None and expected_owner is None:
+            expected_owner = self._registered_owner(repo_id)
         try:
-            extracted_dir = self.download_artifact(
-                artifact["id"],
+            release = artifact.get("artifact_backend") == "github_release"
+            download = self.download_release_artifact if release else self.download_artifact
+            extracted_dir = download(
+                artifact["release_tag"] if release else artifact["id"],
                 output_dir,
                 repo_id=repo_id,
                 tracked_branch=tracked_branch,
@@ -646,7 +871,8 @@ class IndexArtifactDownloader:
             )
         except (subprocess.CalledProcessError, urllib.error.URLError, RuntimeError) as exc:
             logger.warning(
-                "GitHub outage detected, keeping local index (artifact download failed: %s)", exc
+                "GitHub outage detected, keeping local index (artifact download failed: %s)",
+                type(exc).__name__,
             )
             return ArtifactDownloadResult(artifact=artifact, installed_items=[])
 
@@ -665,7 +891,7 @@ class IndexArtifactDownloader:
         head_commit = artifact.get("workflow_run", {}).get("head_sha", "HEAD")
         if target_commit:
             head_commit = target_commit
-        verdict = verify_artifact_freshness(meta, head_commit, max_age_days)
+        verdict = verify_artifact_freshness(meta, head_commit, max_age_days, repo_path=repo_path)
         rejected_reasons: List[str] = []
         if verdict is not FreshnessVerdict.FRESH:
             rejected_reasons.append(f"freshness verdict: {verdict.value}")
@@ -678,34 +904,120 @@ class IndexArtifactDownloader:
                 "; ".join(rejected_reasons),
             )
 
-        installed_items = self.install_indexes(
-            extracted_dir,
-            index_location=index_location,
-            index_path=index_path,
-            backup=backup,
-        )
+        if repo_id is not None:
+            if rejected_reasons:
+                raise ValueError(
+                    "Mismatched artifacts cannot be admitted as registered generations"
+                )
+            installed_items = self._install_verified_generation(
+                repo_id, extracted_dir, head_commit, repo_path, expected_owner=expected_owner
+            )
+        else:
+            installed_items = self.install_indexes(
+                extracted_dir,
+                index_location=index_location,
+                index_path=index_path,
+                backup=backup,
+            )
         return ArtifactDownloadResult(
             artifact=artifact,
             installed_items=installed_items,
             validation_reasons=rejected_reasons,
         )
 
+    def _install_verified_generation(
+        self, repo_id: str, extracted: Path, commit: str, repo_path, *, expected_owner=None
+    ) -> List[str]:
+        from mcp_server.dispatcher.dispatcher_enhanced import EnhancedDispatcher
+        from mcp_server.storage.git_index_manager import GitAwareIndexManager
+        from mcp_server.storage.repository_registry import RepositoryRegistry
+
+        manager = self._index_manager
+        owned = manager is None
+        dispatcher = None
+        if expected_owner is None:
+            expected_owner = self._registered_owner(repo_id)
+        try:
+            if owned:
+                registry = self._registry if self._registry is not None else RepositoryRegistry()
+                dispatcher = EnhancedDispatcher(
+                    enable_advanced_features=False,
+                    use_plugin_factory=True,
+                    semantic_search_enabled=get_settings().semantic_search_enabled,
+                    memory_aware=False,
+                    multi_repo_enabled=False,
+                )
+                manager = GitAwareIndexManager(registry, dispatcher)
+            info = manager.registry.get(repo_id)
+            if info is None or (
+                repo_path is not None and Path(info.path).resolve() != Path(repo_path).resolve()
+            ):
+                raise ValueError("Artifact destination is not the registered repository")
+            result = manager.restore_verified_artifact(
+                repo_id, extracted, expected_commit=commit, expected_owner=expected_owner
+            )
+            if result.action != "full_index":
+                raise ValueError(result.error or "Artifact generation was not admitted")
+            current = manager.registry.get(repo_id)
+            published = result.readiness
+            if current is None or (
+                current.registration_id != expected_owner.registration_id
+                or current.index_generation != published["index_generation"]
+                or str(current.index_path) != published["index_path"]
+            ):
+                raise ValueError("Artifact generation was superseded after publication")
+            return [published["index_path"]]
+        finally:
+            if owned:
+                try:
+                    if dispatcher is not None:
+                        dispatcher.shutdown()
+                finally:
+                    if manager is not None and manager.store_registry is not None:
+                        manager.store_registry.shutdown()
+
     def download_latest(
         self,
         *,
         output_dir: Path,
         backup: bool = True,
-        full_only: bool = False,
+        full_only: bool = True,
         **kwargs: Any,
     ) -> ArtifactDownloadResult:
+        if kwargs.get("repo_id") is not None and kwargs.get("expected_owner") is None:
+            kwargs["expected_owner"] = self._registered_owner(kwargs["repo_id"])
         artifacts = self.list_artifacts()
         if full_only:
-            artifacts = [a for a in artifacts if "-delta-" not in a.get("name", "")]
+            artifacts = [a for a in artifacts if not re.search(r"-delta(?:-|$)", a.get("name", ""))]
         best = self.find_best_artifact(artifacts)
         if not best:
             raise RuntimeError("No compatible artifacts found")
-        print(f"\n✅ Selected: {best['name']}")
-        return self.download_selected_artifact(best, output_dir=output_dir, backup=backup, **kwargs)
+        targeted = any(kwargs.get(key) for key in ("repo_id", "tracked_branch", "target_commit"))
+        if not targeted or kwargs.get("allow_unsafe"):
+            return self.download_selected_artifact(
+                best, output_dir=output_dir, backup=backup, **kwargs
+            )
+        candidates = [best, *[artifact for artifact in artifacts if artifact is not best]]
+        commit = kwargs.get("target_commit")
+        if commit:
+            # Discovery hints affect priority only; authenticated metadata still gates install.
+            candidates.sort(
+                key=lambda artifact: not (
+                    artifact.get("workflow_run", {}).get("head_sha") == commit
+                    or commit in artifact.get("name", "")
+                )
+            )
+        for candidate in candidates[:MAX_IDENTITY_CANDIDATES]:
+            try:
+                return self.download_selected_artifact(
+                    candidate, output_dir=output_dir, backup=backup, **kwargs
+                )
+            except ArtifactIdentityMismatch:
+                continue
+        raise ArtifactIdentityMismatch(
+            "No authenticated artifact matched the requested identity within the candidate limit; "
+            "select an explicit --artifact-id or recover --branch/--commit"
+        )
 
     def recover(
         self,
@@ -716,6 +1028,8 @@ class IndexArtifactDownloader:
         backup: bool = True,
         **kwargs: Any,
     ) -> ArtifactDownloadResult:
+        if kwargs.get("repo_id") is not None and kwargs.get("expected_owner") is None:
+            kwargs["expected_owner"] = self._registered_owner(kwargs["repo_id"])
         artifacts = self.list_artifacts()
         selected = self.find_recovery_artifact(artifacts, branch=branch, commit=commit)
         if not selected:

@@ -13,9 +13,9 @@ on:
           - prepare
           - publish
       version:
-        description: 'Exact version to prepare or publish (e.g., v1.4.0)'
+        description: 'Exact version to prepare or publish (e.g., v1.4.1)'
         required: true
-        default: 'v1.4.0'
+        default: 'v1.4.1'
         type: string
       auto_merge:
         description: 'Enable auto-merge for the prepared release PR'
@@ -25,9 +25,21 @@ on:
         options:
           - 'false'
           - 'true'
+      expected_commit:
+        description: 'Accepted protected-main commit SHA (required for publish)'
+        required: false
+        type: string
+      expected_tree:
+        description: 'Accepted Git tree SHA (required for publish)'
+        required: false
+        type: string
 
 permissions:
   contents: read
+
+concurrency:
+  group: release-${{ inputs.mode == 'publish' && 'publish' || github.ref }}
+  cancel-in-progress: false
 
 env:
   RELEASE_VERSION: ${{ inputs.version }}
@@ -41,7 +53,11 @@ jobs:
       - name: Validate mode, ref, and version syntax
         env:
           MODE: ${{ inputs.mode }}
+          EXPECTED_COMMIT: ${{ inputs.expected_commit }}
+          EXPECTED_TREE: ${{ inputs.expected_tree }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -euo pipefail
           case "$RELEASE_VERSION" in
             v[0-9]*.[0-9]*.[0-9]*) ;;
             *)
@@ -57,6 +73,14 @@ jobs:
           if [ "$MODE" = "prepare" ] && [ "$GITHUB_REF" = "refs/heads/main" ]; then
             echo "::error::Prepare mode must be dispatched from a release feature branch"
             exit 1
+          fi
+          if [ "$MODE" = "publish" ]; then
+            [[ "$EXPECTED_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+            [[ "$EXPECTED_TREE" =~ ^[0-9a-f]{40}$ ]]
+            test "$GITHUB_SHA" = "$EXPECTED_COMMIT"
+            test "$GITHUB_RUN_ATTEMPT" = "1"
+            ACTUAL_TREE=$(gh api "repos/$GITHUB_REPOSITORY/git/commits/$EXPECTED_COMMIT" --jq .tree.sha)
+            test "$ACTUAL_TREE" = "$EXPECTED_TREE"
           fi
 
   prepare-release-pr:
@@ -160,6 +184,12 @@ jobs:
       contents: read
       packages: read
     steps:
+      - name: Refuse publication retries
+        run: |
+          test "$GITHUB_RUN_ATTEMPT" = "1" || {
+            echo "::error::Release recovery requires a new owner decision; do not rerun jobs"
+            exit 1
+          }
       - name: Check out exact protected-main commit
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
@@ -180,7 +210,8 @@ jobs:
           grep -Fxq "version = \"$VERSION_NO_V\"" pyproject.toml
           grep -Fxq "__version__ = \"$VERSION_NO_V\"" mcp_server/__init__.py
           if git show-ref --verify --quiet "refs/tags/$RELEASE_VERSION"; then
-            test "$(git rev-list -n 1 "$RELEASE_VERSION")" = "${{ github.sha }}"
+            echo "::error::Existing version requires an explicit recovery decision"
+            exit 1
           fi
 
       - name: Run release gates
@@ -192,16 +223,71 @@ jobs:
           make release-smoke
           make release-smoke-container
 
+  claim-release:
+    name: Claim one release attempt
+    needs: preflight-publish
+    if: inputs.mode == 'publish' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Refuse publication retries
+        run: |
+          test "$GITHUB_RUN_ATTEMPT" = "1" || {
+            echo "::error::Release recovery requires a new owner decision; do not rerun jobs"
+            exit 1
+          }
+      - name: Check out exact protected-main commit
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          fetch-depth: 0
+          ref: ${{ github.sha }}
+      - name: Guard protected main before claim release attempt
+        run: |
+          VERSION_NO_V=${RELEASE_VERSION#v}
+          git fetch origin main --tags
+          test "$(git rev-parse HEAD)" = "${{ github.sha }}"
+          git merge-base --is-ancestor "${{ github.sha }}" origin/main
+          grep -Fxq "version = \"$VERSION_NO_V\"" pyproject.toml
+          grep -Fxq "__version__ = \"$VERSION_NO_V\"" mcp_server/__init__.py
+          ! git show-ref --verify --quiet "refs/tags/$RELEASE_VERSION"
+      - name: Claim release attempt
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EXPECTED_COMMIT: ${{ inputs.expected_commit }}
+          EXPECTED_TREE: ${{ inputs.expected_tree }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_SHA" = "$EXPECTED_COMMIT"
+          test "$(git rev-parse HEAD^{tree})" = "$EXPECTED_TREE"
+          test "$GITHUB_RUN_ATTEMPT" = "1"
+          CLAIM="release-claims/$RELEASE_VERSION"
+          OBJECT=$(gh api --method POST "repos/$GITHUB_REPOSITORY/git/tags" \
+            -f tag="$CLAIM" -f object="$EXPECTED_COMMIT" -f type=commit \
+            -f message="Release claim run=$GITHUB_RUN_ID source=$EXPECTED_COMMIT tree=$EXPECTED_TREE" --jq .sha)
+          # Create-only ref is the durable claim. Never update/delete it or retry publication.
+          gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
+            -f ref="refs/tags/$CLAIM" -f sha="$OBJECT" --silent
+
   build-release:
     name: Build artifacts from protected main
-    needs: preflight-publish
+    needs: claim-release
     if: inputs.mode == 'publish' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
       id-token: write
+    outputs:
+      image_digest: ${{ steps.build-and-push.outputs.digest }}
     steps:
+      - name: Refuse publication retries
+        run: |
+          test "$GITHUB_RUN_ATTEMPT" = "1" || {
+            echo "::error::Release recovery requires a new owner decision; do not rerun jobs"
+            exit 1
+          }
       - name: Derive lowercase GHCR image name (follows repo owner across transfers)
         run: |
           owner="${GITHUB_REPOSITORY_OWNER,,}"
@@ -261,8 +347,7 @@ jobs:
           push: true
           provenance: mode=max
           tags: |
-            ${{ env.IMAGE_REF }}:${{ inputs.version }}
-            ${{ !contains(inputs.version, '-') && format('{0}:latest', env.IMAGE_REF) || '' }}
+            ${{ env.IMAGE_REF }}:candidate-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
           labels: |
             org.opencontainers.image.version=${{ inputs.version }}
             org.opencontainers.image.revision=${{ github.sha }}
@@ -288,6 +373,12 @@ jobs:
           IMAGE_DIGEST: ${{ steps.build-and-push.outputs.digest }}
         run: |
           cosign sign --yes "${IMAGE_REF}@${IMAGE_DIGEST}"
+          cosign verify "${IMAGE_REF}@${IMAGE_DIGEST}" \
+            --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release-automation.yml@refs/heads/main" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            --certificate-github-workflow-sha "${{ github.sha }}"
+          printf '%s\n' "$IMAGE_DIGEST" > image-digest.txt
+          printf '%s\n' "${IMAGE_REF}@${IMAGE_DIGEST}" > image-reference.txt
 
       - name: Upload release artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -298,6 +389,8 @@ jobs:
             dist/
             sbom.spdx.json
             CHANGELOG.md
+            image-digest.txt
+            image-reference.txt
 
   publish-release:
     name: Publish protected-main artifacts
@@ -308,6 +401,12 @@ jobs:
       contents: write
       id-token: write
     steps:
+      - name: Refuse publication retries
+        run: |
+          test "$GITHUB_RUN_ATTEMPT" = "1" || {
+            echo "::error::Release recovery requires a new owner decision; do not rerun jobs"
+            exit 1
+          }
       - name: Check out exact protected-main commit
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
@@ -334,11 +433,11 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           if git show-ref --verify --quiet "refs/tags/$RELEASE_VERSION"; then
-            test "$(git rev-list -n 1 "$RELEASE_VERSION")" = "${{ github.sha }}"
-          else
-            git tag -a "$RELEASE_VERSION" "${{ github.sha }}" -m "Release $RELEASE_VERSION"
-            git push origin "$RELEASE_VERSION"
+            echo "::error::Version appeared after release claim; manual reconciliation required"
+            exit 1
           fi
+          git tag -a "$RELEASE_VERSION" "${{ github.sha }}" -m "Release $RELEASE_VERSION"
+          git push origin "$RELEASE_VERSION"
 
       - name: Guard protected main before create github release
         run: |
@@ -351,17 +450,14 @@ jobs:
           test "$(git rev-list -n 1 "$RELEASE_VERSION")" = "${{ github.sha }}"
 
       - name: Create GitHub release
-        uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b # v3
-        with:
-          tag_name: ${{ inputs.version }}
-          target_commitish: ${{ github.sha }}
-          name: Release ${{ inputs.version }}
-          body_path: CHANGELOG.md
-          draft: false
-          prerelease: ${{ contains(inputs.version, '-') }}
-          files: |
-            dist/*
-            sbom.spdx.json
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          flags=(--verify-tag --target "$GITHUB_SHA" --title "Release $RELEASE_VERSION" --notes-file CHANGELOG.md)
+          if [[ "$RELEASE_VERSION" == *-* ]]; then flags+=(--prerelease); fi
+          # Do not attach assets in `create`: gh otherwise deletes its draft on upload failure.
+          gh release create "$RELEASE_VERSION" "${flags[@]}"
+          gh release upload "$RELEASE_VERSION" dist/* sbom.spdx.json image-digest.txt image-reference.txt
 
       - name: Guard protected main before publish to pypi
         run: |
@@ -377,3 +473,59 @@ jobs:
         uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # release/v1
         with:
           packages-dir: dist/
+
+  verify-container:
+    name: Verify released container digest
+    needs: [build-release, publish-release]
+    if: inputs.mode == 'publish' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    env:
+      IMAGE_DIGEST: ${{ needs.build-release.outputs.image_digest }}
+    steps:
+      - name: Refuse publication retries
+        run: |
+          test "$GITHUB_RUN_ATTEMPT" = "1" || {
+            echo "::error::Release recovery requires a new owner decision; do not rerun jobs"
+            exit 1
+          }
+      - name: Check out exact protected-main commit
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          fetch-depth: 0
+          ref: ${{ github.sha }}
+      - name: Derive lowercase GHCR image name
+        run: |
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          echo "IMAGE_REF=${REGISTRY}/${owner}/code-index-mcp" >> "$GITHUB_ENV"
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
+      - name: Verify released digest and source signature
+        run: |
+          [[ "$IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          cosign verify "${IMAGE_REF}@${IMAGE_DIGEST}" \
+            --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release-automation.yml@refs/heads/main" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            --certificate-github-workflow-sha "${{ github.sha }}"
+      - name: Guard protected main before verify released container
+        run: |
+          VERSION_NO_V=${RELEASE_VERSION#v}
+          git fetch origin main --tags
+          test "$(git rev-parse HEAD)" = "${{ github.sha }}"
+          git merge-base --is-ancestor "${{ github.sha }}" origin/main
+          grep -Fxq "version = \"$VERSION_NO_V\"" pyproject.toml
+          grep -Fxq "__version__ = \"$VERSION_NO_V\"" mcp_server/__init__.py
+      - name: Confirm immutable container identity without retagging
+        run: |
+          actual=$(docker buildx imagetools inspect "${IMAGE_REF}@${IMAGE_DIGEST}" --format '{{json .Manifest}}' | jq -r .digest)
+          test "$actual" = "$IMAGE_DIGEST"

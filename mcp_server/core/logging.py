@@ -6,9 +6,51 @@ import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Mapping, Optional
+from urllib.parse import urlsplit
 
 from mcp_server.config.environment import Environment, get_environment
+
+
+class _PrivateTransportFilter(logging.Filter):
+    """Keep framework diagnostics from repeating client-controlled payloads."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if (
+            record.name.endswith(".access")
+            and isinstance(record.args, tuple)
+            and len(record.args) == 5
+        ):
+            args = list(record.args)
+            try:
+                args[2] = urlsplit(str(args[2])).path
+            except ValueError:
+                args[2] = "<invalid-target>"
+            record.args = tuple(args)
+        elif record.name == "gunicorn.access" and isinstance(record.args, Mapping):
+            atoms = record.args
+            try:
+                path = urlsplit(str(atoms.get("U", "-"))).path
+            except ValueError:
+                path = "<invalid-target>"
+            record.msg = "%s %s %s"
+            record.args = (atoms.get("m", "-"), path, atoms.get("s", "-"))
+        else:
+            # SDK errors can embed whole invalid JSON messages before our handler runs.
+            record.msg = "Transport diagnostic in %s (%s)"
+            record.args = (record.funcName, record.levelname)
+        record.exc_info = None
+        record.exc_text = None
+        record.stack_info = None
+        return True
+
+
+def configure_private_diagnostics() -> None:
+    """Install content-free SDK and query-free HTTP access diagnostics."""
+    for name in ("uvicorn.access", "gunicorn.access", "mcp.server.lowlevel.server"):
+        target = logging.getLogger(name)
+        if not any(isinstance(item, _PrivateTransportFilter) for item in target.filters):
+            target.addFilter(_PrivateTransportFilter())
 
 
 class JSONFormatter(logging.Formatter):
@@ -58,6 +100,7 @@ def _use_json_logging() -> bool:
 
 def setup_logging(log_level: str = "INFO", log_file: Optional[str] = None) -> None:
     """Configure logging for the MCP Server."""
+    configure_private_diagnostics()
     if log_file is None:
         log_file = "mcp_server.log"
 

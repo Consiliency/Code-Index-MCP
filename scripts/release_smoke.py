@@ -1,18 +1,25 @@
 #!/usr/bin/env python3
-"""Release smoke checks for wheel, lexical MCP, and production container paths."""
+"""Release smoke checks against actual installed wheel and non-root image entrypoints."""
 
 from __future__ import annotations
 
 import argparse
+import configparser
+import hashlib
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
 import sys
 import tempfile
 import time
+import tomllib
+import uuid
 import venv
+import zipfile
+from email.parser import BytesParser
 from pathlib import Path
 from urllib.error import URLError
 from urllib.request import urlopen
@@ -21,20 +28,31 @@ REPO = Path(__file__).resolve().parents[1]
 IMAGE = "ghcr.io/consiliency/code-index-mcp:local-smoke"
 CANONICAL_ENTRYPOINTS = ("mcp-index", "index-it-mcp")
 REMOVED_ENTRYPOINTS = ("code-index-mcp",)
+PROBE = REPO / "scripts/installed_runtime_smoke.py"
+SAFETY_PROBE = REPO / "scripts/safety_runtime_smoke.py"
 
 
-def _run(cmd: list[str], *, cwd: Path = REPO, env: dict[str, str] | None = None) -> None:
+def _run(
+    cmd: list[str], *, cwd: Path = REPO, env: dict[str, str] | None = None, timeout: int = 300
+) -> None:
     print("+", " ".join(cmd), flush=True)
-    run_env = os.environ.copy()
-    if env:
-        run_env.update(env)
-    subprocess.run(cmd, cwd=str(cwd), env=run_env, check=True)
+    subprocess.run(cmd, cwd=cwd, env=env, check=True, timeout=timeout)
 
 
 def _venv_bin(root: Path, name: str) -> Path:
-    if os.name == "nt":
-        return root / "Scripts" / f"{name}.exe"
-    return root / "bin" / name
+    return (
+        root
+        / ("Scripts" if os.name == "nt" else "bin")
+        / (f"{name}.exe" if os.name == "nt" else name)
+    )
+
+
+def _clean_env(root: Path) -> dict[str, str]:
+    return {
+        "PATH": os.environ.get("PATH", os.defpath),
+        "HOME": str(root),
+        "PIP_DISABLE_PIP_VERSION_CHECK": "1",
+    }
 
 
 def _free_port() -> int:
@@ -43,286 +61,418 @@ def _free_port() -> int:
         return int(sock.getsockname()[1])
 
 
-def smoke_wheel() -> None:
+def validate_wheel_source(wheel: Path, repo: Path = REPO) -> dict:
+    """Bind the wheel's install contract and payload to the accepted source checkout."""
+    from packaging.requirements import Requirement
+    from packaging.utils import canonicalize_name
+
+    project = tomllib.loads((repo / "pyproject.toml").read_text())["project"]
+
+    def requirement(value, extra=None):
+        parsed = Requirement(value)
+        marker = str(parsed.marker) if parsed.marker else ""
+        if extra is not None:
+            marker = f'({marker}) and extra == "{extra}"' if marker else f'extra == "{extra}"'
+            from packaging.markers import Marker
+
+            marker = str(Marker(marker))
+        return (
+            canonicalize_name(parsed.name),
+            tuple(sorted(canonicalize_name(e) for e in parsed.extras)),
+            str(parsed.specifier),
+            parsed.url,
+            marker,
+        )
+
+    expected_dependencies = {requirement(value) for value in project["dependencies"]}
+    for extra, values in project.get("optional-dependencies", {}).items():
+        expected_dependencies.update(requirement(value, extra) for value in values)
+    tracked = (
+        subprocess.check_output(["git", "ls-files", "-z", "--", "mcp_server"], cwd=repo, timeout=30)
+        .decode()
+        .split("\0")
+    )
+    payload = {
+        name
+        for name in tracked
+        if name.endswith(".py")
+        or name == "mcp_server/py.typed"
+        or name.startswith("mcp_server/storage/migrations/")
+        and name.endswith(".sql")
+    }
+    info = (
+        canonicalize_name(project["name"]).replace("-", "_") + f'-{project["version"]}.dist-info/'
+    )
+    metadata_files = {
+        info + name
+        for name in (
+            "METADATA",
+            "WHEEL",
+            "RECORD",
+            "entry_points.txt",
+            "top_level.txt",
+            "licenses/LICENSE",
+        )
+    }
+    with zipfile.ZipFile(wheel) as archive:
+        names = archive.namelist()
+        if not payload or len(names) != len(set(names)) or set(names) != payload | metadata_files:
+            raise ValueError("Wheel payload membership differs from reviewed source")
+        metadata = BytesParser().parsebytes(archive.read(info + "METADATA"))
+        for key, expected in (
+            ("Name", project["name"]),
+            ("Version", project["version"]),
+            ("Requires-Python", project["requires-python"]),
+        ):
+            if metadata.get_all(key) != [expected]:
+                raise ValueError(f"Wheel {key} differs from reviewed source")
+        actual_dependencies = {
+            requirement(value) for value in metadata.get_all("Requires-Dist", [])
+        }
+        if actual_dependencies != expected_dependencies:
+            raise ValueError("Wheel Requires-Dist differs from reviewed source")
+        if set(metadata.get_all("Provides-Extra", [])) != set(
+            project.get("optional-dependencies", {})
+        ):
+            raise ValueError("Wheel extras differ from reviewed source")
+        entrypoints = configparser.ConfigParser(interpolation=None)
+        entrypoints.read_string(archive.read(info + "entry_points.txt").decode())
+        if (
+            entrypoints.sections() != ["console_scripts"]
+            or dict(entrypoints["console_scripts"]) != project["scripts"]
+        ):
+            raise ValueError("Wheel entry points differ from reviewed source")
+        for name in sorted(payload):
+            if archive.read(name) != (repo / name).read_bytes():
+                raise ValueError(f"Wheel package content differs from reviewed source: {name}")
+        if archive.read(info + "licenses/LICENSE") != (repo / "LICENSE").read_bytes():
+            raise ValueError("Wheel license differs from reviewed source")
+    return {
+        "name": project["name"],
+        "version": project["version"],
+        "source_files_verified": len(payload),
+    }
+
+
+def smoke_wheel(wheel_path: Path | None = None, expected_sha256: str | None = None) -> None:
+    if (wheel_path is None) != (expected_sha256 is None):
+        raise ValueError("Delivered wheel requires its registry SHA256")
     with tempfile.TemporaryDirectory(prefix="mcp-release-wheel-") as tmp:
         root = Path(tmp)
-        dist = root / "dist"
-        venv_dir = root / "venv"
-        dist.mkdir()
-
-        _run([sys.executable, "-m", "build", "--wheel", "--outdir", str(dist)])
+        dist, venv_dir, runtime = root / "dist", root / "venv", root / "runtime"
+        runtime.mkdir()
+        probe = runtime / PROBE.name
+        shutil.copyfile(PROBE, probe)
+        shutil.copyfile(SAFETY_PROBE, runtime / SAFETY_PROBE.name)
+        if wheel_path is None:
+            _run(["uv", "build", "--wheel", "--out-dir", str(dist)], timeout=300)
+        else:
+            dist.mkdir()
+            shutil.copyfile(wheel_path, dist / wheel_path.name)
         wheels = sorted(dist.glob("index_it_mcp-*.whl"))
-        if not wheels:
-            raise RuntimeError(f"No index_it_mcp wheel produced in {dist}")
-
-        venv.EnvBuilder(with_pip=True, clear=True).create(venv_dir)
+        if len(wheels) != 1:
+            raise RuntimeError("Expected exactly one built wheel")
+        if expected_sha256 is not None and (
+            not re.fullmatch(r"[0-9a-f]{64}", expected_sha256)
+            or hashlib.sha256(wheels[0].read_bytes()).hexdigest() != expected_sha256
+        ):
+            raise ValueError("Delivered wheel registry digest mismatch")
+        contract = validate_wheel_source(wheels[0])
+        print(
+            json.dumps(
+                {
+                    "wheel": wheels[0].name,
+                    "sha256": hashlib.sha256(wheels[0].read_bytes()).hexdigest(),
+                    "source_contract": contract,
+                }
+            ),
+            flush=True,
+        )
+        requirements = root / "requirements.txt"
+        _run(
+            [
+                "uv",
+                "export",
+                "--frozen",
+                "--no-dev",
+                "--no-emit-project",
+                "--no-hashes",
+                "--output-file",
+                str(requirements),
+            ]
+        )
+        venv.EnvBuilder(with_pip=False).create(venv_dir)
         python = _venv_bin(venv_dir, "python")
         _run(
-            [str(python), "-m", "pip", "install", str(wheels[-1])],
-            env={"PIP_DISABLE_PIP_VERSION_CHECK": "1"},
+            [
+                "uv",
+                "pip",
+                "install",
+                "--python",
+                str(python),
+                "-c",
+                str(requirements),
+                str(wheels[0]),
+            ],
+            cwd=root,
+            timeout=300,
         )
+        env = _clean_env(root)
         for entrypoint in CANONICAL_ENTRYPOINTS:
-            script = _venv_bin(venv_dir, entrypoint)
-            if not script.exists():
-                raise RuntimeError(f"Missing expected wheel entrypoint: {entrypoint}")
-            _run([str(script), "--help"])
+            binary = _venv_bin(venv_dir, entrypoint)
+            assert binary.is_file(), entrypoint
+            _run([str(binary), "--help"], cwd=runtime, env=env)
         for entrypoint in REMOVED_ENTRYPOINTS:
-            script = _venv_bin(venv_dir, entrypoint)
-            if script.exists():
-                raise RuntimeError(f"Unexpected legacy wheel entrypoint present: {entrypoint}")
+            assert not _venv_bin(venv_dir, entrypoint).exists(), entrypoint
+        for mode in ("schema", "prepare", "python", "stdio"):
+            _run(
+                [
+                    str(python),
+                    "-I",
+                    str(probe),
+                    "--root",
+                    str(runtime),
+                    "--entrypoint",
+                    str(_venv_bin(venv_dir, "index-it-mcp")),
+                    "--mode",
+                    mode,
+                ],
+                cwd=runtime,
+                env=env,
+                timeout=300,
+            )
+        _run(
+            [
+                str(python),
+                "-I",
+                str(runtime / SAFETY_PROBE.name),
+                "--root",
+                str(runtime),
+                "--entrypoint",
+                str(_venv_bin(venv_dir, "index-it-mcp")),
+            ],
+            cwd=runtime,
+            env=env,
+            timeout=300,
+        )
 
 
 def smoke_stdio() -> None:
-    sys.path.insert(0, str(REPO))
-    from tests.fixtures.multi_repo import boot_test_server, build_temp_repo
-
-    source = """
-class SmokeWidget:
-    pass
-
-
-def release_smoke_token():
-    return "p22 lexical smoke"
-"""
-    with tempfile.TemporaryDirectory(prefix="mcp-release-stdio-") as tmp:
-        tmp_path = Path(tmp)
-        repo_path, _ = build_temp_repo(
-            tmp_path,
-            "fixture_repo",
-            seed_files={"smoke.py": source.lstrip()},
-        )
-        unregistered_path = tmp_path / "unregistered_repo"
-        unregistered_path.mkdir()
-        old_qdrant_path = os.environ.get("QDRANT_PATH")
-        old_semantic_enabled = os.environ.get("SEMANTIC_SEARCH_ENABLED")
-        os.environ["QDRANT_PATH"] = str(tmp_path / "missing-vector-index.qdrant")
-        os.environ["SEMANTIC_SEARCH_ENABLED"] = "false"
-        try:
-            with boot_test_server(tmp_path, [repo_path], extra_roots=[unregistered_path]) as server:
-                search = server.call_tool(
-                    "search_code",
-                    {
-                        "query": "release_smoke_token",
-                        "repository": str(repo_path),
-                        "semantic": False,
-                        "limit": 5,
-                    },
-                )
-                if not isinstance(search, list) or not search:
-                    raise AssertionError(f"search_code did not return results: {search!r}")
-
-                lookup = server.call_tool(
-                    "symbol_lookup",
-                    {"symbol": "release_smoke_token", "repository": str(repo_path)},
-                )
-                if lookup.get("symbol") != "release_smoke_token":
-                    raise AssertionError(f"symbol_lookup failed: {lookup!r}")
-
-                status = server.call_tool("get_status", {})
-                rows = status.get("repositories", [])
-                if len(rows) != 1 or rows[0].get("readiness") != "ready":
-                    raise AssertionError(f"get_status readiness failed: {status!r}")
-
-                fallback = server.call_tool(
-                    "search_code",
-                    {
-                        "query": "release_smoke_token",
-                        "repository": str(unregistered_path),
-                        "semantic": False,
-                    },
-                )
-                if (
-                    fallback.get("code") != "index_unavailable"
-                    or fallback.get("safe_fallback") != "native_search"
-                    or fallback.get("readiness", {}).get("state") != "unregistered_repository"
-                ):
-                    raise AssertionError(f"fallback contract failed: {fallback!r}")
-        finally:
-            if old_qdrant_path is None:
-                os.environ.pop("QDRANT_PATH", None)
-            else:
-                os.environ["QDRANT_PATH"] = old_qdrant_path
-            if old_semantic_enabled is None:
-                os.environ.pop("SEMANTIC_SEARCH_ENABLED", None)
-            else:
-                os.environ["SEMANTIC_SEARCH_ENABLED"] = old_semantic_enabled
+    """STDIO is tested from the installed wheel, never from test fixture dispatchers."""
+    smoke_wheel()
 
 
 def _poll_health(port: int, *, timeout: float = 60.0) -> None:
     deadline = time.monotonic() + timeout
-    url = f"http://127.0.0.1:{port}/health"
-    last_error: Exception | None = None
+    last_error = None
     while time.monotonic() < deadline:
         try:
-            with urlopen(url, timeout=2.0) as response:
-                payload = json.loads(response.read().decode("utf-8"))
-            if payload.get("status") == "healthy":
-                return
+            with urlopen(f"http://127.0.0.1:{port}/health", timeout=2) as response:
+                if json.load(response).get("status") == "healthy":
+                    return
         except (OSError, URLError, json.JSONDecodeError) as exc:
-            last_error = exc
-        time.sleep(1.0)
-    raise RuntimeError(f"Container health check did not pass: {last_error}")
+            last_error = type(exc).__name__
+        time.sleep(1)
+    raise RuntimeError(f"Container health timeout ({last_error})")
 
 
-def smoke_container() -> None:
+def smoke_container(image_ref: str | None = None) -> None:
+    if image_ref is not None and not re.fullmatch(
+        r"ghcr\.io/[a-z0-9_./-]+@sha256:[0-9a-f]{64}", image_ref
+    ):
+        raise ValueError("Delivered image requires an immutable GHCR digest reference")
     if shutil.which("docker") is None:
         raise RuntimeError("docker is required for --container smoke")
-
-    _run(["docker", "build", "-f", "docker/dockerfiles/Dockerfile.production", "-t", IMAGE, "."])
-    _run(["docker", "run", "--rm", IMAGE, "mcp-index", "--help"])
-    container_contract = r"""
-import asyncio
-import json
-import os
-import tempfile
-from pathlib import Path
-
-from mcp_server.cli.tool_handlers import handle_get_status, handle_search_code
-from mcp_server.health.repository_readiness import RepositoryReadiness, RepositoryReadinessState
-
-
-class Dispatcher:
-    def get_statistics(self):
-        return {}
-
-    def health_check(self):
-        return {}
-
-
-class Resolver:
-    def classify(self, path):
-        return RepositoryReadiness(
-            state=RepositoryReadinessState.UNREGISTERED_REPOSITORY,
-            requested_path=str(Path(path).resolve()),
-            remediation="Register this repository path before querying it.",
+    if image_ref is None:
+        _run(
+            ["docker", "build", "-f", "docker/dockerfiles/Dockerfile.production", "-t", IMAGE, "."],
+            timeout=600,
         )
-
-    def resolve(self, path):
-        return None
-
-
-async def main():
-    with tempfile.TemporaryDirectory(prefix="mcp-container-fallback-") as tmp:
-        os.environ["MCP_ALLOWED_ROOTS"] = tmp
-        repo = Path(tmp) / "unregistered"
-        repo.mkdir()
-        dispatcher = Dispatcher()
-        resolver = Resolver()
-        fallback = json.loads(
-            (
-                await handle_search_code(
-                    arguments={
-                        "query": "release_smoke_token",
-                        "repository": str(repo),
-                        "semantic": False,
-                    },
-                    dispatcher=dispatcher,
-                    repo_resolver=resolver,
-                )
-            )[0].text
+    else:
+        _run(["docker", "pull", image_ref], timeout=300)
+        digests = json.loads(
+            subprocess.check_output(
+                ["docker", "image", "inspect", "--format", "{{json .RepoDigests}}", image_ref],
+                text=True,
+                timeout=30,
+            )
         )
-        status = json.loads(
-            (
-                await handle_get_status(
-                    arguments={},
-                    dispatcher=dispatcher,
-                    repo_resolver=resolver,
-                    server_version="container-smoke",
-                )
-            )[0].text
+        if image_ref not in digests:
+            raise ValueError("Delivered image registry digest mismatch")
+        source = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=REPO, text=True, timeout=30
+        ).strip()
+        labels = json.loads(
+            subprocess.check_output(
+                ["docker", "image", "inspect", "--format", "{{json .Config.Labels}}", image_ref],
+                text=True,
+                timeout=30,
+            )
         )
-        assert fallback["code"] == "index_unavailable", fallback
-        assert fallback["safe_fallback"] == "native_search", fallback
-        assert fallback["readiness"]["state"] == "unregistered_repository", fallback
-        assert "repositories" in status, status
-
-
-asyncio.run(main())
-"""
-    _run(
-        [
-            "docker",
-            "run",
-            "--rm",
-            "-e",
-            "SEMANTIC_SEARCH_ENABLED=false",
-            IMAGE,
-            "python",
-            "-c",
-            container_contract,
-        ]
-    )
-
-    port = _free_port()
-    container_id = subprocess.check_output(
-        [
-            "docker",
-            "run",
-            "-d",
-            "--rm",
-            "-p",
-            f"127.0.0.1:{port}:8000",
-            "-e",
-            "MCP_ENVIRONMENT=development",
-            "-e",
-            "JWT_SECRET_KEY=p22-release-smoke-jwt-secret-key-00000000",
-            "-e",
-            "DEFAULT_ADMIN_PASSWORD=p22-release-smoke-admin-password-00000000",
-            "-e",
-            "DEFAULT_ADMIN_EMAIL=admin@localhost",
-            "-e",
-            "CORS_ORIGINS=http://localhost",
-            IMAGE,
-        ],
-        cwd=str(REPO),
+        project = tomllib.loads((REPO / "pyproject.toml").read_text())["project"]
+        expected_labels = {
+            "org.opencontainers.image.version": "v" + project["version"],
+            "org.opencontainers.image.revision": source,
+        }
+        if not isinstance(labels, dict) or any(
+            labels.get(key) != value for key, value in expected_labels.items()
+        ):
+            raise ValueError("Delivered image labels differ from accepted source")
+        if shutil.which("cosign") is None:
+            raise RuntimeError("cosign is required to verify delivered image provenance")
+        _run(
+            [
+                "cosign",
+                "verify",
+                image_ref,
+                "--certificate-identity",
+                "https://github.com/Consiliency/Code-Index-MCP/.github/workflows/"
+                "release-automation.yml@refs/heads/main",
+                "--certificate-oidc-issuer",
+                "https://token.actions.githubusercontent.com",
+                "--certificate-github-workflow-sha",
+                source,
+            ],
+            timeout=120,
+        )
+    image_id = subprocess.check_output(
+        ["docker", "image", "inspect", "--format", "{{.Id}}", image_ref or IMAGE],
         text=True,
+        timeout=30,
     ).strip()
-    try:
-        _poll_health(port)
-    finally:
-        subprocess.run(
-            ["docker", "stop", container_id],
-            cwd=str(REPO),
-            check=False,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+    print(json.dumps({"image": image_ref or IMAGE, "image_id": image_id}), flush=True)
+    with tempfile.TemporaryDirectory(prefix="mcp-release-container-") as tmp:
+        root = Path(tmp)
+        root.chmod(0o777)
+        shutil.copyfile(PROBE, root / PROBE.name)
+        shutil.copyfile(SAFETY_PROBE, root / SAFETY_PROBE.name)
+        mount = ["-v", f"{root}:/smoke"]
+        probe = ["python", "-I", "/smoke/installed_runtime_smoke.py", "--root", "/smoke"]
+        # The image's configured USER owns the fixture; no root override or fake services.
+        for mode in ("schema", "prepare", "python"):
+            _run(["docker", "run", "--rm", *mount, image_id, *probe, "--mode", mode])
+        port = _free_port()
+        env = {
+            "HOME": "/smoke/home",
+            "MCP_REPO_REGISTRY": "/smoke/registry.json",
+            "MCP_INDEX_STORAGE_PATH": "/smoke/indexes",
+            "MCP_ALLOWED_ROOTS": "/smoke",
+            "MCP_WORKSPACE_ROOT": "/smoke/fixture",
+            "SEMANTIC_SEARCH_ENABLED": "false",
+            "MCP_AUTO_INDEX": "false",
+            "MCP_SKIP_PLUGIN_PREINDEX": "true",
+            "MCP_METRICS_PORT": "0",
+            "MCP_ENVIRONMENT": "development",
+            "JWT_SECRET_KEY": "synthetic-smoke-jwt-key-00000000000000",
+            "DEFAULT_ADMIN_PASSWORD": "synthetic-smoke-admin-password-00000000",
+            "DEFAULT_ADMIN_EMAIL": "admin@localhost",
+            "CORS_ORIGINS": "http://localhost",
+        }
+        args = [part for key, value in env.items() for part in ("-e", f"{key}={value}")]
+        container = "mcp-release-smoke-" + uuid.uuid4().hex
+        try:
+            subprocess.check_output(
+                [
+                    "docker",
+                    "run",
+                    "--name",
+                    container,
+                    "-d",
+                    *mount,
+                    "-p",
+                    f"127.0.0.1:{port}:8000",
+                    *args,
+                    image_id,
+                ],
+                text=True,
+                timeout=60,
+            )
+            _poll_health(port)
+            _run(["docker", "exec", container, *probe, "--mode", "http"])
+            _run(["docker", "restart", container], timeout=60)
+            _poll_health(port)
+            _run(["docker", "exec", container, *probe, "--mode", "http", "--restart"])
+            captured = subprocess.run(
+                ["docker", "logs", container],
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=30,
+            )
+            logs = captured.stdout + captured.stderr
+            assert "release_smoke_token" not in logs, "HTTP query content leaked into logs"
+            assert "refresh_token=" not in logs, "Refresh credential query leaked into logs"
+            assert "198.51.100.77" not in logs, "Untrusted forwarded peer reached access logs"
+            print(
+                json.dumps({"http_log_privacy": "passed", "untrusted_proxy": "ignored"}), flush=True
+            )
+        except Exception:
+            # This container has only synthetic inputs and no operator credentials.
+            subprocess.run(["docker", "logs", "--tail", "100", container], timeout=30, check=False)
+            raise
+        finally:
+            subprocess.run(
+                ["docker", "rm", "-f", container], check=True, timeout=60, stdout=subprocess.DEVNULL
+            )
+        _run(
+            [
+                "docker",
+                "run",
+                "--rm",
+                *mount,
+                image_id,
+                "python",
+                "-I",
+                "/smoke/safety_runtime_smoke.py",
+                "--root",
+                "/smoke",
+            ],
+            timeout=300,
         )
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--wheel",
-        action="store_true",
-        help="Build wheel, install it in a fresh venv, and run mcp-index --help",
+        "--wheel", action="store_true", help="Build, install and exercise real STDIO"
     )
     parser.add_argument(
-        "--stdio",
-        action="store_true",
-        help="Run lexical search_code and symbol_lookup against a fixture repo",
+        "--stdio", action="store_true", help="Exercise STDIO from the installed wheel"
     )
     parser.add_argument(
-        "--container", action="store_true", help="Build and smoke the production container image"
+        "--container", action="store_true", help="Exercise the configured non-root image"
     )
+    parser.add_argument("--all", action="store_true", help="Run wheel/STDIO and container smoke")
+    parser.add_argument("--wheel-path", type=Path, help="Use a delivered wheel without building")
+    parser.add_argument("--wheel-sha256", help="Expected SHA256 from the package registry")
     parser.add_argument(
-        "--all", action="store_true", help="Run wheel, stdio, and container smoke checks"
+        "--image-ref", help="Use a delivered immutable GHCR digest without building"
     )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
+    if (args.wheel_path is None) != (args.wheel_sha256 is None):
+        raise SystemExit("Supply both --wheel-path and --wheel-sha256")
+    delivered = args.wheel_path is not None or args.image_ref is not None
     if args.all:
         args.wheel = args.stdio = args.container = True
+    args.wheel = args.wheel or args.wheel_path is not None
+    args.container = args.container or args.image_ref is not None
+    if delivered and (
+        (args.wheel or args.stdio)
+        and args.wheel_path is None
+        or args.container
+        and args.image_ref is None
+    ):
+        raise SystemExit("Delivered mode cannot mix registry artifacts with local builds")
     if not (args.wheel or args.stdio or args.container):
-        raise SystemExit("Choose at least one of --wheel, --stdio, --container, or --all")
-
-    if args.wheel:
-        smoke_wheel()
-    if args.stdio:
-        smoke_stdio()
+        raise SystemExit("Choose --wheel, --stdio, --container, or --all")
+    if args.wheel or args.stdio:
+        smoke_wheel(args.wheel_path, args.wheel_sha256)
     if args.container:
-        smoke_container()
+        smoke_container(args.image_ref)
 
 
 if __name__ == "__main__":

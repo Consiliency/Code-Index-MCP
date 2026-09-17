@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import inspect
 
+import jsonschema
 import pytest
 
 from mcp_server.cli.stdio_runner import _build_tool_list
@@ -33,6 +34,32 @@ TOOL_NAME_TO_HANDLER = {
 }
 
 ZERO_ARGUMENT_TOOLS = {"get_status", "list_plugins"}
+
+
+def test_staged_reindex_output_matches_advertised_schema():
+    schema = next(t.outputSchema for t in _build_tool_list() if t.name == "reindex")
+    result = {
+        "path": "/synthetic/fixture",
+        "mode": "staged_full",
+        "indexed_files": 1,
+        "mutation_performed": True,
+        "commit": "a" * 40,
+        "recovery": {"previous_state": "missing_index"},
+        "semantic": None,
+    }
+    jsonschema.validate(result, schema)
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate({**result, "mutation_performed": False}, schema)
+    jsonschema.validate(
+        {
+            "error": "Reindex failed",
+            "code": "wrong_branch",
+            "details": None,
+            "readiness": {},
+            "mutation_performed": False,
+        },
+        schema,
+    )
 
 
 def _schema_advertises_repository(tool_schema: dict) -> bool:

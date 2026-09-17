@@ -9,6 +9,7 @@ Covers:
 
 import logging
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from unittest.mock import MagicMock, call, patch
 
 import pytest
@@ -197,6 +198,10 @@ def _make_watcher(registry=None, index_manager=None):
         dispatcher=dispatcher,
         index_manager=index_manager,
     )
+    watcher.running = True
+    watcher.watchers["my-repo"] = MagicMock()
+    watcher.watchers["my-repo"].ctx.registry_entry.path = Path.cwd()
+    watcher.watchers["my-repo"].ctx.registry_entry.registration_id = "admitted-registration"
     return watcher
 
 
@@ -240,8 +245,13 @@ def test_enqueue_full_rescan_passes_repo_id():
     assert len(submitted_callables) == 1
     fn, args, kwargs = submitted_callables[0]
     # Call the submitted closure — it should invoke a guarded force-full sync.
-    fn()
-    index_manager.sync_repository_index.assert_called_once_with("my-repo", force_full=True)
+    fn(*args, **kwargs)
+    index_manager.sync_repository_index.assert_called_once_with(
+        "my-repo",
+        force_full=True,
+        expected_registration_id="admitted-registration",
+        require_auto_sync=True,
+    )
 
 
 # ---------------------------------------------------------------------------
