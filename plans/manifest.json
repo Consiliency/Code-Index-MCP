@@ -415,7 +415,7 @@
       "acceptance_criteria_count": 3,
       "created_at": "2026-09-12T08:31:28Z",
       "file": "plans/phase-plan-v13-PREP.md",
-      "handoff_ref": ".dev-skills/handoffs/codex-execute-phase/20260912T1033Z-prep-checkpoint.md",
+      "handoff_ref": ".dev-skills/handoffs/codex-execute-phase/20260917T0603Z-manual-route.md",
       "if_gates_produced": [],
       "lanes": [
         "SL-0",
@@ -453,9 +453,19 @@
           "transition": "failed"
         }
       ],
+      "manual_execution_checkpoint": {
+        "focused_tests_passed": 253,
+        "human_required": false,
+        "lifecycle_warning": "failed_to_executing_unsupported",
+        "pilot_consumed": false,
+        "review_route": "owner_authorized_manual_pointer_reads",
+        "run_id": "20260917T0603Z-manual-route",
+        "signing_consumed": false,
+        "status": "executed"
+      },
       "owner_skill": "codex-plan-phase",
       "phase_alias": "PREP",
-      "reflection_ref": "/home/viperjuice/.codex/skills/codex-execute-phase/reflections/448c2cf6/codex-v13-audit-remediation/20260912T0953Z-prep-repairs.md",
+      "reflection_ref": "/home/viperjuice/.codex/skills/codex-execute-phase/reflections/448c2cf6/codex-v13-audit-remediation/20260917T0603Z-manual-route.md",
       "roadmap_ref": {
         "file": "specs/phase-plans-v13.md",
         "slug": "phase-plans-v13",
@@ -464,9 +474,9 @@
       },
       "slug": "phase-plan-v13-PREP",
       "status": "failed",
-      "task_summary": "Repaired source locally verified; acceptance blocked on renewed live/signing approval and final four-seat review. No PREP gate or publication.",
+      "task_summary": "One owner-authorized Fable5/max native Read diagnostic returned AGREE with full two-file coverage from a 1307-byte pointer prompt. No global/broker permission changes or governed acceptance; final candidate gates outstanding, both effects unused.",
       "type": "phase",
-      "updated_at": "2026-09-12T10:34:42Z"
+      "updated_at": "2026-09-17T06:03:04Z"
     },
     {
       "acceptance_criteria_count": 4,

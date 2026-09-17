@@ -26,8 +26,21 @@ new live run of the version-bumped wheel.
 The first candidate (6310af8) was rejected during review. Subsequent runtime
 repairs are NOT version-only, so that comparator must refuse inheritance of
 the old pilot. A fresh candidate-bound pilot and metadata-signature validation
-are required before acceptance. The requested replacement allowances are pending;
-the old ledger and consumed signing job are not reusable authorizations.
+are required before acceptance. The owner approved one replacement synthetic-local
+pilot and one digest-only signing validation on September 15, 2026. These remain
+unused until recorded first admission and accepted dispatch, respectively. The
+old ledger and consumed signing job are not reusable authorizations.
+
+The renewed pilot uses only approval
+`v13-prep-178b8328-20260915-synthetic-local` and the canonical
+`.phase-loop/runs/v13-PILOT-allowance-20260915/` ledger: 100000 input units
+including retries, 900 seconds from first admission, concurrency one. The
+distinct `--renewed-pilot-root` validator requires matching clean source, wheel,
+lock, offline/browser/rehearsal/live proof and the canonical ledger. The legacy
+version-only comparator must still reject these runtime repairs. Signing is
+limited to one five-minute `index-attestation` job receiving only the canonical
+metadata digest. Complete all code fixes and prerequisite checks before either
+effect; neither permits an automatic retry after failure or uncertain acceptance.
 
 Fresh candidate-specific local full, installed PMCP, container, Qdrant,
 loopback-provider and browser checks are required in PREP. Real inference is not
@@ -40,6 +53,10 @@ Grok `grok-4.5`, and Gemini `Gemini 3.1 Pro`. Each receives full candidate chang
 then all peer reports for reconciliation. No unavailable or degraded seat counts
 as approval; configured and reported model identities remain distinguishable.
 Fable uses only first-party subscription TUI/self-PTY execution.
+On September 17 the owner authorized the manual pointer-based four-seat route
+for this release, conditional on verified scoped read-only access. Reviewers
+receive short briefs and file pointers, not injected source bundles. This does
+not waive any seat, exact-candidate coverage, or cross-model reconciliation.
 
 Final review receipts live outside the frozen source tree and are referenced
 from qualified PR comments and the SHIP handoff. The tracked PREP status is not

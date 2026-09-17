@@ -21,6 +21,10 @@ import httpx
 INPUT_LIMIT = 100000
 SECONDS_LIMIT = 900
 APPROVAL = "v13-freeze-178b8328-20260911-synthetic-local"
+RENEWED_APPROVAL = "v13-prep-178b8328-20260915-synthetic-local"
+_RUNS_ROOT = Path(__file__).resolve().parents[1] / ".phase-loop" / "runs"
+ORIGINAL_ROOT = _RUNS_ROOT / "v13-PILOT-allowance"
+RENEWED_ROOT = _RUNS_ROOT / "v13-PILOT-allowance-20260915"
 ENDPOINTS = {"embedding": "http://ai:8001/v1", "enrichment": "http://ai:8002/v1"}
 ROUTES = {
     ("GET", "/embedding/v1/models"): ("embedding", "/models"),
@@ -38,7 +42,24 @@ class BudgetLedger:
     """One persistent allowance; opening an existing root never initializes it."""
 
     @staticmethod
-    def initialize(root: Path, manifest_sha256: str) -> None:
+    def _check_root(root: Path, approval: str, read_only: bool) -> None:
+        if approval not in {APPROVAL, RENEWED_APPROVAL}:
+            raise BudgetDenied("approval_unknown")
+        if root.absolute() != root.resolve():
+            raise BudgetDenied("allowance_root_invalid")
+        if root == ORIGINAL_ROOT and not read_only:
+            raise BudgetDenied("ledger_read_only")
+        if root == RENEWED_ROOT and approval != RENEWED_APPROVAL:
+            raise BudgetDenied("approval_root_mismatch")
+        if approval == RENEWED_APPROVAL and (
+            root == ORIGINAL_ROOT or (not read_only and root != RENEWED_ROOT)
+        ):
+            raise BudgetDenied("approval_root_mismatch")
+
+    @staticmethod
+    def initialize(root: Path, manifest_sha256: str, *, approval: str = APPROVAL) -> None:
+        root = root.absolute()
+        BudgetLedger._check_root(root, approval, False)
         if len(manifest_sha256) != 64 or any(c not in "0123456789abcdef" for c in manifest_sha256):
             raise BudgetDenied("manifest_invalid")
         root.mkdir(mode=0o700, parents=False, exist_ok=False)
@@ -59,7 +80,7 @@ class BudgetLedger:
                 """)
             db.execute(
                 "INSERT INTO allowance(id, approval, manifest) VALUES (1, ?, ?)",
-                (APPROVAL, manifest_sha256),
+                (approval, manifest_sha256),
             )
         (root / "ledger.sqlite").chmod(0o600)
 
@@ -70,8 +91,10 @@ class BudgetLedger:
         *,
         clock: Callable[[], tuple[float, float]] = lambda: (time.time(), time.monotonic()),
         read_only: bool = False,
+        approval: str = APPROVAL,
     ) -> None:
-        self.root = root
+        self.root = root.absolute()
+        self.approval = approval
         self.manifest_sha256 = manifest_sha256
         self.clock = clock
         self.read_only = read_only
@@ -82,6 +105,7 @@ class BudgetLedger:
     def _transaction(self):
         db = None
         try:
+            self._check_root(self.root, self.approval, self.read_only)
             path = self.root / "ledger.sqlite"
             if path.is_symlink() or not path.is_file():
                 raise BudgetDenied("ledger_invalid")
@@ -93,7 +117,7 @@ class BudgetLedger:
             if db.execute("PRAGMA quick_check").fetchone()[0] != "ok":
                 raise BudgetDenied("ledger_invalid")
             rows = db.execute("SELECT * FROM allowance").fetchall()
-            if len(rows) != 1 or rows[0]["approval"] != APPROVAL:
+            if len(rows) != 1 or rows[0]["approval"] != self.approval:
                 raise BudgetDenied("ledger_invalid")
             state = dict(rows[0])
             if state["manifest"] != self.manifest_sha256:
@@ -212,7 +236,7 @@ class BudgetLedger:
             rows = [dict(row) for row in db.execute("SELECT * FROM requests ORDER BY rowid")]
             return {
                 "schema": "v13-pilot-budget.v1",
-                "approval": APPROVAL,
+                "approval": self.approval,
                 "manifest_sha256": state["manifest"],
                 "input_limit": INPUT_LIMIT,
                 "seconds_limit": SECONDS_LIMIT,

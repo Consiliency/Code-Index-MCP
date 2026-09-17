@@ -90,8 +90,9 @@ def digest_file(path: Path) -> str:
 
 
 def validate_receipt(receipt: dict, manifest: dict, kind: str) -> None:
+    receipt_kind = "live" if kind == "rehearsal" else kind
     for key, expected in {
-        "kind": kind,
+        "kind": receipt_kind,
         "source": manifest["source"],
         "wheel_sha256": manifest["wheel_sha256"],
         "manifest_sha256": digest_json(manifest),
@@ -99,9 +100,11 @@ def validate_receipt(receipt: dict, manifest: dict, kind: str) -> None:
         if receipt.get(key) != expected:
             raise PilotRefused("receipt_binding_mismatch")
     goals = receipt.get("goals", {})
-    if any(goals.get(name) is not True for name in GOALS[kind]):
+    if any(goals.get(name) is not True for name in GOALS[receipt_kind]):
         raise PilotRefused("receipt_goals_incomplete")
-    if kind in {"offline", "live", "browser"}:
+    if kind == "rehearsal" and receipt.get("rehearsal") is not True:
+        raise PilotRefused("rehearsal_required")
+    if kind in {"offline", "live", "browser", "rehearsal"}:
         durations = receipt.get("shutdown_seconds", [])
         rss = receipt.get("peak_rss_mib")
         if (
@@ -947,7 +950,9 @@ async def browser_session(root: Path, manifest: dict, inspector: Path) -> dict:
     return result
 
 
-def verify_saved_receipt(root: Path, manifest: dict, kind: str) -> dict:
+def verify_saved_receipt(
+    root: Path, manifest: dict, kind: str, *, expected_approval: str | None = None
+) -> dict:
     result = json.loads((root / f"{kind}.json").read_text())
     validate_receipt(result, manifest, kind)
     required_roles = {
@@ -958,7 +963,7 @@ def verify_saved_receipt(root: Path, manifest: dict, kind: str) -> dict:
             "browser_session",
         },
         "live": {"allowance_ledger", "runtime_provenance", "runtime_metadata", "workload"},
-    }[kind]
+    }["live" if kind == "rehearsal" else kind]
     artifacts = result.get("artifacts", [])
     if not required_roles <= {item.get("role") for item in artifacts}:
         raise PilotRefused("receipt_artifacts_incomplete")
@@ -1008,16 +1013,29 @@ def verify_saved_receipt(root: Path, manifest: dict, kind: str) -> dict:
             except (OSError, ValueError):
                 raise PilotRefused("browser_screenshot_invalid") from None
     else:
-        _verify_live_records(root, manifest, result)
+        _verify_live_records(
+            root,
+            manifest,
+            result,
+            rehearsal=kind == "rehearsal",
+            expected_approval=expected_approval,
+        )
     return result
 
 
-def _verify_live_records(root: Path, manifest: dict, result: dict, *, rehearsal=False) -> None:
+def _verify_live_records(
+    root: Path,
+    manifest: dict,
+    result: dict,
+    *,
+    rehearsal=False,
+    expected_approval: str | None = None,
+) -> None:
     if __package__:
-        from .v13_pilot_budget import ENDPOINTS, BudgetDenied, BudgetLedger
+        from .v13_pilot_budget import APPROVAL, ENDPOINTS, BudgetDenied, BudgetLedger
         from .v13_pilot_estimate import REQUEST_ENVELOPES, SYNTHETIC_CORPUS
     else:
-        from v13_pilot_budget import ENDPOINTS, BudgetDenied, BudgetLedger
+        from v13_pilot_budget import APPROVAL, ENDPOINTS, BudgetDenied, BudgetLedger
         from v13_pilot_estimate import REQUEST_ENVELOPES, SYNTHETIC_CORPUS
 
     try:
@@ -1030,7 +1048,10 @@ def _verify_live_records(root: Path, manifest: dict, result: dict, *, rehearsal=
         if len(set(paths.values())) != 4 or paths["allowance_ledger"].name != "ledger.sqlite":
             raise PilotRefused("live_artifact_invalid")
         ledger = BudgetLedger(
-            paths["allowance_ledger"].parent, digest_json(manifest), read_only=True
+            paths["allowance_ledger"].parent,
+            digest_json(manifest),
+            read_only=True,
+            approval=APPROVAL if expected_approval is None else expected_approval,
         )
         snapshot = ledger.snapshot()
         recorded = {
@@ -1352,17 +1373,20 @@ async def runtime_provenance(fixture: dict, qdrant_url: str) -> list[dict]:
 
 
 async def inference_pilot(root: Path, manifest: dict, *, rehearsal: bool) -> dict:
-    from v13_pilot_budget import ENDPOINTS, BudgetLedger, LocalForwarder
+    from v13_pilot_budget import (
+        APPROVAL,
+        ENDPOINTS,
+        RENEWED_APPROVAL,
+        RENEWED_ROOT,
+        BudgetLedger,
+        LocalForwarder,
+    )
     from v13_pilot_estimate import REQUEST_ENVELOPES, SYNTHETIC_CORPUS
 
     if not rehearsal:
         validate_receipt(json.loads((root / "offline.json").read_text()), manifest, "offline")
         verify_saved_receipt(root, manifest, "browser")
-        previous = json.loads((root / "rehearsal.json").read_text())
-        if previous.get("manifest_sha256") != digest_json(manifest) or not previous.get(
-            "workflow_completed"
-        ):
-            raise PilotRefused("rehearsal_required")
+        verify_saved_receipt(root, manifest, "rehearsal")
     label = "rehearsal" if rehearsal else "live"
     fixture = create_fixture(root, manifest, label=label)
     directory = fixture["root"]
@@ -1380,7 +1404,8 @@ async def inference_pilot(root: Path, manifest: dict, *, rehearsal: bool) -> dic
         "manifest_sha256": digest_json(manifest),
     }
     write_json(directory / "workload.json", workload, exclusive=True)
-    allowance = directory / "allowance" if rehearsal else root.parent / "v13-PILOT-allowance"
+    allowance = directory / "allowance" if rehearsal else RENEWED_ROOT
+    approval = APPROVAL if rehearsal else RENEWED_APPROVAL
     ledger = None
     servers = []
     threads = []
@@ -1512,8 +1537,8 @@ async def inference_pilot(root: Path, manifest: dict, *, rehearsal: bool) -> dic
             endpoints = dict.fromkeys(
                 ("embedding", "enrichment"), f"http://127.0.0.1:{fake.server_port}/v1"
             )
-        BudgetLedger.initialize(allowance, digest_json(manifest))
-        ledger = BudgetLedger(allowance, digest_json(manifest))
+        BudgetLedger.initialize(allowance, digest_json(manifest), approval=approval)
+        ledger = BudgetLedger(allowance, digest_json(manifest), approval=approval)
         token = secrets.token_urlsafe(36)
         guard = LocalForwarder(
             ledger,
@@ -1744,7 +1769,7 @@ async def inference_pilot(root: Path, manifest: dict, *, rehearsal: bool) -> dic
             ("workload", directory / "workload.json"),
         )
     ]
-    _verify_live_records(root, manifest, result, rehearsal=rehearsal)
+    _verify_live_records(root, manifest, result, rehearsal=rehearsal, expected_approval=approval)
     write_json(root / (label + ".json"), result)
     return result
 
@@ -1788,7 +1813,14 @@ def main():
             raise PilotRefused("inspector_entrypoint_required")
         result = asyncio.run(browser_session(root, load_manifest(root), args.inspector.resolve()))
     elif args.mode.startswith("verify-"):
-        result = verify_saved_receipt(root, load_manifest(root), args.mode.removeprefix("verify-"))
+        from v13_pilot_budget import RENEWED_APPROVAL
+
+        result = verify_saved_receipt(
+            root,
+            load_manifest(root),
+            args.mode.removeprefix("verify-"),
+            expected_approval=RENEWED_APPROVAL if args.mode == "verify-live" else None,
+        )
     else:
         result = asyncio.run(
             inference_pilot(root, load_manifest(root), rehearsal=args.mode == "rehearsal")

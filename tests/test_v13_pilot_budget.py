@@ -10,6 +10,7 @@ from threading import Event, Thread
 import httpx
 import pytest
 
+from scripts import v13_pilot_budget as budget
 from scripts.v13_pilot_budget import BudgetDenied, BudgetLedger, LocalForwarder
 
 _CONNECT = socket.socket.connect
@@ -86,6 +87,89 @@ def test_deadline_and_clock_rollback_cannot_reset_allowance(ledger, clock, clock
 def test_manifest_change_cannot_reuse_allowance(ledger):
     with pytest.raises(BudgetDenied, match="manifest_mismatch"):
         BudgetLedger(ledger.root, "b" * 64)
+
+
+@pytest.fixture
+def renewal_roots(tmp_path, monkeypatch):
+    original = tmp_path / "v13-PILOT-allowance"
+    renewed = tmp_path / "v13-PILOT-allowance-20260915"
+    monkeypatch.setattr(budget, "ORIGINAL_ROOT", original)
+    monkeypatch.setattr(budget, "RENEWED_ROOT", renewed)
+    return original, renewed
+
+
+def test_renewed_ledger_has_one_fixed_identity_and_cannot_reinitialize(renewal_roots, clock):
+    _, root = renewal_roots
+    approval = budget.RENEWED_APPROVAL
+    BudgetLedger.initialize(root, "b" * 64, approval=approval)
+    ledger = BudgetLedger(root, "b" * 64, approval=approval, clock=lambda: tuple(clock))
+    first = ledger.reserve("embedding", 60000)
+    ledger.finish(first, "http_error", 500)
+    reopened = BudgetLedger(root, "b" * 64, approval=approval, clock=lambda: tuple(clock))
+    second = reopened.reserve("enrichment", 40000)
+    reopened.finish(second, "success", 200)
+    assert reopened.snapshot()["approval"] == approval
+    with pytest.raises(BudgetDenied, match="token_limit"):
+        reopened.reserve("embedding", 1)
+    with pytest.raises(FileExistsError):
+        BudgetLedger.initialize(root, "b" * 64, approval=approval)
+    with pytest.raises(BudgetDenied):
+        BudgetLedger(root, "b" * 64)
+
+
+@pytest.mark.parametrize("kind", ["unknown", "alternate", "symlink", "original", "wrong_identity"])
+def test_renewal_root_and_identity_bypasses_are_refused(renewal_roots, tmp_path, kind):
+    original, renewed = renewal_roots
+    root, approval = renewed, budget.RENEWED_APPROVAL
+    if kind == "unknown":
+        approval = "unapproved"
+    elif kind == "alternate":
+        root = tmp_path / "alternate"
+    elif kind == "symlink":
+        alias = tmp_path / "alias"
+        alias.symlink_to(tmp_path, target_is_directory=True)
+        root = alias / renewed.name
+    elif kind == "original":
+        root = original
+    else:
+        approval = budget.APPROVAL
+    with pytest.raises(BudgetDenied):
+        BudgetLedger.initialize(root, "b" * 64, approval=approval)
+    assert not renewed.exists() and not original.exists()
+
+
+def test_original_canonical_ledger_is_read_only(renewal_roots, tmp_path):
+    original, _ = renewal_roots
+    fixture = tmp_path / "historical-fixture"
+    BudgetLedger.initialize(fixture, "a" * 64)
+    fixture.rename(original)
+    before = (original / "ledger.sqlite").read_bytes()
+    for read_only in (False, True):
+        if read_only:
+            archived = BudgetLedger(original, "a" * 64, read_only=True)
+            assert archived.snapshot()["approval"] == budget.APPROVAL
+            with pytest.raises(BudgetDenied, match="ledger_read_only"):
+                archived.reserve("embedding", 1)
+        else:
+            with pytest.raises(BudgetDenied, match="ledger_read_only"):
+                BudgetLedger(original, "a" * 64)
+    assert (original / "ledger.sqlite").read_bytes() == before
+
+
+def test_archived_renewal_is_readable_but_not_a_second_allowance(renewal_roots, tmp_path):
+    _, root = renewal_roots
+    BudgetLedger.initialize(root, "b" * 64, approval=budget.RENEWED_APPROVAL)
+    archived = tmp_path / "archive"
+    archived.mkdir()
+    (archived / "ledger.sqlite").write_bytes((root / "ledger.sqlite").read_bytes())
+    assert (
+        BudgetLedger(
+            archived, "b" * 64, approval=budget.RENEWED_APPROVAL, read_only=True
+        ).snapshot()["request_count"]
+        == 0
+    )
+    with pytest.raises(BudgetDenied):
+        BudgetLedger(archived, "b" * 64, approval=budget.RENEWED_APPROVAL)
 
 
 @pytest.mark.parametrize("damage", ["delete", "empty", "garbage", "accounting"])

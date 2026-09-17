@@ -1,17 +1,34 @@
-"""Read-only, version-only consumption of the accepted v13 live pilot evidence."""
+"""Read-only validation of legacy and separately authorized fresh v13 evidence."""
 
 from __future__ import annotations
 
+import argparse
 import json
+import os
 import re
 import subprocess
 import tomllib
+from datetime import datetime
 from pathlib import Path
 
 if __package__:
-    from .v13_pmcp_pilot import PilotRefused, digest_file, digest_json, verify_saved_receipt
+    from .v13_pilot_budget import RENEWED_APPROVAL, BudgetDenied, BudgetLedger
+    from .v13_pmcp_pilot import (
+        PilotRefused,
+        digest_file,
+        digest_json,
+        validate_receipt,
+        verify_saved_receipt,
+    )
 else:
-    from v13_pmcp_pilot import PilotRefused, digest_file, digest_json, verify_saved_receipt
+    from v13_pilot_budget import RENEWED_APPROVAL, BudgetDenied, BudgetLedger
+    from v13_pmcp_pilot import (
+        PilotRefused,
+        digest_file,
+        digest_json,
+        validate_receipt,
+        verify_saved_receipt,
+    )
 
 REPO = Path(__file__).resolve().parents[1]
 METADATA_FILES = {
@@ -42,6 +59,206 @@ VERSION_TEXT_FILES = {
 
 class CandidateRefused(RuntimeError):
     """Candidate no longer qualifies to consume unchanged-runtime pilot proof."""
+
+
+SIGNING_REPOSITORY = "Consiliency/Code-Index-MCP"
+SIGNING_BRANCH = "codex/v13-audit-remediation"
+SIGNING_WORKFLOW = ".github/workflows/sign-published-image.yml"
+SIGNING_SUBJECT = "index-it-mcp-artifact-metadata.json"
+
+
+def _signing_context(repo: Path, root: Path) -> dict:
+    import yaml
+
+    canonical = repo.resolve() / ".phase-loop/runs/v13-PREP-signing-20260915"
+    if root.absolute() != canonical or root.resolve() != canonical:
+        raise CandidateRefused("signing_root_outside_plan")
+    if _git(repo, "status", "--porcelain", "--untracked-files=all"):
+        raise CandidateRefused("dirty_candidate")
+    if _git(repo, "branch", "--show-current") != SIGNING_BRANCH:
+        raise CandidateRefused("signing_branch_mismatch")
+    for name in ("artifact-metadata.json", "index.tar.gz"):
+        path = root / name
+        if path.is_symlink() or not path.is_file():
+            raise CandidateRefused("signing_input_invalid")
+    workflow = repo / SIGNING_WORKFLOW
+    job = yaml.safe_load(workflow.read_text())["jobs"]["attest-local-index"]
+    settings = job["steps"][-1]["with"]
+    if (
+        job["if"] != "inputs.mode == 'index-attestation'"
+        or job["timeout-minutes"] != 5
+        or job["runs-on"] != "ubuntu-latest"
+        or job["permissions"] != {"contents": "read", "id-token": "write", "attestations": "write"}
+        or settings["subject-name"] != SIGNING_SUBJECT
+        or settings["subject-digest"] != "sha256:${{ inputs.subject_digest }}"
+        or settings["push-to-registry"] is not False
+        or settings["create-storage-record"] is not False
+    ):
+        raise CandidateRefused("signing_workflow_policy_mismatch")
+    return {
+        "approval": "v13-prep-178b8328-20260915-digest-signing",
+        "repository": SIGNING_REPOSITORY,
+        "source": _git(repo, "rev-parse", "HEAD"),
+        "tree": _git(repo, "rev-parse", "HEAD^{tree}"),
+        "ref": "refs/heads/" + SIGNING_BRANCH,
+        "workflow": SIGNING_WORKFLOW,
+        "workflow_sha256": digest_file(workflow),
+        "mode": "index-attestation",
+        "subject_name": SIGNING_SUBJECT,
+        "subject_digest": digest_file(root / "artifact-metadata.json"),
+        "archive_sha256": digest_file(root / "index.tar.gz"),
+    }
+
+
+def claim_signing_dispatch(repo: Path, root: Path) -> dict:
+    """Record one intent before an operator dispatch; never dispatch or retry here."""
+    intent = _signing_context(repo, root)
+    try:
+        with (root / "dispatch-intent.json").open("x", encoding="utf-8") as stream:
+            json.dump(intent, stream, indent=2, sort_keys=True)
+            stream.flush()
+            os.fsync(stream.fileno())
+        descriptor = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+    except FileExistsError:
+        raise CandidateRefused("signing_dispatch_already_claimed") from None
+    return intent
+
+
+def verify_signing_proof(repo: Path, root: Path) -> dict:
+    """Read-only verification of the one approved metadata-signing exercise."""
+    from mcp_server.artifacts.attestation import PREDICATE_TYPE, AttestationError, attest
+    from mcp_server.artifacts.integrity_gate import validate_artifact_integrity
+
+    try:
+        expected = _signing_context(repo, root)
+        for name in (
+            "dispatch-intent.json",
+            "dispatch.json",
+            "artifact-metadata.json.attestation.jsonl",
+        ):
+            if (root / name).is_symlink() or not (root / name).is_file():
+                raise CandidateRefused("signing_proof_missing")
+        intent = json.loads((root / "dispatch-intent.json").read_text())
+        dispatch = json.loads((root / "dispatch.json").read_text())
+        if intent != expected or (
+            dispatch["intent_sha256"] != digest_file(root / "dispatch-intent.json")
+            or dispatch["accepted"] is not True
+            or type(dispatch["dispatch_attempts"]) is not int
+            or dispatch["dispatch_attempts"] != 1
+            or type(dispatch["run_id"]) is not int
+            or dispatch["run_id"] <= 0
+        ):
+            raise CandidateRefused("signing_dispatch_mismatch")
+
+        def gh_json(*args: str):
+            completed = subprocess.run(["gh", *args], capture_output=True, text=True, timeout=30)
+            if completed.returncode:
+                raise CandidateRefused("signing_verification_command_failed")
+            return json.loads(completed.stdout)
+
+        run_id = dispatch["run_id"]
+        run = gh_json("api", f"repos/{SIGNING_REPOSITORY}/actions/runs/{run_id}")
+        if (
+            run["id"] != run_id
+            or run["run_attempt"] != 1
+            or run["head_sha"] != expected["source"]
+            or run["head_branch"] != SIGNING_BRANCH
+            or run["path"] != SIGNING_WORKFLOW
+            or run["event"] != "workflow_dispatch"
+            or run["repository"]["full_name"] != SIGNING_REPOSITORY
+            or run["status"] != "completed"
+            or run["conclusion"] != "success"
+        ):
+            raise CandidateRefused("signing_run_mismatch")
+        jobs = gh_json("api", f"repos/{SIGNING_REPOSITORY}/actions/runs/{run_id}/attempts/1/jobs")[
+            "jobs"
+        ]
+        signed = [
+            job for job in jobs if job["name"] == "Attest operator-supplied local index digest"
+        ]
+        if len(signed) != 1 or any(
+            job["conclusion"] != "skipped" for job in jobs if job not in signed
+        ):
+            raise CandidateRefused("signing_job_mismatch")
+        job = signed[0]
+        seconds = (
+            datetime.fromisoformat(job["completed_at"]) - datetime.fromisoformat(job["started_at"])
+        ).total_seconds()
+        if job["conclusion"] != "success" or job["run_id"] != run_id or not 0 <= seconds <= 300:
+            raise CandidateRefused("signing_job_failed_or_over_budget")
+        if (
+            os.environ.get("MCP_ATTESTATION_MODE", "enforce") != "enforce"
+            or os.environ.get("MCP_ATTESTATION_SOURCE_REF") != expected["ref"]
+            or os.environ.get("MCP_ATTESTATION_SIGNER_DIGEST") != expected["source"]
+        ):
+            raise CandidateRefused("signing_verifier_policy_mismatch")
+        metadata_path = root / "artifact-metadata.json"
+        attestation = attest(metadata_path, repo=SIGNING_REPOSITORY)
+        verified = gh_json(
+            "attestation",
+            "verify",
+            str(metadata_path),
+            "--bundle",
+            str(attestation.bundle_path),
+            "--repo",
+            SIGNING_REPOSITORY,
+            "--source-ref",
+            expected["ref"],
+            "--signer-digest",
+            expected["source"],
+            "--source-digest",
+            expected["source"],
+            "--cert-identity",
+            f"https://github.com/{SIGNING_REPOSITORY}/{SIGNING_WORKFLOW}@{expected['ref']}",
+            "--predicate-type",
+            PREDICATE_TYPE,
+            "--deny-self-hosted-runners",
+            "--format",
+            "json",
+        )
+        if len(verified) != 1:
+            raise CandidateRefused("signing_bundle_ambiguous")
+        result = verified[0]["verificationResult"]
+        certificate = result["signature"]["certificate"]
+        statement = result["statement"]
+        if (
+            certificate["runInvocationURI"]
+            != f"https://github.com/{SIGNING_REPOSITORY}/actions/runs/{run_id}/attempts/1"
+            or statement["subject"]
+            != [{"name": SIGNING_SUBJECT, "digest": {"sha256": expected["subject_digest"]}}]
+            or statement["predicateType"] != PREDICATE_TYPE
+            or statement["predicate"]
+            != {
+                "artifact_origin": "local",
+                "digest_origin": "operator-supplied",
+                "built_in_this_workflow": False,
+            }
+        ):
+            raise CandidateRefused("signing_attestation_binding_mismatch")
+        metadata = json.loads(metadata_path.read_text())
+        if not validate_artifact_integrity(metadata, root / "index.tar.gz").passed:
+            raise CandidateRefused("signing_archive_integrity_failed")
+        return {
+            **expected,
+            "run_id": run_id,
+            "run_attempt": 1,
+            "job_seconds": seconds,
+            "production_verifier": "passed",
+            "new_dispatches": 0,
+        }
+    except (
+        OSError,
+        KeyError,
+        TypeError,
+        ValueError,
+        subprocess.TimeoutExpired,
+        AttestationError,
+    ) as exc:
+        raise CandidateRefused("signing_evidence_missing_or_invalid") from exc
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -175,12 +392,103 @@ def verify_pilot(repo: Path) -> dict:
         raise CandidateRefused("pilot_evidence_missing_or_invalid") from exc
 
 
+def verify_renewed_pilot(repo: Path, root: Path) -> dict:
+    """Validate fresh exact-candidate proof without widening version-only reuse."""
+    root = root.absolute()
+    runs = repo.resolve() / ".phase-loop" / "runs"
+    if (
+        root != root.resolve()
+        or root.parent != runs
+        or not re.fullmatch(r"v13-PILOT-PREP-[A-Za-z0-9-]+", root.name)
+    ):
+        raise CandidateRefused("renewed_root_outside_plan")
+    if _git(repo, "status", "--porcelain", "--untracked-files=all"):
+        raise CandidateRefused("dirty_candidate")
+
+    def checked_file(relative: str) -> Path:
+        path = root / relative
+        if Path(relative).is_absolute() or path != path.resolve() or not path.is_file():
+            raise CandidateRefused("renewed_artifact_path_invalid")
+        if not path.is_relative_to(root):
+            raise CandidateRefused("renewed_artifact_path_invalid")
+        return path
+
+    try:
+        manifest = json.loads(checked_file("manifest.json").read_text())
+        identity = {
+            "source": _git(repo, "rev-parse", "HEAD"),
+            "tree": _git(repo, "rev-parse", "HEAD^{tree}"),
+            "lock_sha256": digest_file(repo / "uv.lock"),
+        }
+        if any(manifest.get(key) != value for key, value in identity.items()):
+            raise CandidateRefused("renewed_candidate_binding_changed")
+        wheel_name = manifest["wheel"]
+        if not isinstance(wheel_name, str) or Path(wheel_name).name != wheel_name:
+            raise CandidateRefused("renewed_wheel_path_invalid")
+        if (
+            digest_file(checked_file("dist/" + wheel_name)) != manifest["wheel_sha256"]
+            or digest_file(checked_file("constraints.txt")) != manifest["constraints_sha256"]
+        ):
+            raise CandidateRefused("renewed_artifact_binding_changed")
+        offline = json.loads(checked_file("offline.json").read_text())
+        validate_receipt(offline, manifest, "offline")
+        for kind in ("browser", "rehearsal", "live"):
+            saved = json.loads(checked_file(kind + ".json").read_text())
+            for artifact in saved.get("artifacts", []):
+                checked_file(artifact["path"])
+        browser = verify_saved_receipt(root, manifest, "browser")
+        verify_saved_receipt(root, manifest, "rehearsal")
+        live = verify_saved_receipt(root, manifest, "live", expected_approval=RENEWED_APPROVAL)
+        if live["budget"]["approval"] != RENEWED_APPROVAL:
+            raise CandidateRefused("renewed_approval_mismatch")
+        canonical = runs / "v13-PILOT-allowance-20260915"
+        ledger = BudgetLedger(
+            canonical, digest_json(manifest), approval=RENEWED_APPROVAL, read_only=True
+        )
+        archived = [item for item in live["artifacts"] if item["role"] == "allowance_ledger"]
+        if len(archived) != 1 or (
+            digest_file(canonical / "ledger.sqlite") != archived[0]["sha256"]
+            or ledger.snapshot()
+            != {key: value for key, value in live["budget"].items() if key != "elapsed_seconds"}
+        ):
+            raise CandidateRefused("renewed_canonical_ledger_mismatch")
+        return {
+            **identity,
+            "manifest_sha256": digest_json(manifest),
+            "wheel_sha256": manifest["wheel_sha256"],
+            "approval": RENEWED_APPROVAL,
+            "reserved_input_units": live["budget"]["reserved_input_units"],
+            "proof_sha256": {
+                kind: digest_file(root / f"{kind}.json")
+                for kind in ("offline", "browser", "rehearsal", "live")
+            },
+            "browser_goal_count": len(browser["goals"]),
+            "new_inference_requests": 0,
+            "evidence_scope": "fresh_exact_candidate_pilot",
+        }
+    except (OSError, KeyError, TypeError, ValueError, PilotRefused, BudgetDenied) as exc:
+        raise CandidateRefused("renewed_pilot_evidence_missing_or_invalid") from exc
+
+
 def main() -> None:
     """Print metadata-only comparison; any missing proof exits unsuccessfully."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--renewed-pilot-root", type=Path)
+    args = parser.parse_args()
     try:
         pilot = verify_pilot(REPO)
-        candidate = compare_candidate(REPO, pilot["source"])
-        print(json.dumps({"candidate": candidate, "consumed_pilot": pilot}, indent=2))
+        if args.renewed_pilot_root is None:
+            candidate = compare_candidate(REPO, pilot["source"])
+            result = {"candidate": candidate, "consumed_pilot": pilot}
+        else:
+            result = {
+                "renewed_candidate": verify_renewed_pilot(REPO, args.renewed_pilot_root),
+                "signing_proof": verify_signing_proof(
+                    REPO, REPO / ".phase-loop/runs/v13-PREP-signing-20260915"
+                ),
+                "original_pilot_read_only_control": pilot,
+            }
+        print(json.dumps(result, indent=2))
     except CandidateRefused as exc:
         raise SystemExit(str(exc)) from None
 

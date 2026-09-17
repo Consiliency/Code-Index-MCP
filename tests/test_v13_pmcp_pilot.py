@@ -242,10 +242,11 @@ def test_hashes_and_goal_flags_cannot_replace_live_records(tmp_path, manifest):
         verify_saved_receipt(tmp_path, manifest, "live")
 
 
-@pytest.fixture
-def live_records(tmp_path, manifest):
+@pytest.fixture(params=["original", "renewed"])
+def live_records(tmp_path, manifest, request, monkeypatch):
     import hashlib
 
+    from scripts import v13_pilot_budget as budget
     from scripts.v13_pilot_budget import ENDPOINTS, BudgetLedger
     from scripts.v13_pilot_estimate import REQUEST_ENVELOPES, SYNTHETIC_CORPUS
     from scripts.v13_pmcp_pilot import QDRANT_IMAGE, QUERY_TEXTS
@@ -253,8 +254,13 @@ def live_records(tmp_path, manifest):
     result = receipt(manifest, "live")
     result.update(rehearsal=False, workflow_completed=True, samples=[], index_intervals=[])
     ledger_root = tmp_path / "ledger"
-    BudgetLedger.initialize(ledger_root, digest_json(manifest))
-    ledger = BudgetLedger(ledger_root, digest_json(manifest), clock=lambda: (1000.0, 100.0))
+    approval = budget.RENEWED_APPROVAL if request.param == "renewed" else budget.APPROVAL
+    if request.param == "renewed":
+        monkeypatch.setattr(budget, "RENEWED_ROOT", ledger_root)
+    BudgetLedger.initialize(ledger_root, digest_json(manifest), approval=approval)
+    ledger = BudgetLedger(
+        ledger_root, digest_json(manifest), clock=lambda: (1000.0, 100.0), approval=approval
+    )
     for request_class, count in (
         ("provenance_probe", 2),
         ("summary", 1),
@@ -461,10 +467,47 @@ def test_live_record_reduction_is_consistent_and_read_only(
     before = {path: (tmp_path / path).read_bytes() for path in paths.values()}
     if damage:
         with pytest.raises(PilotRefused):
-            verify_saved_receipt(tmp_path, manifest, "live")
+            verify_saved_receipt(tmp_path, manifest, "live", expected_approval=ledger.approval)
     else:
-        verify_saved_receipt(tmp_path, manifest, "live")
+        verify_saved_receipt(tmp_path, manifest, "live", expected_approval=ledger.approval)
+        from scripts.v13_pilot_budget import RENEWED_APPROVAL
+
+        if ledger.approval == RENEWED_APPROVAL:
+            with pytest.raises(PilotRefused):
+                verify_saved_receipt(tmp_path, manifest, "live")
     assert before == {path: (tmp_path / path).read_bytes() for path in paths.values()}
+
+
+@pytest.mark.parametrize("live_records", ["original"], indirect=True)
+@pytest.mark.parametrize("damage", [None, "binding", "not_rehearsal", "incomplete", "artifact"])
+def test_saved_rehearsal_requires_actual_bound_records(tmp_path, manifest, live_records, damage):
+    from scripts.v13_pmcp_pilot import digest_file
+
+    result, ledger, documents = live_records
+    result["rehearsal"] = documents["workload"]["rehearsal"] = True
+    documents["runtime_metadata"]["workload_sha256"] = digest_json(documents["workload"])
+    paths = {"allowance_ledger": (ledger.root / "ledger.sqlite").relative_to(tmp_path).as_posix()}
+    for role, document in documents.items():
+        paths[role] = role + ".json"
+        (tmp_path / paths[role]).write_text(json.dumps(document))
+    result["artifacts"] = [
+        {"role": role, "path": path, "sha256": digest_file(tmp_path / path)}
+        for role, path in paths.items()
+    ]
+    if damage == "binding":
+        result["manifest_sha256"] = "0" * 64
+    elif damage == "not_rehearsal":
+        result["rehearsal"] = False
+    elif damage == "incomplete":
+        result["workflow_completed"] = False
+    elif damage == "artifact":
+        (tmp_path / paths["workload"]).write_text("{}")
+    (tmp_path / "rehearsal.json").write_text(json.dumps(result))
+    if damage:
+        with pytest.raises(PilotRefused):
+            verify_saved_receipt(tmp_path, manifest, "rehearsal")
+    else:
+        verify_saved_receipt(tmp_path, manifest, "rehearsal")
 
 
 @pytest.mark.asyncio
