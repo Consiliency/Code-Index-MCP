@@ -1635,6 +1635,20 @@ async def _serve(registry_path=None) -> None:
             ref_poller.start()
             logger.info("MultiRepositoryWatcher and RefPoller started")
     except Exception as _watcher_err:
+        from mcp_server.core.lifecycle import retirement_watchdog
+
+        with retirement_watchdog():
+            cleanup_errors = []
+            for owner, stop in ((ref_poller, "stop"), (multi_watcher, "stop_watching_all")):
+                if owner is not None:
+                    try:
+                        getattr(owner, stop)()
+                    except Exception as cleanup_error:
+                        cleanup_errors.append(cleanup_error)
+            if cleanup_errors:
+                raise RuntimeError("Watcher startup cleanup failed") from cleanup_errors[0]
+        multi_watcher = None
+        ref_poller = None
         logger.warning("MultiRepositoryWatcher failed to start (%s)", type(_watcher_err).__name__)
 
     # Install SIGTERM/SIGINT handlers for graceful shutdown

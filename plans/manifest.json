@@ -145,7 +145,9 @@
       "created_at": "2026-09-11T13:26:53Z",
       "file": "plans/phase-plan-v13-DATA.md",
       "handoff_ref": ".dev-skills/handoffs/codex-plan-phase/20260911T132653Z-data-plan.md",
-      "if_gates_produced": [],
+      "if_gates_produced": [
+        "IF-0-DATA-1"
+      ],
       "lanes": [
         "SL-0",
         "SL-1",
@@ -454,13 +456,12 @@
         }
       ],
       "manual_execution_checkpoint": {
-        "focused_tests_passed": 141,
         "human_required": false,
         "lifecycle_warning": "failed_to_executing_unsupported",
         "pilot_consumed": false,
-        "regression_tests_passed": 285,
+        "plan_warning_disposition": "SL-0 prepares frozen operator contracts before SL-1 effects; it cannot depend on SL-1 without a cycle. SL-1 is the terminal evidence reducer. No later approval is claimed by SL-0 docs.",
         "review_route": "owner_authorized_manual_pointer_reads",
-        "run_id": "20260917T0840Z-third-panel-repairs",
+        "run_id": "20260917-fourth-panel-repairs",
         "signing_consumed": false,
         "status": "candidate_repairs_prepared"
       },
@@ -475,9 +476,9 @@
       },
       "slug": "phase-plan-v13-PREP",
       "status": "failed",
-      "task_summary": "d748fcc local/installed/UI gates passed but batch review reproduced additional shutdown, lifecycle and restore defects. Third repairs pass 285 regression tests; SHIP plan prepared before freeze. Final code/panel/operational acceptance remains pending.",
+      "task_summary": "Fourth diagnostic repairs prepared; 4f4e55e rejected. Source-bound publication, delivered smoke, evidence stability and resource ownership repaired. Fresh frozen checks and four-seat code/operational reconciliation pending; neither allowance used.",
       "type": "phase",
-      "updated_at": "2026-09-17T08:38:37.885146+00:00"
+      "updated_at": "2026-09-17T10:11:03.319420+00:00"
     },
     {
       "acceptance_criteria_count": 4,
@@ -539,6 +540,7 @@
       "acceptance_criteria_count": 6,
       "created_at": "2026-09-17T08:38:37.885146+00:00",
       "execution_started": false,
+      "expected_source_inputs_required": true,
       "file": "plans/phase-plan-v13-SHIP.md",
       "handoff_ref": null,
       "if_gates_produced": [],
@@ -552,6 +554,7 @@
       "prerequisite_accepted": false,
       "publication_dispatch_count": 0,
       "reflection_ref": null,
+      "remote_one_shot_claim": "refs/tags/release-claims/v1.4.1",
       "roadmap_ref": {
         "file": "specs/phase-plans-v13.md",
         "slug": "phase-plans-v13",
@@ -560,9 +563,9 @@
       },
       "slug": "phase-plan-v13-SHIP",
       "status": "committed",
-      "task_summary": "Prepared before final PREP freeze; gated by external accepted IF-0-PREP-1. One serial merge/publication/post-dispatch reducer lane; no execution or effect yet.",
+      "task_summary": "Prepared before final PREP freeze; exact accepted source/tree inputs, create-only release claim and supplied registry artifact checks. Gated by external accepted IF-0-PREP-1; no effects.",
       "type": "phase",
-      "updated_at": "2026-09-17T08:38:37.885146+00:00"
+      "updated_at": "2026-09-17T10:11:03.319420+00:00"
     },
     {
       "acceptance_criteria_count": 3,

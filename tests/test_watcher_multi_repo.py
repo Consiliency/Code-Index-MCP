@@ -55,6 +55,27 @@ def _make_repo_info(path: str, auto_sync: bool = True):
     return info
 
 
+@pytest.mark.parametrize("disabled", ["auto_sync", "active"])
+def test_sweeper_and_git_monitor_respect_disabled_repository(tmp_path, disabled):
+    from mcp_server.watcher_multi_repo import GitMonitor
+
+    info = _make_repo_info(str(tmp_path))
+    setattr(info, disabled, False)
+    watcher = MultiRepositoryWatcher.__new__(MultiRepositoryWatcher)
+    watcher.registry = _make_registry({"repo-1": info})
+    watcher.index_manager = Mock()
+    watcher.mark_repository_changed = Mock()
+    sweeper = watcher._build_default_sweeper()
+    assert sweeper._repo_roots_provider() == {}
+    watcher._reconcile_repository_drift("repo-1")
+    watcher.index_manager.sync_repository_index.assert_not_called()
+    monitor = GitMonitor(watcher.registry, Mock())
+    monitor._get_current_commit = Mock(return_value="new")
+    monitor.last_commits["repo-1"] = "old"
+    monitor._check_repositories()
+    monitor.callback.assert_not_called()
+
+
 def _make_dispatcher():
     from mcp_server.dispatcher.dispatcher_enhanced import IndexResult, IndexResultStatus
 
@@ -86,6 +107,39 @@ def _make_dispatcher():
     )
     d.evict_repository_state = Mock()
     return d
+
+
+def test_committed_event_failure_does_not_terminate_observation(tmp_path):
+    handler = MultiRepositoryHandler.__new__(MultiRepositoryHandler)
+    handler.repo_path = tmp_path
+    handler.repo_id = "repo-1"
+    handler._refresh_context = Mock(return_value=True)
+    handler.parent_watcher = Mock()
+    sync = handler.parent_watcher.index_manager.sync_repository_index
+    sync.side_effect = TimeoutError("writer is busy")
+    assert handler._reconcile_committed_event(tmp_path / "source.py") is False
+    sync.side_effect = None
+    sync.return_value.action = "incremental_update"
+    assert handler._reconcile_committed_event(tmp_path / "source.py") is True
+
+
+def test_watcher_status_uses_stable_membership_snapshot(tmp_path):
+    watcher = MultiRepositoryWatcher.__new__(MultiRepositoryWatcher)
+    watcher._watch_lock = threading.RLock()
+    watcher.watchers = {"repo-1": Mock()}
+    watcher.changed_repos = set()
+    watcher.registry = Mock()
+    watcher.index_manager = Mock()
+
+    def concurrent_removal(repo_id):
+        watcher.watchers.clear()
+        return _make_repo_info(str(tmp_path))
+
+    watcher.registry.get_repository.side_effect = concurrent_removal
+    watcher.index_manager.get_repository_status.return_value = {"ready": True}
+    status = watcher.get_status()
+    assert status["watching"] == 1
+    assert status["repositories"]["repo-1"]["ready"] is True
 
 
 def _make_repo_resolver(ctx_map=None):
@@ -626,11 +680,15 @@ class TestArtifactPublishTriggers:
             # repo-1 observer still running
             assert "repo-1" in watcher.observers
             assert watcher.observers["repo-1"].is_alive()
-            store_registry.close.assert_called_once_with("repo-2")
-            plugin_registry.evict.assert_called_once_with("repo-2")
-            semantic_registry.evict.assert_called_once_with("repo-2")
+            store_registry.close.assert_called_once_with(
+                "repo-2", expected_owner=ctx2.registry_entry
+            )
+            plugin_registry.evict.assert_not_called()
+            semantic_registry.evict.assert_called_once_with(
+                "repo-2", expected_owner=ctx2.registry_entry
+            )
             dispatcher.evict_repository_state.assert_called_once_with(
-                "repo-2", repo_root=Path(repos["repo-2"].path)
+                "repo-2", repo_root=Path(repos["repo-2"].path), expected_owner=ctx2.registry_entry
             )
         finally:
             watcher.stop_watching_all()

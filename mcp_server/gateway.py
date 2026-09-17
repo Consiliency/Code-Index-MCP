@@ -1058,21 +1058,23 @@ async def startup_event():
                 starting_watcher.start_watching_all()
                 starting_poller.start()
             except Exception as _watcher_err:
-                cleanup_errors = []
-                for owner, stop in (
-                    (starting_poller, "stop"),
-                    (starting_watcher, "stop_watching_all"),
-                ):
-                    if owner is not None:
-                        try:
-                            getattr(owner, stop)()
-                        except Exception as cleanup_error:
-                            cleanup_errors.append(cleanup_error)
-                if cleanup_errors:
-                    # Retain owners for shutdown retry and fail startup rather than leak silently.
-                    multi_watcher = starting_watcher
-                    ref_poller = starting_poller
-                    raise RuntimeError("Watcher startup cleanup failed") from cleanup_errors[0]
+                from .core.lifecycle import retirement_watchdog
+
+                with retirement_watchdog():
+                    cleanup_errors = []
+                    for owner, stop in (
+                        (starting_poller, "stop"),
+                        (starting_watcher, "stop_watching_all"),
+                    ):
+                        if owner is not None:
+                            try:
+                                getattr(owner, stop)()
+                            except Exception as cleanup_error:
+                                cleanup_errors.append(cleanup_error)
+                    if cleanup_errors:
+                        multi_watcher = starting_watcher
+                        ref_poller = starting_poller
+                        raise RuntimeError("Watcher startup cleanup failed") from cleanup_errors[0]
                 logger.warning(
                     "MultiRepositoryWatcher failed to start: %s", type(_watcher_err).__name__
                 )
@@ -1160,46 +1162,28 @@ async def startup_event():
 @app.on_event("shutdown")
 async def shutdown_event():
     """Clean up resources on shutdown."""
-    # These globals are only read, not assigned, so no 'global' declaration needed
+    from .core.lifecycle import retirement_watchdog
 
-    if multi_watcher:
-        try:
-            multi_watcher.stop_watching_all()
-            logger.info("MultiRepositoryWatcher stopped successfully")
-        except Exception as e:
-            logger.error(f"Error stopping MultiRepositoryWatcher: {type(e).__name__}")
-
-    if ref_poller:
-        try:
-            ref_poller.stop()
-            logger.info("RefPoller stopped successfully")
-        except Exception as e:
-            logger.error(f"Error stopping RefPoller: {type(e).__name__}")
-
-    if dispatcher:
-        try:
+    with retirement_watchdog():
+        cleanup_errors = []
+        for owner, stop in ((ref_poller, "stop"), (multi_watcher, "stop_watching_all")):
+            if owner is not None:
+                try:
+                    getattr(owner, stop)()
+                except Exception as exc:
+                    cleanup_errors.append(exc)
+        if cleanup_errors:
+            # Do not close resources beneath a writer whose retirement failed.
+            raise RuntimeError("Watcher shutdown failed") from cleanup_errors[0]
+        if dispatcher:
             dispatcher.shutdown()
-            logger.info("Dispatcher plugin workers stopped successfully")
-        except Exception as e:
-            logger.error(f"Error stopping dispatcher plugin workers: {type(e).__name__}")
-
-    if plugin_manager:
-        try:
+        if plugin_manager:
             shutdown_result = plugin_manager.shutdown_safe()
-            if shutdown_result.success:
-                logger.info("Plugin manager shutdown successfully")
-            else:
-                logger.error(f"Plugin manager shutdown failed: {shutdown_result.error.message}")
-                logger.error(f"Shutdown error details: {shutdown_result.error.details}")
-        except Exception as e:
-            logger.error(f"Error shutting down plugin manager: {type(e).__name__}")
-
-    if cache_manager:
-        try:
+            if not shutdown_result.success:
+                raise RuntimeError("Plugin manager shutdown failed")
+        if cache_manager:
             await cache_manager.shutdown()
-            logger.info("Cache manager shutdown successfully")
-        except Exception as e:
-            logger.error(f"Error shutting down cache manager: {type(e).__name__}")
+        logger.info("Owned service resources stopped successfully")
 
 
 # Authentication endpoints

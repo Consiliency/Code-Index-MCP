@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
 
 try:
     import tomllib
@@ -78,6 +83,67 @@ def test_release_smoke_entrypoints_exist():
     assert re.search(r"^release-smoke-container:", makefile, re.MULTILINE)
     assert "scripts/release_smoke.py --wheel --stdio" in makefile
     assert "scripts/release_smoke.py --container" in makefile
+
+
+def test_delivered_wheel_never_builds_and_checks_registry_digest(tmp_path, monkeypatch):
+    from scripts import release_smoke as smoke
+
+    wheel = tmp_path / "index_it_mcp-1.4.1-py3-none-any.whl"
+    wheel.write_bytes(b"registry fixture")
+    calls = []
+    monkeypatch.setattr(smoke, "_run", lambda command, **kwargs: calls.append(command))
+
+    def reached_install(_):
+        raise RuntimeError("reached install without build")
+
+    monkeypatch.setattr(
+        smoke.venv, "EnvBuilder", lambda **kwargs: SimpleNamespace(create=reached_install)
+    )
+    with pytest.raises(ValueError, match="digest mismatch"):
+        smoke.smoke_wheel(wheel, "0" * 64)
+    assert calls == []
+    with pytest.raises(RuntimeError, match="reached install"):
+        smoke.smoke_wheel(wheel, hashlib.sha256(wheel.read_bytes()).hexdigest())
+    assert calls and all(command[:2] != ["uv", "build"] for command in calls)
+
+
+def test_delivered_image_never_builds_and_requires_immutable_reference(tmp_path, monkeypatch):
+    from scripts import release_smoke as smoke
+
+    image = GHCR_IMAGE + "@sha256:" + "a" * 64
+    calls = []
+    monkeypatch.setattr(smoke.shutil, "which", lambda _: "/usr/bin/docker")
+    monkeypatch.setattr(
+        smoke.subprocess,
+        "check_output",
+        lambda command, **kwargs: (
+            json.dumps([image]) if "{{json .RepoDigests}}" in command else "sha256:" + "b" * 64
+        ),
+    )
+
+    def run(command, **kwargs):
+        calls.append(command)
+        if command[:2] == ["docker", "run"]:
+            raise RuntimeError("reached delivered runtime")
+
+    monkeypatch.setattr(smoke, "_run", run)
+    with pytest.raises(ValueError, match="immutable"):
+        smoke.smoke_container(GHCR_IMAGE + ":latest")
+    assert not calls
+    with pytest.raises(RuntimeError, match="delivered runtime"):
+        smoke.smoke_container(image)
+    assert calls[0] == ["docker", "pull", image]
+    assert all(command[:2] != ["docker", "build"] for command in calls)
+
+
+def test_delivered_smoke_cli_cannot_fall_back_to_partial_build(monkeypatch):
+    from scripts import release_smoke as smoke
+
+    monkeypatch.setattr(
+        smoke.sys, "argv", ["smoke", "--all", "--image-ref", GHCR_IMAGE + "@sha256:" + "a" * 64]
+    )
+    with pytest.raises(SystemExit, match="cannot mix"):
+        smoke.main()
 
 
 def test_pyproject_has_console_script_and_build_dependency():

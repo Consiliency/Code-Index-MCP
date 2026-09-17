@@ -357,9 +357,10 @@ class MultiRepoArtifactCoordinator:
                 artifact = result.artifact or {}
                 if not getattr(result, "installed_items", None):
                     raise RuntimeError("Artifact download admitted no new generation")
-                repo = self.multi_repo_manager.registry.get(repo.repository_id)
-                if repo is None:
+                restored_repo = self.multi_repo_manager.registry.get(repo.repository_id)
+                if restored_repo is None or restored_repo.registration_id != repo.registration_id:
                     raise RuntimeError("Repository was removed during artifact restore")
+                repo = restored_repo
                 profiles = self._read_local_profiles(
                     repo.path, repo.index_location, repo.index_path
                 )
@@ -408,7 +409,7 @@ class MultiRepoArtifactCoordinator:
                         action="fetch",
                         success=False,
                         details={},
-                        error=str(exc),
+                        error=f"Artifact fetch failed ({type(exc).__name__})",
                     )
                 )
         return results

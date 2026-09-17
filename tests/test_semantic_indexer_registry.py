@@ -244,6 +244,31 @@ def test_lease_drains_before_eviction_closes(tmp_path):
         registry.shutdown()
 
 
+def test_old_registration_retirement_leaves_replacement_semantics_open(tmp_path):
+    from dataclasses import replace
+
+    from mcp_server.utils.semantic_indexer_registry import SemanticIndexerRegistry
+
+    repo_reg = _make_registry_with_repos(tmp_path)
+    old_owner = repo_reg.get("repo-a")
+    first, second = MagicMock(), MagicMock()
+    with patch("mcp_server.utils.semantic_indexer.SemanticIndexer", side_effect=[first, second]):
+        registry = SemanticIndexerRegistry(repo_reg)
+        with registry.lease("repo-a"):
+            repo_reg.unregister("repo-a")
+            repo_reg.register(replace(old_owner, registration_id="replacement-owner"))
+            with registry.lease("repo-a") as replacement:
+                assert replacement is second
+                assert registry.evict("repo-a", expected_owner=old_owner)
+                second.qdrant.close.assert_not_called()
+            second.qdrant.close.assert_not_called()
+        first.qdrant.close.assert_called_once()
+        assert not registry.evict("repo-a", expected_owner=old_owner)
+        second.qdrant.close.assert_not_called()
+        registry.shutdown()
+        second.qdrant.close.assert_called_once()
+
+
 def test_new_generation_opens_without_closing_old_lease(tmp_path):
     from mcp_server.utils.semantic_indexer_registry import SemanticIndexerRegistry
 

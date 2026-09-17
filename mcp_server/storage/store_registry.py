@@ -99,7 +99,9 @@ class StoreRegistry:
                 )
                 try:
                     if replaced:
-                        self._registry.update_staleness_reason(repo_id, "partial_index_failure")
+                        self._registry.update_staleness_reason(
+                            repo_id, "partial_index_failure", expected_owner=info
+                        )
                 finally:
                     retired.close()
                 if replaced:
@@ -136,11 +138,21 @@ class StoreRegistry:
                     raise RuntimeError("StoreRegistry shut down while opening an index")
             return store
 
-    def close(self, repo_id: str) -> None:
+    def close(self, repo_id: str, *, expected_owner=None) -> None:
         """Close and evict the cached store for repo_id. No-op if absent."""
         # Keep the per-key lock identity stable for concurrent constructors.
         with self._get_build_lock(repo_id):
             with self._lock:
+                cached = self._cache.get(repo_id)
+                if (
+                    expected_owner is not None
+                    and cached is not None
+                    and (
+                        cached.registry_binding[0]
+                        != getattr(expected_owner, "registration_id", None)
+                    )
+                ):
+                    return
                 store = self._cache.pop(repo_id, None)
             if store is not None:
                 store.close()

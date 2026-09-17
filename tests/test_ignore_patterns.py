@@ -55,7 +55,20 @@ class TestDefaultPatterns:
 
 
 class TestCustomIgnoreFile:
-    """When .mcp-index-ignore exists its patterns replace defaults."""
+    """Custom patterns extend defaults; negations are explicit policy overrides."""
+
+    @pytest.mark.parametrize("content", ["", "# comment only\n", "*.custom\n"])
+    def test_custom_file_preserves_sensitive_defaults(self, tmp_path, content):
+        (tmp_path / ".mcp-index-ignore").write_text(content)
+        manager = IgnorePatternManager(root_path=tmp_path)
+        for name in (".env", ".env.local", "deploy.key", "deploy.pem", ".ssh/id_rsa"):
+            assert manager.should_ignore(Path(name)), name
+
+    def test_explicit_negation_can_admit_safe_fixture(self, tmp_path):
+        (tmp_path / ".mcp-index-ignore").write_text("!.env.example\n")
+        manager = IgnorePatternManager(root_path=tmp_path)
+        assert not manager.should_ignore(Path(".env.example"))
+        assert manager.should_ignore(Path(".env"))
 
     def test_patterns_from_file_are_loaded(self, tmp_path):
         (tmp_path / ".mcp-index-ignore").write_text("*.foo\n*.bar\n# comment\n\n")
@@ -277,7 +290,7 @@ def test_snapshot_ancestors_do_not_exclude_admitted_root(tmp_path):
 
 
 def test_nested_gitignore_negation_and_rooted_patterns(tmp_path):
-    (tmp_path / ".mcp-index-ignore").write_text("")
+    (tmp_path / ".mcp-index-ignore").write_text("!*.tmp\n")
     (tmp_path / ".gitignore").write_text("/root-only.txt\n*.tmp\nblocked/\n")
     nested = tmp_path / "nested"
     nested.mkdir()

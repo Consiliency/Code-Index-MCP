@@ -32,8 +32,21 @@ separate protected-main workflow mode.
    `mcp-index artifact push --repository NAME --prepared-archive ARCHIVE --prepared-metadata artifact-metadata.json`.
    This verifies the metadata attestation and its archive checksum without
    recompression or changing signed metadata. Upload
-   failure retains local bytes and partial releases for explicit recovery;
-   it does not delete diagnostic evidence or report successful publication.
+failure retains local bytes and partial releases for explicit recovery;
+  it does not delete diagnostic evidence or report successful publication.
+
+Uploads create a draft, transfer a canonical `index-archive.tar.gz` plus its
+sidecars without clobbering, verify the exact uploaded asset names and SHA-256
+digests, then publish and verify again. Existing releases are read-only: only
+an already-published identical asset set is a successful retry. An incomplete
+draft or conflicting bytes require explicit recovery, never automatic overwrite.
+Default release tags include the canonical metadata digest. Preserve the prepared
+archive and metadata for retries; re-preparing creates different metadata bytes.
+
+Normal preparation and automatic publication emit full snapshots only. Delta
+restore is refused until an authenticated base-chain install exists; signed delta
+metadata is never rewritten to pretend it is a full snapshot. The size threshold
+does not change a full archive into a delta.
 
 The signing repository must provide the approved workflow. Its OIDC identity
 must match the expected repository and workflow used by the verifier. A local

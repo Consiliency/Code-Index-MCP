@@ -177,10 +177,11 @@ these additional bounded repairs; SL-1 repeats exact-candidate review afterward.
 - test/impl: Inspect the untrusted Actions ZIP before expansion. Reject unknown,
   nested, duplicate, ambiguous and special members; bound compressed/expanded
   bytes and member count; use fresh exclusive output before metadata verification.
-- test/impl: Push a unique nonstable image reference, sign and verify its exact
-  digest, then promote version/latest only after release publication succeeds.
-  Serialize release dispatches, preserve protected-main guards and evidence of
-  partial publication; never add automatic retries or a hosted prepare run.
+- test/impl: Prepare and test the downstream SHIP workflow's unique nonstable
+  image reference, exact-digest signing and post-publication promotion logic.
+  PREP never pushes or signs an image. Actual image publication belongs only
+  to gated SHIP execution. Serialize release dispatches, preserve protected-main
+  guards and partial-publication evidence; no automatic retries or hosted prepare.
 - test/impl: Read-only signing reduction enumerates exact-candidate workflow
   dispatches and rejects duplicate/ambiguous effects. The local claim controls
   this operator, not all holders of a broad GitHub credential. Require an exact
@@ -255,6 +256,49 @@ one-shot allowance was used. The existing SL-0 ownership covers these repairs.
   it remains gated by IF-0-PREP-1 and grants no premature merge or dispatch.
   This prevents adding tracked planning files after the one-shot proofs.
 
+## Fourth Diagnostic Repair Amendment - 2026-09-17
+
+Candidate 4f4e55e is not accepted. Review reproduced mixed semantic failure
+publication, stale observer writes, disabled-watcher policy violations, unsafe
+release overwrites, delta interpretation and lifecycle/privacy defects. Its
+broad suite passed 3527 tests, but disk exhaustion invalidated container/phase
+and browser acceptance. Preserve those receipts and the failed native review
+attempt; neither operational allowance was consumed.
+
+- test/impl: Failed or blocked semantic files take precedence over partial
+  success; preparation failures are not skips. Require exact staged SQLite/vector
+  ownership parity, and publish the profile actually used by the stage.
+- test/impl: CAS-fence stale observer diagnostics; honor active/auto-sync policy
+  in sweepers and Git polling; preserve event observation after sync failure and
+  snapshot watcher membership for status reads.
+- test/impl: Bound failed/hung startup, mutation retirement and HTTP shutdown
+  with process retirement, never abandoned writers or closed dependencies under
+  an unretired watcher. Prove failure paths in subprocesses with real threads.
+- test/impl: Create immutable draft releases, verify exact asset names/digests
+  before promotion and afterward, preserve identical-byte retry and refuse
+  conflicting/incomplete releases. Canonical archive naming cannot accumulate
+  ambiguous archives; keep partial effects and prepared bytes for diagnosis.
+- test/impl: Preserve ignore defaults when custom policy exists; redact fetch
+  failures without losing repository identity on removal; retain safe Gunicorn
+  access metadata. Full archives remain full, and unsupported delta restore
+  refuses without rewriting authenticated metadata or guessing a base.
+- docs/verify: Correct active filtering/publication docs, rerun focused/full
+  checks on a new frozen candidate and resolve all four independent reports.
+  SL-0 performs no one-shot operational effects. SL-1's strict serial order is
+  four complete independent code approvals, bounded effects, four cross-model
+  reconciliations including actual effect evidence, then acceptance reduction.
+- test/impl: Retire only the admitted registration's stores and semantic owners;
+  cancel or drain its queued sync work before removal. Measure detached pilot
+  children through owned Linux cgroups and include disposable Qdrant RSS/stop.
+- test/impl: Validate canonical metadata, schema/identity and archive size/hash
+  before a signing claim. Validate private evidence snapshots and bind receipt
+  hashes to the exact parsed bytes, with atomic-replacement counterexamples.
+- test/impl: Add delivered-wheel/digest-only image smoke modes and PMCP prepare
+  from a registry wheel, with tests forbidding build fallback. Bind release
+  dispatch to accepted commit/tree inputs before gates or effects; create a
+  durable version-scoped remote claim before publication and refuse reruns.
+  This implementation remains local during PREP; the claim is a SHIP effect.
+
 ## Lane Index & Dependencies
 
 SL-0 — Version, release docs and candidate proof
@@ -271,9 +315,9 @@ SL-1 — Independent review and evidence reducer
 
 ### SL-0 - Version, release docs and candidate proof
 
-- **Scope**: Prepare consistent patch metadata and prove current candidate behavior with the explicitly renewed operational evidence.
+- **Scope**: Prepare consistent patch metadata and prove local candidate behavior without consuming either one-shot operational allowance.
 - **Depends on**: (none)
-- **Owned files**: `pyproject.toml`, `uv.lock`, `mcp_server/__init__.py`, `.github/workflows/release-automation.yml`, `CHANGELOG.md`, `README.md`, `scripts/install-mcp-docker.sh`, `scripts/install-mcp-docker.ps1`, `docs/GETTING_STARTED.md`, `docs/MCP_CONFIGURATION.md`, `docs/SUPPORT_MATRIX.md`, `tests/test_release_metadata.py`, `scripts/v13_release_candidate.py`, `tests/test_v13_release_candidate.py`, `scripts/v13_pmcp_pilot.py`, `tests/test_v13_pmcp_pilot.py`, `scripts/v13_pilot_budget.py`, `tests/test_v13_pilot_budget.py`, `docs/operations/v13-release.md`, `mcp_server/artifacts/artifact_download.py`, `mcp_server/artifacts/integrity_gate.py`, `tests/test_artifact_integrity_gate.py`, `mcp_server/artifacts/artifact_upload.py`, `mcp_server/artifacts/freshness.py`, `mcp_server/artifacts/multi_repo_artifact_coordinator.py`, `mcp_server/artifacts/publisher.py`, `mcp_server/cli/artifact_commands.py`, `mcp_server/cli/task_reindex.py`, `mcp_server/cli/tool_handlers.py`, `mcp_server/cli/stdio_runner.py`, `mcp_server/client.py`, `mcp_server/core/ignore_patterns.py`, `mcp_server/core/repo_resolver.py`, `mcp_server/dispatcher/cross_repo_coordinator.py`, `mcp_server/dispatcher/dispatcher_enhanced.py`, `mcp_server/storage/sqlite_store.py`, `mcp_server/storage/multi_repo_manager.py`, `docs/operations/v13-pmcp-pilot.md`, `docs/security/attestation.md`, `docs/security/auth-boundary.md`, `.github/workflows/sign-published-image.yml`, `tests/test_v13_prep_repairs.py`, `tests/test_artifact_download.py`, `tests/test_artifact_upload.py`, `tests/test_artifact_attestation.py`, `tests/security/test_artifact_attestation.py`, `tests/test_artifact_publish_race.py`, `tests/test_artifact_publish_rollback.py`, `tests/test_artifact_auto_delta.py`, `tests/test_artifact_commands.py`, `tests/test_multi_repo_artifact_coordinator.py`, `tests/test_mcptasks_reindex.py`, `tests/test_artifact_freshness.py`, `tests/test_ignore_patterns.py`, `tests/test_python_client_contract.py`, `tests/test_cross_repo_coordinator.py`, `tests/docs/test_gabase_ga_readiness_contract.py`, `tests/docs/test_garc_rc_soak_contract.py`, `tests/docs/test_garecut_rc_recut_contract.py`, `tests/docs/test_p34_public_alpha_recut.py`, `tests/docs/test_pubname_public_docs.py`, `tests/smoke/test_mcpbase_stdio_smoke.py`, `tests/smoke/test_mcpeval_sdk_surface.py`, `mcp_server/artifacts/attestation.py`, `mcp_server/gateway.py`, `mcp_server/metrics/health_check.py`, `mcp_server/watcher/file_watcher.py`, `mcp_server/watcher_multi_repo.py`, `mcp_server/storage/git_index_manager.py`, `tests/test_v13_prep_panel_repairs.py`, `tests/test_gateway_transport_boundary.py`, `tests/test_watcher_multi_repo.py`, `tests/test_workflow_release_policy.py`, `tests/test_gateway.py`, `mcp_server/storage/repository_registry.py`, `tests/test_git_index_manager.py`, `tests/docs/test_gagov_governance_contract.py`, `tests/integration/test_multi_repo_hydration.py`, `tests/smoke/test_release_smoke_contract.py`, `tests/test_delta_base_fallback.py`, `tests/test_dispatcher_toctou.py`, `tests/test_p25_release_gates.py`, `tests/test_workflow_action_pins.py`
+- **Owned files**: `pyproject.toml`, `uv.lock`, `mcp_server/__init__.py`, `.github/workflows/release-automation.yml`, `CHANGELOG.md`, `README.md`, `scripts/install-mcp-docker.sh`, `scripts/install-mcp-docker.ps1`, `docs/GETTING_STARTED.md`, `docs/MCP_CONFIGURATION.md`, `docs/SUPPORT_MATRIX.md`, `tests/test_release_metadata.py`, `scripts/v13_release_candidate.py`, `tests/test_v13_release_candidate.py`, `scripts/v13_pmcp_pilot.py`, `tests/test_v13_pmcp_pilot.py`, `scripts/v13_pilot_budget.py`, `tests/test_v13_pilot_budget.py`, `docs/operations/v13-release.md`, `mcp_server/artifacts/artifact_download.py`, `mcp_server/artifacts/integrity_gate.py`, `tests/test_artifact_integrity_gate.py`, `mcp_server/artifacts/artifact_upload.py`, `mcp_server/artifacts/freshness.py`, `mcp_server/artifacts/multi_repo_artifact_coordinator.py`, `mcp_server/artifacts/publisher.py`, `mcp_server/cli/artifact_commands.py`, `mcp_server/cli/task_reindex.py`, `mcp_server/cli/tool_handlers.py`, `mcp_server/cli/stdio_runner.py`, `mcp_server/client.py`, `mcp_server/core/ignore_patterns.py`, `mcp_server/core/repo_resolver.py`, `mcp_server/dispatcher/cross_repo_coordinator.py`, `mcp_server/dispatcher/dispatcher_enhanced.py`, `mcp_server/storage/sqlite_store.py`, `mcp_server/storage/multi_repo_manager.py`, `docs/operations/v13-pmcp-pilot.md`, `docs/security/attestation.md`, `docs/security/auth-boundary.md`, `.github/workflows/sign-published-image.yml`, `tests/test_v13_prep_repairs.py`, `tests/test_artifact_download.py`, `tests/test_artifact_upload.py`, `tests/test_artifact_attestation.py`, `tests/security/test_artifact_attestation.py`, `tests/test_artifact_publish_race.py`, `tests/test_artifact_publish_rollback.py`, `tests/test_artifact_auto_delta.py`, `tests/test_artifact_commands.py`, `tests/test_multi_repo_artifact_coordinator.py`, `tests/test_mcptasks_reindex.py`, `tests/test_artifact_freshness.py`, `tests/test_ignore_patterns.py`, `tests/test_python_client_contract.py`, `tests/test_cross_repo_coordinator.py`, `tests/docs/test_gabase_ga_readiness_contract.py`, `tests/docs/test_garc_rc_soak_contract.py`, `tests/docs/test_garecut_rc_recut_contract.py`, `tests/docs/test_p34_public_alpha_recut.py`, `tests/docs/test_pubname_public_docs.py`, `tests/smoke/test_mcpbase_stdio_smoke.py`, `tests/smoke/test_mcpeval_sdk_surface.py`, `mcp_server/artifacts/attestation.py`, `mcp_server/gateway.py`, `mcp_server/metrics/health_check.py`, `mcp_server/watcher/file_watcher.py`, `mcp_server/watcher_multi_repo.py`, `mcp_server/storage/git_index_manager.py`, `tests/test_v13_prep_panel_repairs.py`, `tests/test_gateway_transport_boundary.py`, `tests/test_watcher_multi_repo.py`, `tests/test_workflow_release_policy.py`, `tests/test_gateway.py`, `mcp_server/storage/repository_registry.py`, `tests/test_git_index_manager.py`, `tests/docs/test_gagov_governance_contract.py`, `tests/integration/test_multi_repo_hydration.py`, `tests/smoke/test_release_smoke_contract.py`, `tests/test_delta_base_fallback.py`, `tests/test_dispatcher_toctou.py`, `tests/test_p25_release_gates.py`, `tests/test_workflow_action_pins.py`, `mcp_server/core/lifecycle.py`, `mcp_server/core/logging.py`, `mcp_server/storage/store_registry.py`, `mcp_server/utils/semantic_indexer.py`, `tests/test_dispatcher.py`, `tests/test_profile_aware_semantic_indexer.py`, `tests/test_v13_data_vectors.py`, `tests/test_v13_safety.py`, `docs/IGNORE_PATTERNS_BEHAVIOR.md`, `mcp_server/utils/semantic_indexer_registry.py`, `tests/test_semantic_indexer_registry.py`, `scripts/release_smoke.py`
 - **Interfaces provided**: prepared-version-contract, version-only-evidence-binding, fresh-release-checks
 - **Interfaces consumed**: accepted-pilot-contract (pre-existing), accepted-freeze-contract (pre-existing)
 - **Parallel-safe**: no
@@ -285,14 +329,14 @@ SL-1 — Independent review and evidence reducer
   - test: Reject unknown approval IDs, cross-identity ledgers, alternate/symlinked allowance roots, reinitialization, CLI overrides, cumulative units above 100000 including retries, admission after 900 seconds, concurrent admission, and original-ledger writes. Preserve charged failures across crash/cancellation/restart.
   - impl: Add only the fixed renewal identity/path and a distinct renewed-pilot validator; preserve all legacy validator behavior.
   - test: Signing acceptance rejects missing/failed proof, wrong ref/mode/digest, second dispatch, production-verifier failure, metadata tampering and archive tampering.
-  - verify: Perform the single digest-only signing exercise after all prerequisite gates; retain production-verifier and negative-control results.
+  - verify: Validate signing prerequisites and negative controls without dispatch; SL-1 owns the one-shot exercise after independent code approval.
   - verify: Focused tests, locked refresh, full local gate, independent installed wheel/PMCP, Qdrant both modes, non-root container, synthetic-provider rehearsal and actual admin/Inspector browser interactions.
   - impl: Document publication inputs, clean worktree and recovery policy: on partial effect or delivered acceptance failure stop, preserve evidence, no blind redispatch/yank/delete; corrective release or rollback requires a fresh bounded decision.
-  - verify: Live GitHub/tag/PyPI collision checks and exact release inputs. Only the separately approved digest-only signing validation is permitted; no release publication.
+  - verify: Read-only GitHub/tag/PyPI collision checks and exact release inputs. No signing dispatch, live inference, image push or release publication in SL-0.
 
 ### SL-1 - Independent review and evidence reducer
 
-- **Scope**: Reconcile the four exact review seats and package verified release authority for SHIP.
+- **Scope**: Obtain independent code approval, perform the two bounded checks, then reconcile all four seats and package verified release authority for SHIP.
 - **Depends on**: SL-0
 - **Owned files**: `docs/validation/v13/PREP.json`, `docs/status/V13_EXECUTION.md`, `specs/phase-plans-v13_reviews.md`
 - **Interfaces provided**: accepted-prep-evidence, reviewed-candidate-identity, ship-publication-contract
@@ -300,9 +344,11 @@ SL-1 — Independent review and evidence reducer
 - **Parallel-safe**: no
 - **Tasks**:
   - test: Evidence checklist rejects missing exact seats, source drift, unresolved substantive findings, failed/skipped required operational goals or a published-before-acceptance claim.
-  - impl: Freeze the candidate and stage full review materials through the supported advisor-panel runtime; no custom spawn or authorization bypass.
-  - verify: Each seat independently reviews full changes and relevant production construction sites; then reads all peer reports and supplies its reconciliation disposition on the same candidate.
+  - impl: Freeze the candidate and stage file-pointer review materials using the owner-authorized read-only manual route above; retain actual access/model evidence without claiming governed-broker acceptance.
+  - verify: Each of the four exact seats independently reviews the full changed surface and relevant production construction sites. Resolve every substantive code blocker and coverage gap before either one-shot effect; batch verdicts alone are insufficient.
   - impl: Adjudicate findings with reproductions, fix legitimate bugs through amended SL-0 ownership, rerun affected/full checks and renewed panel as required. No unresolved release blocker.
+  - verify: Only after four independent complete-candidate code approvals and all local/installed/browser gates, perform exactly one renewed live pilot and one digest-only metadata-signing exercise under the fixed allowance identities. No image/source/index upload, second dispatch or automatic inference retry.
+  - verify: After both effects, each seat reads all peer reports and the fresh operational evidence and supplies a final reconciliation disposition on the unchanged candidate. Missing/failed effect proof or any unresolved blocker forbids acceptance. Tracked changes after effects require a new owner decision.
   - verify: Recheck PR base/head/mergeability and qualified open issues; retain old finding dispositions without closing unproved work.
   - impl: Emit accepted metadata-only external PREP receipt with exact source/diff/tree/artifact/check/panel hashes, all goal dispositions, explicit limits and clean SHIP instructions. Pending tracked receipt points to canonical external receipt without claiming prior approval.
 

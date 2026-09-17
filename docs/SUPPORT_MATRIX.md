@@ -157,12 +157,15 @@ Git fixture, not only health. A failing node blocks distribution acceptance;
 actual results belong in `docs/validation/v13/DIST.json`, not this description.
 BAML generation and runtime are pinned together at 0.221.0; regeneration is
 offline and does not call the inference client declared in the source contract.
-V13 now has separate accepted DIST, STATE, SAFETY, DATA and PILOT receipts.
-PILOT proves an independently installed candidate through PMCP 2.7.3, MCP
+V13 has historical accepted DIST, STATE, SAFETY, DATA and PILOT receipts bound
+to their recorded source commits, not to subsequent PREP repairs. The historical
+PILOT proves its independently installed candidate through PMCP 2.7.3, MCP
 Inspector 2.6.0 and the HTTP admin UI on Linux/Python 3.12.12, including bounded
 local inference and query/index contention. See `docs/validation/v13/PILOT.json`
 and `docs/operations/v13-pmcp-pilot.md` for exact source/artifact identities.
-This does not establish fleet readiness, general retrieval quality, immutable
+The current 1.4.1 candidate still requires fresh installed, browser and bounded
+live validation plus four-seat reconciliation. Historical PILOT acceptance cannot
+substitute for that proof. This does not establish fleet readiness, general retrieval quality, immutable
 provider-build identity, or support on untested platforms. PREP code review and
 SHIP publication remain required; the published 1.4.0 package is not this v13
 candidate. Existing support tiers and opt-in retrieval gates are unchanged.

@@ -10766,10 +10766,16 @@ class TestEnhancedDispatcherProtocolConformance:
         assert result["semantic_stage"] == "indexed"
         assert result["semantic_collection_bootstrap"]["status"] == "created"
 
-    def test_index_directory_records_semantic_batch_blockers(self, tmp_path, monkeypatch):
+    @pytest.mark.parametrize("indexed", [0, 1])
+    @pytest.mark.parametrize("outcome", ["blocked", "failed"])
+    def test_index_directory_records_semantic_batch_blockers(
+        self, tmp_path, monkeypatch, indexed, outcome
+    ):
         ctx = _make_repo_ctx(sqlite_store=MagicMock(db_path=str(tmp_path / "index.db")))
         target = tmp_path / "sample.py"
         target.write_text("x = 1\n")
+        if indexed:
+            (tmp_path / "successful.py").write_text("x = 2\n")
 
         class FakeWriter:
             def __init__(self, *args, **kwargs):
@@ -10788,10 +10794,10 @@ class TestEnhancedDispatcherProtocolConformance:
         class FakeSemanticIndexer:
             def index_files_batch(self, paths, **kwargs):
                 return {
-                    "files_indexed": 0,
-                    "files_failed": 0,
+                    "files_indexed": indexed,
+                    "files_failed": int(outcome == "failed"),
                     "files_skipped": 0,
-                    "files_blocked": 1,
+                    "files_blocked": int(outcome == "blocked"),
                     "semantic_blocker": {
                         "code": "semantic_batch_blocked",
                         "message": "Semantic batch writes were blocked after summaries were generated",
@@ -10832,8 +10838,8 @@ class TestEnhancedDispatcherProtocolConformance:
 
         result = Dispatcher([]).index_directory(ctx, tmp_path)
 
-        assert result["semantic_stage"] == "blocked_semantic_batch"
-        assert result["semantic_blocked"] == 1
+        assert result["semantic_stage"] == f"{outcome}_semantic_batch"
+        assert result[f"semantic_{outcome}"] == 1
         assert (
             result["semantic_error"]
             == "Semantic batch writes were blocked after summaries were generated"

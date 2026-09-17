@@ -382,23 +382,11 @@ class IndexArtifactDownloader:
         verify_attestation(metadata_path, att, expected_repo=self.repo, gh_cmd="gh")
         metadata_bytes = metadata_path.read_bytes()
         metadata = json.loads(metadata_bytes)
-        delta_base = metadata.get("delta_from")
-        if delta_base:
-            probe = subprocess.run(
-                ["gh", "release", "view", delta_base, "--repo", self.repo],
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-            if probe.returncode != 0:
-                logger.warning(
-                    "Delta base release %r not found in %s; treating artifact as full (delta_from cleared)",
-                    delta_base,
-                    self.repo,
-                )
-                metadata = dict(metadata)
-                metadata["delta_from"] = None
         gate_result = self._run_integrity_gate(metadata, archive_path, checksum_path)
+        if metadata.get("artifact_type") == "delta" or metadata.get("delta_from"):
+            raise ValueError(
+                "Delta restore requires an authenticated base chain; download a full snapshot"
+            )
         if gate_result.manifest_v2_validated:
             print("✅ Manifest v2 verified")
 

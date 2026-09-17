@@ -421,25 +421,39 @@ def test_uploaded_release_is_discovered_authenticated_and_restored(
         if args[:2] == ["gh", "release"]:
             if args[2] == "create":
                 release.update(
-                    tag_name=args[3], created_at=metadata["timestamp"], target_commitish="main"
+                    tag_name=args[3],
+                    created_at=metadata["timestamp"],
+                    target_commitish=metadata["commit"],
+                    draft="--draft" in args,
                 )
             elif args[2] == "upload":
                 uploaded.update(
                     {
                         Path(name).name: Path(name).read_bytes()
-                        for name in args[args.index("--clobber") + 1 :]
+                        for name in args[args.index("--repo") + 2 :]
                     }
                 )
                 release["assets"] = [
-                    {"name": name, "size": len(data)} for name, data in uploaded.items()
+                    {
+                        "name": name,
+                        "size": len(data),
+                        "state": "uploaded",
+                        "digest": "sha256:" + hashlib.sha256(data).hexdigest(),
+                    }
+                    for name, data in uploaded.items()
                 ]
             elif args[2] == "view":
                 return subprocess.CompletedProcess(
                     args, 0, json.dumps({"assets": release["assets"]}), ""
                 )
+            elif args[2] == "edit":
+                assert "--draft=false" in args
+                release["draft"] = False
             else:
                 pytest.fail("Unexpected release command")
         elif args[:2] == ["gh", "api"]:
+            if "/releases/tags/" in args[2]:
+                return subprocess.CompletedProcess(args, 0, json.dumps(release), "")
             assert "--paginate" in args
             response = json.dumps(release) if args[2].endswith("/releases") else ""
             return subprocess.CompletedProcess(args, 0, response, "")
@@ -665,9 +679,12 @@ def test_repository_retirement_joins_observer_before_closing_resources(tmp_path)
         _watch_lock=threading.RLock(),
         observers={"synthetic": observer},
         watchers={},
-        store_registry=SimpleNamespace(close=lambda repo_id: calls.append("store")),
+        _pending_syncs={},
+        store_registry=SimpleNamespace(close=lambda repo_id, **kwargs: calls.append("store")),
         plugin_set_registry=SimpleNamespace(evict=lambda repo_id: calls.append("plugins")),
-        semantic_indexer_registry=SimpleNamespace(evict=lambda repo_id: calls.append("vectors")),
+        semantic_indexer_registry=SimpleNamespace(
+            evict=lambda repo_id, **kwargs: calls.append("vectors")
+        ),
         dispatcher=SimpleNamespace(
             evict_repository_state=lambda *args, **kwargs: calls.append("dispatcher")
         ),
@@ -675,7 +692,57 @@ def test_repository_retirement_joins_observer_before_closing_resources(tmp_path)
     MultiRepositoryWatcher._stop_repo_watcher(
         owner, "synthetic", SimpleNamespace(path=str(tmp_path))
     )
-    assert calls == ["stop", "joined", "store", "plugins", "vectors", "dispatcher"]
+    assert calls == ["stop", "joined", "store", "vectors", "dispatcher"]
+
+
+def test_retired_watcher_cannot_close_replacement_store_or_run_queued_sync(runtime):
+    from concurrent.futures import ThreadPoolExecutor
+
+    from mcp_server.indexing.lock_registry import lock_registry
+    from mcp_server.watcher_multi_repo import MultiRepositoryWatcher
+
+    repo, registry, repo_id, _store, manager = runtime
+    assert manager.rebuild_repository_index(repo_id).action == "full_index"
+    old = registry.get(repo_id)
+    stores = StoreRegistry.for_registry(registry)
+    stores.get(repo_id)
+    watcher = MultiRepositoryWatcher.__new__(MultiRepositoryWatcher)
+    watcher._watch_lock = threading.RLock()
+    watcher._pending_syncs = {}
+    watcher.running = True
+    watcher.registry = registry
+    watcher.index_manager = MagicMock()
+    watcher.changed_repos = set()
+    watcher.watchers = {
+        repo_id: SimpleNamespace(repo_path=repo, ctx=SimpleNamespace(registry_entry=old))
+    }
+    watcher.observers = {repo_id: MagicMock()}
+    watcher.store_registry = stores
+    watcher.plugin_set_registry = MagicMock()
+    watcher.semantic_indexer_registry = MagicMock()
+    watcher.dispatcher = MagicMock()
+    watcher.executor = ThreadPoolExecutor(max_workers=1)
+    try:
+        with lock_registry.acquire(repo_id, repo_path=repo):
+            watcher.on_git_commit(repo_id, old.last_indexed_commit)
+            pending, retired = watcher._pending_syncs[repo_id][0]
+            registry.unregister_repository(repo_id)
+            registry.register_repository(str(repo))
+            replacement = stores.get(repo_id)
+            stop = threading.Thread(target=watcher._stop_repo_watcher, args=(repo_id,))
+            stop.start()
+            assert retired.wait(2)
+        stop.join(3)
+        assert not stop.is_alive()
+        watcher.index_manager.sync_repository_index.assert_not_called()
+        watcher.plugin_set_registry.evict.assert_not_called()
+        watcher.semantic_indexer_registry.evict.assert_called_once_with(repo_id, expected_owner=old)
+        with replacement._get_connection() as connection:
+            assert connection.execute("SELECT 1").fetchone()[0] == 1
+        assert not registry.unregister_repository(repo_id, expected_owner=old)
+    finally:
+        watcher.executor.shutdown(wait=True, cancel_futures=True)
+        stores.shutdown()
 
 
 def test_dispatcher_shutdown_drains_every_owner():
@@ -867,8 +934,15 @@ def test_upload_deadlines_are_shared_and_failures_are_not_retried(tmp_path, monk
     calls = []
 
     def bounded(command, output, limit, deadline):
-        step = {"--version": "probe", "create": "create", "upload": "upload", "view": "verify"}.get(
-            command[1] if command[1] == "--version" else command[2]
+        step = (
+            "verify"
+            if command[1] == "api"
+            else {
+                "--version": "probe",
+                "create": "create",
+                "upload": "upload",
+                "view": "verify",
+            }.get(command[1] if command[1] == "--version" else command[2])
         )
         calls.append((step, limit, deadline))
         assert limit == 1024**2
@@ -901,6 +975,46 @@ def test_expired_deadline_refuses_before_starting_external_command(monkeypatch):
     with pytest.raises(subprocess.TimeoutExpired):
         _download_bounded(["gh", "release", "create", "synthetic"], io.BytesIO(), 1024, 0)
     start.assert_not_called()
+
+
+@pytest.mark.parametrize("outcome", ["semantic_failed", "semantic_blocked"])
+def test_mixed_semantic_batch_cannot_publish_ready_generation(runtime, monkeypatch, outcome):
+    repo, registry, repo_id, _store, manager = runtime
+    assert manager.rebuild_repository_index(repo_id).action == "full_index"
+    before = registry.get(repo_id)
+    original = manager.dispatcher.index_directory
+
+    def mixed(*args, **kwargs):
+        result = original(*args, **kwargs)
+        result.update(semantic_stage="indexed", semantic_indexed=1, **{outcome: 1})
+        return result
+
+    monkeypatch.setattr(manager.dispatcher, "index_directory", mixed)
+    assert manager.rebuild_repository_index(repo_id).action == "failed"
+    assert registry.get(repo_id).index_generation == before.index_generation
+
+
+def test_stale_store_replacement_observer_cannot_poison_new_registration(runtime, monkeypatch):
+    repo, registry, repo_id, _store, manager = runtime
+    assert manager.rebuild_repository_index(repo_id).action == "full_index"
+    stores = StoreRegistry.for_registry(registry)
+    stores.get(repo_id)
+    info = registry.get(repo_id)
+    replacement = info.index_path.with_suffix(".replacement")
+    replacement.write_bytes(info.index_path.read_bytes())
+    replacement.replace(info.index_path)
+    update = registry.update_staleness_reason
+
+    def race(*args, **kwargs):
+        assert registry.unregister_repository(repo_id)
+        assert registry.register_repository(str(repo)) == repo_id
+        return update(*args, **kwargs)
+
+    monkeypatch.setattr(registry, "update_staleness_reason", race)
+    with pytest.raises(RuntimeError, match="replaced outside"):
+        stores.get(repo_id)
+    assert registry.get(repo_id).registration_id != info.registration_id
+    assert registry.get(repo_id).staleness_reason != "partial_index_failure"
 
 
 @pytest.mark.parametrize("backend", ["actions", "releases"])

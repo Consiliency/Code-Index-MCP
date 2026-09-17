@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -55,7 +56,9 @@ def _free_port() -> int:
         return int(sock.getsockname()[1])
 
 
-def smoke_wheel() -> None:
+def smoke_wheel(wheel_path: Path | None = None, expected_sha256: str | None = None) -> None:
+    if (wheel_path is None) != (expected_sha256 is None):
+        raise ValueError("Delivered wheel requires its registry SHA256")
     with tempfile.TemporaryDirectory(prefix="mcp-release-wheel-") as tmp:
         root = Path(tmp)
         dist, venv_dir, runtime = root / "dist", root / "venv", root / "runtime"
@@ -63,10 +66,19 @@ def smoke_wheel() -> None:
         probe = runtime / PROBE.name
         shutil.copyfile(PROBE, probe)
         shutil.copyfile(SAFETY_PROBE, runtime / SAFETY_PROBE.name)
-        _run(["uv", "build", "--wheel", "--out-dir", str(dist)], timeout=300)
+        if wheel_path is None:
+            _run(["uv", "build", "--wheel", "--out-dir", str(dist)], timeout=300)
+        else:
+            dist.mkdir()
+            shutil.copyfile(wheel_path, dist / wheel_path.name)
         wheels = sorted(dist.glob("index_it_mcp-*.whl"))
         if len(wheels) != 1:
             raise RuntimeError("Expected exactly one built wheel")
+        if expected_sha256 is not None and (
+            not re.fullmatch(r"[0-9a-f]{64}", expected_sha256)
+            or hashlib.sha256(wheels[0].read_bytes()).hexdigest() != expected_sha256
+        ):
+            raise ValueError("Delivered wheel registry digest mismatch")
         print(
             json.dumps(
                 {
@@ -164,17 +176,35 @@ def _poll_health(port: int, *, timeout: float = 60.0) -> None:
     raise RuntimeError(f"Container health timeout ({last_error})")
 
 
-def smoke_container() -> None:
+def smoke_container(image_ref: str | None = None) -> None:
+    if image_ref is not None and not re.fullmatch(
+        r"ghcr\.io/[a-z0-9_./-]+@sha256:[0-9a-f]{64}", image_ref
+    ):
+        raise ValueError("Delivered image requires an immutable GHCR digest reference")
     if shutil.which("docker") is None:
         raise RuntimeError("docker is required for --container smoke")
-    _run(
-        ["docker", "build", "-f", "docker/dockerfiles/Dockerfile.production", "-t", IMAGE, "."],
-        timeout=600,
-    )
+    if image_ref is None:
+        _run(
+            ["docker", "build", "-f", "docker/dockerfiles/Dockerfile.production", "-t", IMAGE, "."],
+            timeout=600,
+        )
+    else:
+        _run(["docker", "pull", image_ref], timeout=300)
+        digests = json.loads(
+            subprocess.check_output(
+                ["docker", "image", "inspect", "--format", "{{json .RepoDigests}}", image_ref],
+                text=True,
+                timeout=30,
+            )
+        )
+        if image_ref not in digests:
+            raise ValueError("Delivered image registry digest mismatch")
     image_id = subprocess.check_output(
-        ["docker", "image", "inspect", "--format", "{{.Id}}", IMAGE], text=True, timeout=30
+        ["docker", "image", "inspect", "--format", "{{.Id}}", image_ref or IMAGE],
+        text=True,
+        timeout=30,
     ).strip()
-    print(json.dumps({"image": IMAGE, "image_id": image_id}), flush=True)
+    print(json.dumps({"image": image_ref or IMAGE, "image_id": image_id}), flush=True)
     with tempfile.TemporaryDirectory(prefix="mcp-release-container-") as tmp:
         root = Path(tmp)
         root.chmod(0o777)
@@ -265,19 +295,36 @@ def parse_args() -> argparse.Namespace:
         "--container", action="store_true", help="Exercise the configured non-root image"
     )
     parser.add_argument("--all", action="store_true", help="Run wheel/STDIO and container smoke")
+    parser.add_argument("--wheel-path", type=Path, help="Use a delivered wheel without building")
+    parser.add_argument("--wheel-sha256", help="Expected SHA256 from the package registry")
+    parser.add_argument(
+        "--image-ref", help="Use a delivered immutable GHCR digest without building"
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
+    if (args.wheel_path is None) != (args.wheel_sha256 is None):
+        raise SystemExit("Supply both --wheel-path and --wheel-sha256")
+    delivered = args.wheel_path is not None or args.image_ref is not None
     if args.all:
         args.wheel = args.stdio = args.container = True
+    args.wheel = args.wheel or args.wheel_path is not None
+    args.container = args.container or args.image_ref is not None
+    if delivered and (
+        (args.wheel or args.stdio)
+        and args.wheel_path is None
+        or args.container
+        and args.image_ref is None
+    ):
+        raise SystemExit("Delivered mode cannot mix registry artifacts with local builds")
     if not (args.wheel or args.stdio or args.container):
         raise SystemExit("Choose --wheel, --stdio, --container, or --all")
     if args.wheel or args.stdio:
-        smoke_wheel()
+        smoke_wheel(args.wheel_path, args.wheel_sha256)
     if args.container:
-        smoke_container()
+        smoke_container(args.image_ref)
 
 
 if __name__ == "__main__":

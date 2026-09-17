@@ -41,6 +41,10 @@ version-only comparator must still reject these runtime repairs. Signing is
 limited to one five-minute `index-attestation` job receiving only the canonical
 metadata digest. Complete all code fixes and prerequisite checks before either
 effect; neither permits an automatic retry after failure or uncertain acceptance.
+`scripts/v13_release_candidate.py --claim-signing-dispatch` performs local
+canonical metadata/schema/identity/size/checksum validation, then durably claims
+the one attempt. It does not dispatch. Changed or invalid local inputs must
+leave no claim, and an existing claim is never replaced or reset.
 
 Fresh candidate-specific local full, installed PMCP, container, Qdrant,
 loopback-provider and browser checks are required in PREP. Real inference is not
@@ -72,7 +76,8 @@ an approval substitute. Any candidate edit after review requires renewed review.
    inputs, and record independent publication authorization outside that tree.
 4. Check PyPI, GHCR, GitHub release and tag state for collisions or partial effects.
    Dispatch `Release Automation` once with `mode=publish`, `version=v1.4.1`,
-   `auto_merge=false`, and `--ref main` only after the SHIP pre-publication gate.
+   `auto_merge=false`, `expected_commit=<recorded-main-sha>`,
+   `expected_tree=<accepted-tree-sha>`, and `--ref main` only after the SHIP gate.
 5. Record workflow/run, tag/source, wheel/sdist/image digests and attestations.
    Independently install registry-delivered artifacts outside the checkout and
    repeat critical PMCP, query, migration, non-root and lifecycle acceptance.
@@ -80,12 +85,23 @@ an approval substitute. Any candidate edit after review requires renewed review.
    qualified issues whose acceptance is actually proved.
 
 Routine verification is local. No hosted prepare dispatch is required. Existing
-release workflow action pins and protected-main guards remain unchanged.
-The serialized publish workflow first uploads a unique candidate image reference,
+release workflow action pins and protected-main guards remain enforced.
+The first job refuses commit/tree drift and reruns. After local gates the
+workflow creates `refs/tags/release-claims/<version>` once, recording run/source/tree.
+An existing claim prevents all downstream publication, including after a partial
+failure; never delete/update it to retry. The publish workflow then uploads a unique candidate image reference,
 signs and verifies its digest, and publishes the Python/GitHub artifacts. Only
 then does the final job promote that same digest to version/latest tags. A failed
 intermediate step may leave a candidate image or partial release; it never
 authorizes automatic redispatch or promotion of an unsigned image.
+
+Delivered acceptance uses `release_smoke.py --wheel-path <downloaded-wheel>
+--wheel-sha256 <registry-sha256> --image-ref <ghcr-name>@sha256:<registry-digest>`.
+For PMCP, run `v13_pmcp_pilot.py --mode prepare --root <owned-root> --wheel
+<downloaded-wheel> --wheel-sha256 <registry-sha256>`, then offline, rehearsal and
+browser modes against that manifest. These supplied-artifact paths never build
+a replacement wheel or image. Record the registry digest independently before
+passing it to the runner; a locally calculated checksum alone is not registry proof.
 
 ## Recovery And Rollout
 
@@ -116,8 +132,9 @@ may re-embed the corpus and needs a separate inference budget. No automatic garb
 collection or fleet indexing is authorized by this release.
 
 The HTTP admin gateway requires external process supervision. Python cannot safely
-abandon a stuck mutating worker while it owns the repository fence; an indexing
-timeout may therefore await that worker. A supervisor must terminate/restart a
-wedged gateway process, after which readiness still refuses incomplete generations.
-STDIO separately uses its bounded shutdown watchdog. Neither surface promises
-in-process recovery from arbitrary stuck native plugin code.
+abandon a stuck mutating worker while it owns the repository fence. Failed or
+timed-out retirement keeps dependencies alive while draining; a five-second
+process watchdog exits unsuccessfully if drainage cannot finish. A supervisor
+must restart that process; readiness still refuses incomplete generations.
+STDIO also uses bounded shutdown. Neither surface promises in-process recovery
+from arbitrary stuck native plugin code.

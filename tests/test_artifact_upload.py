@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
+import subprocess
 import tarfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -13,6 +15,100 @@ import pytest
 from mcp_server.artifacts.artifact_upload import IndexArtifactUploader
 from mcp_server.artifacts.attestation import Attestation, AttestationError
 from mcp_server.artifacts.manifest_v2 import LEXICAL_ONLY_SEMANTIC_PROFILE_HASH
+
+
+@pytest.fixture
+def release_backend(monkeypatch):
+    monkeypatch.setenv("MCP_ATTESTATION_MODE", "skip")
+    uploader = IndexArtifactUploader(repo="synthetic/example")
+    releases = {}
+    calls = []
+
+    def gh(command, *, deadline):
+        calls.append(command)
+        if command[:2] == ["gh", "--version"]:
+            return "synthetic"
+        if command[:2] == ["gh", "api"]:
+            from urllib.parse import unquote
+
+            tag = unquote(command[2].split("/tags/", 1)[1])
+            return json.dumps(releases[tag])
+        assert command[:2] == ["gh", "release"]
+        operation, tag = command[2:4]
+        if operation == "create":
+            if tag in releases:
+                raise subprocess.CalledProcessError(1, command)
+            releases[tag] = {"tag_name": tag, "draft": "--draft" in command, "assets": []}
+        elif operation == "upload":
+            assert "--clobber" not in command
+            paths = command[command.index("--repo") + 2 :]
+            for name in paths:
+                path = Path(name)
+                releases[tag]["assets"].append(
+                    {
+                        "name": path.name,
+                        "state": "uploaded",
+                        "digest": "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest(),
+                    }
+                )
+        elif operation == "edit":
+            assert "--draft=false" in command
+            releases[tag]["draft"] = False
+        else:
+            raise AssertionError(command)
+        return ""
+
+    monkeypatch.setattr(uploader, "_run_gh", gh)
+    monkeypatch.setattr(subprocess, "Popen", MagicMock(side_effect=AssertionError("Offline test")))
+    return uploader, releases, calls
+
+
+def test_repeated_prepared_upload_is_idempotent_across_local_filenames(tmp_path, release_backend):
+    from mcp_server.artifacts.artifact_download import _payload_limits
+
+    uploader, releases, calls = release_backend
+    for suffix in ("a", "b"):
+        archive = tmp_path / f"index-archive-{suffix}.tar.gz"
+        archive.write_bytes(b"identical prepared bytes")
+        uploader.upload_direct(
+            archive,
+            {
+                "checksum": uploader._calculate_checksum(archive),
+                "logical_artifact_id": "index-synthetic-main-commit",
+            },
+        )
+    assert len(releases) == 1
+    release = next(iter(releases.values()))
+    assert release["draft"] is False
+    assert len(release["assets"]) == 3
+    _payload_limits([item["name"] for item in release["assets"]])
+    assert sum(command[:3] == ["gh", "release", "upload"] for command in calls) == 1
+
+
+@pytest.mark.parametrize("damage", ["extra", "digest", "incomplete", "draft"])
+def test_existing_release_mismatch_has_no_upload_or_promotion(tmp_path, release_backend, damage):
+    uploader, releases, calls = release_backend
+    archive = tmp_path / "original.tar.gz"
+    archive.write_bytes(b"prepared")
+    metadata = {"checksum": uploader._calculate_checksum(archive)}
+    uploader.upload_direct(archive, metadata, release_tag="index-explicit")
+    release = releases["index-explicit"]
+    if damage == "extra":
+        release["assets"].append(
+            {"name": "unexpected.tar.gz", "state": "uploaded", "digest": "sha256:bad"}
+        )
+    elif damage == "digest":
+        release["assets"][0]["digest"] = "sha256:bad"
+    elif damage == "incomplete":
+        release["assets"][0]["state"] = "starter"
+    else:
+        release["draft"] = True
+    calls.clear()
+    with pytest.raises(RuntimeError):
+        uploader.upload_direct(archive, metadata, release_tag="index-explicit")
+    assert not any(
+        command[:3] in (["gh", "release", "upload"], ["gh", "release", "edit"]) for command in calls
+    )
 
 
 def test_prepared_upload_uses_exact_bytes_without_compression(tmp_path, monkeypatch):
@@ -243,7 +339,7 @@ def test_build_release_asset_bundle_writes_metadata_checksum_and_attestation(tmp
     attestation_path = tmp_path / "archive.tar.gz.attestation.jsonl"
     attestation_path.write_text('{"bundle":1}\n', encoding="utf-8")
     metadata = {
-        "checksum": "deadbeef",
+        "checksum": hashlib.sha256(archive.read_bytes()).hexdigest(),
         "commit": "abcdef123456",
         "logical_artifact_id": "logical-id",
     }
@@ -261,14 +357,20 @@ def test_build_release_asset_bundle_writes_metadata_checksum_and_attestation(tmp
     )
 
     assert bundle.metadata_path.name == "artifact-metadata.json"
-    assert json.loads(bundle.metadata_path.read_text(encoding="utf-8"))["checksum"] == "deadbeef"
-    assert bundle.checksum_path.read_text(encoding="utf-8") == "deadbeef  archive.tar.gz\n"
+    assert (
+        json.loads(bundle.metadata_path.read_text(encoding="utf-8"))["checksum"]
+        == metadata["checksum"]
+    )
+    assert (
+        bundle.checksum_path.read_text(encoding="utf-8")
+        == f"{metadata['checksum']}  index-archive.tar.gz\n"
+    )
     assert bundle.attestation_path is not None
     assert bundle.attestation_path.read_text(encoding="utf-8") == '{"bundle":1}\n'
     assert [path.name for path in bundle.asset_paths] == [
-        "archive.tar.gz",
+        "index-archive.tar.gz",
         "artifact-metadata.json",
-        "archive.tar.gz.sha256",
+        "index-archive.tar.gz.sha256",
         "artifact-metadata.json.attestation.jsonl",
     ]
 
@@ -317,7 +419,9 @@ def test_write_metadata_file_matches_create_metadata_contract(tmp_path: Path):
     assert payload["manifest_v2"]["tracked_branch"] == "main"
 
 
-def test_upload_direct_uses_explicit_release_tag_and_clobber(tmp_path: Path, monkeypatch):
+def test_upload_direct_uses_explicit_release_tag_without_clobber(
+    tmp_path: Path, monkeypatch, release_backend
+):
     monkeypatch.setenv("MCP_ATTESTATION_MODE", "skip")
     archive = tmp_path / "archive.tar.gz"
     archive.write_bytes(b"archive-bytes")
@@ -326,35 +430,18 @@ def test_upload_direct_uses_explicit_release_tag_and_clobber(tmp_path: Path, mon
         "commit": "abcdef123456",
         "logical_artifact_id": "logical-id",
     }
-    uploader = IndexArtifactUploader(repo="owner/repo")
-
-    def side_effect(args, **kwargs):
-        if args[:2] == ["gh", "--version"]:
-            return "synthetic version"
-        if args[:4] == ["gh", "release", "view", "sha-tag"]:
-            return json.dumps(
-                {
-                    "assets": [
-                        {"name": "archive.tar.gz"},
-                        {"name": "artifact-metadata.json"},
-                        {"name": "archive.tar.gz.sha256"},
-                    ]
-                }
-            )
-        return ""
-
-    with patch.object(uploader, "_run_gh", side_effect=side_effect) as mock_run:
-        uploader.upload_direct(archive, metadata, release_tag="sha-tag")
-
-    upload_call = next(
-        call_args
-        for call_args in mock_run.call_args_list
-        if call_args.args[0][:3] == ["gh", "release", "upload"]
-    )
-    assert upload_call.args[0][3] == "sha-tag"
-    assert "--clobber" in upload_call.args[0]
-    uploaded_names = [Path(arg).name for arg in upload_call.args[0] if str(arg).startswith("/")]
-    assert uploaded_names == ["archive.tar.gz", "artifact-metadata.json", "archive.tar.gz.sha256"]
+    uploader, releases, calls = release_backend
+    uploader.upload_direct(archive, metadata, release_tag="sha-tag")
+    upload_call = next(command for command in calls if command[:3] == ["gh", "release", "upload"])
+    assert upload_call[3] == "sha-tag"
+    assert "--clobber" not in upload_call
+    assert releases["sha-tag"]["draft"] is False
+    uploaded_names = [Path(arg).name for arg in upload_call if str(arg).startswith("/")]
+    assert uploaded_names == [
+        "index-archive.tar.gz",
+        "artifact-metadata.json",
+        "index-archive.tar.gz.sha256",
+    ]
 
 
 def test_unsigned_upload_has_no_github_mutation(tmp_path, monkeypatch):

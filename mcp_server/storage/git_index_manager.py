@@ -193,7 +193,12 @@ class GitAwareIndexManager:
         self.on_branch_drift: _DriftCallback = None
 
     def sync_repository_index(
-        self, repo_id: str, force_full: bool = False, bypass_branch_guard: bool = False
+        self,
+        repo_id: str,
+        force_full: bool = False,
+        bypass_branch_guard: bool = False,
+        *,
+        expected_registration_id: Optional[str] = None,
     ) -> IndexSyncResult:
         """Serialize repository synchronization through the shared per-repo lock."""
         repo = self.registry.get_repository(repo_id)
@@ -202,10 +207,16 @@ class GitAwareIndexManager:
                 repo_id,
                 force_full=force_full,
                 bypass_branch_guard=bypass_branch_guard,
+                expected_registration_id=expected_registration_id,
             )
 
     def _sync_repository_index_locked(
-        self, repo_id: str, force_full: bool = False, bypass_branch_guard: bool = False
+        self,
+        repo_id: str,
+        force_full: bool = False,
+        bypass_branch_guard: bool = False,
+        *,
+        expected_registration_id: Optional[str] = None,
     ) -> IndexSyncResult:
         """Sync index with repository's current git state.
 
@@ -224,6 +235,13 @@ class GitAwareIndexManager:
         if not repo_info:
             return IndexSyncResult(
                 action="failed", commit="", error=f"Repository not found: {repo_id}"
+            )
+        if (
+            expected_registration_id is not None
+            and repo_info.registration_id != expected_registration_id
+        ):
+            return IndexSyncResult(
+                action="refused", commit="", error="Repository registration changed"
             )
 
         repo_path = Path(repo_info.path)
@@ -600,6 +618,7 @@ class GitAwareIndexManager:
                 repo_info,
                 index_path=generation_path,
                 index_generation=generation,
+                index_profile=profile,
                 current_commit=current_commit,
                 last_indexed_commit=current_commit,
                 current_branch=current_branch,
@@ -697,12 +716,13 @@ class GitAwareIndexManager:
                 index_path=generation_path,
                 commit=current_commit,
                 branch=current_branch or repo_info.tracked_branch,
-                profile=repo_info.index_profile,
+                profile=profile,
                 expected_registration_id=repo_info.registration_id,
                 expected_generation=repo_info.index_generation,
             )
             repo_info.index_path = generation_path
             repo_info.index_generation = generation
+            repo_info.index_profile = profile
             repo_info.last_indexed_commit = current_commit
             repo_info.last_indexed_branch = current_branch
             repo_info.staleness_reason = None
@@ -817,6 +837,8 @@ class GitAwareIndexManager:
 
     def _finalize_staged_vectors(self, repo_id: str, ctx: RepoContext) -> None:
         """Drain only this unpublished owner and verify its live point mappings."""
+        from qdrant_client import models
+
         if not ctx.staging:
             raise RuntimeError("Vector publication requires an unpublished generation")
         with self.dispatcher._semantic_registry.lease(repo_id, ctx=ctx) as staged:
@@ -838,6 +860,15 @@ class GitAwareIndexManager:
             if any(row["collection"] != staged.collection for row in records):
                 raise RuntimeError("Staged vectors belong to another generation")
             ids = list(dict.fromkeys(row["point_id"] for row in records))
+            remote_count = staged.qdrant.count(
+                collection_name=staged.collection,
+                exact=True,
+                count_filter=models.Filter(
+                    must_not=[models.HasIdCondition(has_id=[staged.PROVENANCE_POINT_ID])]
+                ),
+            ).count
+            if remote_count != len(ids):
+                raise RuntimeError("Staged vector ownership is incomplete")
             relative_paths = set()
             complete_corpus = True
             for start in range(0, len(ids), 256):
@@ -1392,6 +1423,8 @@ class GitAwareIndexManager:
 
         stage = semantic.get("semantic_stage")
         if stage in {None, "not_run", "skipped", "indexed"}:
+            if semantic.get("semantic_failed", 0) or semantic.get("semantic_blocked", 0):
+                return "Semantic stage has failed or blocked files"
             return None
 
         error = semantic.get("semantic_error")

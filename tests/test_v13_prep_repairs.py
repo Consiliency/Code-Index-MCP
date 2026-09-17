@@ -489,7 +489,7 @@ def test_prepared_upload_restore_preserves_signed_metadata_bytes(
             return verify_signature(args, **kwargs)
         assert args[:2] == ["gh", "release"]
         if args[2] == "upload":
-            for name in args[args.index("--clobber") + 1 :]:
+            for name in args[args.index("--repo") + 2 :]:
                 shutil.copyfile(name, uploaded / Path(name).name)
         return subprocess.CompletedProcess(args, 0, "", "")
 
@@ -499,8 +499,10 @@ def test_prepared_upload_restore_preserves_signed_metadata_bytes(
     monkeypatch.setattr(uploader, "_ensure_gh_cli", lambda: None)
     monkeypatch.setattr(uploader, "_run_gh", lambda args, **kwargs: gh(args).stdout)
 
-    def verify_assets(tag, names, *, deadline):
-        assert names == {path.name for path in uploaded.iterdir()}
+    def verify_assets(tag, assets, *, deadline, draft=False):
+        assert assets == {
+            path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in uploaded.iterdir()
+        }
 
     monkeypatch.setattr(uploader, "_verify_release_assets", verify_assets)
     uploader.upload_direct(payload / "index.tar.gz", metadata, attestation=attestation)

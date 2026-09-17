@@ -164,6 +164,37 @@ def test_coordinator_fetch_updates_registry(monkeypatch, tmp_path: Path):
     assert results[0].details["validation"]["schema_version"] == "2"
 
 
+@pytest.mark.parametrize("removed", [False, True])
+def test_fetch_failure_is_redacted_and_survives_removed_registration(
+    monkeypatch, tmp_path, removed
+):
+    from types import SimpleNamespace
+
+    manager = MultiRepositoryManager(central_index_path=tmp_path / "registry.json")
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    repo_info = _repo_info("repo-1", repo_path)
+    manager.registry.register(repo_info)
+
+    def download(*args, **kwargs):
+        if not removed:
+            raise RuntimeError("PRIVATE_DOWNLOAD_BODY")
+        manager.registry.unregister_repository("repo-1")
+        return SimpleNamespace(artifact={}, installed_items=["fixture"])
+
+    monkeypatch.setattr(
+        "mcp_server.artifacts.multi_repo_artifact_coordinator.IndexArtifactDownloader._detect_repository",
+        lambda *args: "synthetic/example",
+    )
+    monkeypatch.setattr(
+        "mcp_server.artifacts.multi_repo_artifact_coordinator.IndexArtifactDownloader.download_latest",
+        download,
+    )
+    result = MultiRepoArtifactCoordinator(manager).fetch_workspace(["repo-1"])[0]
+    assert not result.success
+    assert result.error == "Artifact fetch failed (RuntimeError)"
+
+
 def test_reconcile_workspace_marks_missing_or_ready(tmp_path: Path):
     manager = MultiRepositoryManager(central_index_path=tmp_path / "registry.json")
     repo_path = tmp_path / "repo"

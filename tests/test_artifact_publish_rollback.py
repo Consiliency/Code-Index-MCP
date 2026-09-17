@@ -153,6 +153,9 @@ class TestPublishRollback:
     def test_no_rollback_when_sha_release_never_created(self):
         """If _ensure_sha_release itself fails, no delete should be attempted."""
         uploader = _make_uploader()
+        uploader.upload_direct.side_effect = subprocess.CalledProcessError(
+            1, ["gh", "release", "create", SHA_TAG]
+        )
         publisher = ArtifactPublisher(uploader, gh_cmd="gh")
         delete_calls: list[list[str]] = []
 

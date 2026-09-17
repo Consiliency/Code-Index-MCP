@@ -8,6 +8,7 @@ import io
 import json
 import os
 import re
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -17,7 +18,7 @@ from contextlib import closing
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, NamedTuple, Optional, Tuple
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 from mcp_server.artifacts.attestation import (
     Attestation,
@@ -26,7 +27,6 @@ from mcp_server.artifacts.attestation import (
     attest,
     verify_attestation,
 )
-from mcp_server.artifacts.delta_policy import DeltaPolicy
 from mcp_server.config.settings import get_settings
 from mcp_server.core.errors import record_handled_error
 
@@ -450,8 +450,17 @@ class IndexArtifactUploader:
             raise ValueError("artifact metadata checksum is required for direct upload")
 
         if bundle_dir is None:
-            bundle_dir = Path(tempfile.mkdtemp(prefix="mcp-artifact-release-"))
+            bundle_dir = Path(
+                tempfile.mkdtemp(prefix=".mcp-artifact-release-", dir=archive_path.parent)
+            )
         bundle_dir.mkdir(parents=True, exist_ok=True)
+
+        published_archive = bundle_dir / "index-archive.tar.gz"
+        with archive_path.open("rb") as source, published_archive.open("xb") as target:
+            shutil.copyfileobj(source, target)
+        if self._calculate_checksum(published_archive) != checksum:
+            raise ValueError("Prepared archive changed while constructing the release bundle")
+        archive_path = published_archive
 
         metadata_path = bundle_dir / "artifact-metadata.json"
         with metadata_path.open("xb") as handle:
@@ -479,26 +488,26 @@ class IndexArtifactUploader:
         )
 
     def _verify_release_assets(
-        self, tag: str, expected_names: set[str], *, deadline: float
+        self, tag: str, expected_assets: Dict[str, str], *, deadline: float, draft: bool = False
     ) -> None:
         result = self._run_gh(
-            ["gh", "release", "view", tag, "--repo", self.repo, "--json", "assets"],
+            ["gh", "api", f"/repos/{self.repo}/releases/tags/{quote(tag, safe='')}"],
             deadline=deadline,
         )
         payload = json.loads(result or "{}")
+        if payload.get("tag_name") != tag or payload.get("draft") is not draft:
+            raise RuntimeError("Artifact release identity or publication state does not match")
         assets = payload.get("assets")
-        if not isinstance(assets, list):
+        if not isinstance(assets, list) or any(not isinstance(item, dict) for item in assets):
             raise RuntimeError(f"Release {tag} returned malformed asset payload")
-        actual_names = {
-            str(item.get("name"))
-            for item in assets
-            if isinstance(item, dict) and item.get("name") is not None
-        }
-        missing = sorted(expected_names - actual_names)
-        if missing:
-            raise RuntimeError(
-                f"Release {tag} missing required assets after upload: {', '.join(missing)}"
-            )
+        actual = {item.get("name"): item.get("digest") for item in assets}
+        expected = {name: f"sha256:{digest}" for name, digest in expected_assets.items()}
+        if (
+            len(actual) != len(assets)
+            or actual != expected
+            or any(item.get("state") != "uploaded" for item in assets)
+        ):
+            raise RuntimeError("Artifact release assets do not match the exact prepared bytes")
 
     def upload_prepared(
         self,
@@ -544,10 +553,17 @@ class IndexArtifactUploader:
             verify_attestation(bundle.metadata_path, attestation, expected_repo=self.repo)
         self._ensure_gh_cli()
 
-        tag = str(release_tag or metadata.get("logical_artifact_id") or "index-latest")
-        commit = str(metadata.get("commit", ""))[:8]
+        metadata_digest = self._calculate_checksum(bundle.metadata_path)
+        tag = str(
+            release_tag
+            or f"{metadata.get('logical_artifact_id') or 'index-artifact'}-{metadata_digest}"
+        )
+        expected_assets = {path.name: self._calculate_checksum(path) for path in bundle.asset_paths}
+        source_commit = str(metadata.get("commit", ""))
+        commit = source_commit[:8]
+        target = ["--target", source_commit] if re.fullmatch(r"[0-9a-f]{40}", source_commit) else []
         deadline = time.monotonic() + 300
-        # Only a confirmed existing release permits proceeding after create fails.
+        # Creating the draft acquires publication ownership. An existing release is read-only.
         try:
             self._run_gh(
                 [
@@ -557,22 +573,20 @@ class IndexArtifactUploader:
                     tag,
                     "--repo",
                     self.repo,
+                    "--draft",
                     "--title",
                     f"Index: latest ({commit})",
                     "--notes",
                     f"Auto-updated index artifact. Commit: {metadata.get('commit', 'unknown')}",
+                    *target,
                 ],
                 deadline=deadline,
             )
         except subprocess.CalledProcessError:
-            existing = self._run_gh(
-                ["gh", "release", "view", tag, "--repo", self.repo, "--json", "tagName"],
-                deadline=deadline,
-            )
-            if json.loads(existing).get("tagName") != tag:
-                raise RuntimeError("Could not confirm the existing artifact release")
+            self._verify_release_assets(tag, expected_assets, deadline=deadline)
+            return bundle
 
-        # Upload (overwrite) the archive and metadata assets
+        # Never clobber another attempt, including an incomplete draft.
         self._run_gh(
             [
                 "gh",
@@ -581,14 +595,15 @@ class IndexArtifactUploader:
                 tag,
                 "--repo",
                 self.repo,
-                "--clobber",
                 *[str(asset_path) for asset_path in bundle.asset_paths],
             ],
             deadline=deadline,
         )
-        self._verify_release_assets(
-            tag, {asset_path.name for asset_path in bundle.asset_paths}, deadline=deadline
+        self._verify_release_assets(tag, expected_assets, deadline=deadline, draft=True)
+        self._run_gh(
+            ["gh", "release", "edit", tag, "--repo", self.repo, "--draft=false"], deadline=deadline
         )
+        self._verify_release_assets(tag, expected_assets, deadline=deadline)
 
         size_mb = archive_path.stat().st_size / 1024 / 1024
         print(
@@ -701,6 +716,8 @@ def run_cli(args: argparse.Namespace) -> int:
                 raise ValueError("Index foreign-key validation failed")
         print("✅ Validation passed")
 
+    if args.artifact_type != "full" or args.delta_from:
+        raise ValueError("Archive preparation supports full snapshots only; omit delta options")
     secure = not args.no_secure
     archive_path, checksum, size = uploader.compress_indexes(
         Path(args.output),
@@ -709,18 +726,12 @@ def run_cli(args: argparse.Namespace) -> int:
         index_path=index_path,
     )
 
-    policy = DeltaPolicy()
-    decision = policy.decide(
-        compressed_size_bytes=size,
-        previous_artifact_id=args.delta_from,
-    )
-
     metadata = uploader.create_metadata(
         checksum,
         size,
         secure=secure,
-        artifact_type=decision.strategy,
-        delta_from=decision.base_artifact_id,
+        artifact_type="full",
+        delta_from=None,
         repo_id=args.repo,
         tracked_branch=args.tracked_branch,
         commit=args.commit,

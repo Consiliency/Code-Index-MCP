@@ -30,6 +30,125 @@ def test_timeout_does_not_return_while_mutation_is_running():
     assert writes == ["complete"], "timeout returned while mutation still owned a live thread"
 
 
+def test_uncancellable_mutation_cannot_wedge_service_forever():
+    program = """
+import threading
+from mcp_server.dispatcher.dispatcher_enhanced import _run_blocking_with_timeout
+_run_blocking_with_timeout(threading.Event().wait, timeout_seconds=0.01)
+raise AssertionError('hung mutation returned without retiring its worker')
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", program], capture_output=True, text=True, timeout=12
+    )
+    assert result.returncode == 1, result.stderr
+
+
+@pytest.mark.parametrize("behavior", ["hang", "fail"])
+def test_gateway_shutdown_retires_process_after_failed_cleanup(behavior):
+    program = """
+import asyncio, sys, threading
+from types import SimpleNamespace
+from mcp_server import gateway
+from mcp_server.core import lifecycle
+lifecycle._RETIREMENT_GRACE_SECONDS = 0.15
+def stop():
+    if sys.argv[1] == 'hang':
+        threading.Event().wait()
+    raise RuntimeError('synthetic cleanup failure')
+def dependent_shutdown():
+    print('unsafe dependent shutdown', flush=True)
+gateway.multi_watcher = SimpleNamespace(stop_watching_all=stop)
+gateway.ref_poller = None
+gateway.dispatcher = SimpleNamespace(shutdown=dependent_shutdown)
+gateway.plugin_manager = gateway.cache_manager = None
+try:
+    asyncio.run(gateway.shutdown_event())
+except RuntimeError:
+    pass
+threading.Event().wait()
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", program, behavior], capture_output=True, text=True, timeout=10
+    )
+    assert result.returncode == 1, result.stderr
+    assert "unsafe dependent shutdown" not in result.stdout
+
+
+@pytest.mark.parametrize(
+    "boundary",
+    [
+        "watcher_construct",
+        "poller_construct",
+        "watcher_start",
+        "poller_start",
+        "cleanup_fail",
+        "cleanup_hang",
+    ],
+)
+def test_stdio_partial_startup_drains_real_owned_threads(boundary):
+    program = """
+import asyncio, json, os, sys, threading
+from unittest.mock import MagicMock, patch
+from mcp_server.cli import stdio_runner as runner
+from mcp_server.core import lifecycle
+from mcp_server.dispatcher.dispatcher_enhanced import EnhancedDispatcher
+boundary = sys.argv[1]
+lifecycle._RETIREMENT_GRACE_SECONDS = 0.15
+owners, stopped = [], []
+class Owner:
+    def __init__(self, kind):
+        self.kind = kind
+        self.done = threading.Event()
+        self.thread = None
+        if boundary == kind + '_construct':
+            raise RuntimeError('synthetic construct')
+        owners.append(self)
+    def start(self):
+        self.thread = threading.Thread(target=self.done.wait, daemon=False)
+        self.thread.start()
+        if boundary == self.kind + '_start' or (self.kind == 'poller' and boundary.startswith('cleanup_')):
+            raise RuntimeError('synthetic start')
+    start_watching_all = start
+    def stop(self):
+        stopped.append(self.kind)
+        if self.kind == 'watcher' and boundary == 'cleanup_fail':
+            raise RuntimeError('synthetic cleanup')
+        if self.kind == 'watcher' and boundary == 'cleanup_hang':
+            threading.Event().wait()
+        self.done.set()
+        if self.thread is not None:
+            self.thread.join()
+    stop_watching_all = stop
+class Finished(Exception): pass
+def after_startup(*args):
+    assert all(owner.thread is None or not owner.thread.is_alive() for owner in owners)
+    assert len(stopped) == len(owners)
+    print('drained', flush=True)
+    raise Finished()
+os.environ.pop('MCP_METRICS_PORT', None)
+runner.initialize_stateless_services = lambda **kwargs: (MagicMock(), MagicMock(), EnhancedDispatcher.__new__(EnhancedDispatcher), MagicMock(), MagicMock())
+runner.MultiRepositoryWatcher = lambda **kwargs: Owner('watcher')
+runner.RefPoller = lambda **kwargs: Owner('poller')
+runner.Server = after_startup
+with patch('dotenv.load_dotenv'), patch('mcp_server.artifacts.attestation.warn_if_gh_attestation_missing'):
+    try:
+        asyncio.run(runner._serve())
+    except Finished:
+        pass
+    except RuntimeError:
+        assert boundary == 'cleanup_fail'
+        assert stopped == ['poller', 'watcher']
+        print('retirement failed', flush=True)
+        threading.Event().wait()
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", program, boundary], capture_output=True, text=True, timeout=10
+    )
+    assert result.returncode == (1 if boundary.startswith("cleanup_") else 0), result.stderr
+    if not boundary.startswith("cleanup_"):
+        assert "drained" in result.stdout
+
+
 @pytest.mark.parametrize(
     "behavior", ["partial", "stderr_flood", "blocked_stdin", "concurrent_close"]
 )
@@ -267,6 +386,30 @@ def test_transport_log_filter_omits_external_content(monkeypatch, caplog, name):
         else:
             log.error("Received exception from stream: " + sentinel)
     assert sentinel not in caplog.text
+
+
+def test_gunicorn_mapping_access_log_retains_safe_request_metadata(monkeypatch, caplog):
+    import logging
+
+    from mcp_server.core.logging import configure_private_diagnostics
+
+    log = logging.getLogger("gunicorn.access")
+    monkeypatch.setattr(log, "filters", [])
+    configure_private_diagnostics()
+    with caplog.at_level("INFO", logger=log.name):
+        log.info(
+            "%(r)s %(s)s %(q)s",
+            {
+                "r": "GET /search?q=PRIVATE_QUERY HTTP/1.1",
+                "m": "GET",
+                "U": "/search",
+                "q": "PRIVATE_QUERY",
+                "s": "200",
+                "{authorization}i": "PRIVATE_TOKEN",
+            },
+        )
+    assert "GET /search 200" in caplog.text
+    assert "PRIVATE_" not in caplog.text
 
 
 def test_background_cache_failure_omits_exception_payload(caplog):

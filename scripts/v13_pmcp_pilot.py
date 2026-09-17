@@ -8,6 +8,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import secrets
 import shutil
 import signal
@@ -15,10 +16,12 @@ import socket
 import sqlite3
 import subprocess
 import sys
+import tempfile
 import threading
 import time
+import uuid
 import zipfile
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from datetime import timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -87,6 +90,33 @@ def digest_json(value: dict) -> str:
 
 def digest_file(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+@contextmanager
+def evidence_snapshot(paths: list[Path]):
+    """Validate private copies and refuse inputs replaced while they were checked."""
+
+    def identity(value):
+        return (value.st_dev, value.st_ino, value.st_size, value.st_mtime_ns, value.st_ctime_ns)
+
+    with tempfile.TemporaryDirectory(prefix="v13-evidence-") as directory:
+        copies, identities = {}, {}
+        for index, path in enumerate(dict.fromkeys(paths)):
+            target = Path(directory) / str(index) / path.name
+            target.parent.mkdir()
+            with path.open("rb") as source, target.open("xb") as output:
+                before = os.fstat(source.fileno())
+                shutil.copyfileobj(source, output)
+                if identity(os.fstat(source.fileno())) != identity(before):
+                    raise PilotRefused("evidence_changed_during_validation")
+            target.chmod(0o400)
+            copies[path], identities[path] = target, identity(before)
+        yield copies
+        if any(
+            path.is_symlink() or identity(path.stat()) != expected
+            for path, expected in identities.items()
+        ):
+            raise PilotRefused("evidence_changed_during_validation")
 
 
 def validate_receipt(receipt: dict, manifest: dict, kind: str) -> None:
@@ -209,24 +239,34 @@ def uvx_prefix(root: Path, wheel: Path, python: str) -> list[str]:
     ]
 
 
-def prepare(root: Path) -> dict:
+def prepare(root: Path, wheel_path: Path | None = None, expected_sha256: str | None = None) -> dict:
+    if (wheel_path is None) != (expected_sha256 is None):
+        raise PilotRefused("delivered_wheel_digest_required")
     identity = source_identity()
     root.mkdir(mode=0o700, parents=True, exist_ok=False)
     (root / "home").mkdir()
     python = str(Path(sys.base_prefix) / "bin" / "python3.12")
     if sys.version_info[:2] != (3, 12) or not Path(python).is_file():
         raise PilotRefused("python_312_required")
-    run_command(
-        ["uv", "build", "--wheel", "--out-dir", str(root / "dist")],
-        root,
-        "pilot-build",
-        env=clean_env(root),
-        cwd=REPO,
-    )
+    if wheel_path is None:
+        run_command(
+            ["uv", "build", "--wheel", "--out-dir", str(root / "dist")],
+            root,
+            "pilot-build",
+            env=clean_env(root),
+            cwd=REPO,
+        )
+    else:
+        (root / "dist").mkdir()
+        shutil.copyfile(wheel_path, root / "dist" / wheel_path.name)
     wheels = list((root / "dist").glob("*.whl"))
     if len(wheels) != 1:
         raise PilotRefused("wheel_count")
     wheel = wheels[0]
+    if expected_sha256 is not None and (
+        not re.fullmatch(r"[0-9a-f]{64}", expected_sha256) or digest_file(wheel) != expected_sha256
+    ):
+        raise PilotRefused("delivered_wheel_digest_mismatch")
     run_command(
         [
             "uv",
@@ -275,6 +315,7 @@ def prepare(root: Path) -> dict:
         **identity,
         "wheel": wheel.name,
         "wheel_sha256": digest_file(wheel),
+        "artifact_origin": "registry" if wheel_path is not None else "local_build",
         "constraints_sha256": digest_file(root / "constraints.txt"),
         "installed": installed,
         "uvx_prefix": prefix,
@@ -442,52 +483,176 @@ def commit_fixture(path: Path, env: dict) -> None:
     )
 
 
+def cgroup_processes(group: Path) -> list[psutil.Process]:
+    """Census the owned Linux cgroup even after a child reparents or calls setsid."""
+    members = {}
+    for path in group.rglob("cgroup.procs") if group.exists() else []:
+        try:
+            pids = path.read_text().split()
+        except FileNotFoundError:
+            continue
+        for value in pids:
+            try:
+                process = psutil.Process(int(value))
+                if process.status() != psutil.STATUS_ZOMBIE:
+                    members[process.pid] = process
+            except psutil.NoSuchProcess:
+                continue
+    return list(members.values())
+
+
 class OwnedProcess:
     def __init__(self, argv: list[str], root: Path, env: dict, label: str):
         self.log = (root / f"{label}.log").open("wb")
-        self.proc = subprocess.Popen(argv, cwd=root, env=env, stdout=self.log, stderr=self.log)
+        self.unit = "code-index-v13-" + uuid.uuid4().hex + ".scope"
+        self.control_env = {
+            "PATH": os.environ.get("PATH", os.defpath),
+            "XDG_RUNTIME_DIR": os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}"),
+        }
+        self.proc = subprocess.Popen(
+            [
+                "systemd-run",
+                "--user",
+                "--scope",
+                "--quiet",
+                "--unit",
+                self.unit,
+                "--property=MemoryAccounting=yes",
+                "--",
+                *argv,
+            ],
+            cwd=root,
+            env={**env, **self.control_env},
+            stdout=self.log,
+            stderr=self.log,
+            start_new_session=True,
+        )
         self.children = {}
         self.peak_rss_mib = 0.0
         self.exit_seconds = None
         self.survivors = []
+        self.group = None
+        try:
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                state = self._control("show", "--property=ControlGroup", "--value")
+                group = state.stdout.strip()
+                if state.returncode == 0 and group.startswith("/user.slice/"):
+                    self.group = Path("/sys/fs/cgroup") / group.lstrip("/")
+                    if self.group.is_dir():
+                        break
+                if self.proc.poll() is not None:
+                    raise PilotRefused("owned_scope_start_failed")
+                time.sleep(0.02)
+            else:
+                raise PilotRefused("owned_scope_unavailable")
+        except BaseException:
+            self._control("kill", "--signal=SIGKILL", "--kill-who=all")
+            self.proc.wait(timeout=5)
+            self.log.close()
+            raise
+
+    def _control(self, *arguments):
+        return subprocess.run(
+            ["systemctl", "--user", *arguments, self.unit],
+            env=self.control_env,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
 
     def observe(self):
-        try:
-            owner = psutil.Process(self.proc.pid)
-            children = owner.children(recursive=True)
-            for child in children:
-                self.children[child.pid] = child
-            rss = owner.memory_info().rss + sum(child.memory_info().rss for child in children)
-            self.peak_rss_mib = max(self.peak_rss_mib, rss / 1024**2)
-        except psutil.Error:
-            pass
+        rss = 0
+        for child in cgroup_processes(self.group):
+            self.children[child.pid] = child
+            try:
+                rss += child.memory_info().rss
+            except psutil.NoSuchProcess:
+                continue
+        self.peak_rss_mib = max(self.peak_rss_mib, rss / 1024**2)
 
     def stop(self):
         self.observe()
         started = time.monotonic()
         try:
-            if self.proc.poll() is None:
-                self.proc.send_signal(signal.SIGTERM)
-                try:
-                    self.proc.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    self.proc.kill()
-                    self.proc.wait(timeout=5)
+            self._control("kill", "--signal=SIGTERM", "--kill-who=all")
+            while cgroup_processes(self.group) and time.monotonic() - started < 5:
+                self.observe()
+                time.sleep(0.02)
             self.exit_seconds = time.monotonic() - started
-            self.survivors = [
-                child.pid
-                for child in self.children.values()
-                if child.is_running() and child.status() != psutil.STATUS_ZOMBIE
-            ]
+            self.survivors = [child.pid for child in cgroup_processes(self.group)]
         finally:
-            for child in self.children.values():
-                try:
-                    if child.is_running():
-                        child.kill()
-                except psutil.Error:
-                    pass
-            psutil.wait_procs(list(self.children.values()), timeout=2)
+            self._control("kill", "--signal=SIGKILL", "--kill-who=all")
+            self.proc.wait(timeout=5)
+            deadline = time.monotonic() + 2
+            while cgroup_processes(self.group) and time.monotonic() < deadline:
+                time.sleep(0.02)
             self.log.close()
+            if cgroup_processes(self.group):
+                raise PilotRefused("owned_scope_cleanup_failed")
+
+
+class OwnedContainer:
+    """Measure and retire only the exact disposable Qdrant container created here."""
+
+    def __init__(self, container: str, root: Path):
+        self.container, self.root = container, root
+        pid = int(
+            run_command(
+                ["docker", "inspect", "--format", "{{.State.Pid}}", container],
+                root,
+                "qdrant-pid",
+                timeout=5,
+            )
+        )
+        entries = (Path("/proc") / str(pid) / "cgroup").read_text().splitlines()
+        group = next((entry[3:] for entry in entries if entry.startswith("0::/")), None)
+        if not group:
+            raise PilotRefused("qdrant_cgroup_unavailable")
+        self.group = Path("/sys/fs/cgroup") / group.lstrip("/")
+        if not self.group.is_dir():
+            raise PilotRefused("qdrant_cgroup_unavailable")
+        self.peak_rss_mib = 0.0
+        self.exit_seconds = None
+        self.survivors = []
+        self.observe()
+
+    def observe(self):
+        rss = 0
+        for process in cgroup_processes(self.group):
+            try:
+                rss += process.memory_info().rss
+            except psutil.NoSuchProcess:
+                continue
+        self.peak_rss_mib = max(self.peak_rss_mib, rss / 1024**2)
+
+    def stop(self):
+        started = time.monotonic()
+        try:
+            run_command(
+                ["docker", "stop", "--time", "4", self.container],
+                self.root,
+                "qdrant-stop",
+                timeout=6,
+            )
+            state = json.loads(
+                run_command(
+                    ["docker", "inspect", "--format", "{{json .State}}", self.container],
+                    self.root,
+                    "qdrant-stopped-state",
+                    timeout=5,
+                )
+            )
+            self.exit_seconds = time.monotonic() - started
+            self.survivors = [process.pid for process in cgroup_processes(self.group)]
+            if state["Running"] or state["ExitCode"] not in (0, 143) or state["OOMKilled"]:
+                self.survivors.append("qdrant_unclean_exit")
+        finally:
+            run_command(
+                ["docker", "rm", "--force", self.container], self.root, "qdrant-remove", timeout=6
+            )
+            if cgroup_processes(self.group):
+                raise PilotRefused("qdrant_cleanup_failed")
 
 
 def tool_payload(value):
@@ -951,9 +1116,16 @@ async def browser_session(root: Path, manifest: dict, inspector: Path) -> dict:
 
 
 def verify_saved_receipt(
-    root: Path, manifest: dict, kind: str, *, expected_approval: str | None = None
+    root: Path,
+    manifest: dict,
+    kind: str,
+    *,
+    expected_approval: str | None = None,
+    receipt_bytes: bytes | None = None,
 ) -> dict:
-    result = json.loads((root / f"{kind}.json").read_text())
+    result = json.loads(
+        receipt_bytes if receipt_bytes is not None else (root / f"{kind}.json").read_bytes()
+    )
     validate_receipt(result, manifest, kind)
     required_roles = {
         "browser": {
@@ -973,15 +1145,24 @@ def verify_saved_receipt(
             Path(item["path"]).is_absolute()
             or not path.resolve().is_relative_to(root.resolve())
             or not path.is_file()
-            or digest_file(path) != item.get("sha256")
         ):
             raise PilotRefused("receipt_artifact_mismatch")
+    with evidence_snapshot([root / item["path"] for item in artifacts]) as copies:
+        for item in artifacts:
+            if digest_file(copies[root / item["path"]]) != item.get("sha256"):
+                raise PilotRefused("receipt_artifact_mismatch")
+        _verify_receipt_artifacts(root, manifest, kind, result, copies, expected_approval)
+    return result
+
+
+def _verify_receipt_artifacts(root, manifest, kind, result, copies, expected_approval):
+    artifacts = result["artifacts"]
     if kind == "browser":
         from PIL import Image
 
         evidence = {}
         for role in ("browser_session", "browser_actions"):
-            paths = [root / item["path"] for item in artifacts if item["role"] == role]
+            paths = [copies[root / item["path"]] for item in artifacts if item["role"] == role]
             if len(paths) != 1:
                 raise PilotRefused("browser_artifact_ambiguous")
             evidence[role] = json.loads(paths[0].read_text())
@@ -1000,7 +1181,9 @@ def verify_saved_receipt(
             ):
                 raise PilotRefused("browser_actions_incomplete")
         screenshot_paths = [
-            root / item["path"] for item in artifacts if item["role"].endswith("_screenshot")
+            copies[root / item["path"]]
+            for item in artifacts
+            if item["role"].endswith("_screenshot")
         ]
         if len(set(screenshot_paths)) < 2:
             raise PilotRefused("browser_screenshots_not_distinct")
@@ -1017,10 +1200,10 @@ def verify_saved_receipt(
             root,
             manifest,
             result,
+            copies=copies,
             rehearsal=kind == "rehearsal",
             expected_approval=expected_approval,
         )
-    return result
 
 
 def _verify_live_records(
@@ -1028,6 +1211,7 @@ def _verify_live_records(
     manifest: dict,
     result: dict,
     *,
+    copies: dict,
     rehearsal=False,
     expected_approval: str | None = None,
 ) -> None:
@@ -1041,7 +1225,9 @@ def _verify_live_records(
     try:
         paths = {}
         for role in ("allowance_ledger", "runtime_provenance", "runtime_metadata", "workload"):
-            matches = [root / item["path"] for item in result["artifacts"] if item["role"] == role]
+            matches = [
+                copies[root / item["path"]] for item in result["artifacts"] if item["role"] == role
+            ]
             if len(matches) != 1:
                 raise PilotRefused("live_artifact_ambiguous")
             paths[role] = matches[0]
@@ -1410,6 +1596,7 @@ async def inference_pilot(root: Path, manifest: dict, *, rehearsal: bool) -> dic
     servers = []
     threads = []
     container = None
+    container_owner = None
     sampling = None
     finished = asyncio.Event()
     result = {
@@ -1435,6 +1622,8 @@ async def inference_pilot(root: Path, manifest: dict, *, rehearsal: bool) -> dic
         while not finished.is_set():
             for process in fixture.get("processes", []):
                 process.observe()
+            if container_owner is not None:
+                container_owner.observe()
             await asyncio.sleep(0.05)
 
     async def query(client, tools, repo, kind, *, measured=False):
@@ -1505,7 +1694,6 @@ async def inference_pilot(root: Path, manifest: dict, *, rehearsal: bool) -> dic
                 [
                     "docker",
                     "run",
-                    "--rm",
                     "-d",
                     "-p",
                     f"127.0.0.1:{port}:6333",
@@ -1519,6 +1707,7 @@ async def inference_pilot(root: Path, manifest: dict, *, rehearsal: bool) -> dic
         ).strip()
         if len(container) != 64 or any(c not in "0123456789abcdef" for c in container):
             raise PilotRefused("qdrant_owner_identity")
+        container_owner = await asyncio.to_thread(OwnedContainer, container, directory)
         qdrant_url = f"http://127.0.0.1:{port}"
         async with httpx.AsyncClient(trust_env=False) as http:
             for _ in range(100):
@@ -1703,17 +1892,35 @@ async def inference_pilot(root: Path, manifest: dict, *, rehearsal: bool) -> dic
         result["workflow_completed"] = True
     finally:
         finished.set()
+        cleanup_errors = []
         if sampling:
-            await sampling
+            try:
+                await sampling
+            except BaseException as exc:
+                cleanup_errors.append(type(exc).__name__)
         for server in reversed(servers):
-            await asyncio.to_thread(server.shutdown)
-            server.server_close()
+            try:
+                await asyncio.to_thread(server.shutdown)
+                server.server_close()
+            except Exception as exc:
+                cleanup_errors.append(type(exc).__name__)
         for thread in threads:
             await asyncio.to_thread(thread.join, 5)
-        if container:
-            await asyncio.to_thread(
-                run_command, ["docker", "stop", "--time", "5", container], directory, "qdrant-stop"
-            )
+            if thread.is_alive():
+                cleanup_errors.append("server_thread_survived")
+        try:
+            if container_owner is not None:
+                await asyncio.to_thread(container_owner.stop)
+            elif container:
+                await asyncio.to_thread(
+                    run_command,
+                    ["docker", "rm", "--force", container],
+                    directory,
+                    "qdrant-failed-adoption-cleanup",
+                    timeout=6,
+                )
+        except Exception as exc:
+            cleanup_errors.append(type(exc).__name__)
         if ledger:
             budget = ledger.snapshot()
             budget["elapsed_seconds"] = (
@@ -1726,10 +1933,12 @@ async def inference_pilot(root: Path, manifest: dict, *, rehearsal: bool) -> dic
                 allowance / "ledger.sqlite", directory / "allowance-ledger/ledger.sqlite"
             )
         processes = fixture.get("processes", [])
+        owned = [*processes, *([container_owner] if container_owner is not None else [])]
         result.update(
-            shutdown_seconds=[p.exit_seconds for p in processes],
-            surviving_children=[pid for p in processes for pid in p.survivors],
-            peak_rss_mib=max((p.peak_rss_mib for p in processes), default=0),
+            shutdown_seconds=[p.exit_seconds for p in owned],
+            surviving_children=[pid for p in owned for pid in p.survivors],
+            peak_rss_mib=sum(p.peak_rss_mib for p in owned),
+            qdrant_measured=container_owner is not None,
         )
         result["latencies_ms"] = {
             kind: [
@@ -1758,6 +1967,8 @@ async def inference_pilot(root: Path, manifest: dict, *, rehearsal: bool) -> dic
             n >= 20 for n in result["contention_successes"].values()
         )
         write_json(root / (label + ".partial.json"), result)
+        if cleanup_errors:
+            raise PilotRefused("pilot_cleanup_failed:" + ",".join(cleanup_errors))
     if not rehearsal:
         validate_receipt(result, manifest, "live")
     result["artifacts"] = [
@@ -1769,7 +1980,13 @@ async def inference_pilot(root: Path, manifest: dict, *, rehearsal: bool) -> dic
             ("workload", directory / "workload.json"),
         )
     ]
-    _verify_live_records(root, manifest, result, rehearsal=rehearsal, expected_approval=approval)
+    verify_saved_receipt(
+        root,
+        manifest,
+        label,
+        expected_approval=approval,
+        receipt_bytes=json.dumps(result).encode(),
+    )
     write_json(root / (label + ".json"), result)
     return result
 
@@ -1792,11 +2009,14 @@ def main():
     )
     parser.add_argument("--root", type=Path)
     parser.add_argument("--wheel", type=Path)
+    parser.add_argument("--wheel-sha256")
     parser.add_argument("--inspector", type=Path)
     args = parser.parse_args()
     if args.mode == "identity":
         print(json.dumps(installed_identity(args.wheel)))
         return
+    if args.mode != "prepare" and (args.wheel is not None or args.wheel_sha256 is not None):
+        raise PilotRefused("delivered_wheel_requires_prepare_mode")
     root = args.root or REPO / ".phase-loop" / "runs" / (
         "v13-PILOT-" + source_identity()["source"][:12]
     )
@@ -1805,7 +2025,7 @@ def main():
     if root.parent != expected or not root.name.startswith("v13-PILOT-"):
         raise PilotRefused("scratch_root_outside_plan")
     if args.mode == "prepare":
-        result = prepare(root)
+        result = prepare(root, args.wheel, args.wheel_sha256)
     elif args.mode == "offline":
         result = asyncio.run(offline(root, load_manifest(root)))
     elif args.mode == "browser":

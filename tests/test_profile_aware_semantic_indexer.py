@@ -6,6 +6,9 @@ import hashlib
 import json
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import Mock
+
+import pytest
 
 from mcp_server.artifacts.semantic_profiles import SemanticProfileRegistry
 from mcp_server.utils import semantic_indexer as semantic_indexer_module
@@ -285,6 +288,37 @@ def test_strict_batch_indexing_refuses_writes_without_authoritative_summary(monk
     assert result["files_blocked"] == 1
     assert result["missing_summary_chunk_ids"] == ["chunk-1"]
     assert indexer.qdrant.upserts == []
+
+
+@pytest.mark.parametrize("include_success", [False, True])
+def test_batch_preparation_errors_are_failures_not_skips(monkeypatch, tmp_path, include_success):
+    _patch_indexer_runtime(monkeypatch, tmp_path)
+    _patch_chunk_file(monkeypatch)
+    registry = SemanticProfileRegistry.from_raw(_sample_profiles(), "oss-high")
+    source = tmp_path / "sample.py"
+    source.write_text("def alpha(x):\n    return x + 1\n")
+    indexer = SemanticIndexer(
+        qdrant_path=":memory:",
+        profile_registry=registry,
+        semantic_profile="oss-high",
+        sqlite_store=_FakeSQLiteStore(summary_text="Synthetic summary"),
+    )
+    prepare = indexer._prepare_file_for_indexing
+    failed = tmp_path / "bad.py"
+
+    def prepare_with_failure(path):
+        if path == failed:
+            raise OSError("private input")
+        return prepare(path)
+
+    monkeypatch.setattr(indexer, "_prepare_file_for_indexing", prepare_with_failure)
+    provenance = Mock()
+    monkeypatch.setattr(indexer, "_write_collection_provenance_best_effort", provenance)
+    result = indexer.index_files_batch([failed, source] if include_success else [failed])
+    assert result["files_failed"] == 1
+    assert result["files_skipped"] == 0
+    assert result["files_indexed"] == int(include_success)
+    provenance.assert_not_called()
 
 
 def test_strict_preparation_includes_summary_text_in_embedding_input(monkeypatch, tmp_path):

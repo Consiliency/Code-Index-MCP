@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -17,6 +18,7 @@ if __package__:
         PilotRefused,
         digest_file,
         digest_json,
+        evidence_snapshot,
         validate_receipt,
         verify_saved_receipt,
     )
@@ -26,6 +28,7 @@ else:
         PilotRefused,
         digest_file,
         digest_json,
+        evidence_snapshot,
         validate_receipt,
         verify_saved_receipt,
     )
@@ -70,6 +73,10 @@ SIGNING_SUBJECT = "index-it-mcp-artifact-metadata.json"
 def _signing_context(repo: Path, root: Path) -> dict:
     import yaml
 
+    from mcp_server.artifacts.artifact_download import IndexArtifactDownloader
+    from mcp_server.artifacts.artifact_upload import _metadata_bytes
+    from mcp_server.artifacts.integrity_gate import validate_artifact_integrity
+
     canonical = repo.resolve() / ".phase-loop/runs/v13-PREP-signing-20260915"
     if root.absolute() != canonical or root.resolve() != canonical:
         raise CandidateRefused("signing_root_outside_plan")
@@ -95,6 +102,35 @@ def _signing_context(repo: Path, root: Path) -> dict:
         or settings["create-storage-record"] is not False
     ):
         raise CandidateRefused("signing_workflow_policy_mismatch")
+    try:
+        metadata_path, archive_path = root / "artifact-metadata.json", root / "index.tar.gz"
+        with evidence_snapshot([metadata_path, archive_path]) as copies:
+            raw = copies[metadata_path].read_bytes()
+            metadata = json.loads(raw)
+            archive = copies[archive_path]
+            if (
+                not isinstance(metadata, dict)
+                or raw != _metadata_bytes(metadata)
+                or type(metadata.get("compressed_size")) is not int
+                or metadata["compressed_size"] != archive.stat().st_size
+                or not metadata.get("repo_id")
+                or not metadata.get("tracked_branch")
+                or not re.fullmatch(r"[0-9a-f]{40}", str(metadata.get("commit", "")))
+                or metadata.get("artifact_type") != "full"
+                or not validate_artifact_integrity(metadata, archive).passed
+                or IndexArtifactDownloader(repo=SIGNING_REPOSITORY).validate_artifact_identity(
+                    metadata,
+                    repo_id=metadata["repo_id"],
+                    tracked_branch=metadata["tracked_branch"],
+                    target_commit=metadata["commit"],
+                    semantic_profile_hash=metadata["semantic_profile_hash"],
+                )
+            ):
+                raise CandidateRefused("signing_archive_integrity_failed")
+            subject_digest = hashlib.sha256(raw).hexdigest()
+            archive_digest = digest_file(archive)
+    except (OSError, ValueError, TypeError, KeyError, PilotRefused) as exc:
+        raise CandidateRefused("signing_inputs_missing_or_invalid") from exc
     return {
         "approval": "v13-prep-178b8328-20260915-digest-signing",
         "repository": SIGNING_REPOSITORY,
@@ -105,8 +141,8 @@ def _signing_context(repo: Path, root: Path) -> dict:
         "workflow_sha256": digest_file(workflow),
         "mode": "index-attestation",
         "subject_name": SIGNING_SUBJECT,
-        "subject_digest": digest_file(root / "artifact-metadata.json"),
-        "archive_sha256": digest_file(root / "index.tar.gz"),
+        "subject_digest": subject_digest,
+        "archive_sha256": archive_digest,
     }
 
 
@@ -448,15 +484,27 @@ def verify_renewed_pilot(repo: Path, root: Path) -> dict:
             or digest_file(checked_file("constraints.txt")) != manifest["constraints_sha256"]
         ):
             raise CandidateRefused("renewed_artifact_binding_changed")
-        offline = json.loads(checked_file("offline.json").read_text())
+        proof_bytes = {
+            kind: checked_file(kind + ".json").read_bytes()
+            for kind in ("offline", "browser", "rehearsal", "live")
+        }
+        offline = json.loads(proof_bytes["offline"])
         validate_receipt(offline, manifest, "offline")
         for kind in ("browser", "rehearsal", "live"):
-            saved = json.loads(checked_file(kind + ".json").read_text())
+            saved = json.loads(proof_bytes[kind])
             for artifact in saved.get("artifacts", []):
                 checked_file(artifact["path"])
-        browser = verify_saved_receipt(root, manifest, "browser")
-        verify_saved_receipt(root, manifest, "rehearsal")
-        live = verify_saved_receipt(root, manifest, "live", expected_approval=RENEWED_APPROVAL)
+        browser = verify_saved_receipt(
+            root, manifest, "browser", receipt_bytes=proof_bytes["browser"]
+        )
+        verify_saved_receipt(root, manifest, "rehearsal", receipt_bytes=proof_bytes["rehearsal"])
+        live = verify_saved_receipt(
+            root,
+            manifest,
+            "live",
+            expected_approval=RENEWED_APPROVAL,
+            receipt_bytes=proof_bytes["live"],
+        )
         if live["budget"]["approval"] != RENEWED_APPROVAL:
             raise CandidateRefused("renewed_approval_mismatch")
         canonical = runs / "v13-PILOT-allowance-20260915"
@@ -477,8 +525,7 @@ def verify_renewed_pilot(repo: Path, root: Path) -> dict:
             "approval": RENEWED_APPROVAL,
             "reserved_input_units": live["budget"]["reserved_input_units"],
             "proof_sha256": {
-                kind: digest_file(root / f"{kind}.json")
-                for kind in ("offline", "browser", "rehearsal", "live")
+                kind: hashlib.sha256(raw).hexdigest() for kind, raw in proof_bytes.items()
             },
             "browser_goal_count": len(browser["goals"]),
             "new_inference_requests": 0,
@@ -491,9 +538,21 @@ def verify_renewed_pilot(repo: Path, root: Path) -> dict:
 def main() -> None:
     """Print metadata-only comparison; any missing proof exits unsuccessfully."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--renewed-pilot-root", type=Path)
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--renewed-pilot-root", type=Path)
+    mode.add_argument("--claim-signing-dispatch", action="store_true")
     args = parser.parse_args()
     try:
+        if args.claim_signing_dispatch:
+            print(
+                json.dumps(
+                    claim_signing_dispatch(
+                        REPO, REPO / ".phase-loop/runs/v13-PREP-signing-20260915"
+                    ),
+                    indent=2,
+                )
+            )
+            return
         pilot = verify_pilot(REPO)
         if args.renewed_pilot_root is None:
             candidate = compare_candidate(REPO, pilot["source"])

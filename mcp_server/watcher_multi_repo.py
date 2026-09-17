@@ -82,7 +82,7 @@ class GitMonitor:
             key: value for key, value in self.last_commits.items() if key in repositories
         }
         for repo_id, repo_info in repositories.items():
-            if not repo_info.auto_sync:
+            if not repo_info.auto_sync or not getattr(repo_info, "active", True):
                 continue
 
             try:
@@ -348,7 +348,11 @@ class MultiRepositoryHandler(FileSystemEventHandler):
         """Watchdog is a hint to reconcile Git, never authority for working-tree bytes."""
         if not self._refresh_context() or build_walker_filter(self.repo_path)(path):
             return False
-        result = self.parent_watcher.index_manager.sync_repository_index(self.repo_id)
+        try:
+            result = self.parent_watcher.index_manager.sync_repository_index(self.repo_id)
+        except Exception as exc:
+            logger.warning("Committed event reconciliation deferred (%s)", type(exc).__name__)
+            return False
         return result.action in {"full_index", "incremental_update"}
 
     def on_any_event(self, event):
@@ -405,6 +409,7 @@ class MultiRepositoryWatcher:
         self.changed_repos = set()  # Repos with uncommitted changes
         self.git_monitor = GitMonitor(registry, self.on_git_commit, self._reconcile_registry)
         self._watch_lock = threading.RLock()
+        self._pending_syncs = {}
 
         self.query_cache = None
         self.path_resolver = None
@@ -461,6 +466,7 @@ class MultiRepositoryWatcher:
             return {
                 repo_id: Path(repo.path)
                 for repo_id, repo in self.registry.get_all_repositories().items()
+                if repo.auto_sync and getattr(repo, "active", True)
             }
 
         if not self.registry.get_all_repositories():
@@ -477,6 +483,9 @@ class MultiRepositoryWatcher:
         )
 
     def _reconcile_repository_drift(self, repo_id: str) -> None:
+        repo = self.registry.get_repository(repo_id)
+        if repo is None or not repo.auto_sync or not getattr(repo, "active", True):
+            return
         result = self.index_manager.sync_repository_index(repo_id, force_full=True)
         if result.action in {"full_index", "incremental_update"}:
             self.mark_repository_changed(repo_id)
@@ -597,30 +606,42 @@ class MultiRepositoryWatcher:
         """
         repo_info = self.registry.get_repository(repo_id)
         self._stop_repo_watcher(repo_id, repo_info)
-        self.registry.unregister_repository(repo_id)
+        if repo_info is not None:
+            self.registry.unregister_repository(repo_id, expected_owner=repo_info)
 
     def _stop_repo_watcher(self, repo_id: str, repo_info=None) -> None:
         with self._watch_lock:
             observer = self.observers.pop(repo_id, None)
             handler = self.watchers.pop(repo_id, None)
+            pending = self._pending_syncs.pop(repo_id, [])
+            for future, retired in pending:
+                retired.set()
+                future.cancel()
             if observer is not None:
                 observer.stop()
                 observer.join()
+        for future, _retired in pending:
+            if not future.cancelled():
+                future.result()
         repo_root = (
             Path(repo_info.path)
             if repo_info is not None
             else (handler.repo_path if handler else None)
         )
+        owner = handler.ctx.registry_entry if handler is not None else repo_info
+        if owner is None:
+            return
         if self.store_registry is not None and hasattr(self.store_registry, "close"):
-            self.store_registry.close(repo_id)
-        if self.plugin_set_registry is not None and hasattr(self.plugin_set_registry, "evict"):
-            self.plugin_set_registry.evict(repo_id)
+            self.store_registry.close(repo_id, expected_owner=owner)
+        # Plugins are shared by repo ID, not registration; their lifecycle manager owns eviction.
         if self.semantic_indexer_registry is not None and hasattr(
             self.semantic_indexer_registry, "evict"
         ):
-            self.semantic_indexer_registry.evict(repo_id)
+            self.semantic_indexer_registry.evict(repo_id, expected_owner=owner)
         if hasattr(self.dispatcher, "evict_repository_state"):
-            self.dispatcher.evict_repository_state(repo_id, repo_root=repo_root)
+            self.dispatcher.evict_repository_state(
+                repo_id, repo_root=repo_root, expected_owner=owner
+            )
 
     def _start_repo_watcher(self, repo_id: str, repo_path: str):
         """Start watching a specific repository."""
@@ -686,10 +707,28 @@ class MultiRepositoryWatcher:
         # Remove from changed set (changes are now committed)
         self.changed_repos.discard(repo_id)
 
-        # Submit index sync task
-        _ = self.executor.submit(self._sync_repository, repo_id, commit)
+        with self._watch_lock:
+            if not self.running or repo_id not in self.watchers:
+                return
+            owner = self.watchers[repo_id].ctx.registry_entry
+            retired = threading.Event()
+            pending = self._pending_syncs.setdefault(repo_id, [])
+            pending[:] = [(future, token) for future, token in pending if not future.done()]
+            pending.append(
+                (
+                    self.executor.submit(
+                        self._sync_admitted_repository, repo_id, commit, owner, retired
+                    ),
+                    retired,
+                )
+            )
 
-    def _sync_repository(self, repo_id: str, commit: str):
+    def _sync_admitted_repository(self, repo_id, commit, owner, retired):
+        with lock_registry.acquire(repo_id, repo_path=Path(owner.path)):
+            if not retired.is_set():
+                self._sync_repository(repo_id, commit, owner=owner)
+
+    def _sync_repository(self, repo_id: str, commit: str, *, owner=None):
         """Sync repository index with new commit.
 
         Args:
@@ -698,7 +737,10 @@ class MultiRepositoryWatcher:
         """
         try:
             # Sync the index
-            result = self.index_manager.sync_repository_index(repo_id)
+            kwargs = (
+                {"expected_registration_id": owner.registration_id} if owner is not None else {}
+            )
+            result = self.index_manager.sync_repository_index(repo_id, **kwargs)
 
             successful_mutation = result.action in {"full_index", "incremental_update"}
             if successful_mutation:
@@ -708,6 +750,10 @@ class MultiRepositoryWatcher:
                 )
 
                 repo_info = self.registry.get_repository(repo_id)
+                if owner is not None and (
+                    repo_info is None or repo_info.registration_id != owner.registration_id
+                ):
+                    return
                 synced_commit = getattr(result, "commit", None) or commit
 
                 if (
@@ -770,7 +816,7 @@ class MultiRepositoryWatcher:
         futures = []
 
         for repo_id, repo_info in self.registry.get_all_repositories().items():
-            if repo_info.auto_sync:
+            if repo_info.auto_sync and repo_info.active:
 
                 def _locked_sync(rid=repo_id):
                     return self.index_manager.sync_repository_index(rid)
@@ -792,13 +838,16 @@ class MultiRepositoryWatcher:
         Returns:
             Status dictionary
         """
-        status = {"watching": len(self.watchers), "repositories": {}}
+        with self._watch_lock:
+            repo_ids = list(self.watchers)
+            changed_repos = set(self.changed_repos)
+        status = {"watching": len(repo_ids), "repositories": {}}
 
-        for repo_id in self.watchers:
+        for repo_id in repo_ids:
             repo_info = self.registry.get_repository(repo_id)
             if repo_info:
                 repo_status = self.index_manager.get_repository_status(repo_id)
-                repo_status["has_uncommitted_changes"] = repo_id in self.changed_repos
+                repo_status["has_uncommitted_changes"] = repo_id in changed_repos
                 status["repositories"][repo_id] = repo_status
 
         return status

@@ -338,6 +338,9 @@ class TestCallOrder:
         uploader = _make_uploader()
         publisher = ArtifactPublisher(uploader, gh_cmd="gh")
         observed: list[str] = []
+        uploader.upload_direct.side_effect = lambda *args, **kwargs: observed.append(
+            "verified-upload"
+        )
 
         def side_effect(args, **kwargs):
             # args = ["gh", "release", <subcommand>, <tag>, ...]
@@ -363,9 +366,9 @@ class TestCallOrder:
         assert upload_call.kwargs["release_tag"] == _canonical_tag("repo", COMMIT)
         assert "attestation" not in upload_call.kwargs
 
-        # SHA-keyed create must precede index-latest edit
+        # The uploader owns draft creation and verifies publication before returning.
         sha_create_idx = next(
-            (i for i, s in enumerate(observed) if f"create:{_canonical_tag('repo', COMMIT)}" == s),
+            (i for i, s in enumerate(observed) if s == "verified-upload"),
             None,
         )
         latest_edit_idx = next(

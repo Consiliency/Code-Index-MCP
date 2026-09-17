@@ -310,7 +310,7 @@ class RepositoryRegistry:
 
             logger.info(f"Registered repository: {repo_info.name} ({repo_info.repository_id})")
 
-    def unregister(self, repository_id: str):
+    def unregister(self, repository_id: str, *, expected_owner=None):
         """
         Unregister a repository.
 
@@ -319,6 +319,12 @@ class RepositoryRegistry:
         """
         with self._transaction(write=True):
             if repository_id in self._registry:
+                if (
+                    expected_owner is not None
+                    and self._registry[repository_id].get("registration_id")
+                    != expected_owner.registration_id
+                ):
+                    return False
                 repo_name = self._registry[repository_id].get("name", "Unknown")
                 del self._registry[repository_id]
                 logger.info(f"Unregistered repository: {repo_name} ({repository_id})")
@@ -392,9 +398,9 @@ class RepositoryRegistry:
         self.register(repo_info)
         return repo_id
 
-    def unregister_repository(self, repository_id: str) -> bool:
+    def unregister_repository(self, repository_id: str, *, expected_owner=None) -> bool:
         """Unregister a repository and return whether it existed."""
-        return self.unregister(repository_id)
+        return self.unregister(repository_id, expected_owner=expected_owner)
 
     def get_all_repositories(self) -> Dict[str, Any]:
         """Return all repositories keyed by repository ID."""
@@ -471,7 +477,9 @@ class RepositoryRegistry:
             )
             return True
 
-    def update_staleness_reason(self, repository_id: str, reason: Optional[str]) -> bool:
+    def update_staleness_reason(
+        self, repository_id: str, reason: Optional[str], *, expected_owner: Any = None
+    ) -> bool:
         """Persist a repo-local staleness marker for status/reporting surfaces."""
         with self._transaction(write=True):
             repo = self._registry.get(repository_id)
@@ -479,6 +487,11 @@ class RepositoryRegistry:
                 logger.warning(f"Repository {repository_id} not found in registry")
                 return False
 
+            if expected_owner is not None and any(
+                repo.get(key) != getattr(expected_owner, key, None)
+                for key in ("registration_id", "index_generation", "last_indexed_commit")
+            ):
+                return False
             repo["staleness_reason"] = reason
             return True
 

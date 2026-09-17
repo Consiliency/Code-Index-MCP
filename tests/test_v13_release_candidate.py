@@ -211,11 +211,13 @@ def renewed_candidate(candidate, monkeypatch):
         (root / f"{kind}.json").write_text(json.dumps(receipt))
 
     # Operational record reduction is tested with real fixtures in test_v13_pmcp_pilot.
-    def verified_receipt(path, candidate_manifest, kind, *, expected_approval=None):
+    def verified_receipt(
+        path, candidate_manifest, kind, *, expected_approval=None, receipt_bytes=None
+    ):
         assert path == root and candidate_manifest == manifest
         if kind == "live":
             assert expected_approval == budget.RENEWED_APPROVAL
-        return json.loads((path / f"{kind}.json").read_text())
+        return json.loads(receipt_bytes)
 
     monkeypatch.setattr(release, "verify_saved_receipt", verified_receipt)
     return repo, root, canonical
@@ -320,11 +322,14 @@ def signing_candidate(candidate, monkeypatch):
         "schema_version": "2",
         "semantic_profile_hash": "lexical-only",
         "checksum": digest_file(archive),
+        "compressed_size": archive.stat().st_size,
         "artifact_type": "full",
         "timestamp": "2026-09-17T00:00:00Z",
         "compatibility": {"schema_version": "2", "embedding_model": None},
     }
-    (root / "artifact-metadata.json").write_text(json.dumps(metadata))
+    from mcp_server.artifacts.artifact_upload import _metadata_bytes
+
+    (root / "artifact-metadata.json").write_bytes(_metadata_bytes(metadata))
     (root / "artifact-metadata.json.attestation.jsonl").write_text("mock signature boundary")
     intent = release.claim_signing_dispatch(repo, root)
     dispatch = {
@@ -439,6 +444,80 @@ def test_second_signing_claim_cannot_reset_or_replace_intent(signing_candidate):
     with pytest.raises(CandidateRefused, match="already_claimed"):
         release.claim_signing_dispatch(repo, root)
     assert (root / "dispatch-intent.json").read_bytes() == before
+
+
+@pytest.mark.parametrize("damage", ["archive", "size", "schema", "canonical", "replace"])
+def test_signing_claim_checks_local_bytes_before_consuming_allowance(
+    signing_candidate, monkeypatch, damage
+):
+    from mcp_server.artifacts import integrity_gate
+    from mcp_server.artifacts.artifact_upload import _metadata_bytes
+
+    repo, root, *_ = signing_candidate
+    intent = root / "dispatch-intent.json"
+    intent.unlink()
+    path = root / "artifact-metadata.json"
+    metadata = json.loads(path.read_bytes())
+    if damage == "archive":
+        (root / "index.tar.gz").write_bytes(b"changed archive")
+    elif damage in {"size", "schema"}:
+        metadata["compressed_size" if damage == "size" else "schema_version"] = 999999
+        path.write_bytes(_metadata_bytes(metadata))
+    elif damage == "canonical":
+        path.write_text(json.dumps(metadata))
+    else:
+        validate = integrity_gate.validate_artifact_integrity
+
+        def replaced(*args, **kwargs):
+            result = validate(*args, **kwargs)
+            replacement = root / "replacement.json"
+            replacement.write_bytes(path.read_bytes())
+            replacement.replace(path)
+            return result
+
+        monkeypatch.setattr(integrity_gate, "validate_artifact_integrity", replaced)
+    with pytest.raises(CandidateRefused):
+        release.claim_signing_dispatch(repo, root)
+    assert not intent.exists()
+
+
+def test_renewed_hashes_bind_the_receipt_bytes_actually_validated(renewed_candidate, monkeypatch):
+    import hashlib
+
+    repo, root, _ = renewed_candidate
+    path = root / "live.json"
+    original = path.read_bytes()
+    verify = release.verify_saved_receipt
+
+    def replaced(*args, **kwargs):
+        result = verify(*args, **kwargs)
+        if args[2] == "live":
+            replacement = root / "replacement.json"
+            replacement.write_text('{"unvalidated": true}')
+            replacement.replace(path)
+        return result
+
+    monkeypatch.setattr(release, "verify_saved_receipt", replaced)
+    result = release.verify_renewed_pilot(repo, root)
+    assert result["proof_sha256"]["live"] == hashlib.sha256(original).hexdigest()
+    assert result["proof_sha256"]["live"] != digest_file(path)
+
+
+def test_signing_claim_cli_does_not_dispatch_or_consume_pilot(monkeypatch, tmp_path, capsys):
+    import sys
+
+    monkeypatch.setattr(sys, "argv", ["validator", "--claim-signing-dispatch"])
+    monkeypatch.setattr(release, "REPO", tmp_path)
+    calls = []
+    monkeypatch.setattr(
+        release, "claim_signing_dispatch", lambda *args: calls.append(args) or {"claimed": True}
+    )
+    monkeypatch.setattr(
+        release, "verify_pilot", lambda *args: pytest.fail("claim must not consume pilot")
+    )
+    release.main()
+    assert json.loads(capsys.readouterr().out) == {"claimed": True}
+    assert calls == [(tmp_path, tmp_path / ".phase-loop/runs/v13-PREP-signing-20260915")]
 
 
 def test_renewed_cli_requires_signing_as_well_as_pilot(monkeypatch, tmp_path):

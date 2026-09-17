@@ -78,6 +78,27 @@ Do not restart v9 or infer v13 completion from old primary-checkout state.
 
 ## PREP Candidate
 
+### Fourth Diagnostic Repair Checkpoint
+
+Candidate `4f4e55e` was rejected. The panel found additional publication,
+shutdown, semantic partial-failure, stale-registration, ignore-policy and
+release-evidence defects. Fourth repairs are under verification in the isolated
+`codex/v13-panel-fourth-repairs` worktree. They include immutable draft assets,
+full-only normal restores, bounded retirement, owner-scoped watcher cleanup,
+private evidence snapshots, pre-signing integrity checks, delivered-artifact
+smoke modes and accepted-source/create-only release guards.
+
+All old-candidate batches finished; this is not full independent seat approval.
+Fable's first batch failed due to disk exhaustion and must be reread. Other
+batch reports and audited reads remain diagnostic evidence. The old candidate's
+3527 broad and 140 Git passes do not supersede failed container/phase/browser
+checks. Fresh exact-source tests, installed/UI evidence and all four independent
+code verdicts remain required before either one-shot effect, followed by final
+cross-model reconciliation. No renewed pilot, signing, merge or publication
+has occurred at this checkpoint; historical accepted phase receipts are unchanged.
+
+### Earlier Candidate Preparation
+
 The patch version is 1.4.1. Seven release-metadata assertions reproduced the old
 version and inconsistent active docs before repair; the initial focused run
 now passes 30 tests. Locked refresh changes only the root distribution version.

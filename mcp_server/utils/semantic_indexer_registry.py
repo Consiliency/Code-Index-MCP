@@ -217,10 +217,18 @@ class SemanticIndexerRegistry:
         commit_part = re.sub(r"[^0-9a-zA-Z]+", "_", (commit or "unknown").lower()).strip("_")
         return f"ci__{repo_part}__{branch_part}__{commit_part[:12] or 'unknown'}"
 
-    def evict(self, repo_id: str) -> bool:
+    def evict(self, repo_id: str, *, expected_owner=None) -> bool:
         """Deny new leases; close retired resources after their last borrower."""
         with self._lock:
-            entries = [(key, entry) for key, entry in self._entries.items() if key[0] == repo_id]
+            entries = [
+                (key, entry)
+                for key, entry in self._entries.items()
+                if key[0] == repo_id
+                and (
+                    expected_owner is None
+                    or key[1][0][0] == getattr(expected_owner, "registration_id", None)
+                )
+            ]
             for _, entry in entries:
                 entry.retired = True
             for key, entry in entries:

@@ -25,6 +25,14 @@ on:
         options:
           - 'false'
           - 'true'
+      expected_commit:
+        description: 'Accepted protected-main commit SHA (required for publish)'
+        required: false
+        type: string
+      expected_tree:
+        description: 'Accepted Git tree SHA (required for publish)'
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -45,7 +53,11 @@ jobs:
       - name: Validate mode, ref, and version syntax
         env:
           MODE: ${{ inputs.mode }}
+          EXPECTED_COMMIT: ${{ inputs.expected_commit }}
+          EXPECTED_TREE: ${{ inputs.expected_tree }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -euo pipefail
           case "$RELEASE_VERSION" in
             v[0-9]*.[0-9]*.[0-9]*) ;;
             *)
@@ -61,6 +73,14 @@ jobs:
           if [ "$MODE" = "prepare" ] && [ "$GITHUB_REF" = "refs/heads/main" ]; then
             echo "::error::Prepare mode must be dispatched from a release feature branch"
             exit 1
+          fi
+          if [ "$MODE" = "publish" ]; then
+            [[ "$EXPECTED_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+            [[ "$EXPECTED_TREE" =~ ^[0-9a-f]{40}$ ]]
+            test "$GITHUB_SHA" = "$EXPECTED_COMMIT"
+            test "$GITHUB_RUN_ATTEMPT" = "1"
+            ACTUAL_TREE=$(gh api "repos/$GITHUB_REPOSITORY/git/commits/$EXPECTED_COMMIT" --jq .tree.sha)
+            test "$ACTUAL_TREE" = "$EXPECTED_TREE"
           fi
 
   prepare-release-pr:
@@ -184,7 +204,8 @@ jobs:
           grep -Fxq "version = \"$VERSION_NO_V\"" pyproject.toml
           grep -Fxq "__version__ = \"$VERSION_NO_V\"" mcp_server/__init__.py
           if git show-ref --verify --quiet "refs/tags/$RELEASE_VERSION"; then
-            test "$(git rev-list -n 1 "$RELEASE_VERSION")" = "${{ github.sha }}"
+            echo "::error::Existing version requires an explicit recovery decision"
+            exit 1
           fi
 
       - name: Run release gates
@@ -196,9 +217,50 @@ jobs:
           make release-smoke
           make release-smoke-container
 
+  claim-release:
+    name: Claim one release attempt
+    needs: preflight-publish
+    if: inputs.mode == 'publish' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Check out exact protected-main commit
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          fetch-depth: 0
+          ref: ${{ github.sha }}
+      - name: Guard protected main before claim release attempt
+        run: |
+          VERSION_NO_V=${RELEASE_VERSION#v}
+          git fetch origin main --tags
+          test "$(git rev-parse HEAD)" = "${{ github.sha }}"
+          git merge-base --is-ancestor "${{ github.sha }}" origin/main
+          grep -Fxq "version = \"$VERSION_NO_V\"" pyproject.toml
+          grep -Fxq "__version__ = \"$VERSION_NO_V\"" mcp_server/__init__.py
+          ! git show-ref --verify --quiet "refs/tags/$RELEASE_VERSION"
+      - name: Claim release attempt
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EXPECTED_COMMIT: ${{ inputs.expected_commit }}
+          EXPECTED_TREE: ${{ inputs.expected_tree }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_SHA" = "$EXPECTED_COMMIT"
+          test "$(git rev-parse HEAD^{tree})" = "$EXPECTED_TREE"
+          test "$GITHUB_RUN_ATTEMPT" = "1"
+          CLAIM="release-claims/$RELEASE_VERSION"
+          OBJECT=$(gh api --method POST "repos/$GITHUB_REPOSITORY/git/tags" \
+            -f tag="$CLAIM" -f object="$EXPECTED_COMMIT" -f type=commit \
+            -f message="Release claim run=$GITHUB_RUN_ID source=$EXPECTED_COMMIT tree=$EXPECTED_TREE" --jq .sha)
+          # Create-only ref is the durable claim. Never update/delete it or retry publication.
+          gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
+            -f ref="refs/tags/$CLAIM" -f sha="$OBJECT" --silent
+
   build-release:
     name: Build artifacts from protected main
-    needs: preflight-publish
+    needs: claim-release
     if: inputs.mode == 'publish' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
@@ -344,11 +406,11 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           if git show-ref --verify --quiet "refs/tags/$RELEASE_VERSION"; then
-            test "$(git rev-list -n 1 "$RELEASE_VERSION")" = "${{ github.sha }}"
-          else
-            git tag -a "$RELEASE_VERSION" "${{ github.sha }}" -m "Release $RELEASE_VERSION"
-            git push origin "$RELEASE_VERSION"
+            echo "::error::Version appeared after release claim; manual reconciliation required"
+            exit 1
           fi
+          git tag -a "$RELEASE_VERSION" "${{ github.sha }}" -m "Release $RELEASE_VERSION"
+          git push origin "$RELEASE_VERSION"
 
       - name: Guard protected main before create github release
         run: |

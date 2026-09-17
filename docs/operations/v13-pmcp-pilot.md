@@ -77,10 +77,12 @@ confinement. It permits only the frozen local roles, serializes inference and
 reserves conservative serialized input units before forwarding, including retries.
 Failed requests consume reservations; redirects and ambient proxies are refused.
 
-The approved cumulative allowance is 100000 input units, 900 seconds from first
-admission and concurrency one. The canonical ledger is
-.phase-loop/runs/v13-PILOT-allowance. Never initialize a second ledger, reset it,
-refund failed attempts or rerun live inference as an ordinary test.
+The historical PILOT allowance was 100000 input units, 900 seconds from first
+admission and concurrency one, using .phase-loop/runs/v13-PILOT-allowance.
+That exhausted ledger is read-only. The owner-approved PREP plan grants exactly
+one separate allowance at .phase-loop/runs/v13-PILOT-allowance-20260915 with the
+same limits. No further ledger, reset, refund, or ordinary-test inference retry
+is authorized; see plans/phase-plan-v13-PREP.md for admission order and bounds.
 
 ## Evidence And Repeatable Checks
 
@@ -95,7 +97,10 @@ per class fully overlapping another repository's indexing interval. Refusals are
 not fast successful samples.
 
 Limits remain symbol p95 <=100ms, search p95 <=500ms, shutdown <=5s and observed
-process-tree RSS <=2048MiB. Do not tune these limits after measurement.
+owned-process and Qdrant RSS <=2048MiB. The driver requires Linux cgroup v2,
+a working systemd user manager and Docker. Owned user scopes retain detached
+children; the disposable Qdrant container is measured and stopped separately.
+Do not tune these limits after measurement.
 
 verify-browser and verify-live consume saved evidence without inference.
 Live verification reopens the archived ledger read-only, reconciles request

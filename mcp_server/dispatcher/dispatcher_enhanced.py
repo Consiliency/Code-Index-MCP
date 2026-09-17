@@ -369,6 +369,8 @@ def _run_coro_blocking(coro: Any) -> Any:
 
 def _run_blocking_with_timeout(func: Any, *, timeout_seconds: float) -> Any:
     """Report deadline failure only after the worker releases mutation ownership."""
+    from mcp_server.core.lifecycle import retirement_watchdog
+
     result: dict[str, Any] = {}
     error: dict[str, BaseException] = {}
 
@@ -382,9 +384,9 @@ def _run_blocking_with_timeout(func: Any, *, timeout_seconds: float) -> Any:
     thread.start()
     thread.join(timeout_seconds)
     if thread.is_alive():
-        # Python cannot cancel a running thread. Keep the caller's writer fence
-        # until it settles; STDIO's shutdown watchdog bounds service termination.
-        thread.join()
+        # Keep the writer fence until the worker stops, or retire the whole service.
+        with retirement_watchdog():
+            thread.join()
         raise TimeoutError(f"Operation exceeded {timeout_seconds:.0f} seconds; worker drained")
     if "value" in error:
         raise error["value"]
@@ -1788,7 +1790,7 @@ class EnhancedDispatcher:
         }
 
     def evict_repository_state(
-        self, repo_id: str, repo_root: Optional[Union[str, Path]] = None
+        self, repo_id: str, repo_root: Optional[Union[str, Path]] = None, *, expected_owner=None
     ) -> Dict[str, int]:
         evicted = {"file_cache": 0, "graph": 0, "plugins": 0, "semantic": 0}
         root: Optional[Path] = Path(repo_root).expanduser().resolve() if repo_root else None
@@ -1807,14 +1809,16 @@ class EnhancedDispatcher:
             if key.startswith(f"{repo_id}:"):
                 self._graph_state.pop(key, None)
                 evicted["graph"] += 1
-        if hasattr(self._plugin_set_registry, "evict"):
+        if expected_owner is None and hasattr(self._plugin_set_registry, "evict"):
             try:
                 self._plugin_set_registry.evict(repo_id)
                 evicted["plugins"] = 1
             except Exception as exc:
                 logger.warning("Plugin eviction failed for %s: %s", repo_id, type(exc).__name__)
         if self._semantic_registry is not None and hasattr(self._semantic_registry, "evict"):
-            evicted["semantic"] = 1 if self._semantic_registry.evict(repo_id) else 0
+            evicted["semantic"] = (
+                1 if self._semantic_registry.evict(repo_id, expected_owner=expected_owner) else 0
+            )
         return evicted
 
     @_semantic_operation
@@ -3301,9 +3305,7 @@ class EnhancedDispatcher:
             stats["semantic_blocker"] = sem_stats.get("semantic_blocker")
         if sem_stats.get("semantic_error"):
             stats["semantic_error"] = sem_stats.get("semantic_error")
-        if stats["semantic_indexed"] > 0:
-            stats["semantic_stage"] = "indexed"
-        elif stats["semantic_blocked"] > 0:
+        if stats["semantic_blocked"] > 0:
             stats["semantic_stage"] = "blocked_semantic_batch"
             if "semantic_error" not in stats:
                 stats["semantic_error"] = (
@@ -3311,6 +3313,8 @@ class EnhancedDispatcher:
                 )
         elif stats["semantic_failed"] > 0:
             stats["semantic_stage"] = "failed_semantic_batch"
+        elif stats["semantic_indexed"] > 0:
+            stats["semantic_stage"] = "indexed"
         else:
             stats["semantic_stage"] = "skipped"
         emit_progress(stats["semantic_stage"], "semantic_closeout", "semantic_closeout")

@@ -129,7 +129,7 @@ class IgnorePatternManager:
         ]
 
         if ignore_path.exists() or ignore_path.is_symlink():
-            return self._read_patterns(ignore_path)
+            return default_patterns + self._read_patterns(ignore_path)
         return default_patterns
 
     def should_ignore(self, file_path: Path) -> bool:

@@ -79,8 +79,8 @@ Benchmarks in this repository show large token/cost reductions when an assistant
 - **🎯 Query-Intent Routing**: Symbol-pattern queries (`class Foo`, `def bar`, CamelCase) bypass BM25 and hit the symbols table directly for sub-5ms lookups
 - **🔒 Security-Aware Export**: Automatic filtering of sensitive files from shared indexes
 - **🔍 Hybrid Search**: BM25 + semantic search with configurable fusion
-- **🔐 Index Everything Locally**: Search .env files and secrets on your machine
-- **🚫 Smart Filtering on Share**: .gitignore and .mcp-index-ignore patterns applied only during export
+- **🔐 Filtered Local Indexes**: Default secret-file exclusions apply to lexical and semantic indexing
+- **🚫 Ignore Rules**: .gitignore and .mcp-index-ignore filter indexing and export; patterns are not a secret scanner
 - **🌐 Multi-Language Indexing**: Index entire repositories with mixed languages
 
 ## 🏗️ Architecture

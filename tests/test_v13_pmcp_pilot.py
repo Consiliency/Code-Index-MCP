@@ -2,16 +2,113 @@
 
 import copy
 import json
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
 
 import pytest
 
 from scripts.v13_pmcp_pilot import (
     GOALS,
+    OwnedContainer,
+    OwnedProcess,
     PilotRefused,
+    cgroup_processes,
     digest_json,
     validate_receipt,
     verify_saved_receipt,
 )
+
+
+@pytest.mark.parametrize("detach_at_shutdown", [False, True])
+def test_owned_scope_catches_detached_children(tmp_path, detach_at_shutdown):
+    marker = tmp_path / "child.pid"
+    program = r"""
+import os, signal, sys, time
+def detach(*args):
+    pid = os.fork()
+    if pid == 0:
+        os.setsid()
+        signal.signal(signal.SIGTERM, lambda *args: sys.exit(0))
+        with open(sys.argv[1], 'w') as stream:
+            stream.write(str(os.getpid()))
+        time.sleep(60)
+        sys.exit(0)
+    if args:
+        sys.exit(0)
+if sys.argv[2] == 'late':
+    signal.signal(signal.SIGTERM, detach)
+else:
+    detach()
+time.sleep(60)
+"""
+    owner = OwnedProcess(
+        [sys.executable, "-c", program, str(marker), "late" if detach_at_shutdown else "early"],
+        tmp_path,
+        dict(os.environ),
+        "owned-test",
+    )
+    try:
+        if not detach_at_shutdown:
+            deadline = time.monotonic() + 3
+            while not marker.exists() and time.monotonic() < deadline:
+                time.sleep(0.02)
+            assert marker.exists()
+        else:
+            time.sleep(0.2)
+        owner.observe()
+        owner.stop()
+        assert not cgroup_processes(owner.group)
+        assert owner.peak_rss_mib > 0
+        if detach_at_shutdown:
+            # A child born after group SIGTERM must remain a failed receipt even
+            # though final SIGKILL cleanup removes it from the owned cgroup.
+            assert owner.survivors and owner.exit_seconds >= 5
+        else:
+            assert not owner.survivors and owner.exit_seconds <= 5
+    finally:
+        if not owner.log.closed:
+            owner.stop()
+
+
+@pytest.mark.parametrize("elapsed,exit_code", [(1, 0), (6, 0), (1, 137)])
+def test_container_retirement_records_slow_and_forced_exit(
+    monkeypatch, tmp_path, manifest, elapsed, exit_code
+):
+    from scripts import v13_pmcp_pilot as pilot
+
+    owner = OwnedContainer.__new__(OwnedContainer)
+    owner.container, owner.root, owner.group = "a" * 64, tmp_path, tmp_path / "absent-cgroup"
+    owner.peak_rss_mib = 80
+    clock = iter([0, elapsed])
+    monkeypatch.setattr(pilot.time, "monotonic", lambda: next(clock))
+    calls = []
+
+    def command(args, *rest, **kwargs):
+        calls.append((args, kwargs))
+        return (
+            json.dumps({"Running": False, "ExitCode": exit_code, "OOMKilled": False})
+            if args[1] == "inspect"
+            else ""
+        )
+
+    monkeypatch.setattr(pilot, "run_command", command)
+    owner.stop()
+    value = receipt(manifest, "live")
+    value.update(
+        shutdown_seconds=[owner.exit_seconds],
+        surviving_children=owner.survivors,
+        peak_rss_mib=owner.peak_rss_mib,
+    )
+    if elapsed > 5 or exit_code == 137:
+        with pytest.raises(PilotRefused, match="operational"):
+            validate_receipt(value, manifest, "live")
+    else:
+        validate_receipt(value, manifest, "live")
+    assert calls[0][1]["timeout"] == 6
+    assert calls[-1][0] == ["docker", "rm", "--force", owner.container]
 
 
 @pytest.fixture
@@ -113,6 +210,65 @@ def test_latency_threshold_and_missing_samples_refused(manifest, kind, value):
 def test_browser_goals_without_artifacts_cannot_pass(tmp_path, manifest):
     (tmp_path / "browser.json").write_text(json.dumps(receipt(manifest, "browser")))
     with pytest.raises(PilotRefused, match="artifacts"):
+        verify_saved_receipt(tmp_path, manifest, "browser")
+
+
+@pytest.mark.parametrize("valid", [True, False])
+def test_prepare_delivered_wheel_never_builds(tmp_path, monkeypatch, valid):
+    from scripts import v13_pmcp_pilot as pilot
+
+    wheel = tmp_path / "index_it_mcp-1.4.1-py3-none-any.whl"
+    wheel.write_bytes(b"registry wheel fixture")
+    root = tmp_path / "owned"
+    calls = []
+    monkeypatch.setattr(pilot, "source_identity", lambda: {"source": "a" * 40})
+
+    def run(command, directory, label, **kwargs):
+        assert command[:2] != ["uv", "build"]
+        calls.append(command)
+        if label == "pilot-lock-export":
+            (directory / "constraints.txt").write_text("dependency==1\n")
+        return "{}" if label == "installed-identity" else "fixture"
+
+    monkeypatch.setattr(pilot, "run_command", run)
+    digest = pilot.digest_file(wheel) if valid else "0" * 64
+    if not valid:
+        with pytest.raises(PilotRefused, match="digest_mismatch"):
+            pilot.prepare(root, wheel, digest)
+        assert not calls
+    else:
+        result = pilot.prepare(root, wheel, digest)
+        assert result["artifact_origin"] == "registry"
+        assert result["wheel_sha256"] == digest
+        assert (root / "dist" / wheel.name).read_bytes() == wheel.read_bytes()
+        assert (root / "dist" / wheel.name).as_uri() in " ".join(result["uvx_prefix"])
+
+
+def test_artifact_replacement_cannot_change_the_validated_snapshot(tmp_path, manifest, monkeypatch):
+    from scripts import v13_pmcp_pilot as pilot
+
+    result = receipt(manifest, "browser")
+    asset = tmp_path / "asset.json"
+    asset.write_text('{"original": true}')
+    result["artifacts"] = [
+        {"role": role, "path": asset.name, "sha256": pilot.digest_file(asset)}
+        for role in (
+            "inspector_screenshot",
+            "admin_screenshot",
+            "browser_actions",
+            "browser_session",
+        )
+    ]
+    (tmp_path / "browser.json").write_text(json.dumps(result))
+
+    def replace_then_check(root, manifest, kind, result, copies, expected_approval):
+        replacement = root / "replacement.json"
+        replacement.write_text('{"unvalidated": true}')
+        replacement.replace(asset)
+        assert json.loads(copies[asset].read_bytes()) == {"original": True}
+
+    monkeypatch.setattr(pilot, "_verify_receipt_artifacts", replace_then_check)
+    with pytest.raises(PilotRefused, match="evidence_changed"):
         verify_saved_receipt(tmp_path, manifest, "browser")
 
 

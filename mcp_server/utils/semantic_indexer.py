@@ -2628,6 +2628,7 @@ class SemanticIndexer:
         # Phase 1: prepare all files — chunking + build embedding texts, no API calls
         preparations: List[tuple] = []
         skipped = 0
+        failed = 0
         blocked_files: List[str] = []
         missing_summary_chunk_ids: List[str] = []
         for path in paths:
@@ -2643,13 +2644,13 @@ class SemanticIndexer:
                 else:
                     skipped += 1
             except Exception as exc:
-                logger.warning("Failed to prepare %s for semantic indexing: %s", path, exc)
-                skipped += 1
+                logger.warning("Failed to prepare semantic input: %s", type(exc).__name__)
+                failed += 1
 
         if not preparations:
             return {
                 "files_indexed": 0,
-                "files_failed": 0,
+                "files_failed": failed,
                 "files_skipped": skipped,
                 "files_blocked": len(blocked_files),
                 "blocked_files": blocked_files,
@@ -2715,7 +2716,6 @@ class SemanticIndexer:
 
         # Phase 4: store per-file using pre-computed embeddings
         indexed = 0
-        failed = 0
         built_point_ids: List[int] = []
         indexed_relative_paths: List[str] = []
         for path, prep, start, end in file_slices:
@@ -2726,7 +2726,7 @@ class SemanticIndexer:
                 indexed_relative_paths.append(prep["relative_path"])
                 indexed += 1
             except Exception as exc:
-                logger.error("Failed to store embeddings for %s: %s", path, exc)
+                logger.error("Failed to store semantic embeddings: %s", type(exc).__name__)
                 failed += 1
 
         # Phase 5: stamp collection-resident provenance for this successful build.
@@ -2737,7 +2737,7 @@ class SemanticIndexer:
         # included relative paths joined by '\n', no trailing newline) so a
         # collection built from the frozen corpus emits a ``corpus_sha256`` that
         # verifies against the benchmark's recorded value.
-        if indexed:
+        if indexed and not failed and not blocked_files:
             corpus_sha256 = self._compute_corpus_sha256(indexed_relative_paths)
             self._write_collection_provenance_best_effort(
                 point_ids=built_point_ids, corpus_sha256=corpus_sha256

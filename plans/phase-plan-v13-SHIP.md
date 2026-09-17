@@ -77,7 +77,11 @@ SL-0 — Publication And Post-Dispatch Documentation Sweep
     with accepted source/tree, default-branch SHA, version, exact workflow hash,
     owner authorization, expected inputs and `dispatch_attempted=false`. Then
     dispatch `release-automation.yml` exactly once from `main` with
-    `mode=publish`, `version=v1.4.1`, `auto_merge=false`. Record request time and
+    `mode=publish`, `version=v1.4.1`, `auto_merge=false`, `expected_commit` equal
+    to the recorded default-branch SHA and `expected_tree` equal to the accepted
+    tree. The first job rejects mismatch or reruns; the create-only
+    `refs/tags/release-claims/v1.4.1` claim records run/source/tree before any
+    build/publication job. Never delete/update a claim to retry. Record request time and
     exact run identity before monitoring. Ambiguous acceptance permits only
     read-only enumeration/reconciliation; no automatic redispatch.
   - verify: Read all workflow jobs to terminal states, retain failed/partial
@@ -115,7 +119,12 @@ Read-only preflight uses `git status --porcelain`, `git rev-parse`, `git diff`,
 and PMCP installed checks must consume registry artifacts, not rebuild/import
 the checkout. Use existing `scripts/release_smoke.py` and
 `scripts/v13_pmcp_pilot.py` acceptance implementations through owned verification
-drivers. Capture exact commands, exit statuses and hashes with the standalone
+drivers: `release_smoke.py --wheel-path <downloaded-wheel> --wheel-sha256
+<registry-sha256> --image-ref <ghcr-name>@sha256:<registry-digest>` and
+`v13_pmcp_pilot.py --mode prepare --root <owned-root> --wheel
+<downloaded-wheel> --wheel-sha256 <registry-sha256>`, followed by its offline,
+rehearsal and browser modes on that same manifest. Supplied-artifact modes
+must not invoke local wheel/image builds. Capture exact commands, exit statuses and hashes with the standalone
 verification helper; do not convert missing prerequisites or skipped tests into
 passing acceptance. All operational processes must be stopped and reaped.
 

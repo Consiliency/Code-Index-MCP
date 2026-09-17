@@ -6,7 +6,7 @@ import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Mapping, Optional
 from urllib.parse import urlsplit
 
 from mcp_server.config.environment import Environment, get_environment
@@ -27,6 +27,14 @@ class _PrivateTransportFilter(logging.Filter):
             except ValueError:
                 args[2] = "<invalid-target>"
             record.args = tuple(args)
+        elif record.name == "gunicorn.access" and isinstance(record.args, Mapping):
+            atoms = record.args
+            try:
+                path = urlsplit(str(atoms.get("U", "-"))).path
+            except ValueError:
+                path = "<invalid-target>"
+            record.msg = "%s %s %s"
+            record.args = (atoms.get("m", "-"), path, atoms.get("s", "-"))
         else:
             # SDK errors can embed whole invalid JSON messages before our handler runs.
             record.msg = "Transport diagnostic in %s (%s)"

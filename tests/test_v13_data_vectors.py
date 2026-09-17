@@ -182,6 +182,35 @@ def test_empty_semantic_candidates_do_not_embed_or_search(real_indexer):
     assert provider.calls == before
 
 
+@pytest.mark.parametrize("remote_only", [False, True])
+def test_staged_publication_requires_exact_remote_ownership(real_indexer, tmp_path, remote_only):
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    from mcp_server.core.repo_context import RepoContext
+    from mcp_server.storage.git_index_manager import GitAwareIndexManager
+    from mcp_server.storage.sqlite_store import SQLiteStore
+
+    _seed(real_indexer, 2 if remote_only else 1)
+    real_indexer.write_collection_provenance([1])
+    store = SQLiteStore(str(tmp_path / "staged.db"))
+    try:
+        store.upsert_semantic_point(
+            real_indexer.semantic_profile.profile_id, "chunk", 1, real_indexer.collection
+        )
+        registry = SimpleNamespace(lease=lambda repo_id, ctx: nullcontext(real_indexer))
+        manager = GitAwareIndexManager.__new__(GitAwareIndexManager)
+        manager.dispatcher = SimpleNamespace(_semantic_registry=registry)
+        ctx = RepoContext("repo", store, tmp_path, "main", SimpleNamespace(), staging=True)
+        if remote_only:
+            with pytest.raises(RuntimeError, match="ownership is incomplete"):
+                manager._finalize_staged_vectors("repo", ctx)
+        else:
+            manager._finalize_staged_vectors("repo", ctx)
+    finally:
+        store.close()
+
+
 @pytest.mark.parametrize("derived", [0, 2**63 - 1, 2**63, 2**64 - 1])
 def test_generated_point_ids_fit_both_sqlite_and_qdrant(real_indexer, tmp_path, derived):
     from mcp_server.storage.sqlite_store import SQLiteStore
