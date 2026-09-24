@@ -17,6 +17,7 @@ project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 from mcp_server.artifacts.semantic_profiles import SemanticProfileRegistry  # noqa: E402
+from mcp_server.config.env_vars import get_qdrant_api_key  # noqa: E402
 from mcp_server.config.settings import reload_settings  # noqa: E402
 from mcp_server.dispatcher.dispatcher_enhanced import EnhancedDispatcher  # noqa: E402
 from mcp_server.setup.semantic_preflight import run_semantic_preflight  # noqa: E402
@@ -80,7 +81,7 @@ def _get_vector_backend_status() -> Dict[str, Any]:
         try:
             from qdrant_client import QdrantClient
 
-            client = QdrantClient(url=server_url, timeout=5)
+            client = QdrantClient(url=server_url, api_key=get_qdrant_api_key(), timeout=5)
             collection_descriptions = list(client.get_collections().collections)
             details = []
             for collection_meta in collection_descriptions:

@@ -60,6 +60,7 @@ Configuration precedence:
 - `SEMANTIC_STRICT_MODE=false`
 - `SEMANTIC_PREFLIGHT_TIMEOUT_SECONDS=10`
 - `QDRANT_URL=http://localhost:6333`
+- `QDRANT_API_KEY=`  # only when the server sets `QDRANT__SERVICE__API_KEY`; unset sends no key
 - `QDRANT_COMPOSE_FILE=docker-compose.qdrant.yml`
 - `SEMANTIC_ENRICHMENT_BASE_URL=http://ai:8002/v1`
 - `SEMANTIC_ENRICHMENT_MODEL=chat`

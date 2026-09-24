@@ -12,6 +12,10 @@ services:
       - ./qdrant_storage:/qdrant/storage:z
     environment:
       - QDRANT__SERVICE__GRPC_PORT=6334
+      # Require an API key; Code-Index-MCP then needs the same value in QDRANT_API_KEY.
+      # With a key set, GET /collections below returns 401, so switch the healthcheck
+      # to GET /readyz (health endpoints are exempt from API-key auth).
+      # - QDRANT__SERVICE__API_KEY=${QDRANT_API_KEY}
     healthcheck:
       test: ["CMD", "bash", "-lc", "exec 3<>/dev/tcp/127.0.0.1/6333 && printf 'GET /collections HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3 && cat <&3 | grep -q '200 OK'"]
       interval: 5s

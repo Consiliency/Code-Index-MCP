@@ -198,6 +198,7 @@ docker run -it \
   -e VOYAGE_API_KEY=your-key \
   -e REDIS_URL=redis://redis:6379 \
   -e QDRANT_URL=http://qdrant:6333 \
+  -e QDRANT_API_KEY \
   ghcr.io/consiliency/code-index-mcp:v1.4.0
 ```
 

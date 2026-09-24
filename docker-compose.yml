@@ -27,6 +27,7 @@ services:
       # Semantic search configuration (dormant - requires API key)
       - SEMANTIC_SEARCH_ENABLED=false
       - QDRANT_URL=http://qdrant:6333
+      - QDRANT_API_KEY=${QDRANT_API_KEY:-}  # empty = no key; see qdrant service below
       - SEMANTIC_COLLECTION_NAME=code-index
       - SEMANTIC_VECTOR_SIZE=1024
       - SEMANTIC_SEARCH_LIMIT=10
@@ -106,6 +107,8 @@ services:
     environment:
       - QDRANT__SERVICE__HTTP_PORT=6333
       - QDRANT__SERVICE__GRPC_PORT=6334
+      # Require an API key; clients then need the same value in QDRANT_API_KEY.
+      # - QDRANT__SERVICE__API_KEY=${QDRANT_API_KEY}
     restart: unless-stopped
     networks:
       - mcp-network
