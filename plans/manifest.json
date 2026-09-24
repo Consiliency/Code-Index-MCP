@@ -1,6 +1,115 @@
 {
   "plans": [
     {
+      "acceptance_criteria_count": 6,
+      "created_at": "2026-09-21T04:53:34Z",
+      "document_status": "draft",
+      "execution_authorized": false,
+      "file": "plans/detailed-jev-shadow-pilot-20260921-0453.md",
+      "handoff_ref": ".dev-skills/handoffs/codex-plan-detailed/20260921T045334Z-jev-detailed-plans.md",
+      "if_gates_produced": [],
+      "lanes": [],
+      "lifecycle": [
+        {
+          "at": "2026-09-21T04:53:34Z",
+          "by": "codex-plan-detailed",
+          "metadata": {
+            "git_committed": false,
+            "panel_approved": false,
+            "planning_only": true,
+            "run_id": "20260921T045334Z-jev-detailed-plans"
+          },
+          "transition": "committed"
+        }
+      ],
+      "owner_skill": "codex-plan-detailed",
+      "panel_approved": false,
+      "phase_alias": null,
+      "reflection_ref": "/home/viperjuice/.codex/skills/codex-plan-detailed/reflections/bbbf158136f7/codex-jev-remediation-plans-20260921/20260921T045334Z-jev-detailed-plans.md",
+      "roadmap_ref": null,
+      "slug": "detailed-jev-shadow-pilot-20260921-0453",
+      "status": "committed",
+      "task_summary": "Plan a separate opt-in post-release Jev shadow qualification",
+      "type": "detailed",
+      "updated_at": "2026-09-21T04:53:34Z"
+    },
+    {
+      "acceptance_criteria_count": 6,
+      "created_at": "2026-09-21T04:53:34Z",
+      "document_status": "draft",
+      "execution_authorized": false,
+      "file": "plans/detailed-reranker-correctness-20260921-0453.md",
+      "handoff_ref": ".dev-skills/handoffs/codex-plan-detailed/20260921T045334Z-jev-detailed-plans.md",
+      "if_gates_produced": [],
+      "lanes": [],
+      "lifecycle": [
+        {
+          "at": "2026-09-21T04:53:34Z",
+          "by": "codex-plan-detailed",
+          "metadata": {
+            "git_committed": false,
+            "panel_approved": false,
+            "planning_only": true,
+            "run_id": "20260921T045334Z-jev-detailed-plans"
+          },
+          "transition": "committed"
+        }
+      ],
+      "owner_skill": "codex-plan-detailed",
+      "panel_approved": false,
+      "phase_alias": null,
+      "reflection_ref": "/home/viperjuice/.codex/skills/codex-plan-detailed/reflections/bbbf158136f7/codex-jev-remediation-plans-20260921/20260921T045334Z-jev-detailed-plans.md",
+      "roadmap_ref": {
+        "file": "specs/phase-plans-v13.md",
+        "slug": "phase-plans-v13",
+        "status": "committed",
+        "type": "roadmap"
+      },
+      "slug": "detailed-reranker-correctness-20260921-0453",
+      "status": "committed",
+      "task_summary": "Repair selected-chunk scoring, numeric validation, and deadline fallback",
+      "type": "detailed",
+      "updated_at": "2026-09-21T04:53:34Z"
+    },
+    {
+      "acceptance_criteria_count": 6,
+      "created_at": "2026-09-21T04:53:34Z",
+      "document_status": "draft",
+      "execution_authorized": false,
+      "file": "plans/detailed-search-cache-index-isolation-20260921-0453.md",
+      "handoff_ref": ".dev-skills/handoffs/codex-plan-detailed/20260921T045334Z-jev-detailed-plans.md",
+      "if_gates_produced": [],
+      "lanes": [],
+      "lifecycle": [
+        {
+          "at": "2026-09-21T04:53:34Z",
+          "by": "codex-plan-detailed",
+          "metadata": {
+            "git_committed": false,
+            "panel_approved": false,
+            "planning_only": true,
+            "run_id": "20260921T045334Z-jev-detailed-plans"
+          },
+          "transition": "committed"
+        }
+      ],
+      "owner_skill": "codex-plan-detailed",
+      "panel_approved": false,
+      "phase_alias": null,
+      "reflection_ref": "/home/viperjuice/.codex/skills/codex-plan-detailed/reflections/bbbf158136f7/codex-jev-remediation-plans-20260921/20260921T045334Z-jev-detailed-plans.md",
+      "roadmap_ref": {
+        "file": "specs/phase-plans-v13.md",
+        "slug": "phase-plans-v13",
+        "status": "committed",
+        "type": "roadmap"
+      },
+      "slug": "detailed-search-cache-index-isolation-20260921-0453",
+      "status": "committed",
+      "task_summary": "Repair result-cache scope and scorer-independent vector resources",
+      "type": "detailed",
+      "updated_at": "2026-09-21T04:53:34Z"
+    },
+    {
       "acceptance_criteria_count": 9,
       "created_at": "2026-07-10T05:58:00Z",
       "file": "plans/phase-plan-v10-AUTHBOUND.md",
