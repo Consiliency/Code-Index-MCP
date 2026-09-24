@@ -37,6 +37,7 @@ from ..artifacts.semantic_profiles import (
     extract_semantic_profile_metadata,
     get_primary_semantic_profile_metadata,
 )
+from ..config.env_vars import get_qdrant_api_key
 from ..core.path_resolver import PathResolver
 from ..interfaces.inference_contracts import EmbeddingRole
 from ..plugins.language_registry import get_language_by_extension
@@ -1101,7 +1102,7 @@ class SemanticIndexer:
             try:
                 # Try connecting to Qdrant server
                 logger.info(f"Attempting to connect to Qdrant server at {server_url}")
-                client = QdrantClient(url=server_url, timeout=5)
+                client = QdrantClient(url=server_url, api_key=get_qdrant_api_key(), timeout=5)
                 # Test connection with actual API call
                 client.get_collections()
                 logger.info(f"Successfully connected to Qdrant server at {server_url}")
@@ -1118,7 +1119,7 @@ class SemanticIndexer:
         if qdrant_path.startswith("http"):
             try:
                 logger.info(f"Connecting to Qdrant at explicit URL: {qdrant_path}")
-                client = QdrantClient(url=qdrant_path, timeout=5)
+                client = QdrantClient(url=qdrant_path, api_key=get_qdrant_api_key(), timeout=5)
                 # Test connection
                 client.get_collections()
                 logger.info(f"Successfully connected to Qdrant at {qdrant_path}")

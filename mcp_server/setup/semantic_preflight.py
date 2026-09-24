@@ -11,6 +11,7 @@ from urllib import error, request
 
 from mcp_server.artifacts.semantic_namespace import SemanticNamespaceResolver
 from mcp_server.artifacts.semantic_profiles import SemanticProfile, SemanticProfileRegistry
+from mcp_server.config.env_vars import get_qdrant_api_key
 from mcp_server.config.settings import Settings
 
 
@@ -166,8 +167,10 @@ def _http_request_json(
     return json.loads(content) if content else {}
 
 
-def _http_get_json(url: str, timeout_s: float) -> Dict[str, Any]:
-    return _http_request_json(url, timeout_s=timeout_s, method="GET")
+def _http_get_json(
+    url: str, timeout_s: float, headers: Optional[Dict[str, str]] = None
+) -> Dict[str, Any]:
+    return _http_request_json(url, timeout_s=timeout_s, method="GET", headers=headers)
 
 
 def _http_post_json(
@@ -199,6 +202,13 @@ def _redacted_auth_headers(api_key_env: str) -> Dict[str, str]:
     if not api_key:
         return {}
     return {"Authorization": f"Bearer {api_key}"}
+
+
+def _qdrant_auth_headers() -> Dict[str, str]:
+    api_key = get_qdrant_api_key()
+    if not api_key:
+        return {}
+    return {"api-key": api_key}
 
 
 def _missing_api_key_result(
@@ -342,7 +352,7 @@ def check_qdrant(qdrant_url: str, timeout_s: float = 5.0) -> CheckResult:
     """Check Qdrant API reachability."""
     probe = qdrant_url.rstrip("/") + "/collections"
     try:
-        payload = _http_get_json(probe, timeout_s=timeout_s)
+        payload = _http_get_json(probe, timeout_s=timeout_s, headers=_qdrant_auth_headers())
         collections = payload.get("result", {}).get("collections", [])
         return CheckResult(
             name="qdrant",
@@ -356,6 +366,12 @@ def check_qdrant(qdrant_url: str, timeout_s: float = 5.0) -> CheckResult:
         )
     except error.HTTPError as exc:
         status_code, body = _read_http_error(exc)
+        fixes = [
+            "Check the Qdrant server health and route",
+            "Or set QDRANT_URL to a reachable server endpoint",
+        ]
+        if status_code in (401, 403):
+            fixes.insert(0, "Set QDRANT_API_KEY to the server's API key (QDRANT__SERVICE__API_KEY)")
         return CheckResult(
             name="qdrant",
             status=ServiceStatus.UNREACHABLE,
@@ -366,10 +382,7 @@ def check_qdrant(qdrant_url: str, timeout_s: float = 5.0) -> CheckResult:
                 "error": body,
                 "failure_class": "qdrant_unreachable",
             },
-            fixes=[
-                "Check the Qdrant server health and route",
-                "Or set QDRANT_URL to a reachable server endpoint",
-            ],
+            fixes=fixes,
         )
     except (error.URLError, TimeoutError, ValueError, OSError) as exc:
         return CheckResult(
@@ -787,6 +800,7 @@ def check_qdrant_collection(
         payload = _http_get_json(
             qdrant_url.rstrip("/") + f"/collections/{collection_name}",
             timeout_s=timeout_s,
+            headers=_qdrant_auth_headers(),
         )
         result = payload.get("result") or {}
         vectors = (((result.get("config") or {}).get("params") or {}).get("vectors")) or {}
@@ -1084,7 +1098,7 @@ def bootstrap_active_profile_collection(
     from mcp_server.utils.semantic_indexer import ensure_qdrant_collection
 
     try:
-        client = QdrantClient(url=qdrant_url, timeout=timeout)
+        client = QdrantClient(url=qdrant_url, api_key=get_qdrant_api_key(), timeout=timeout)
         ensure_result = ensure_qdrant_collection(
             client,
             collection_name=collection_name,
