@@ -9,7 +9,6 @@ Covers:
 
 import logging
 from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
 from unittest.mock import MagicMock, call, patch
 
 import pytest
@@ -188,7 +187,7 @@ def test_on_branch_drift_not_called_when_no_callback():
 # ---------------------------------------------------------------------------
 
 
-def _make_watcher(registry=None, index_manager=None):
+def _make_watcher(root, registry=None, index_manager=None):
     """Build a MultiRepositoryWatcher with mocked components."""
     registry = registry or MagicMock()
     dispatcher = MagicMock()
@@ -200,14 +199,14 @@ def _make_watcher(registry=None, index_manager=None):
     )
     watcher.running = True
     watcher.watchers["my-repo"] = MagicMock()
-    watcher.watchers["my-repo"].ctx.registry_entry.path = Path.cwd()
+    watcher.watchers["my-repo"].ctx.registry_entry.path = root
     watcher.watchers["my-repo"].ctx.registry_entry.registration_id = "admitted-registration"
     return watcher
 
 
-def test_enqueue_full_rescan_submits_to_executor():
+def test_enqueue_full_rescan_submits_to_executor(tmp_path):
     """enqueue_full_rescan must submit work to executor, not execute inline."""
-    watcher = _make_watcher()
+    watcher = _make_watcher(tmp_path)
 
     with patch.object(watcher.executor, "submit") as mock_submit:
         watcher.enqueue_full_rescan("my-repo")
@@ -217,9 +216,9 @@ def test_enqueue_full_rescan_submits_to_executor():
         assert callable(callable_arg)
 
 
-def test_enqueue_full_rescan_returns_immediately():
+def test_enqueue_full_rescan_returns_immediately(tmp_path):
     """enqueue_full_rescan returns without blocking (no future.result() call)."""
-    watcher = _make_watcher()
+    watcher = _make_watcher(tmp_path)
     future_mock = MagicMock()
     future_mock.result = MagicMock(side_effect=AssertionError("result() was called — blocking!"))
 
@@ -227,10 +226,10 @@ def test_enqueue_full_rescan_returns_immediately():
         watcher.enqueue_full_rescan("my-repo")  # must not raise
 
 
-def test_enqueue_full_rescan_passes_repo_id():
+def test_enqueue_full_rescan_passes_repo_id(tmp_path):
     """The callable submitted to executor receives the correct repo_id."""
     index_manager = MagicMock()
-    watcher = _make_watcher(index_manager=index_manager)
+    watcher = _make_watcher(tmp_path, index_manager=index_manager)
 
     submitted_callables = []
 
@@ -259,10 +258,10 @@ def test_enqueue_full_rescan_passes_repo_id():
 # ---------------------------------------------------------------------------
 
 
-def test_watcher_wires_drift_callback_to_index_manager():
+def test_watcher_wires_drift_callback_to_index_manager(tmp_path):
     """MultiRepositoryWatcher.__init__ sets index_manager.on_branch_drift."""
     index_manager = MagicMock()
-    watcher = _make_watcher(index_manager=index_manager)
+    watcher = _make_watcher(tmp_path, index_manager=index_manager)
 
     assert hasattr(index_manager, "on_branch_drift"), "on_branch_drift must be set on index_manager"
     # The assigned attribute must be callable
@@ -270,10 +269,10 @@ def test_watcher_wires_drift_callback_to_index_manager():
     assert callable(cb)
 
 
-def test_watcher_drift_callback_does_not_enqueue_full_rescan():
+def test_watcher_drift_callback_does_not_enqueue_full_rescan(tmp_path):
     """The wired drift callback records diagnostics without scheduling mutation."""
     index_manager = MagicMock()
-    watcher = _make_watcher(index_manager=index_manager)
+    watcher = _make_watcher(tmp_path, index_manager=index_manager)
 
     with patch.object(watcher, "enqueue_full_rescan") as mock_enqueue:
         # Simulate drift: call the wired callback directly

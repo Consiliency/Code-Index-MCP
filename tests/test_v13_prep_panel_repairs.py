@@ -288,7 +288,7 @@ def test_stable_container_tags_are_not_published_in_build_job():
     assert "github.run_id" in step["with"]["tags"]
 
 
-@pytest.mark.parametrize("damage", ["duplicate", "special", "expanded", "compressed", "extra"])
+@pytest.mark.parametrize("damage", ["duplicate", "special", "expanded", "compressed", "extra", "bzip2", "lzma"])
 def test_actions_zip_preflight_rejects_bad_envelopes_without_writes(tmp_path, monkeypatch, damage):
     import mcp_server.artifacts.artifact_download as download
 
@@ -298,6 +298,8 @@ def test_actions_zip_preflight_rejects_bad_envelopes_without_writes(tmp_path, mo
         if damage == "special":
             member.create_system = 3
             member.external_attr = (stat.S_IFLNK | 0o777) << 16
+        elif damage in {"bzip2", "lzma"}:
+            member.compress_type = {"bzip2": zipfile.ZIP_BZIP2, "lzma": zipfile.ZIP_LZMA}[damage]
         archive.writestr(member, b"synthetic")
         if damage == "duplicate":
             with pytest.warns(UserWarning, match="Duplicate name"):
@@ -313,14 +315,15 @@ def test_actions_zip_preflight_rejects_bad_envelopes_without_writes(tmp_path, mo
     assert {path.name for path in tmp_path.iterdir()} == {"artifact.zip"}
 
 
-def test_actions_zip_accepts_exact_flat_payload(tmp_path):
+@pytest.mark.parametrize("compression", [zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED])
+def test_actions_zip_accepts_exact_flat_payload(tmp_path, compression):
     contents = {
         "index.tar.gz": b"synthetic archive",
         "artifact-metadata.json": b"{}",
         "artifact-metadata.json.attestation.jsonl": b"synthetic signature",
         "index.tar.gz.sha256": b"synthetic checksum",
     }
-    with zipfile.ZipFile(tmp_path / "artifact.zip", "w") as archive:
+    with zipfile.ZipFile(tmp_path / "artifact.zip", "w", compression=compression) as archive:
         for name, payload in contents.items():
             archive.writestr(name, payload)
     IndexArtifactDownloader(repo="synthetic/example")._extract_actions_artifact_zip(tmp_path)

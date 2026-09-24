@@ -274,6 +274,8 @@ class IndexArtifactDownloader:
                     or member.file_size > limits.get(member.filename, 0)
                     or member.is_dir()
                     or member.flag_bits & 1
+                    # Other ZipExtFile codecs can expand an entire input chunk in memory.
+                    or member.compress_type not in {zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED}
                     or stat.S_IFMT(member.external_attr >> 16) not in {0, stat.S_IFREG}
                     or (temp_dir / member.filename).exists()
                     or (temp_dir / member.filename).is_symlink()
