@@ -376,6 +376,9 @@ approved inference budget, provider, or signing allowance.
 The installed admin browser fixture uses the existing `plugins.yaml` allowlist
 for its Python-only synthetic repositories. This exercises the real Python
 plugin, Swagger, and Inspector surfaces within the frozen 2048 MiB process limit.
+SL-0 also owns `mcp_server/plugin_system/discovery.py` and its pilot regression:
+read a declared class `lang` before considering instance construction, so
+unneeded sandbox workers do not start during language discovery.
 
 ## Lane Index & Dependencies
 

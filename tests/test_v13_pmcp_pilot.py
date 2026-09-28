@@ -23,6 +23,21 @@ from scripts.v13_pmcp_pilot import (
 )
 
 
+def test_plugin_discovery_does_not_construct_declared_language(tmp_path):
+    from mcp_server.plugin_system.discovery import PluginDiscovery
+
+    class Plugin:
+        lang = "python"
+
+        def __init__(self, sqlite_store):
+            raise AssertionError("plugin construction during discovery")
+
+        def get_language(self):
+            return self.lang
+
+    assert PluginDiscovery()._extract_language(Plugin, tmp_path / "unknown_plugin.py") == "python"
+
+
 @pytest.mark.parametrize("detach_at_shutdown", [False, True])
 def test_owned_scope_catches_detached_children(tmp_path, detach_at_shutdown):
     marker = tmp_path / "child.pid"
