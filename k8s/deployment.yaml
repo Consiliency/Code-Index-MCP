@@ -47,6 +47,12 @@ spec:
               name: code-index-mcp-config
               key: qdrant-url
               optional: true
+        - name: QDRANT_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: code-index-mcp-secrets
+              key: qdrant-api-key
+              optional: true
         - name: LOG_LEVEL
           valueFrom:
             configMapKeyRef:

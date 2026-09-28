@@ -19,6 +19,7 @@ ENV UV_PROJECT_ENVIRONMENT=/home/mcp/.venv
 # Copy dependency metadata first for better caching
 COPY pyproject.toml uv.lock README.md ./
 COPY mcp_server/ ./mcp_server/
+COPY baml_sdk/ ./baml_sdk/
 
 # Install Python dependencies and the project entry points
 RUN mkdir -p /home/mcp && \

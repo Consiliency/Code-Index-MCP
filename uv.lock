@@ -377,18 +377,22 @@ wheels = [
 ]
 
 [[package]]
-name = "baml-py"
-version = "0.221.0"
+name = "baml-bridge"
+version = "0.20.1"
 source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "protobuf" },
+    { name = "typing-extensions" },
+]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/fe/8b/c327e7afccaf43fb1f3ae17d10f8ff1c53818b9e98a5ed157e10a508f0e8/baml_py-0.221.0-cp38-abi3-macosx_10_12_x86_64.whl", hash = "sha256:492c58e462324a44eb8fc8fc9594f218472781f53679bc9373dc144af01fc996", size = 21814592, upload-time = "2026-04-15T19:50:27.773Z" },
-    { url = "https://files.pythonhosted.org/packages/cc/be/92ebd6f0633877a21e57abe968db83b685540eb2a25a66b1c9cc6db762b1/baml_py-0.221.0-cp38-abi3-macosx_11_0_arm64.whl", hash = "sha256:e7491f9c35aa57aced7a8e79c98d6b2a2552e67f1a0037306c1999451ee86ffe", size = 20654921, upload-time = "2026-04-15T19:50:30.573Z" },
-    { url = "https://files.pythonhosted.org/packages/c5/00/eeff6f283dec358be737fd858d709da263a7df5e2e1645a2cda6f6be5a4c/baml_py-0.221.0-cp38-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:4f3e578a81a78eff3b65d54b8f02fb87c65dc5c77815bace9687685de92e3055", size = 24367896, upload-time = "2026-04-15T19:50:33.616Z" },
-    { url = "https://files.pythonhosted.org/packages/d5/3b/5da6bbbbc9d5778ceea805cdbdd9e34d29aed23f43d706a83956d9b887df/baml_py-0.221.0-cp38-abi3-manylinux_2_24_aarch64.whl", hash = "sha256:da382fc9ddc4d7f089242f79b6ed760a356799f41d12e05bef1719234d636ffb", size = 23740744, upload-time = "2026-04-15T19:50:36.498Z" },
-    { url = "https://files.pythonhosted.org/packages/9b/76/7e7179d16ea814dcc2e4a756347b0efeda0f21aa4ce2207a9c81a1347156/baml_py-0.221.0-cp38-abi3-musllinux_1_1_aarch64.whl", hash = "sha256:0daaa87da4bbd30529c45826283a2018ded2b80580e9c3a1be81bfc6734e7b0e", size = 24119636, upload-time = "2026-04-15T19:50:39.643Z" },
-    { url = "https://files.pythonhosted.org/packages/05/08/6883257302c4f2f0f9ca2e59bfa2bf3bd4880739a269034841ba313cc639/baml_py-0.221.0-cp38-abi3-musllinux_1_1_x86_64.whl", hash = "sha256:8e691bc386237677ff9fcb0d42bf8b97daaa86b653ebcec8677a3444c67dec6a", size = 24615148, upload-time = "2026-04-15T19:50:43.062Z" },
-    { url = "https://files.pythonhosted.org/packages/56/4e/ba9e0e1301939880b4339d0ad1013d87bb7a5b8a96b107e94db3e2e3fa86/baml_py-0.221.0-cp38-abi3-win_amd64.whl", hash = "sha256:96fb0dfce070b0c0b88d105dcc637990788268d4920f17f0aef25d980aee4313", size = 22013809, upload-time = "2026-04-15T19:50:46.255Z" },
-    { url = "https://files.pythonhosted.org/packages/9e/d4/4bdaa7a376b540a5fc52bdf551b0223dc6c5a2e8f4dc03c85c40a0702796/baml_py-0.221.0-cp38-abi3-win_arm64.whl", hash = "sha256:841537ae241fde5f2ae1829a4dd4c820a3a1a3ea75f8f65dce82f64917adf4a1", size = 20379767, upload-time = "2026-04-15T19:50:49.328Z" },
+    { url = "https://files.pythonhosted.org/packages/43/01/39904fc7b61b50b47a7604f2ee3f9f492df2237c9c12297cc7fe58afa731/baml_bridge-0.20.1-cp310-abi3-macosx_10_12_x86_64.whl", hash = "sha256:9bbadb15e891e0656a918e10ef8130764b6a27e05a3495d2931f489bbd6e2ee3", size = 10418851, upload-time = "2026-09-20T21:55:20.486Z" },
+    { url = "https://files.pythonhosted.org/packages/9f/ed/d482c1f1063f20315a1d79b8634316c4a786b71ced8f936e00109b11f3d2/baml_bridge-0.20.1-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:17974a3e475adeef7fcd1d99382ca2d100e709e21b0f5b1bf64a58d42b8833a7", size = 10054008, upload-time = "2026-09-20T21:55:23.653Z" },
+    { url = "https://files.pythonhosted.org/packages/6d/e3/2c6b576fd64a7307149ac3250a861735e1a1d70c9fc480a402994163d239/baml_bridge-0.20.1-cp310-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:c0ba0507758d44c0d0714ac33942da53113c224f34385f9c5618c410f3fc3306", size = 10596160, upload-time = "2026-09-20T21:55:27.122Z" },
+    { url = "https://files.pythonhosted.org/packages/ed/c4/eab78195d38babbd5ec9d313a8fa03a8d9c018deaa006b3260903ecc8edf/baml_bridge-0.20.1-cp310-abi3-manylinux_2_24_aarch64.whl", hash = "sha256:b59d78ba86d73041b26d6000640aa8f6e3e875d0d4132573340695da90f71f8c", size = 10023324, upload-time = "2026-09-20T21:55:30.128Z" },
+    { url = "https://files.pythonhosted.org/packages/f1/bc/5eff83ff6222bfad4e04a22c8c8dd94b4e39566cff150ab4670757d982a7/baml_bridge-0.20.1-cp310-abi3-musllinux_1_1_aarch64.whl", hash = "sha256:f1246cb4b2bd28b5cd43b34727dc1bf6c7532c255dcfa6ab59ee84cdd70389fe", size = 10236514, upload-time = "2026-09-20T21:55:33.46Z" },
+    { url = "https://files.pythonhosted.org/packages/04/96/857b49eba70742a2e459f6142dff54bb239970e2c30ea485a2cdd3e06fc0/baml_bridge-0.20.1-cp310-abi3-musllinux_1_1_x86_64.whl", hash = "sha256:ac9019cfa95cc5d0882825dd8b1fef0ebf1d5047cee14ab4a7767f4692d37098", size = 10751488, upload-time = "2026-09-20T21:55:36.048Z" },
+    { url = "https://files.pythonhosted.org/packages/f6/35/3b4d8f65031ad6511f289fe0bc4f68098de98689bbfbb415c863b1746f7f/baml_bridge-0.20.1-cp310-abi3-win_amd64.whl", hash = "sha256:b12d710384c92c1f8ceb93f28bb415ff03e9bf6e2c6a34881991cfa36033321f", size = 10748288, upload-time = "2026-09-20T21:55:38.739Z" },
+    { url = "https://files.pythonhosted.org/packages/79/be/ab887945694ba23cacd4995b932bb61f8fc31f24119a189abf496c25401a/baml_bridge-0.20.1-cp310-abi3-win_arm64.whl", hash = "sha256:3f8151ada3464409163b2ca3ddc8e7d9972659d4b7bbc31f0a02447e3a1bba5e", size = 10354325, upload-time = "2026-09-20T21:55:41.53Z" },
 ]
 
 [[package]]
@@ -940,37 +944,37 @@ wheels = [
 
 [package.optional-dependencies]
 cublas = [
-    { name = "nvidia-cublas", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "nvidia-cublas" },
 ]
 cudart = [
-    { name = "nvidia-cuda-runtime", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "nvidia-cuda-runtime" },
 ]
 cufft = [
-    { name = "nvidia-cufft", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "nvidia-cufft" },
 ]
 cufile = [
-    { name = "nvidia-cufile", marker = "sys_platform == 'linux'" },
+    { name = "nvidia-cufile" },
 ]
 cupti = [
-    { name = "nvidia-cuda-cupti", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "nvidia-cuda-cupti" },
 ]
 curand = [
-    { name = "nvidia-curand", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "nvidia-curand" },
 ]
 cusolver = [
-    { name = "nvidia-cusolver", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "nvidia-cusolver" },
 ]
 cusparse = [
-    { name = "nvidia-cusparse", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "nvidia-cusparse" },
 ]
 nvjitlink = [
-    { name = "nvidia-nvjitlink", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "nvidia-nvjitlink" },
 ]
 nvrtc = [
-    { name = "nvidia-cuda-nvrtc", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "nvidia-cuda-nvrtc" },
 ]
 nvtx = [
-    { name = "nvidia-nvtx", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "nvidia-nvtx" },
 ]
 
 [[package]]
@@ -1715,7 +1719,7 @@ version = "1.4.1"
 source = { editable = "." }
 dependencies = [
     { name = "argon2-cffi" },
-    { name = "baml-py" },
+    { name = "baml-bridge" },
     { name = "bcrypt" },
     { name = "click" },
     { name = "fastapi" },
@@ -1880,7 +1884,7 @@ requires-dist = [
     { name = "argon2-cffi", specifier = ">=23.1.0" },
     { name = "asyncpg", marker = "extra == 'production'", specifier = ">=0.29" },
     { name = "asynctest", marker = "extra == 'dev'", specifier = ">=0.13.0" },
-    { name = "baml-py", specifier = "==0.221.0" },
+    { name = "baml-bridge", specifier = "==0.20.1" },
     { name = "bandit", marker = "extra == 'dev'", specifier = ">=1.7.5" },
     { name = "bcrypt", specifier = ">=4.0.0" },
     { name = "black", marker = "extra == 'dev'", specifier = ">=23.7.0" },

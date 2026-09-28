@@ -40,6 +40,7 @@ from ..artifacts.semantic_profiles import (
     extract_semantic_profile_metadata,
     get_primary_semantic_profile_metadata,
 )
+from ..config.env_vars import get_qdrant_api_key
 from ..core.path_resolver import PathResolver
 from ..interfaces.inference_contracts import EmbeddingRole
 from ..plugins.language_registry import get_language_by_extension
@@ -1075,7 +1076,11 @@ class SemanticIndexer:
         if qdrant_path == ":memory:":
             mode, kwargs = "memory", {"location": ":memory:"}
         elif qdrant_path.startswith(("http://", "https://")):
-            mode, kwargs = "server", {"url": qdrant_path, "timeout": 5}
+            mode, kwargs = "server", {
+                "url": qdrant_path,
+                "api_key": get_qdrant_api_key(),
+                "timeout": 5,
+            }
         elif qdrant_path:
             mode, kwargs = "file", {"path": qdrant_path}
         else:

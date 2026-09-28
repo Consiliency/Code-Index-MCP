@@ -242,6 +242,7 @@ tree is clean.
 | `MCP_INDEX_STORAGE_PATH` | `~/.mcp/indexes` | Central index storage location |
 | `QDRANT_USE_SERVER` | `true` | Use Qdrant server mode vs file mode |
 | `QDRANT_URL` | `http://localhost:6333` | Qdrant server URL |
+| `QDRANT_API_KEY` | None | API key sent to server-mode Qdrant; must match the server's `QDRANT__SERVICE__API_KEY` (an HTTP 401 from the Qdrant probe means it is missing or wrong) |
 | `VOYAGE_API_KEY` | None | API key for semantic embeddings |
 
 ## Debug Commands

@@ -1,6 +1,7 @@
 """Lazy env-var getters — each reads os.getenv on every call; no module-scope caching."""
 
 import os
+from typing import Optional
 
 
 def get_max_file_size_bytes() -> int:
@@ -24,3 +25,8 @@ def get_publish_rollback_enabled() -> bool:
     if raw is None:
         return True
     return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def get_qdrant_api_key() -> Optional[str]:
+    """API key for server-mode Qdrant; unset or blank means the server needs no key."""
+    return os.getenv("QDRANT_API_KEY", "").strip() or None

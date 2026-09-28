@@ -576,6 +576,10 @@ VOYAGE_API_KEY=your_api_key_here
 # Use 127.0.0.1 for local inference, or a Tailscale/SSH tunnel IP for remote GPUs
 OPENAI_API_BASE=http://127.0.0.1:8001/v1
 QDRANT_PATH=vector_index.qdrant
+# Server-mode Qdrant: QDRANT_URL, plus QDRANT_API_KEY when the server sets
+# QDRANT__SERVICE__API_KEY (leave unset for an unauthenticated server)
+# QDRANT_URL=http://localhost:6333
+# QDRANT_API_KEY=your_qdrant_api_key
 
 # Server settings
 MCP_SERVER_HOST=0.0.0.0

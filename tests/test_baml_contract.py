@@ -1,6 +1,6 @@
-"""Generator, generated client and installed runtime must use one exact BAML version."""
+"""BAML source, generated SDK and installed bridge must use one exact version."""
 
-import re
+import os
 import shutil
 import subprocess
 import sys
@@ -8,53 +8,57 @@ import tomllib
 from importlib.metadata import version
 from pathlib import Path
 
+import pytest
+
 
 def test_baml_generator_runtime_and_generated_client_match():
     root = Path(__file__).resolve().parents[1]
-    runtime = version("baml-py")
-    generator = (root / "baml_src/generators.baml").read_text()
-    assert re.search(r'version\s+"([^"]+)"', generator).group(1) == runtime
+    runtime = version("baml-bridge")
+    assert runtime == "0.20.1"
     project = tomllib.loads((root / "pyproject.toml").read_text())
-    assert f"baml-py=={runtime}" in project["project"]["dependencies"]
-    from mcp_server.indexing.baml_client.baml_client import inlinedbaml
+    assert f"baml-bridge=={runtime}" in project["project"]["dependencies"]
+    assert f'VERSION = "{runtime}"' in (root / "scripts/generate_baml_sdk.py").read_text()
+    assert (root / "baml.toml").is_file()
 
-    assert any(f'version "{runtime}"' in text for text in inlinedbaml.get_baml_files().values())
+    from baml_sdk import SummarizeChunkAlone_spec, SummarizeFileChunks_spec
+
+    assert callable(SummarizeChunkAlone_spec)
+    assert callable(SummarizeFileChunks_spec)
 
 
 def test_baml_regeneration_and_formatting_are_reproducible(tmp_path):
     root = Path(__file__).resolve().parents[1]
+    toolchain = os.environ.get("BAML_TOOLCHAIN") or shutil.which("baml")
+    if not toolchain:
+        pytest.skip("matching BAML 0.20.1 toolchain is not installed")
+    checked = subprocess.run(
+        [toolchain, "--version"], capture_output=True, text=True, check=True, timeout=30
+    )
+    if not checked.stdout.strip().endswith("0.20.1"):
+        pytest.skip("matching BAML 0.20.1 toolchain is not installed")
+
     shutil.copytree(root / "baml_src", tmp_path / "baml_src")
-    generated = Path("mcp_server/indexing/baml_client/baml_client")
+    (tmp_path / "scripts").mkdir()
+    shutil.copy2(root / "scripts/generate_baml_sdk.py", tmp_path / "scripts")
+    shutil.copy2(root / "baml.toml", tmp_path / "baml.toml")
     subprocess.run(
-        [str(Path(sys.executable).with_name("baml-cli")), "generate"],
+        [sys.executable, str(tmp_path / "scripts/generate_baml_sdk.py")],
         cwd=tmp_path,
+        env={**os.environ, "BAML_TOOLCHAIN": toolchain},
         check=True,
         capture_output=True,
-        timeout=30,
+        timeout=120,
     )
-    subprocess.run(
-        [sys.executable, "-m", "black", "--line-length", "100", str(generated)],
-        cwd=tmp_path,
-        check=True,
-        capture_output=True,
-        timeout=30,
-    )
-    subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "isort",
-            "--profile",
-            "black",
-            "--line-length",
-            "100",
-            str(generated),
-        ],
-        cwd=tmp_path,
-        check=True,
-        capture_output=True,
-        timeout=30,
-    )
-    expected = {p.name: p.read_bytes() for p in (root / generated).glob("*.py")}
-    observed = {p.name: p.read_bytes() for p in (tmp_path / generated).glob("*.py")}
+    expected = {
+        path.relative_to(root / "baml_sdk"): path.read_bytes()
+        for path in (root / "baml_sdk").rglob("*")
+        if path.is_file()
+        and (path.suffix in {".py", ".pyi"} or path.name in {".gitignore", "py.typed"})
+    }
+    observed = {
+        path.relative_to(tmp_path / "baml_sdk"): path.read_bytes()
+        for path in (tmp_path / "baml_sdk").rglob("*")
+        if path.is_file()
+        and (path.suffix in {".py", ".pyi"} or path.name in {".gitignore", "py.typed"})
+    }
     assert observed == expected

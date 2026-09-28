@@ -88,15 +88,20 @@ def validate_wheel_source(wheel: Path, repo: Path = REPO) -> dict:
     for extra, values in project.get("optional-dependencies", {}).items():
         expected_dependencies.update(requirement(value, extra) for value in values)
     tracked = (
-        subprocess.check_output(["git", "ls-files", "-z", "--", "mcp_server"], cwd=repo, timeout=30)
+        subprocess.check_output(
+            ["git", "ls-files", "-z", "--", "mcp_server", "baml_sdk"],
+            cwd=repo,
+            timeout=30,
+        )
         .decode()
         .split("\0")
     )
     payload = {
         name
         for name in tracked
-        if name.endswith(".py")
+        if name.endswith((".py", ".pyi"))
         or name == "mcp_server/py.typed"
+        or name == "baml_sdk/py.typed"
         or name.startswith("mcp_server/storage/migrations/")
         and name.endswith(".sql")
     }
@@ -341,6 +346,44 @@ def smoke_container(image_ref: str | None = None) -> None:
         timeout=30,
     ).strip()
     print(json.dumps({"image": image_ref or IMAGE, "image_id": image_id}), flush=True)
+    baml_contract = r"""
+from importlib.metadata import version
+import os
+from unittest.mock import patch
+
+from baml_sdk import ChunkInput, SummarizeChunkAlone_spec, SummarizeFileChunks_spec
+
+assert version("baml-bridge") == "0.20.1"
+os.environ["CEREBRAS_API_KEY"] = "dummy-offline"
+with patch("socket.socket.connect", side_effect=AssertionError("BAML smoke must stay offline")):
+    batch = SummarizeFileChunks_spec(
+        language="python",
+        file_path="smoke.py",
+        file_content="def alpha(): return 1",
+        chunks=[ChunkInput(
+            chunk_id="smoke-1",
+            symbol="alpha",
+            node_type="function_definition",
+            line_start=1,
+            line_end=1,
+            content="return 1",
+        )],
+    )
+    assert batch.build_request().url == "https://api.cerebras.ai/v1/chat/completions"
+    assert "chunk_id: smoke-1" in batch.prompt().messages()[1].content
+    single = SummarizeChunkAlone_spec(
+        language="python",
+        symbol="alpha",
+        line_start=1,
+        line_end=1,
+        content="return 1",
+        parent_context="",
+        file_context="smoke.py",
+    )
+    assert single.build_request().url == "https://api.cerebras.ai/v1/chat/completions"
+    assert 'Set chunk_id to "alpha"' in single.prompt().messages()[1].content
+"""
+    _run(["docker", "run", "--rm", image_id, "python", "-c", baml_contract])
     with tempfile.TemporaryDirectory(prefix="mcp-release-container-") as tmp:
         root = Path(tmp)
         root.chmod(0o777)

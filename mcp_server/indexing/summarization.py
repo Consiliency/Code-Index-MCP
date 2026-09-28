@@ -572,9 +572,9 @@ class ChunkWriter:
             and os.environ.get("CEREBRAS_API_KEY")
         ):
             try:
-                from mcp_server.indexing.baml_client.baml_client.async_client import b
+                from baml_sdk import SummarizeChunkAlone_async
 
-                result = await b.SummarizeChunkAlone(
+                result = await SummarizeChunkAlone_async(
                     language=language,
                     symbol=symbol or "unknown",
                     line_start=chunk_start,
@@ -846,8 +846,7 @@ class FileBatchSummarizer(ChunkWriter):
                 f"({_BATCH_FILE_SIZE_THRESHOLD:,} chars)"
             )
 
-        from mcp_server.indexing.baml_client.baml_client.async_client import b
-        from mcp_server.indexing.baml_client.baml_client.types import ChunkInput
+        from baml_sdk import ChunkInput, SummarizeFileChunks_async
 
         language = (chunks[0].get("language") or "unknown") if chunks else "unknown"
         chunk_inputs = [
@@ -862,7 +861,7 @@ class FileBatchSummarizer(ChunkWriter):
             for c in chunks
         ]
 
-        result = await b.SummarizeFileChunks(
+        result = await SummarizeFileChunks_async(
             language=language,
             file_path=file_path,
             file_content=file_content,
