@@ -172,11 +172,14 @@ def smoke_container() -> None:
     _run(["docker", "run", "--rm", IMAGE, "mcp-index", "--help"])
     container_contract = r"""
 import asyncio
+from importlib.metadata import version
 import json
 import os
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
+from baml_sdk import ChunkInput, SummarizeChunkAlone_spec, SummarizeFileChunks_spec
 from mcp_server.cli.tool_handlers import handle_get_status, handle_search_code
 from mcp_server.health.repository_readiness import RepositoryReadiness, RepositoryReadinessState
 
@@ -202,6 +205,36 @@ class Resolver:
 
 
 async def main():
+    assert version("baml-bridge") == "0.20.1"
+    os.environ["CEREBRAS_API_KEY"] = "dummy-offline"
+    with patch("socket.socket.connect", side_effect=AssertionError("BAML smoke must stay offline")):
+        batch = SummarizeFileChunks_spec(
+            language="python",
+            file_path="smoke.py",
+            file_content="def alpha(): return 1",
+            chunks=[ChunkInput(
+                chunk_id="smoke-1",
+                symbol="alpha",
+                node_type="function_definition",
+                line_start=1,
+                line_end=1,
+                content="return 1",
+            )],
+        )
+        assert batch.build_request().url == "https://api.cerebras.ai/v1/chat/completions"
+        assert "chunk_id: smoke-1" in batch.prompt().messages()[1].content
+        single = SummarizeChunkAlone_spec(
+            language="python",
+            symbol="alpha",
+            line_start=1,
+            line_end=1,
+            content="return 1",
+            parent_context="",
+            file_context="smoke.py",
+        )
+        assert single.build_request().url == "https://api.cerebras.ai/v1/chat/completions"
+        assert 'Set chunk_id to "alpha"' in single.prompt().messages()[1].content
+
     with tempfile.TemporaryDirectory(prefix="mcp-container-fallback-") as tmp:
         os.environ["MCP_ALLOWED_ROOTS"] = tmp
         repo = Path(tmp) / "unregistered"

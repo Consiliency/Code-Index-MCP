@@ -1,0 +1,2 @@
+include baml.toml
+recursive-include baml_src *.baml
