@@ -29,7 +29,7 @@ class _FakeQdrantClient:
         self.deleted = []
         self.upserted = []
 
-    def delete(self, collection_name: str, points_selector, *, wait=False) -> None:
+    def delete(self, collection_name: str, points_selector, *, wait=False):
         self.deleted.append(
             {
                 "collection": collection_name,
@@ -37,6 +37,7 @@ class _FakeQdrantClient:
                 "wait": wait,
             }
         )
+        return SimpleNamespace(status="completed")
 
     def upsert(self, collection_name: str, points) -> None:
         self.upserted.append(
@@ -192,6 +193,20 @@ def test_cleanup_targets_recorded_collection_with_acknowledged_delete(tmp_path):
             "points": [101],
             "wait": True,
         }
+    finally:
+        store.close()
+
+
+def test_unacknowledged_remote_delete_preserves_mapping(tmp_path, monkeypatch):
+    store = SQLiteStore(str(tmp_path / "index.db"))
+    client = _FakeQdrantClient()
+    indexer = _build_indexer(tmp_path, client)
+    monkeypatch.setattr(client, "delete", lambda **kwargs: SimpleNamespace(status="acknowledged"))
+    try:
+        store.upsert_semantic_point("test-profile", "chunk", 101, "code-index")
+        with pytest.raises(RuntimeError, match="Failed to delete remote points"):
+            indexer.delete_stale_vectors("test-profile", ["chunk"], store)
+        assert store.get_semantic_point_ids("test-profile", ["chunk"]) == [101]
     finally:
         store.close()
 

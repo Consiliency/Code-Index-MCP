@@ -2380,6 +2380,7 @@ async def enable_plugin(
             git_index_manager.dispatcher = dispatcher
         if multi_watcher is not None:
             multi_watcher.dispatcher = dispatcher
+        app.state.dispatcher = dispatcher
 
         return {
             "status": "success",
@@ -2421,6 +2422,7 @@ async def disable_plugin(
             git_index_manager.dispatcher = dispatcher
         if multi_watcher is not None:
             multi_watcher.dispatcher = dispatcher
+        app.state.dispatcher = dispatcher
 
         return {
             "status": "success",

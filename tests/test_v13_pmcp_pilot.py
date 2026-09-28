@@ -361,7 +361,7 @@ def test_prepare_delivered_wheel_never_builds(tmp_path, monkeypatch, valid):
     root = tmp_path / "owned"
     calls = []
     monkeypatch.setattr(pilot, "source_identity", lambda: {"source": "a" * 40})
-    monkeypatch.setattr(pilot, "pmcp_distribution_identity", lambda path: {"version": "fixture"})
+    monkeypatch.setattr(pilot, "pmcp_distribution_identity", lambda path: {"version": "2.7.3"})
     monkeypatch.setattr(release_smoke, "validate_wheel_source", lambda *args: {"version": "1.4.1"})
 
     def run(command, directory, label, **kwargs):
@@ -369,7 +369,7 @@ def test_prepare_delivered_wheel_never_builds(tmp_path, monkeypatch, valid):
         calls.append(command)
         if label == "pilot-lock-export":
             (directory / "constraints.txt").write_text("dependency==1\n")
-        return '{"version": "1.4.1"}' if label == "installed-identity" else "fixture"
+        return '{"version": "1.4.1"}' if label == "installed-identity" else "2.7.3"
 
     monkeypatch.setattr(pilot, "run_command", run)
     digest = pilot.digest_file(wheel) if valid else "0" * 64
@@ -395,6 +395,8 @@ def test_prepare_delivered_wheel_never_builds(tmp_path, monkeypatch, valid):
         "pmcp_path",
         "pmcp_sha256",
         "pmcp_distribution",
+        "pmcp_version",
+        "helper_sha256",
     ],
 )
 def test_prepared_runtime_identity_rejects_manifest_tampering(tmp_path, monkeypatch, field):
@@ -408,7 +410,9 @@ def test_prepared_runtime_identity_rejects_manifest_tampering(tmp_path, monkeypa
     executable.write_bytes(b"#!/bin/sh\n")
     monkeypatch.setattr(pilot, "source_identity", lambda: {"source": "a" * 40})
     monkeypatch.setattr(pilot.shutil, "which", lambda name: str(executable))
-    monkeypatch.setattr(pilot, "pmcp_distribution_identity", lambda path: {"version": "fixture"})
+    monkeypatch.setattr(pilot, "pmcp_distribution_identity", lambda path: {"version": "2.7.3"})
+    for name in pilot.PILOT_HELPERS:
+        (tmp_path / name).write_bytes((pilot.REPO / "scripts" / name).read_bytes())
     python = str(Path(sys.base_prefix) / "bin/python3.12")
     manifest = {
         "schema": "v13-pilot-manifest.v1",
@@ -417,12 +421,19 @@ def test_prepared_runtime_identity_rejects_manifest_tampering(tmp_path, monkeypa
         "wheel_sha256": pilot.digest_file(wheel),
         "constraints_sha256": pilot.digest_file(tmp_path / "constraints.txt"),
         "wheel_source_contract": {"version": "1.4.1"},
-        "installed": {"version": "1.4.1", "python_version": [3, 12, 0], "wheel_files_verified": 1},
+        "installed": {
+            "version": "1.4.1",
+            "python_version": [3, 12, 0],
+            "wheel_files_verified": 2,
+            "baml_files_verified": 1,
+        },
         "uvx_prefix": pilot.uvx_prefix(tmp_path, wheel, python),
         "python": python,
         "pmcp_path": str(executable),
         "pmcp_sha256": pilot.digest_file(executable),
-        "pmcp_distribution": {"version": "fixture"},
+        "pmcp_distribution": {"version": "2.7.3"},
+        "pmcp_version": "2.7.3",
+        "helper_sha256": {name: pilot.digest_file(tmp_path / name) for name in pilot.PILOT_HELPERS},
     }
     pilot.validate_manifest(tmp_path, manifest)
     manifest[field] = "tampered"
@@ -570,7 +581,20 @@ def test_ambiguous_model_catalog_refused(catalog):
 
 @pytest.mark.parametrize(
     "damage",
-    [None, "binding", "unstarted", "shutdown", "actions", "image", "blank", "results", "forged"],
+    [
+        None,
+        "binding",
+        "unstarted",
+        "ungraceful",
+        "identity",
+        "shutdown",
+        "actions",
+        "image",
+        "blank",
+        "duplicate",
+        "results",
+        "forged",
+    ],
 )
 def test_browser_artifact_contents_are_verified(tmp_path, manifest, damage):
     from PIL import Image, ImageDraw
@@ -578,10 +602,15 @@ def test_browser_artifact_contents_are_verified(tmp_path, manifest, damage):
     from scripts.v13_pmcp_pilot import digest_file
 
     result = receipt(manifest, "browser")
+    result["inspector_version"] = "2.6.0"
+    result["inspector_entrypoint_sha256"] = "d" * 64
     binding = {key: result[key] for key in ("source", "wheel_sha256", "manifest_sha256")}
     session = {
         **binding,
         "session_started": True,
+        "explicit_stop": True,
+        "inspector_version": "2.6.0",
+        "inspector_entrypoint_sha256": "d" * 64,
         "shutdown_seconds": [1],
         "surviving_children": [],
         "peak_rss_mib": 100,
@@ -664,6 +693,10 @@ def test_browser_artifact_contents_are_verified(tmp_path, manifest, damage):
         session["source"] = "wrong"
     elif damage == "unstarted":
         session["session_started"] = False
+    elif damage == "ungraceful":
+        session["explicit_stop"] = False
+    elif damage == "identity":
+        session["inspector_entrypoint_sha256"] = "e" * 64
     elif damage == "shutdown":
         session["shutdown_seconds"] = [6]
     elif damage == "actions":
@@ -673,12 +706,16 @@ def test_browser_artifact_contents_are_verified(tmp_path, manifest, damage):
     (tmp_path / "results.json").write_text(json.dumps(observations))
     for name in ("admin", "inspector"):
         picture = Image.new("RGB", (100, 100), "white")
-        ImageDraw.Draw(picture).rectangle((10, 10, 90, 90), fill="black")
+        ImageDraw.Draw(picture).rectangle(
+            (10, 10, 90, 90), fill="black" if name == "admin" else "blue"
+        )
         picture.save(tmp_path / (name + ".png"))
     if damage == "image":
         (tmp_path / "admin.png").write_bytes(b"not an image")
     elif damage == "blank":
         Image.new("RGB", (100, 100), "white").save(tmp_path / "admin.png")
+    elif damage == "duplicate":
+        (tmp_path / "inspector.png").write_bytes((tmp_path / "admin.png").read_bytes())
     result["artifacts"] = [
         {"role": role, "path": name, "sha256": digest_file(tmp_path / name)}
         for role, name in (

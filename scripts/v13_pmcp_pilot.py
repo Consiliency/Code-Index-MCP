@@ -38,6 +38,13 @@ QUERY_TEXTS = {
 QDRANT_IMAGE = (
     "qdrant/qdrant@sha256:f1c7272cdac52b38c1a0e89313922d940ba50afd90d593a1605dbbc214e66ffb"
 )
+PILOT_HELPERS = (
+    "v13_pmcp_pilot.py",
+    "installed_runtime_smoke.py",
+    "safety_runtime_smoke.py",
+    "v13_pilot_estimate.py",
+    "v13_pilot_budget.py",
+)
 REHEARSAL_INDEX_DELAY_SECONDS = 4
 GOALS = {
     "offline": {
@@ -203,10 +210,14 @@ def evidence_snapshot(paths: list[Path]):
             target.chmod(0o400)
             copies[path], identities[path] = target, identity(before)
         yield copies
-        if any(
-            path.is_symlink() or identity(path.stat()) != expected
-            for path, expected in identities.items()
-        ):
+        try:
+            changed = any(
+                path.is_symlink() or identity(path.stat()) != expected
+                for path, expected in identities.items()
+            )
+        except OSError:
+            changed = True
+        if changed:
             raise PilotRefused("evidence_changed_during_validation")
 
 
@@ -231,11 +242,11 @@ def validate_receipt(receipt: dict, manifest: dict, kind: str) -> None:
         if (
             not durations
             or any(
-                not isinstance(t, (int, float)) or not math.isfinite(t) or not 0 <= t <= 5
+                type(t) not in (int, float) or not math.isfinite(t) or not 0 <= t <= 5
                 for t in durations
             )
             or receipt.get("surviving_children") != []
-            or not isinstance(rss, (int, float))
+            or type(rss) not in (int, float)
             or not math.isfinite(rss)
             or not 0 < rss <= 2048
         ):
@@ -432,7 +443,6 @@ def prepare(root: Path, wheel_path: Path | None = None, expected_sha256: str | N
             "--extra",
             "production",
             "--no-emit-project",
-            "--no-hashes",
             "--output-file",
             str(root / "constraints.txt"),
         ],
@@ -441,13 +451,7 @@ def prepare(root: Path, wheel_path: Path | None = None, expected_sha256: str | N
         env=clean_env(root),
         cwd=REPO,
     )
-    for name in (
-        "v13_pmcp_pilot.py",
-        "installed_runtime_smoke.py",
-        "safety_runtime_smoke.py",
-        "v13_pilot_estimate.py",
-        "v13_pilot_budget.py",
-    ):
+    for name in PILOT_HELPERS:
         shutil.copyfile(REPO / "scripts" / name, root / name)
     prefix = uvx_prefix(root, wheel, python)
     installed = json.loads(
@@ -476,6 +480,7 @@ def prepare(root: Path, wheel_path: Path | None = None, expected_sha256: str | N
         "wheel_source_contract": wheel_contract,
         "artifact_origin": "registry" if wheel_path is not None else "local_build",
         "constraints_sha256": digest_file(root / "constraints.txt"),
+        "helper_sha256": {name: digest_file(root / name) for name in PILOT_HELPERS},
         "installed": installed,
         "uvx_prefix": prefix,
         "python": python,
@@ -492,6 +497,8 @@ def prepare(root: Path, wheel_path: Path | None = None, expected_sha256: str | N
     }
     manifest["pmcp_sha256"] = digest_file(Path(manifest["pmcp_path"]))
     manifest["pmcp_distribution"] = pmcp_distribution_identity(Path(manifest["pmcp_path"]))
+    if manifest["pmcp_version"] != "2.7.3" or manifest["pmcp_distribution"]["version"] != "2.7.3":
+        raise PilotRefused("pmcp_version_mismatch")
     write_json(root / "manifest.json", manifest, exclusive=True)
     return manifest
 
@@ -507,12 +514,16 @@ def installed_identity(wheel: Path) -> dict:
     if mcp_server.__version__ != version("index-it-mcp"):
         raise PilotRefused("installed_version_mismatch")
     checked = 0
+    baml_checked = 0
     with zipfile.ZipFile(wheel) as archive:
         for name in archive.namelist():
-            if name.startswith("mcp_server/") and not name.endswith("/"):
+            if name.startswith(("mcp_server/", "baml_sdk/")) and not name.endswith("/"):
                 if (package.parent / name).read_bytes() != archive.read(name):
                     raise PilotRefused("installed_artifact_mismatch")
                 checked += 1
+                baml_checked += name.startswith("baml_sdk/")
+    if not baml_checked:
+        raise PilotRefused("installed_baml_missing")
     return {
         "python": sys.executable,
         "python_version": list(sys.version_info[:3]),
@@ -520,6 +531,7 @@ def installed_identity(wheel: Path) -> dict:
         "version": version("index-it-mcp"),
         "prometheus_client_version": version("prometheus-client"),
         "wheel_files_verified": checked,
+        "baml_files_verified": baml_checked,
     }
 
 
@@ -543,6 +555,8 @@ def validate_manifest(root: Path, manifest: dict, *, execute: bool = False) -> N
         or installed.get("python_version", [])[:2] != [3, 12]
         or type(installed.get("wheel_files_verified")) is not int
         or installed["wheel_files_verified"] <= 0
+        or type(installed.get("baml_files_verified")) is not int
+        or installed["baml_files_verified"] <= 0
     ):
         raise PilotRefused("installed_identity_changed")
     pmcp = Path(manifest.get("pmcp_path", ""))
@@ -553,8 +567,16 @@ def validate_manifest(root: Path, manifest: dict, *, execute: bool = False) -> N
         or digest_file(pmcp) != manifest.get("pmcp_sha256")
         or str(Path(shutil.which("pmcp") or "pmcp").resolve()) != str(pmcp)
         or pmcp_distribution_identity(pmcp) != manifest.get("pmcp_distribution")
+        or manifest.get("pmcp_version") != "2.7.3"
+        or manifest["pmcp_distribution"].get("version") != "2.7.3"
     ):
         raise PilotRefused("pmcp_binding_changed")
+    expected_helpers = {name: digest_file(REPO / "scripts" / name) for name in PILOT_HELPERS}
+    if manifest.get("helper_sha256") != expected_helpers or any(
+        not (root / name).is_file() or digest_file(root / name) != expected_helpers[name]
+        for name in PILOT_HELPERS
+    ):
+        raise PilotRefused("pilot_helper_binding_changed")
     if execute:
         observed = json.loads(
             run_command(
@@ -1433,7 +1455,17 @@ def _verify_receipt_artifacts(root, manifest, kind, result, copies, expected_app
                     if evidence[role].get(key) != result[key]:
                         raise PilotRefused("browser_artifact_binding_mismatch")
         session = evidence["browser_session"]
-        if session.get("session_started") is not True:
+        if (
+            session.get("session_started") is not True
+            or session.get("explicit_stop") is not True
+            or session.get("inspector_version") != "2.6.0"
+            or session.get("inspector_version") != result.get("inspector_version")
+            or session.get("inspector_entrypoint_sha256")
+            != result.get("inspector_entrypoint_sha256")
+            or not re.fullmatch(
+                r"[0-9a-f]{64}", str(session.get("inspector_entrypoint_sha256", ""))
+            )
+        ):
             raise PilotRefused("browser_session_not_started")
         validate_receipt({**result, **session}, manifest, "browser")
         actions = evidence["browser_actions"].get("events", [])
@@ -1542,7 +1574,11 @@ def _verify_receipt_artifacts(root, manifest, kind, result, copies, expected_app
             for item in artifacts
             if item["role"].endswith("_screenshot")
         ]
-        if len(screenshot_paths) != 2 or len(set(screenshot_paths)) != 2:
+        if (
+            len(screenshot_paths) != 2
+            or len(set(screenshot_paths)) != 2
+            or digest_file(screenshot_paths[0]) == digest_file(screenshot_paths[1])
+        ):
             raise PilotRefused("browser_screenshots_not_distinct")
         for path in screenshot_paths:
             try:

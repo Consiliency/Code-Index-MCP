@@ -3224,11 +3224,13 @@ class SemanticIndexer:
         try:
             self._invalidate_collection_provenance(strict=True, collection=target)
             for start in range(0, len(point_ids), 256):
-                self.qdrant.delete(
+                outcome = self.qdrant.delete(
                     collection_name=target,
                     points_selector=models.PointIdsList(points=point_ids[start : start + 256]),
                     wait=True,
                 )
+                if getattr(outcome, "status", None) != models.UpdateStatus.COMPLETED:
+                    raise RuntimeError("Qdrant deletion was not acknowledged complete")
         except Exception as exc:
             logger.error("Remote point deletion failed (%s)", type(exc).__name__)
             # NOTE: deliberately do NOT set ``self._qdrant_available = False`` here.
