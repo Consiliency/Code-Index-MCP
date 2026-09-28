@@ -1673,7 +1673,9 @@ async def runtime_provenance(fixture: dict, qdrant_url: str) -> list[dict]:
     return records
 
 
-async def inference_pilot(root: Path, manifest: dict, *, rehearsal: bool) -> dict:
+async def inference_pilot(
+    root: Path, manifest: dict, *, rehearsal: bool, qdrant_network: str = "bridge"
+) -> dict:
     from v13_pilot_budget import (
         APPROVAL,
         ENDPOINTS,
@@ -1803,6 +1805,11 @@ async def inference_pilot(root: Path, manifest: dict, *, rehearsal: bool) -> dic
 
     try:
         port = free_port()
+        network_args = (
+            ["--network", "host", "-e", f"QDRANT__SERVICE__HTTP_PORT={port}"]
+            if qdrant_network == "host"
+            else ["-p", f"127.0.0.1:{port}:6333"]
+        )
         container_id = (
             await asyncio.to_thread(
                 run_command,
@@ -1812,8 +1819,7 @@ async def inference_pilot(root: Path, manifest: dict, *, rehearsal: bool) -> dic
                     "--name",
                     container,
                     "-d",
-                    "-p",
-                    f"127.0.0.1:{port}:6333",
+                    *network_args,
                     "-e",
                     "QDRANT__TELEMETRY_DISABLED=true",
                     image,
@@ -1928,6 +1934,7 @@ async def inference_pilot(root: Path, manifest: dict, *, rehearsal: bool) -> dic
                 "dimension": len(vector),
                 "immutable_revision": "unreported",
                 "qdrant_image": image,
+                "qdrant_network": qdrant_network,
                 "endpoints": endpoints or ENDPOINTS,
                 "workload_sha256": digest_json(workload),
             },
@@ -2173,6 +2180,7 @@ def main():
     parser.add_argument("--wheel", type=Path)
     parser.add_argument("--wheel-sha256")
     parser.add_argument("--inspector", type=Path)
+    parser.add_argument("--qdrant-network", choices=("bridge", "host"), default="bridge")
     args = parser.parse_args()
     if args.mode == "identity":
         print(json.dumps(installed_identity(args.wheel)))
@@ -2205,7 +2213,12 @@ def main():
         )
     else:
         result = asyncio.run(
-            inference_pilot(root, load_manifest(root), rehearsal=args.mode == "rehearsal")
+            inference_pilot(
+                root,
+                load_manifest(root),
+                rehearsal=args.mode == "rehearsal",
+                qdrant_network=args.qdrant_network,
+            )
         )
     print(json.dumps({"mode": args.mode, "root": str(root), "source": result["source"]}))
 

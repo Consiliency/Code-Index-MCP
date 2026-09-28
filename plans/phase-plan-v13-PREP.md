@@ -355,13 +355,16 @@ preserving the accepted historical FREEZE contract bytes. SL-0 additionally owns
 `tests/test_baml_contract.py`, `tests/test_summarization.py`,
 `tests/test_v13_data_vectors.py`, `scripts/validate_v13_freeze.py`, and
 `scripts/v13_qdrant_smoke.py`. SL-0 also owns
-`scripts/safety_runtime_smoke.py` for diagnostics in the container acceptance
-route. The four-seat exact-candidate review and both
+`scripts/safety_runtime_smoke.py` and `scripts/v13_pmcp_pilot.py` for diagnostics
+and host-network Qdrant in the container/pilot acceptance route. The four-seat
+exact-candidate review and both
 one-shot operational proofs must bind a new head after this reconciliation.
 The team host's Docker bridge does not forward published ports or resolve
 package mirrors. The server-mode Qdrant proof may use `--network host`; the
 production container smoke may use `--docker-network host`. Record the topology
-in each proof. SL-0 also owns `scripts/release_smoke.py` for this bounded route.
+in each proof. The rehearsal/live driver may use `--qdrant-network host` for its
+disposable Qdrant container, without changing providers, allowance or budget.
+SL-0 also owns `scripts/release_smoke.py` for this bounded route.
 This changes no inference budget, provider, or signing allowance.
 
 ## Lane Index & Dependencies
