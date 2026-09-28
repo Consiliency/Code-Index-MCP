@@ -1706,7 +1706,7 @@ async def inference_pilot(
         "request_envelopes": REQUEST_ENVELOPES,
         "measured_queries_per_class_per_repository": 20,
         "semantic_tool_attempt_limit": 48,
-        "max_rebuilds_per_contention_window": 3,
+        "max_rebuilds_per_contention_window": 4,
         "rehearsal_index_delay_seconds": REHEARSAL_INDEX_DELAY_SECONDS if rehearsal else 0,
         "query_texts": QUERY_TEXTS,
         "mutation": "append a synthetic function-body comment",
@@ -1963,7 +1963,7 @@ async def inference_pilot(
                 queries_finished = asyncio.Event()
 
                 async def indexing_window():
-                    for revision in range(3):
+                    for revision in range(4):
                         path.write_text(
                             path.read_text() + f"    # Synthetic contention revision {revision}.\n"
                         )
