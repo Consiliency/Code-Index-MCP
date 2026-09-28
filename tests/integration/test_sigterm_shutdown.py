@@ -176,11 +176,14 @@ class TestGracefulShutdown:
 
 
 _PARENT_DEATH_PROBE = r'''
+import signal
 import sys
 import time
 
 from mcp_server.sandbox.capabilities import CapabilitySet
 from mcp_server.sandbox.supervisor import SandboxSupervisor
+
+signal.signal(signal.SIGINT, signal.default_int_handler)
 
 worker_code = """import json
 import sys
@@ -238,7 +241,7 @@ def test_parent_signal_leaves_no_live_sandbox_worker(parent_signal):
             selector.close()
 
         os.kill(parent.pid, parent_signal)
-        parent.wait(timeout=15.0)
+        parent.wait(timeout=5.0)
         assert _wait_for_pid_exit(
             child_pid
         ), f"sandbox worker {child_pid} survived parent signal {parent_signal}"

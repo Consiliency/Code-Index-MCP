@@ -301,13 +301,17 @@ def test_publication_identity_is_checked_before_any_mutation(tmp_path, damage):
     gh = tmp_path / "gh"
     gh.write_text("#!/bin/sh\nprintf '%s\\n' '" + "b" * 40 + "'\n")
     gh.chmod(0o700)
+    assert "gh api " in step["run"]
     shell_env = {
         key: value
         for key, value in env.items()
         if key not in {"BASH_ENV", "ENV"} and not key.startswith("BASH_FUNC_")
     }
     result = subprocess.run(
-        ["bash", "-c", step["run"]], env=shell_env, capture_output=True, timeout=5
+        ["bash", "-c", step["run"].replace("gh api ", f'"{gh}" api ')],
+        env=shell_env,
+        capture_output=True,
+        timeout=5,
     )
     assert (result.returncode == 0) is (damage is None)
     assert _jobs()["preflight-publish"]["needs"] == "validate-dispatch"
@@ -359,6 +363,8 @@ def test_duplicate_release_claim_fails_without_replacing_first_owner(tmp_path):
         "    except FileExistsError:\n        sys.exit(1)\n"
         "else:\n    sys.exit(2)\n"
     )
+    assert "gh api " in script
+    script = script.replace("gh api ", f'"{gh}" api ')
     for path in (git, gh):
         path.chmod(0o700)
     env = {
