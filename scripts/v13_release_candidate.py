@@ -14,8 +14,9 @@ from datetime import datetime
 from pathlib import Path
 
 if __package__:
-    from .v13_pilot_budget import RENEWED_APPROVAL, BudgetDenied, BudgetLedger
+    from .v13_pilot_budget import APPROVAL, RENEWED_APPROVAL, BudgetDenied, BudgetLedger
     from .v13_pmcp_pilot import (
+        GOALS,
         PilotRefused,
         digest_file,
         digest_json,
@@ -24,8 +25,9 @@ if __package__:
         verify_saved_receipt,
     )
 else:
-    from v13_pilot_budget import RENEWED_APPROVAL, BudgetDenied, BudgetLedger
+    from v13_pilot_budget import APPROVAL, RENEWED_APPROVAL, BudgetDenied, BudgetLedger
     from v13_pmcp_pilot import (
+        GOALS,
         PilotRefused,
         digest_file,
         digest_json,
@@ -461,15 +463,90 @@ def verify_pilot(repo: Path) -> dict:
             or digest_file(allowed / "live.json") != proof["sha256"]
         ):
             raise CandidateRefused("pilot_live_record_changed")
-        result = verify_saved_receipt(allowed, manifest, "live")
+        live = json.loads((allowed / "live.json").read_text())
+        if (
+            manifest["source"] != "366f6bca7765d545498f41b02014ae8ba105d2e2"
+            or live.get("kind") != "live"
+            or live.get("rehearsal") is not False
+            or live.get("workflow_completed") is not True
+            or any(
+                live.get(key) != value
+                for key, value in {
+                    "source": manifest["source"],
+                    "wheel_sha256": manifest["wheel_sha256"],
+                    "manifest_sha256": digest_json(manifest),
+                }.items()
+            )
+            or any(live.get("goals", {}).get(goal) is not True for goal in GOALS["live"])
+        ):
+            raise CandidateRefused("pilot_legacy_binding_invalid")
+        historical_roles = {
+            "allowance_ledger": "live/allowance-ledger/ledger.sqlite",
+            "runtime_provenance": "live/runtime-provenance.json",
+            "runtime_metadata": "live/runtime-metadata.json",
+            "workload": "live/workload.json",
+        }
+        artifacts = live.get("artifacts", [])
+        if (
+            len(artifacts) != len(historical_roles)
+            or {item.get("role"): item.get("path") for item in artifacts} != historical_roles
+        ):
+            raise CandidateRefused("pilot_legacy_artifacts_invalid")
+        paths = [allowed / name for name in historical_roles.values()]
+        canonical_ledger = repo / ".phase-loop/runs/v13-PILOT-allowance/ledger.sqlite"
+        with evidence_snapshot(paths + [canonical_ledger]) as copies:
+            if (
+                any(
+                    digest_file(copies[allowed / item["path"]]) != item.get("sha256")
+                    for item in artifacts
+                )
+                or digest_file(copies[canonical_ledger]) != proof["ledger_sha256"]
+            ):
+                raise CandidateRefused("pilot_legacy_artifact_hash_invalid")
+            ledger = BudgetLedger(
+                copies[paths[0]].parent,
+                digest_json(manifest),
+                read_only=True,
+                approval=APPROVAL,
+            ).snapshot()
+            canonical = BudgetLedger(
+                copies[canonical_ledger].parent,
+                digest_json(manifest),
+                read_only=True,
+                approval=APPROVAL,
+            ).snapshot()
+            recorded = {
+                key: value for key, value in live["budget"].items() if key != "elapsed_seconds"
+            }
+            if (
+                ledger != canonical
+                or ledger != recorded
+                or not ledger["requests"]
+                or ledger["reserved_input_units"] > 100000
+                or any(
+                    row["outcome"] in {"inflight", "transport_unknown"}
+                    for row in ledger["requests"]
+                )
+            ):
+                raise CandidateRefused("pilot_legacy_accounting_invalid")
+            workload = json.loads(copies[paths[3]].read_text())
+            metadata = json.loads(copies[paths[2]].read_text())
+            provenance = json.loads(copies[paths[1]].read_text())
+            if (
+                workload.get("manifest_sha256") != digest_json(manifest)
+                or metadata.get("workload_sha256") != digest_json(workload)
+                or len(provenance.get("repositories", [])) != 2
+            ):
+                raise CandidateRefused("pilot_legacy_records_invalid")
         return {
             "source": manifest["source"],
             "manifest_sha256": digest_json(manifest),
             "live_sha256": proof["sha256"],
             "wheel_sha256": manifest["wheel_sha256"],
-            "reserved_input_units": result["budget"]["reserved_input_units"],
+            "reserved_input_units": ledger["reserved_input_units"],
             "new_inference_requests": 0,
             "evidence_scope": "original_pilot_source_only",
+            "historical_ledgers_unchanged": True,
         }
     except (OSError, KeyError, TypeError, ValueError, PilotRefused) as exc:
         raise CandidateRefused("pilot_evidence_missing_or_invalid") from exc
