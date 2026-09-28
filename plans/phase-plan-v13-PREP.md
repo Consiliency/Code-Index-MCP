@@ -373,6 +373,9 @@ The 2048-byte summary and 1536-byte document-embedding request limits, with
 16 document and 34 provenance calls, keep the worst-case estimate below 100000
 input units. The frozen overlap and latency limits remain. This changes no
 approved inference budget, provider, or signing allowance.
+The installed admin browser fixture caps its plugin sandbox pool at four workers
+through the existing `MCP_MAX_PLUGIN_WORKERS` setting. This exercises the real
+Swagger and Inspector surfaces within the frozen 2048 MiB process limit.
 
 ## Lane Index & Dependencies
 

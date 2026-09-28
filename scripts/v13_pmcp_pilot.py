@@ -1097,6 +1097,7 @@ async def browser_session(root: Path, manifest: dict, inspector: Path) -> dict:
             admin_port, inspector_port = free_port(), free_port()
             env = dict(fixture["env"])
             env["MCP_METRICS_PORT"] = str(free_port())
+            env["MCP_MAX_PLUGIN_WORKERS"] = "4"
             processes.append(
                 OwnedProcess(
                     manifest["uvx_prefix"]
