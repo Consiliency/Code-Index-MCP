@@ -365,14 +365,14 @@ production container smoke may use `--docker-network host`. Record the topology
 in each proof. The rehearsal/live driver may use `--qdrant-network host` for its
 disposable Qdrant container, without changing providers, allowance or budget.
 SL-0 also owns `scripts/release_smoke.py` for this bounded route.
-Synthetic contention uses four committed source revisions per window and a
+Synthetic contention uses five committed source revisions per window and a
 four-second source-embedding delay in the fake rehearsal provider so measured
-queries overlap actual indexing. The twelve-call summary envelope covers the
-two initial builds, eight contention revisions, rename, and delete recovery.
-The 2048-byte per-summary request limit and 28-call provenance envelope keep
-the worst-case estimate below 100000 input units. The frozen overlap and latency
-limits remain. This changes no approved inference budget, provider, or signing
-allowance.
+queries overlap actual indexing. The fourteen-call summary envelope covers the
+two initial builds, ten contention revisions, rename, and delete recovery.
+The 2048-byte summary and 1536-byte document-embedding request limits, with
+16 document and 34 provenance calls, keep the worst-case estimate below 100000
+input units. The frozen overlap and latency limits remain. This changes no
+approved inference budget, provider, or signing allowance.
 
 ## Lane Index & Dependencies
 
