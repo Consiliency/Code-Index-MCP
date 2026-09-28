@@ -1098,6 +1098,7 @@ async def browser_session(root: Path, manifest: dict, inspector: Path) -> dict:
             env = dict(fixture["env"])
             env["MCP_METRICS_PORT"] = str(free_port())
             env["MCP_AUTO_DETECT_LANGUAGES"] = "false"
+            env["MCP_FAST_STARTUP"] = "true"
             (directory / "plugins.yaml").write_text("enabled_languages:\n  - python\n")
             processes.append(
                 OwnedProcess(
