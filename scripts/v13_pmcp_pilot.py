@@ -409,7 +409,15 @@ def prepare(root: Path, wheel_path: Path | None = None, expected_sha256: str | N
         "uvx_prefix": prefix,
         "python": python,
         "pmcp_path": str(Path(shutil.which("pmcp") or "pmcp").resolve()),
-        "pmcp_version": run_command(["pmcp", "--version"], root, "pmcp-version").strip(),
+        "pmcp_version": run_command(
+            ["pmcp", "--version"],
+            root,
+            "pmcp-version",
+            env={
+                **clean_env(root),
+                "PYTHONUSERBASE": str(Path(shutil.which("pmcp") or "pmcp").resolve().parents[1]),
+            },
+        ).strip(),
     }
     manifest["pmcp_sha256"] = digest_file(Path(manifest["pmcp_path"]))
     write_json(root / "manifest.json", manifest, exclusive=True)
@@ -492,7 +500,10 @@ def validate_manifest(root: Path, manifest: dict, *, execute: bool = False) -> N
             )
         )
         if observed != installed or run_command(
-            [str(pmcp), "--version"], root, "pmcp-version-recheck"
+            [str(pmcp), "--version"],
+            root,
+            "pmcp-version-recheck",
+            env={**clean_env(root), "PYTHONUSERBASE": str(pmcp.parents[1])},
         ).strip() != manifest.get("pmcp_version"):
             raise PilotRefused("runtime_identity_changed")
     if digest_file(wheel) != manifest["wheel_sha256"]:
@@ -521,6 +532,7 @@ def create_fixture(root: Path, manifest: dict, *, label: str) -> dict:
     for directory in ("home", "project", "repos", "locks", "unregistered"):
         (fixture / directory).mkdir()
     env = clean_env(fixture)
+    env["PYTHONUSERBASE"] = str(Path(manifest["pmcp_path"]).parents[1])
     env["UV_CACHE_DIR"] = str(root / "uv-cache")
     secret = secrets.token_urlsafe(36)
     env.update(
