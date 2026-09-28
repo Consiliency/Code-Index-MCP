@@ -330,7 +330,7 @@ agent-fast-local: alpha-dependency-sync coverage-artifact-guard
 		-q --no-cov
 
 agent-gate-local: agent-fast-local
-	$(UV_RUN) --extra dev pytest \
+	BAML_REQUIRE_REGEN=1 $(UV_RUN) --extra dev pytest \
 		tests/test_sqlite_migrations.py tests/test_baml_contract.py \
 		tests/test_tool_schema_handler_parity.py \
 		tests/test_dispatcher.py::TestEnhancedDispatcherProtocolConformance::test_direct_symbol_response_satisfies_http_contract \

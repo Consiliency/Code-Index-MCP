@@ -112,10 +112,16 @@ jobs:
           grep -Fxq "__version__ = \"$VERSION_NO_V\"" mcp_server/__init__.py
 
       - name: Run release preparation gates
+        env:
+          BAML_TOOLCHAIN: ${{ runner.temp }}/baml-0.20.1/bin/baml-cli
         run: |
           python -m pip install --upgrade pip uv
           uv sync --locked --extra dev --extra semantic
           echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/baml.tar.gz" https://github.com/BoundaryML/baml/releases/download/baml-language-0.20.1/baml-language-0.20.1-x86_64-unknown-linux-gnu.tar.gz
+          echo "6067729f14483eca4ab61bfcd3c1921818e9ecc66da035bc64fbbfeb850e2795  $RUNNER_TEMP/baml.tar.gz" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/baml-0.20.1"
+          tar -xzf "$RUNNER_TEMP/baml.tar.gz" -C "$RUNNER_TEMP/baml-0.20.1"
           make agent-gate
           make release-smoke
           make release-smoke-container
@@ -215,10 +221,16 @@ jobs:
           fi
 
       - name: Run release gates
+        env:
+          BAML_TOOLCHAIN: ${{ runner.temp }}/baml-0.20.1/bin/baml-cli
         run: |
           python -m pip install --upgrade pip uv
           uv sync --locked --extra dev --extra semantic
           echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/baml.tar.gz" https://github.com/BoundaryML/baml/releases/download/baml-language-0.20.1/baml-language-0.20.1-x86_64-unknown-linux-gnu.tar.gz
+          echo "6067729f14483eca4ab61bfcd3c1921818e9ecc66da035bc64fbbfeb850e2795  $RUNNER_TEMP/baml.tar.gz" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/baml-0.20.1"
+          tar -xzf "$RUNNER_TEMP/baml.tar.gz" -C "$RUNNER_TEMP/baml-0.20.1"
           make agent-gate
           make release-smoke
           make release-smoke-container

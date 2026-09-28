@@ -19,9 +19,10 @@ def test_baml_generator_runtime_and_generated_client_match():
     assert f"baml-bridge=={runtime}" in project["project"]["dependencies"]
     assert f'VERSION = "{runtime}"' in (root / "scripts/generate_baml_sdk.py").read_text()
     assert (root / "baml.toml").is_file()
-    assert f"BAML generation and runtime are pinned together at {runtime}" in (
-        root / "docs/SUPPORT_MATRIX.md"
-    ).read_text()
+    assert (
+        f"BAML generation and runtime are pinned together at {runtime}"
+        in (root / "docs/SUPPORT_MATRIX.md").read_text()
+    )
 
     from baml_sdk import SummarizeChunkAlone_spec, SummarizeFileChunks_spec
 
@@ -33,11 +34,15 @@ def test_baml_regeneration_and_formatting_are_reproducible(tmp_path):
     root = Path(__file__).resolve().parents[1]
     toolchain = os.environ.get("BAML_TOOLCHAIN") or shutil.which("baml")
     if not toolchain:
+        if os.environ.get("BAML_REQUIRE_REGEN") == "1":
+            pytest.fail("BAML 0.20.1 toolchain is required by the release gate")
         pytest.skip("matching BAML 0.20.1 toolchain is not installed")
     checked = subprocess.run(
         [toolchain, "--version"], capture_output=True, text=True, check=True, timeout=30
     )
     if not checked.stdout.strip().endswith("0.20.1"):
+        if os.environ.get("BAML_REQUIRE_REGEN") == "1":
+            pytest.fail("BAML 0.20.1 toolchain is required by the release gate")
         pytest.skip("matching BAML 0.20.1 toolchain is not installed")
 
     shutil.copytree(root / "baml_src", tmp_path / "baml_src")

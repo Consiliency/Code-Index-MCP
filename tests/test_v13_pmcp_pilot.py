@@ -517,6 +517,29 @@ def test_pmcp_runtime_drift_rejected_before_interpreter_execution(
         pilot.pmcp_distribution_identity(launcher, expected=expected)
 
 
+def test_pmcp_external_pth_path_is_refused_before_interpreter_execution(tmp_path, monkeypatch):
+    from scripts import v13_pmcp_pilot as pilot
+
+    interpreter = tmp_path / "python"
+    interpreter.write_bytes(b"trusted interpreter")
+    launcher = tmp_path / "pmcp"
+    launcher.write_bytes(f"#!{interpreter}\n".encode())
+    site = tmp_path / "site-packages"
+    site.mkdir()
+    external = tmp_path / "external"
+    external.mkdir()
+    (external / "dependency.py").write_text("value = 1\n")
+    (site / "external.pth").write_text(f"{external}\n")
+    monkeypatch.setattr(pilot, "pmcp_runtime_roots", lambda executable, python: [site])
+    monkeypatch.setattr(
+        pilot.subprocess,
+        "run",
+        lambda *args, **kwargs: pytest.fail("executed unbounded interpreter"),
+    )
+    with pytest.raises(PilotRefused, match="pmcp_runtime_unbounded"):
+        pilot.pmcp_distribution_identity(launcher)
+
+
 def test_semantic_sample_refuses_lexical_fallback_and_wrong_generation():
     from scripts.v13_pmcp_pilot import semantic_sample_valid
 

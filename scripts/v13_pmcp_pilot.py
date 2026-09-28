@@ -144,6 +144,12 @@ def pmcp_runtime_roots(executable: Path, interpreter: Path) -> list[Path]:
 def pmcp_runtime_digest(roots: list[Path]) -> tuple[str, int]:
     """Hash importable runtime files, including startup hooks and dependencies."""
     hasher = hashlib.sha256()
+    bound_roots = [root.resolve() for root in roots]
+    distutils_hook = (
+        "import os; var = 'SETUPTOOLS_USE_DISTUTILS'; enabled = "
+        "os.environ.get(var, 'local') == 'local'; enabled and "
+        "__import__('_distutils_hack').add_shim();"
+    )
     pending = list(roots)
     visited = set()
     files = 0
@@ -156,6 +162,18 @@ def pmcp_runtime_digest(roots: list[Path]) -> tuple[str, int]:
         hasher.update(str(root).encode() + b"\0")
         for path in sorted(root.rglob("*")):
             hasher.update(path.relative_to(root).as_posix().encode() + b"\0")
+            if path.suffix == ".pth" and path.is_file():
+                for line in path.read_text(encoding="utf-8").splitlines():
+                    entry = line.strip()
+                    if not entry or entry.startswith("#"):
+                        continue
+                    if entry.startswith(("import ", "import\t")):
+                        if entry != distutils_hook:
+                            raise PilotRefused("pmcp_runtime_unbounded")
+                        continue
+                    target = (path.parent / entry).resolve()
+                    if not any(target.is_relative_to(bound) for bound in bound_roots):
+                        raise PilotRefused("pmcp_runtime_unbounded")
             if path.is_symlink():
                 hasher.update(os.readlink(path).encode() + b"\0")
                 if path.is_dir():
