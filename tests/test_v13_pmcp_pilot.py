@@ -362,7 +362,12 @@ def test_prepare_delivered_wheel_never_builds(tmp_path, monkeypatch, valid):
     calls = []
     monkeypatch.setattr(pilot, "source_identity", lambda: {"source": "a" * 40})
     monkeypatch.setattr(
-        pilot, "pmcp_distribution_identity", lambda path, expected=None: {"version": "2.7.3"}
+        pilot,
+        "pmcp_distribution_identity",
+        lambda path, expected=None: {"version": "2.7.3", "node_executable": None},
+    )
+    monkeypatch.setattr(
+        pilot, "browser_node_identity", lambda path: {"path": str(path), "sha256": "node"}
     )
     monkeypatch.setattr(release_smoke, "validate_wheel_source", lambda *args: {"version": "1.4.1"})
 
@@ -397,6 +402,7 @@ def test_prepare_delivered_wheel_never_builds(tmp_path, monkeypatch, valid):
         "pmcp_path",
         "pmcp_sha256",
         "pmcp_distribution",
+        "browser_node",
         "pmcp_version",
         "helper_sha256",
     ],
@@ -415,6 +421,8 @@ def test_prepared_runtime_identity_rejects_manifest_tampering(tmp_path, monkeypa
     monkeypatch.setattr(
         pilot, "pmcp_distribution_identity", lambda path, expected=None: {"version": "2.7.3"}
     )
+    node_identity = {"path": str(tmp_path / "node"), "sha256": "node"}
+    monkeypatch.setattr(pilot, "browser_node_identity", lambda path: node_identity)
     for name in pilot.PILOT_HELPERS:
         (tmp_path / name).write_bytes((pilot.REPO / "scripts" / name).read_bytes())
     python = str(Path(sys.base_prefix) / "bin/python3.12")
@@ -436,6 +444,7 @@ def test_prepared_runtime_identity_rejects_manifest_tampering(tmp_path, monkeypa
         "pmcp_path": str(executable),
         "pmcp_sha256": pilot.digest_file(executable),
         "pmcp_distribution": {"version": "2.7.3"},
+        "browser_node": node_identity,
         "pmcp_version": "pmcp 2.7.3",
         "helper_sha256": {name: pilot.digest_file(tmp_path / name) for name in pilot.PILOT_HELPERS},
     }
@@ -557,19 +566,28 @@ def test_pmcp_release_wrapper_binds_python_314_and_node_runtime(tmp_path, monkey
         directory.mkdir(parents=True, exist_ok=True)
     interpreter.write_bytes(b"trusted python")
     console.write_text(f"#!{interpreter}\n")
-    (node_bin / "node").write_bytes(b"trusted node")
+    config = release / "python/pyvenv.cfg"
+    config.write_text(f"home = {interpreter.parent}\ninclude-system-site-packages = false\n")
+    node = node_bin / "node"
+    node.write_bytes(b"trusted node")
+    node.chmod(0o755)
+    npm = node_bin.parent / "lib/node_modules/npm/index.js"
+    npm.parent.mkdir(parents=True)
+    npm.write_text("trusted npm\n")
     (site / "dependency.py").write_text("value = 1\n")
     launcher.write_text(f'#!/bin/sh\nexport PATH={node_bin}:"$PATH"\nexec {console} "$@"\n')
-    assert pilot.pmcp_console_script(launcher) == (console, node_bin)
+    assert pilot.pmcp_console_script(launcher) == (console, node_bin.parent)
     assert site in pilot.pmcp_runtime_roots(console, interpreter)
     monkeypatch.setattr(pilot, "pmcp_runtime_roots", lambda executable, python: [site])
-    roots = [site, node_bin]
+    roots = [site, node_bin.parent]
     runtime_sha256, runtime_files = pilot.pmcp_runtime_digest(roots)
     expected = {
         "launcher": str(launcher),
         "launcher_sha256": pilot.digest_file(launcher),
         "console": str(console),
         "console_sha256": pilot.digest_file(console),
+        "venv_sha256": pilot.digest_file(config),
+        "node_executable": str(node),
         "interpreter": str(interpreter),
         "interpreter_sha256": pilot.digest_file(interpreter),
         "runtime_sha256": runtime_sha256,
@@ -580,10 +598,22 @@ def test_pmcp_release_wrapper_binds_python_314_and_node_runtime(tmp_path, monkey
         "run",
         lambda *args, **kwargs: pytest.fail("executed unverified PMCP runtime"),
     )
-    (node_bin / "node").write_bytes(b"changed node")
+    node.write_bytes(b"changed node")
     with pytest.raises(PilotRefused, match="pmcp_runtime_changed"):
         pilot.pmcp_distribution_identity(launcher, expected=expected)
-    (node_bin / "node").write_bytes(b"trusted node")
+    node.write_bytes(b"trusted node")
+    config.write_text(config.read_text() + "# changed\n")
+    with pytest.raises(PilotRefused, match="pmcp_runtime_changed"):
+        pilot.pmcp_distribution_identity(launcher, expected=expected)
+    config.write_text(f"home = {interpreter.parent}\ninclude-system-site-packages = false\n")
+    npm.write_text("changed npm\n")
+    with pytest.raises(PilotRefused, match="pmcp_runtime_changed"):
+        pilot.pmcp_distribution_identity(launcher, expected=expected)
+    npm.write_text("trusted npm\n")
+    node.chmod(0o700)
+    with pytest.raises(PilotRefused, match="pmcp_runtime_changed"):
+        pilot.pmcp_distribution_identity(launcher, expected=expected)
+    node.chmod(0o755)
     console.write_text(f"#!{interpreter}\n# changed\n")
     with pytest.raises(PilotRefused, match="pmcp_launcher_changed"):
         pilot.pmcp_distribution_identity(launcher, expected=expected)

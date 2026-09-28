@@ -169,8 +169,10 @@ def pmcp_runtime_digest(roots: list[Path]) -> tuple[str, int]:
             continue
         visited.add(resolved)
         hasher.update(str(root).encode() + b"\0")
+        hasher.update(str(root.stat().st_mode & 0o7777).encode() + b"\0")
         for path in sorted(root.rglob("*")):
             hasher.update(path.relative_to(root).as_posix().encode() + b"\0")
+            hasher.update(str(path.stat().st_mode & 0o7777).encode() + b"\0")
             if path.suffix == ".pth" and path.is_file():
                 for line in path.read_text(encoding="utf-8").splitlines():
                     entry = line.strip()
@@ -208,8 +210,10 @@ def pmcp_console_script(executable: Path) -> tuple[Path, Path | None]:
     if len(lines) != 3:
         raise PilotRefused("pmcp_launcher_unknown")
     release = executable.parent.parent
-    path_line = re.fullmatch(r'export PATH=(/[^:\s"]+/node-[^/:\s"]+/bin):"\$PATH"', lines[1])
-    exec_line = re.fullmatch(r'exec (/[^\s"]+/python/bin/pmcp) "\$@"', lines[2])
+    path_line = re.fullmatch(
+        r'export PATH=(/[A-Za-z0-9_./-]+/node-[A-Za-z0-9_.-]+/bin):"\$PATH"', lines[1]
+    )
+    exec_line = re.fullmatch(r'exec (/[A-Za-z0-9_./-]+/python/bin/pmcp) "\$@"', lines[2])
     if path_line is None or exec_line is None:
         raise PilotRefused("pmcp_launcher_unknown")
     node_bin = Path(path_line.group(1))
@@ -223,12 +227,12 @@ def pmcp_console_script(executable: Path) -> tuple[Path, Path | None]:
         or not console.is_file()
     ):
         raise PilotRefused("pmcp_launcher_unknown")
-    return console, node_bin
+    return console, node_bin.parent
 
 
 def pmcp_distribution_identity(executable: Path, expected: dict | None = None) -> dict:
     """Bind the launcher, interpreter, and importable dependency closure."""
-    console, node_bin = pmcp_console_script(executable)
+    console, node_root = pmcp_console_script(executable)
     first_line = console.read_bytes().split(b"\n", 1)[0]
     if not first_line.startswith(b"#!/"):
         raise PilotRefused("pmcp_interpreter_unknown")
@@ -250,9 +254,34 @@ def pmcp_distribution_identity(executable: Path, expected: dict | None = None) -
         or expected.get("console_sha256") != console_sha256
     ):
         raise PilotRefused("pmcp_launcher_changed")
+    venv_sha256 = None
+    node_executable = None
+    if node_root is not None:
+        config_path = console.parents[1] / "pyvenv.cfg"
+        if not config_path.is_file():
+            raise PilotRefused("pmcp_venv_unbound")
+        config = dict(
+            line.split("=", 1) for line in config_path.read_text().splitlines() if "=" in line
+        )
+        config = {key.strip(): value.strip() for key, value in config.items()}
+        if (
+            config.get("include-system-site-packages") != "false"
+            or Path(config.get("home", "")).resolve() != interpreter.resolve().parent
+        ):
+            raise PilotRefused("pmcp_venv_unbound")
+        venv_sha256 = digest_file(config_path)
+        node_executable = node_root / "bin/node"
+        if not node_executable.is_file() or not os.access(node_executable, os.X_OK):
+            raise PilotRefused("pmcp_node_unavailable")
+    if expected is not None and (
+        expected.get("venv_sha256") != venv_sha256
+        or expected.get("node_executable")
+        != (str(node_executable) if node_executable is not None else None)
+    ):
+        raise PilotRefused("pmcp_runtime_changed")
     roots = pmcp_runtime_roots(console, interpreter)
-    if node_bin is not None:
-        roots.append(node_bin)
+    if node_root is not None:
+        roots.append(node_root)
     runtime_sha256, runtime_files = pmcp_runtime_digest(roots)
     if expected is not None and (
         expected.get("runtime_sha256") != runtime_sha256
@@ -278,12 +307,29 @@ def pmcp_distribution_identity(executable: Path, expected: dict | None = None) -
         "launcher_sha256": launcher_sha256,
         "console": str(console),
         "console_sha256": console_sha256,
+        "venv_sha256": venv_sha256,
+        "node_executable": str(node_executable) if node_executable is not None else None,
         "interpreter": str(interpreter),
         "interpreter_sha256": interpreter_sha256,
         "runtime_sha256": runtime_sha256,
         "runtime_files_verified": runtime_files,
         "version": distribution.version,
         "distribution_sha256": distribution_hash.hexdigest(),
+    }
+
+
+def browser_node_identity(executable: Path) -> dict:
+    """Bind the Node installation used by the MCP Inspector."""
+    executable = executable.resolve()
+    if not executable.is_file() or not os.access(executable, os.X_OK):
+        raise PilotRefused("browser_node_unavailable")
+    root = executable.parent.parent if executable.parent.name == "bin" else executable.parent
+    runtime_sha256, runtime_files = pmcp_runtime_digest([root])
+    return {
+        "path": str(executable),
+        "sha256": digest_file(executable),
+        "runtime_sha256": runtime_sha256,
+        "runtime_files_verified": runtime_files,
     }
 
 
@@ -492,6 +538,14 @@ def clean_env(root: Path) -> dict[str, str]:
     }
 
 
+def pmcp_env(root: Path, executable: Path, identity: dict) -> dict[str, str]:
+    env = clean_env(root)
+    env["PYTHONUSERBASE"] = str(executable.parents[1])
+    if identity.get("console") != identity.get("launcher"):
+        env["PYTHONNOUSERSITE"] = "1"
+    return env
+
+
 def run_command(argv: list[str], root: Path, label: str, *, env=None, timeout=300, cwd=None) -> str:
     result = subprocess.run(
         argv,
@@ -597,6 +651,8 @@ def prepare(root: Path, wheel_path: Path | None = None, expected_sha256: str | N
         raise PilotRefused("installed_version_mismatch")
     pmcp_path = Path(shutil.which("pmcp") or "pmcp").resolve()
     pmcp_identity = pmcp_distribution_identity(pmcp_path)
+    node_path = pmcp_identity["node_executable"] or shutil.which("node") or "node"
+    node_identity = browser_node_identity(Path(node_path))
     manifest = {
         "schema": "v13-pilot-manifest.v1",
         **identity,
@@ -612,14 +668,12 @@ def prepare(root: Path, wheel_path: Path | None = None, expected_sha256: str | N
         "pmcp_path": str(pmcp_path),
         "pmcp_sha256": digest_file(pmcp_path),
         "pmcp_distribution": pmcp_identity,
+        "browser_node": node_identity,
         "pmcp_version": run_command(
             [str(pmcp_path), "--version"],
             root,
             "pmcp-version",
-            env={
-                **clean_env(root),
-                "PYTHONUSERBASE": str(pmcp_path.parents[1]),
-            },
+            env=pmcp_env(root, pmcp_path, pmcp_identity),
         ).strip(),
     }
     if (
@@ -705,6 +759,13 @@ def validate_manifest(root: Path, manifest: dict, *, execute: bool = False) -> N
         or expected_pmcp.get("version") != "2.7.3"
     ):
         raise PilotRefused("pmcp_binding_changed")
+    expected_node = manifest.get("browser_node")
+    if (
+        not isinstance(expected_node, dict)
+        or not isinstance(expected_node.get("path"), str)
+        or browser_node_identity(Path(expected_node["path"])) != expected_node
+    ):
+        raise PilotRefused("browser_node_changed")
     expected_helpers = {name: digest_file(REPO / "scripts" / name) for name in PILOT_HELPERS}
     if manifest.get("helper_sha256") != expected_helpers or any(
         not (root / name).is_file() or digest_file(root / name) != expected_helpers[name]
@@ -732,7 +793,7 @@ def validate_manifest(root: Path, manifest: dict, *, execute: bool = False) -> N
             [str(pmcp), "--version"],
             root,
             "pmcp-version-recheck",
-            env={**clean_env(root), "PYTHONUSERBASE": str(pmcp.parents[1])},
+            env=pmcp_env(root, pmcp, expected_pmcp),
         ).strip() != manifest.get("pmcp_version"):
             raise PilotRefused("runtime_identity_changed")
 
@@ -757,7 +818,7 @@ def create_fixture(root: Path, manifest: dict, *, label: str) -> dict:
     for directory in ("home", "project", "repos", "locks", "unregistered"):
         (fixture / directory).mkdir()
     env = clean_env(fixture)
-    env["PYTHONUSERBASE"] = str(Path(manifest["pmcp_path"]).parents[1])
+    env.update(pmcp_env(fixture, Path(manifest["pmcp_path"]), manifest["pmcp_distribution"]))
     env["UV_CACHE_DIR"] = str(root / "uv-cache")
     secret = secrets.token_urlsafe(36)
     env.update(
@@ -1452,7 +1513,7 @@ async def browser_session(root: Path, manifest: dict, inspector: Path) -> dict:
             processes.append(
                 OwnedProcess(
                     [
-                        shutil.which("node") or "node",
+                        manifest["browser_node"]["path"],
                         str(inspector),
                         "--web",
                         "--transport",

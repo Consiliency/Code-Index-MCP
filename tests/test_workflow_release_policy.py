@@ -301,7 +301,14 @@ def test_publication_identity_is_checked_before_any_mutation(tmp_path, damage):
     gh = tmp_path / "gh"
     gh.write_text("#!/bin/sh\nprintf '%s\\n' '" + "b" * 40 + "'\n")
     gh.chmod(0o700)
-    result = subprocess.run(["bash", "-c", step["run"]], env=env, capture_output=True, timeout=5)
+    shell_env = {
+        key: value
+        for key, value in env.items()
+        if key not in {"BASH_ENV", "ENV"} and not key.startswith("BASH_FUNC_")
+    }
+    result = subprocess.run(
+        ["bash", "-c", step["run"]], env=shell_env, capture_output=True, timeout=5
+    )
     assert (result.returncode == 0) is (damage is None)
     assert _jobs()["preflight-publish"]["needs"] == "validate-dispatch"
 
@@ -364,6 +371,11 @@ def test_duplicate_release_claim_fails_without_replacing_first_owner(tmp_path):
         "GITHUB_REPOSITORY": "fixture/repo",
         "RELEASE_VERSION": "v1.4.1",
         "GITHUB_RUN_ID": "first",
+    }
+    env = {
+        key: value
+        for key, value in env.items()
+        if key not in {"BASH_ENV", "ENV"} and not key.startswith("BASH_FUNC_")
     }
     first = subprocess.run(
         ["bash", "-c", script], cwd=tmp_path, env=env, capture_output=True, timeout=5

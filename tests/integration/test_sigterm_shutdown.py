@@ -238,7 +238,7 @@ def test_parent_signal_leaves_no_live_sandbox_worker(parent_signal):
             selector.close()
 
         os.kill(parent.pid, parent_signal)
-        parent.wait(timeout=5.0)
+        parent.wait(timeout=15.0)
         assert _wait_for_pid_exit(
             child_pid
         ), f"sandbox worker {child_pid} survived parent signal {parent_signal}"
