@@ -293,8 +293,7 @@ def smoke_container(image_ref: str | None = None, *, network: str = "bridge") ->
             [
                 "docker",
                 "build",
-                "--network",
-                network,
+                *(["--network", "host"] if network == "host" else []),
                 "-f",
                 "docker/dockerfiles/Dockerfile.production",
                 "-t",

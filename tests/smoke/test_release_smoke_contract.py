@@ -167,7 +167,7 @@ def test_ambiguous_smoke_container_creation_cleans_owned_name(monkeypatch):
 
     calls = []
     monkeypatch.setattr(smoke.shutil, "which", lambda _: "/usr/bin/docker")
-    monkeypatch.setattr(smoke, "_run", lambda *args, **kwargs: None)
+    monkeypatch.setattr(smoke, "_run", lambda command, **kwargs: calls.append(command))
 
     def output(command, **kwargs):
         if command[:2] == ["docker", "run"]:
@@ -179,7 +179,9 @@ def test_ambiguous_smoke_container_creation_cleans_owned_name(monkeypatch):
     monkeypatch.setattr(smoke.subprocess, "run", lambda command, **kwargs: calls.append(command))
     with pytest.raises(subprocess.TimeoutExpired):
         smoke.smoke_container()
-    name = calls[0][calls[0].index("--name") + 1]
+    assert calls[0][:3] == ["docker", "build", "-f"]
+    launch = next(command for command in calls if "--name" in command)
+    name = launch[launch.index("--name") + 1]
     assert name.startswith("mcp-release-smoke-")
     assert calls[-1] == ["docker", "rm", "-f", name]
 
