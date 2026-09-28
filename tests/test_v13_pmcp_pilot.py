@@ -361,6 +361,7 @@ def test_prepare_delivered_wheel_never_builds(tmp_path, monkeypatch, valid):
     root = tmp_path / "owned"
     calls = []
     monkeypatch.setattr(pilot, "source_identity", lambda: {"source": "a" * 40})
+    monkeypatch.setattr(pilot, "pmcp_distribution_identity", lambda path: {"version": "fixture"})
     monkeypatch.setattr(release_smoke, "validate_wheel_source", lambda *args: {"version": "1.4.1"})
 
     def run(command, directory, label, **kwargs):
@@ -385,7 +386,7 @@ def test_prepare_delivered_wheel_never_builds(tmp_path, monkeypatch, valid):
 
 
 @pytest.mark.parametrize(
-    "field", ["schema", "uvx_prefix", "python", "installed", "pmcp_path", "pmcp_sha256"]
+    "field", ["schema", "uvx_prefix", "python", "installed", "pmcp_path", "pmcp_sha256", "pmcp_distribution"]
 )
 def test_prepared_runtime_identity_rejects_manifest_tampering(tmp_path, monkeypatch, field):
     from scripts import v13_pmcp_pilot as pilot
@@ -398,6 +399,7 @@ def test_prepared_runtime_identity_rejects_manifest_tampering(tmp_path, monkeypa
     executable.write_bytes(b"#!/bin/sh\n")
     monkeypatch.setattr(pilot, "source_identity", lambda: {"source": "a" * 40})
     monkeypatch.setattr(pilot.shutil, "which", lambda name: str(executable))
+    monkeypatch.setattr(pilot, "pmcp_distribution_identity", lambda path: {"version": "fixture"})
     python = str(Path(sys.base_prefix) / "bin/python3.12")
     manifest = {
         "schema": "v13-pilot-manifest.v1",
@@ -411,11 +413,42 @@ def test_prepared_runtime_identity_rejects_manifest_tampering(tmp_path, monkeypa
         "python": python,
         "pmcp_path": str(executable),
         "pmcp_sha256": pilot.digest_file(executable),
+        "pmcp_distribution": {"version": "fixture"},
     }
     pilot.validate_manifest(tmp_path, manifest)
     manifest[field] = "tampered"
     with pytest.raises(PilotRefused):
         pilot.validate_manifest(tmp_path, manifest)
+
+
+def test_semantic_sample_refuses_lexical_fallback_and_wrong_generation():
+    from scripts.v13_pmcp_pilot import semantic_sample_valid
+
+    sample = {
+        "semantic_requested": True,
+        "semantic_source": "semantic",
+        "semantic_fallback_status": "not_attempted",
+        "semantic_profile_id": "pilot",
+        "semantic_collection_name": "pilot-collection",
+        "results": [
+            {
+                "file": "bookkeeping.py",
+                "semantic_source": "semantic",
+                "semantic_profile_id": "pilot",
+                "semantic_collection_name": "pilot-collection",
+            }
+        ],
+    }
+    assert semantic_sample_valid(sample)
+    for field, value in (
+        ("semantic_source", "lexical"),
+        ("semantic_fallback_status", "lexical_fallback"),
+        ("semantic_profile_id", "other"),
+        ("semantic_collection_name", "other"),
+    ):
+        corrupted = copy.deepcopy(sample)
+        corrupted[field] = value
+        assert not semantic_sample_valid(corrupted)
 
 
 @pytest.mark.asyncio

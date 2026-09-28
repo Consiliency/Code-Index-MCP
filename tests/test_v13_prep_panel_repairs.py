@@ -597,7 +597,7 @@ def test_nondefault_signer_ref_requires_exact_digest_before_cli(tmp_path, monkey
 
 
 def test_installed_cli_prepares_once_and_uploads_only_matching_signed_identity(
-    runtime, tmp_path, monkeypatch
+    runtime, tmp_path, monkeypatch, capsys
 ):
     from click.testing import CliRunner
 
@@ -639,7 +639,7 @@ def test_installed_cli_prepares_once_and_uploads_only_matching_signed_identity(
         ],
     )
     assert result.exit_code == 0, result.output
-    receipt = json.loads(result.output.splitlines()[-1])
+    receipt = json.loads((result.output + capsys.readouterr().out).splitlines()[-1])
     assert receipt["uploaded"] is False
     assert receipt["sha256"] == hashlib.sha256(metadata_path.read_bytes()).hexdigest()
     archive = Path(receipt["archive"])

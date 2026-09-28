@@ -118,6 +118,71 @@ def digest_file(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def pmcp_distribution_identity(executable: Path) -> dict:
+    """Bind the launcher, interpreter, and every installed distribution file."""
+    first_line = executable.read_bytes().split(b"\n", 1)[0]
+    if not first_line.startswith(b"#!/"):
+        raise PilotRefused("pmcp_interpreter_unknown")
+    interpreter = Path(first_line[2:].decode().strip()).resolve()
+    if not interpreter.is_file():
+        raise PilotRefused("pmcp_interpreter_unknown")
+    script = (
+        "import hashlib, importlib.metadata, json, pathlib\n"
+        "d = importlib.metadata.distribution('pmcp')\n"
+        "files = sorted(d.files or [], key=str)\n"
+        "assert files\n"
+        "h = hashlib.sha256()\n"
+        "for name in files:\n"
+        " p = pathlib.Path(d.locate_file(name))\n"
+        " assert p.is_file()\n"
+        " h.update(str(name).encode() + b'\\0' + hashlib.sha256(p.read_bytes()).digest())\n"
+        "print(json.dumps({'version': d.version, 'distribution_sha256': h.hexdigest()}))\n"
+    )
+    result = subprocess.run(
+        [str(interpreter), "-c", script],
+        env={
+            "PATH": os.environ.get("PATH", os.defpath),
+            "HOME": os.environ.get("HOME", ""),
+            "PYTHONUSERBASE": str(executable.parents[1]),
+        },
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if result.returncode:
+        raise PilotRefused("pmcp_distribution_unavailable")
+    identity = json.loads(result.stdout)
+    return {
+        "interpreter": str(interpreter),
+        "interpreter_sha256": digest_file(interpreter),
+        **identity,
+    }
+
+
+def semantic_sample_valid(value: object) -> bool:
+    if not isinstance(value, dict):
+        return False
+    collection = value.get("semantic_collection_name")
+    results = value.get("results")
+    return bool(
+        value.get("semantic_requested") is True
+        and value.get("semantic_source") == "semantic"
+        and value.get("semantic_fallback_status") == "not_attempted"
+        and value.get("semantic_profile_id") == "pilot"
+        and isinstance(collection, str)
+        and collection
+        and isinstance(results, list)
+        and results
+        and all(
+            isinstance(item, dict)
+            and item.get("semantic_source") == "semantic"
+            and item.get("semantic_profile_id") == "pilot"
+            and item.get("semantic_collection_name") == collection
+            for item in results
+        )
+    )
+
+
 @contextmanager
 def evidence_snapshot(paths: list[Path]):
     """Validate private copies and refuse inputs replaced while they were checked."""
@@ -426,6 +491,7 @@ def prepare(root: Path, wheel_path: Path | None = None, expected_sha256: str | N
         ).strip(),
     }
     manifest["pmcp_sha256"] = digest_file(Path(manifest["pmcp_path"]))
+    manifest["pmcp_distribution"] = pmcp_distribution_identity(Path(manifest["pmcp_path"]))
     write_json(root / "manifest.json", manifest, exclusive=True)
     return manifest
 
@@ -486,6 +552,7 @@ def validate_manifest(root: Path, manifest: dict, *, execute: bool = False) -> N
         or not pmcp.is_file()
         or digest_file(pmcp) != manifest.get("pmcp_sha256")
         or str(Path(shutil.which("pmcp") or "pmcp").resolve()) != str(pmcp)
+        or pmcp_distribution_identity(pmcp) != manifest.get("pmcp_distribution")
     ):
         raise PilotRefused("pmcp_binding_changed")
     if execute:
@@ -1698,7 +1765,13 @@ def _verify_live_records(
             sentinel = record["collection_manifest"]
             provenance = record["embedding_provenance"]
             point_ids = record["point_ids"]
-            filename = "bookkeeping.py" if record["repository"] == "ledger" else "catalog.py"
+            corpus_paths = set(SYNTHETIC_CORPUS[record["repository"]])
+            if record["repository"] == "ledger":
+                corpus_paths.remove("balance.py")
+                corpus_paths.add("bookkeeping.py")
+            expected_corpus = hashlib.sha256(
+                "\n".join(sorted(corpus_paths)).encode()
+            ).hexdigest()
             if (
                 record["attested"] is not True
                 or not record["generation"]
@@ -1712,7 +1785,7 @@ def _verify_live_records(
                 or sentinel["indexed_commit"] != record["commit"]
                 or sentinel["point_set_id"]
                 != hashlib.sha256("\n".join(sorted(point_ids)).encode()).hexdigest()
-                or sentinel["corpus_sha256"] != hashlib.sha256(filename.encode()).hexdigest()
+                or sentinel["corpus_sha256"] != expected_corpus
                 or sentinel["profile_fingerprint"] != profile_fingerprint
                 or sentinel["provider_revision"] != expected_provider_revision(provenance)
                 or sentinel["provenance_version"] != "collection-provenance.v1"
@@ -1849,8 +1922,9 @@ async def runtime_provenance(fixture: dict, qdrant_url: str) -> list[dict]:
                 raise PilotRefused("provenance_point_set_mismatch")
             sentinel = sentinels[0]
             expected_set = hashlib.sha256("\n".join(sorted(expected_ids)).encode()).hexdigest()
+            repo_root = fixture["root"] / "repos" / info["name"]
             expected_paths = sorted(
-                path.name for path in (fixture["root"] / "repos" / info["name"]).glob("*.py")
+                path.relative_to(repo_root).as_posix() for path in repo_root.rglob("*.py")
             )
             expected_corpus = hashlib.sha256("\n".join(expected_paths).encode()).hexdigest()
             if (
@@ -1996,6 +2070,8 @@ async def inference_pilot(
         ) and expected_file in json.dumps(value)
         if isinstance(value, dict) and value.get("code"):
             valid = False
+        if kind == "semantic":
+            valid = valid and semantic_sample_valid(value)
         if measured:
             result["samples"].append(
                 {
@@ -2030,7 +2106,10 @@ async def inference_pilot(
     try:
         port = free_port()
         network_args = (
-            ["--network", "host", "-e", f"QDRANT__SERVICE__HTTP_PORT={port}"]
+            [
+                "--network", "host", "-e", "QDRANT__SERVICE__HOST=127.0.0.1",
+                "-e", f"QDRANT__SERVICE__HTTP_PORT={port}",
+            ]
             if qdrant_network == "host"
             else ["-p", f"127.0.0.1:{port}:6333"]
         )

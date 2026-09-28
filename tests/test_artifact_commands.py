@@ -106,7 +106,7 @@ def test_push_records_uploaded_commit_and_next_skip_does_not_upload(monkeypatch,
     owner.close()
 
 
-def test_artifact_pull_confirms_local_restore(monkeypatch, tmp_path):
+def test_artifact_pull_confirms_local_restore(monkeypatch, tmp_path, capsys):
     runner = CliRunner()
 
     def _fake_download_latest(self, output_dir, backup=True, full_only=False, **kwargs):
@@ -131,12 +131,13 @@ def test_artifact_pull_confirms_local_restore(monkeypatch, tmp_path):
         result = runner.invoke(artifact, ["pull", "--latest"])
 
     assert result.exit_code == 0
-    assert "Local index files restored" in result.output
-    assert "current.db" in result.output
-    assert "guidance" in result.output
+    output = result.output + capsys.readouterr().out
+    assert "Local index files restored" in output
+    assert "current.db" in output
+    assert "guidance" in output
 
 
-def test_artifact_pull_fails_when_no_index_restored(monkeypatch, tmp_path):
+def test_artifact_pull_fails_when_no_index_restored(monkeypatch, tmp_path, capsys):
     runner = CliRunner()
 
     monkeypatch.setattr(
@@ -156,10 +157,12 @@ def test_artifact_pull_fails_when_no_index_restored(monkeypatch, tmp_path):
         result = runner.invoke(artifact, ["pull", "--latest"])
 
     assert result.exit_code != 0
-    assert "no local index files were restored" in result.output.lower()
+    assert "no local index files were restored" in (
+        result.output + capsys.readouterr().err
+    ).lower()
 
 
-def test_artifact_recover_confirms_local_restore(monkeypatch, tmp_path):
+def test_artifact_recover_confirms_local_restore(monkeypatch, tmp_path, capsys):
     runner = CliRunner()
 
     def _fake_recover(self, branch, commit, output_dir, backup=True, **kwargs):
@@ -180,12 +183,13 @@ def test_artifact_recover_confirms_local_restore(monkeypatch, tmp_path):
         result = runner.invoke(artifact, ["recover", "--branch", "main"])
 
     assert result.exit_code == 0
-    assert "Local index files restored" in result.output
-    assert "artifact-metadata.json" in result.output
-    assert "Git drift could not be determined" in result.output
+    output = result.output + capsys.readouterr().out
+    assert "Local index files restored" in output
+    assert "artifact-metadata.json" in output
+    assert "Git drift could not be determined" in output
 
 
-def test_artifact_sync_bootstraps_local_indexes(monkeypatch, tmp_path):
+def test_artifact_sync_bootstraps_local_indexes(monkeypatch, tmp_path, capsys):
     runner = CliRunner()
 
     def _fake_download_latest(self, output_dir, backup=True, full_only=False, **kwargs):
@@ -216,12 +220,13 @@ def test_artifact_sync_bootstraps_local_indexes(monkeypatch, tmp_path):
         result = runner.invoke(artifact, ["sync"])
 
     assert result.exit_code == 0
-    assert "Indexes synchronized!" in result.output
-    assert ".index_metadata.json" in result.output
-    assert "guidance" in result.output
+    output = result.output + capsys.readouterr().out
+    assert "Indexes synchronized!" in output
+    assert ".index_metadata.json" in output
+    assert "guidance" in output
 
 
-def test_artifact_sync_refuses_existing_unregistered_drift(monkeypatch, tmp_path):
+def test_artifact_sync_refuses_existing_unregistered_drift(monkeypatch, tmp_path, capsys):
     runner = CliRunner()
     monkeypatch.setattr(
         "mcp_server.cli.artifact_commands._print_reconcile_guidance",
@@ -241,10 +246,12 @@ def test_artifact_sync_refuses_existing_unregistered_drift(monkeypatch, tmp_path
         result = runner.invoke(artifact, ["sync"])
 
     assert result.exit_code != 0
-    assert "guidance" in result.output
-    assert "mcp-index repository register <path>" in result.output
-    assert "artifact sync --repository <name>" in result.output
-    assert "Sync check complete" not in result.output
+    captured = capsys.readouterr()
+    output = result.output + captured.out + captured.err
+    assert "guidance" in output
+    assert "mcp-index repository register <path>" in output
+    assert "artifact sync --repository <name>" in output
+    assert "Sync check complete" not in output
 
 
 def test_incremental_reconcile_requires_committed_registered_generation(monkeypatch, tmp_path):

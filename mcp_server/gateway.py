@@ -2370,7 +2370,16 @@ async def enable_plugin(
         # Recreate dispatcher with updated plugins
         active_plugins = plugin_manager.get_active_plugins()
         global dispatcher
-        dispatcher = EnhancedDispatcher(list(active_plugins.values()))
+        previous = dispatcher
+        dispatcher = EnhancedDispatcher(
+            list(active_plugins.values()),
+            semantic_search_enabled=previous._semantic_enabled if previous else False,
+            semantic_indexer_registry=previous._semantic_registry if previous else None,
+        )
+        if git_index_manager is not None:
+            git_index_manager.dispatcher = dispatcher
+        if multi_watcher is not None:
+            multi_watcher.dispatcher = dispatcher
 
         return {
             "status": "success",
@@ -2402,7 +2411,16 @@ async def disable_plugin(
         # Recreate dispatcher with updated plugins
         active_plugins = plugin_manager.get_active_plugins()
         global dispatcher
-        dispatcher = EnhancedDispatcher(list(active_plugins.values()))
+        previous = dispatcher
+        dispatcher = EnhancedDispatcher(
+            list(active_plugins.values()),
+            semantic_search_enabled=previous._semantic_enabled if previous else False,
+            semantic_indexer_registry=previous._semantic_registry if previous else None,
+        )
+        if git_index_manager is not None:
+            git_index_manager.dispatcher = dispatcher
+        if multi_watcher is not None:
+            multi_watcher.dispatcher = dispatcher
 
         return {
             "status": "success",
