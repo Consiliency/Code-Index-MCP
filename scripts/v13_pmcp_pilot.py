@@ -497,7 +497,7 @@ def prepare(root: Path, wheel_path: Path | None = None, expected_sha256: str | N
     }
     manifest["pmcp_sha256"] = digest_file(Path(manifest["pmcp_path"]))
     manifest["pmcp_distribution"] = pmcp_distribution_identity(Path(manifest["pmcp_path"]))
-    if manifest["pmcp_version"] != "2.7.3" or manifest["pmcp_distribution"]["version"] != "2.7.3":
+    if manifest["pmcp_version"] != "pmcp 2.7.3" or manifest["pmcp_distribution"]["version"] != "2.7.3":
         raise PilotRefused("pmcp_version_mismatch")
     write_json(root / "manifest.json", manifest, exclusive=True)
     return manifest
@@ -567,7 +567,7 @@ def validate_manifest(root: Path, manifest: dict, *, execute: bool = False) -> N
         or digest_file(pmcp) != manifest.get("pmcp_sha256")
         or str(Path(shutil.which("pmcp") or "pmcp").resolve()) != str(pmcp)
         or pmcp_distribution_identity(pmcp) != manifest.get("pmcp_distribution")
-        or manifest.get("pmcp_version") != "2.7.3"
+        or manifest.get("pmcp_version") != "pmcp 2.7.3"
         or manifest["pmcp_distribution"].get("version") != "2.7.3"
     ):
         raise PilotRefused("pmcp_binding_changed")

@@ -369,7 +369,7 @@ def test_prepare_delivered_wheel_never_builds(tmp_path, monkeypatch, valid):
         calls.append(command)
         if label == "pilot-lock-export":
             (directory / "constraints.txt").write_text("dependency==1\n")
-        return '{"version": "1.4.1"}' if label == "installed-identity" else "2.7.3"
+        return '{"version": "1.4.1"}' if label == "installed-identity" else "pmcp 2.7.3"
 
     monkeypatch.setattr(pilot, "run_command", run)
     digest = pilot.digest_file(wheel) if valid else "0" * 64
@@ -432,7 +432,7 @@ def test_prepared_runtime_identity_rejects_manifest_tampering(tmp_path, monkeypa
         "pmcp_path": str(executable),
         "pmcp_sha256": pilot.digest_file(executable),
         "pmcp_distribution": {"version": "2.7.3"},
-        "pmcp_version": "2.7.3",
+        "pmcp_version": "pmcp 2.7.3",
         "helper_sha256": {name: pilot.digest_file(tmp_path / name) for name in pilot.PILOT_HELPERS},
     }
     pilot.validate_manifest(tmp_path, manifest)
