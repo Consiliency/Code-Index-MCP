@@ -19,6 +19,9 @@ def test_baml_generator_runtime_and_generated_client_match():
     assert f"baml-bridge=={runtime}" in project["project"]["dependencies"]
     assert f'VERSION = "{runtime}"' in (root / "scripts/generate_baml_sdk.py").read_text()
     assert (root / "baml.toml").is_file()
+    assert f"BAML generation and runtime are pinned together at {runtime}" in (
+        root / "docs/SUPPORT_MATRIX.md"
+    ).read_text()
 
     from baml_sdk import SummarizeChunkAlone_spec, SummarizeFileChunks_spec
 

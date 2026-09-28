@@ -155,7 +155,7 @@ registered Git indexing, real SDK queries/refusals and a second STDIO session.
 The container smoke exercises the configured non-root HTTP startup and mounted
 Git fixture, not only health. A failing node blocks distribution acceptance;
 actual results belong in `docs/validation/v13/DIST.json`, not this description.
-BAML generation and runtime are pinned together at 0.221.0; regeneration is
+BAML generation and runtime are pinned together at 0.20.1; regeneration is
 offline and does not call the inference client declared in the source contract.
 V13 has historical accepted DIST, STATE, SAFETY, DATA and PILOT receipts bound
 to their recorded source commits, not to subsequent PREP repairs. The historical

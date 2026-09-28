@@ -636,3 +636,9 @@ PREP remains blocked until the documented final candidate passes all gates,
 four independent exact-model reviews, the bounded live and signing proofs,
 four cross-model reconciliations, and the strict evidence reducer. The draft
 Code-Index-MCP#97 has not been merged or published.
+
+The first four-seat diagnostic review of `6fa1cb3` found that the canonical
+support matrix still claimed BAML 0.221.0 while the locked generator and
+runtime are 0.20.1. That candidate is rejected. The matrix and its contract
+test are corrected for a new candidate; the completed diagnostic reports
+cannot serve as final approvals. No live or signing allowance was consumed.
