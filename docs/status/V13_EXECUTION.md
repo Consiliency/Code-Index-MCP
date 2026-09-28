@@ -709,3 +709,13 @@ clears those variables and binds historical signing to the published tag's
 protected-main ancestor, source tree, version files, image digest and revision.
 It requires a fresh exact-head gate, browser receipt and independent review.
 No one-shot inference or signing allowance has been consumed.
+
+The exact-model Sol follow-up on `9bc7545` accepted the historical signer
+repair but found that `GIT_OBJECT_DIRECTORY` could still poison both Docker
+launcher worktree probes. The next candidate clears Git's complete
+`rev-parse --local-env-vars` list before those probes and avoids reusing
+`GIT_DIR` as a Windows batch output variable. Focused release metadata tests
+pass, including the inherited object-directory and alternate-object-directory
+cases. The `9bc7545` full suite is diagnostic for this later change; a final
+exact-head suite and review are still required. No one-shot inference or
+signing allowance has been consumed.

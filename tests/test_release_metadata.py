@@ -149,11 +149,11 @@ def test_docker_launcher_registers_and_reuses_mounted_workspace(tmp_path):
         ):
             assert value in invocation
     assert 'git -C "%WORKSPACE%" rev-parse --path-format=absolute --git-common-dir' in batch
-    assert 'SET "GIT_COMMON="' in batch
-    assert 'SET "GIT_DIR="' in batch
-    assert 'SET "GIT_COMMON_DIR="' in batch
-    assert 'SET "GIT_WORK_TREE="' in batch
-    assert "gitdir: /mcp-git/worktrees/%GIT_WORKTREE_NAME%" in batch
+    assert 'git rev-parse --local-env-vars' in batch
+    assert 'DO SET "%%G="' in batch
+    assert 'SET "WORKTREE_GIT_COMMON="' in batch
+    assert 'SET "WORKTREE_GIT_DIR="' in batch
+    assert "gitdir: /mcp-git/worktrees/%WORKTREE_NAME%" in batch
     assert "VOYAGE_AI_API_KEY" not in powershell
 
 
@@ -192,7 +192,13 @@ def test_docker_launcher_mounts_linked_git_worktree(tmp_path):
     calls = tmp_path / "calls"
     common = (repository / ".git").resolve()
     pointer = tmp_path / "registry" / "worktree-pointer.git"
-    for git_env in ({}, {"GIT_DIR": "/dev/null"}, {"GIT_COMMON_DIR": "/dev/null"}):
+    for git_env in (
+        {},
+        {"GIT_DIR": "/dev/null"},
+        {"GIT_COMMON_DIR": "/dev/null"},
+        {"GIT_OBJECT_DIRECTORY": "/dev/null"},
+        {"GIT_ALTERNATE_OBJECT_DIRECTORIES": "/dev/null"},
+    ):
         result = subprocess.run(
             [
                 "bash",

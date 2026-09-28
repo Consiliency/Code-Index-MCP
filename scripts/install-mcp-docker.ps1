@@ -189,19 +189,18 @@ docker run -i --rm ^
 EXIT /B
 
 :worktree_mounts
-SET "GIT_COMMON="
-SET "GIT_DIR="
-SET "GIT_COMMON_DIR="
-SET "GIT_WORK_TREE="
-SET "GIT_WORKTREE_NAME="
-FOR /F "delims=" %%G IN ('git -C "%WORKSPACE%" rev-parse --path-format=absolute --git-common-dir 2^>NUL') DO SET "GIT_COMMON=%%G"
-FOR /F "delims=" %%G IN ('git -C "%WORKSPACE%" rev-parse --path-format=absolute --git-dir 2^>NUL') DO SET "GIT_DIR=%%G"
-IF NOT DEFINED GIT_COMMON EXIT /B 1
-IF NOT DEFINED GIT_DIR EXIT /B 1
-FOR %%G IN ("%GIT_DIR%") DO SET "GIT_WORKTREE_NAME=%%~nxG"
-IF NOT EXIST "%GIT_COMMON%/worktrees/%GIT_WORKTREE_NAME%/HEAD" EXIT /B 1
->"%MCP_REGISTRY_DIR%\worktree-pointer.git" ECHO gitdir: /mcp-git/worktrees/%GIT_WORKTREE_NAME%
-SET GIT_MOUNTS=-v "%GIT_COMMON%:/mcp-git:ro" -v "%MCP_REGISTRY_DIR%\worktree-pointer.git:/workspace/.git:ro"
+FOR /F "delims=" %%G IN ('git rev-parse --local-env-vars') DO SET "%%G="
+SET "WORKTREE_GIT_COMMON="
+SET "WORKTREE_GIT_DIR="
+SET "WORKTREE_NAME="
+FOR /F "delims=" %%G IN ('git -C "%WORKSPACE%" rev-parse --path-format=absolute --git-common-dir 2^>NUL') DO SET "WORKTREE_GIT_COMMON=%%G"
+FOR /F "delims=" %%G IN ('git -C "%WORKSPACE%" rev-parse --path-format=absolute --git-dir 2^>NUL') DO SET "WORKTREE_GIT_DIR=%%G"
+IF NOT DEFINED WORKTREE_GIT_COMMON EXIT /B 1
+IF NOT DEFINED WORKTREE_GIT_DIR EXIT /B 1
+FOR %%G IN ("%WORKTREE_GIT_DIR%") DO SET "WORKTREE_NAME=%%~nxG"
+IF NOT EXIST "%WORKTREE_GIT_COMMON%/worktrees/%WORKTREE_NAME%/HEAD" EXIT /B 1
+>"%MCP_REGISTRY_DIR%\worktree-pointer.git" ECHO gitdir: /mcp-git/worktrees/%WORKTREE_NAME%
+SET GIT_MOUNTS=-v "%WORKTREE_GIT_COMMON%:/mcp-git:ro" -v "%MCP_REGISTRY_DIR%\worktree-pointer.git:/workspace/.git:ro"
 EXIT /B 0
 '@
     $launcherContent = $launcherContent.Replace('@MCP_IMAGE_REF@', $MCPImageRef)
