@@ -166,6 +166,7 @@ def test_unregister_removes_repo_from_registry(monkeypatch, tmp_path: Path):
 def test_sync_guidance_matches_local_first_workflow(monkeypatch, tmp_path: Path):
     runner = CliRunner()
     repo_info = _repo_info(tmp_path)
+    dispatcher_options = []
 
     class FakeRegistry:
         def get_repository_by_path(self, path):
@@ -192,7 +193,11 @@ def test_sync_guidance_matches_local_first_workflow(monkeypatch, tmp_path: Path)
     monkeypatch.setattr("mcp_server.cli.repository_commands.GitAwareIndexManager", FakeIndexManager)
     monkeypatch.setattr(
         "mcp_server.cli.repository_commands.EnhancedDispatcher",
-        lambda sqlite_store=None: object(),
+        lambda **kwargs: dispatcher_options.append(kwargs) or object(),
+    )
+    monkeypatch.setattr(
+        "mcp_server.cli.repository_commands.reload_settings",
+        lambda: SimpleNamespace(semantic_search_enabled=False),
     )
     monkeypatch.setattr("mcp_server.cli.repository_commands.SQLiteStore", lambda path: object())
 
@@ -201,6 +206,7 @@ def test_sync_guidance_matches_local_first_workflow(monkeypatch, tmp_path: Path)
     assert result.exit_code == 0
     assert "Downloaded index from artifact" in result.output
     assert "artifact reconcile-workspace" in result.output
+    assert dispatcher_options == [{"semantic_search_enabled": False}]
 
 
 def test_status_reports_rollout_and_query_surfaces(monkeypatch, tmp_path: Path):

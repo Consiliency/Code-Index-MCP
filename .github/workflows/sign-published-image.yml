@@ -18,6 +18,18 @@ on:
         description: 'Published tag to sign (e.g., v1.4.0). Must equal the current protected-main version.'
         required: false
         type: string
+      expected_digest:
+        description: 'Immutable image digest recorded in the published release asset.'
+        required: false
+        type: string
+      expected_source_sha:
+        description: 'Protected-main commit that produced the published image.'
+        required: false
+        type: string
+      expected_source_tree:
+        description: 'Git tree of the protected-main commit.'
+        required: false
+        type: string
       subject_digest:
         description: 'Canonical artifact-metadata.json SHA-256; never source or index contents.'
         required: false
@@ -53,12 +65,20 @@ jobs:
           ref: ${{ github.sha }}
 
       - name: Guard protected main before signing container images
+        env:
+          EXPECTED_SOURCE_SHA: ${{ inputs.expected_source_sha }}
+          EXPECTED_SOURCE_TREE: ${{ inputs.expected_source_tree }}
         run: |
           VERSION_NO_V=${RELEASE_VERSION#v}
           test -n "$VERSION_NO_V"
+          [[ "$EXPECTED_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$EXPECTED_SOURCE_TREE" =~ ^[0-9a-f]{40}$ ]]
           git fetch origin main --tags
           test "$(git rev-parse HEAD)" = "${{ github.sha }}"
+          test "$EXPECTED_SOURCE_SHA" = "${{ github.sha }}"
+          test "$(git rev-parse HEAD^{tree})" = "$EXPECTED_SOURCE_TREE"
           git merge-base --is-ancestor "${{ github.sha }}" origin/main
+          test "$(git rev-parse "${RELEASE_VERSION}^{commit}")" = "${{ github.sha }}"
           grep -Fxq "version = \"$VERSION_NO_V\"" pyproject.toml
           grep -Fxq "__version__ = \"$VERSION_NO_V\"" mcp_server/__init__.py
 
@@ -88,11 +108,20 @@ jobs:
       - name: Sign the published container image (keyless)
         env:
           REF_NAME: ${{ inputs.version }}
+          EXPECTED_DIGEST: ${{ inputs.expected_digest }}
+          EXPECTED_SOURCE_SHA: ${{ inputs.expected_source_sha }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
-          IMAGE_DIGEST=$(docker buildx imagetools inspect \
+          [[ "$EXPECTED_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          gh release download "$REF_NAME" --pattern image-digest.txt --dir "$RUNNER_TEMP"
+          test "$(cat "$RUNNER_TEMP/image-digest.txt")" = "$EXPECTED_DIGEST"
+          TAG_DIGEST=$(docker buildx imagetools inspect \
             "${IMAGE}:${REF_NAME}" --format '{{.Manifest.Digest}}')
-          cosign sign --yes "${IMAGE}@${IMAGE_DIGEST}"
+          test "$TAG_DIGEST" = "$EXPECTED_DIGEST"
+          docker pull "${IMAGE}@${EXPECTED_DIGEST}"
+          test "$(docker image inspect "${IMAGE}@${EXPECTED_DIGEST}" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')" = "$EXPECTED_SOURCE_SHA"
+          cosign sign --yes "${IMAGE}@${EXPECTED_DIGEST}"
 
   attest-local-index:
     name: Attest operator-supplied local index digest

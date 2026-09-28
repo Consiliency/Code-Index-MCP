@@ -39,13 +39,15 @@ class _FakeQdrantClient:
         )
         return SimpleNamespace(status="completed")
 
-    def upsert(self, collection_name: str, points) -> None:
+    def upsert(self, collection_name: str, points, *, wait=False):
         self.upserted.append(
             {
                 "collection": collection_name,
                 "points": points,
+                "wait": wait,
             }
         )
+        return SimpleNamespace(status="completed")
 
 
 def _build_indexer(repo_path: Path, qdrant: _FakeQdrantClient) -> SemanticIndexer:

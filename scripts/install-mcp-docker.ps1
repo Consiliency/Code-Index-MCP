@@ -139,10 +139,17 @@ REM MCP Index Docker Launcher for Windows
 
 SET MCP_IMAGE_REF=@MCP_IMAGE_REF@
 SET WORKSPACE=%CD%
+SET MCP_REGISTRY_DIR=%WORKSPACE%\.mcp-index\docker-registry
+IF NOT EXIST "%MCP_REGISTRY_DIR%" MKDIR "%MCP_REGISTRY_DIR%"
+IF NOT DEFINED MCP_ARTIFACT_SYNC SET MCP_ARTIFACT_SYNC=true
 
 IF "%1"=="setup" (
-    echo Running MCP Index setup wizard...
-    docker run -it --rm -v "%WORKSPACE%:/workspace" %MCP_IMAGE_REF% index-it-mcp setup
+    echo Registering workspace with MCP Index...
+    docker run -i --rm --workdir /workspace ^
+        -v "%WORKSPACE%:/workspace" -v "%MCP_REGISTRY_DIR%:/app/.mcp" ^
+        -e MCP_ENVIRONMENT=development ^
+        -e MCP_WORKSPACE_ROOT=/workspace -e MCP_ALLOWED_ROOTS=/workspace ^
+        %MCP_IMAGE_REF% index-it-mcp repository register /workspace
     EXIT /B
 )
 
@@ -154,14 +161,23 @@ IF "%1"=="upgrade" (
 
 REM Run MCP server with all arguments
 IF "%1"=="" (
-    docker run -i --rm -v "%WORKSPACE%:/workspace" %MCP_IMAGE_REF% index-it-mcp stdio
+    docker run -i --rm --workdir /workspace ^
+        -v "%WORKSPACE%:/workspace" -v "%MCP_REGISTRY_DIR%:/app/.mcp" ^
+        -e MCP_ENVIRONMENT=development ^
+        -e MCP_WORKSPACE_ROOT=/workspace -e MCP_ALLOWED_ROOTS=/workspace ^
+        -e VOYAGE_API_KEY -e MCP_ARTIFACT_SYNC ^
+        %MCP_IMAGE_REF% index-it-mcp stdio
     EXIT /B
 )
 docker run -i --rm ^
+    --workdir /workspace ^
     -v "%WORKSPACE%:/workspace" ^
-    -v "%USERPROFILE%\.mcp-index:/app/.mcp-index" ^
-    -e VOYAGE_AI_API_KEY=%VOYAGE_AI_API_KEY% ^
-    -e MCP_ARTIFACT_SYNC=%MCP_ARTIFACT_SYNC% ^
+    -v "%MCP_REGISTRY_DIR%:/app/.mcp" ^
+    -e MCP_ENVIRONMENT=development ^
+    -e MCP_WORKSPACE_ROOT=/workspace ^
+    -e MCP_ALLOWED_ROOTS=/workspace ^
+    -e VOYAGE_API_KEY ^
+    -e MCP_ARTIFACT_SYNC ^
     %MCP_IMAGE_REF% index-it-mcp %*
 '@
     $launcherContent = $launcherContent.Replace('@MCP_IMAGE_REF@', $MCPImageRef)
@@ -191,16 +207,9 @@ function Create-MCPJson {
     $mcpConfig = @{
         mcpServers = @{
             "code-index" = @{
-                command = "docker"
+                command = "cmd.exe"
                 args = @(
-                    "run", 
-                    "-i", 
-                    "--rm",
-                    "-v", "`${workspace}:/workspace",
-                    "-v", "`${USERPROFILE}\.mcp-index:/app/.mcp-index",
-                    "-e", "VOYAGE_AI_API_KEY=`${VOYAGE_AI_API_KEY:-}",
-                    "-e", "MCP_ARTIFACT_SYNC=`${MCP_ARTIFACT_SYNC:-true}",
-                    $MCPImageRef, "index-it-mcp", "stdio"
+                    "/c", "mcp-index", "stdio"
                 )
             }
         }
@@ -219,12 +228,13 @@ function Show-NextSteps {
     Write-Host "2. Test the installation:"
     Write-Host "   mcp-index --version"
     Write-Host ""
-    Write-Host "3. Index your current directory:"
-    Write-Host "   mcp-index"
+    Write-Host "3. Register and index your current directory:"
+    Write-Host "   mcp-index setup"
+    Write-Host "   mcp-index repository sync"
     Write-Host ""
     
     Write-Host "4. Optional: configure semantic search:"
-    Write-Host "   `$env:VOYAGE_AI_API_KEY = 'your-key-here'"
+    Write-Host "   `$env:VOYAGE_API_KEY = 'your-key-here'"
     Write-Host "   Get your key at: https://www.voyageai.com/"
     Write-Host ""
 

@@ -6,7 +6,8 @@ ORDERING CONTRACT (matters for correctness):
 
   1. ``chdir`` into a scratch temp directory (drop CWD reachability).
   2. Close inherited FDs > 2.
-  3. Scrub ``os.environ`` down to ``caps.env_allow``.
+  3. Scrub ``os.environ`` down to ``caps.env_allow`` and set HOME to the
+     worker scratch directory when HOME was not explicitly allowed.
   4. If ``caps.network is False`` — monkey-patch ``socket`` to forbid connect.
   5. Soft resource limits via :mod:`resource` (best-effort; swallow failures).
   6. If ``caps.sqlite == "none"`` — monkey-patch ``sqlite3.connect`` to raise.
@@ -286,6 +287,7 @@ def apply(caps: CapabilitySet) -> None:
 
     # 3. scrub env.
     _scrub_env(caps.env_allow)
+    os.environ.setdefault("HOME", str(_SCRATCH_DIR))
 
     # 4. network deny.
     if not caps.network:

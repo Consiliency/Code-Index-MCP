@@ -432,3 +432,60 @@ def test_manual_index_signer_only_receives_digest_with_five_minute_cap():
         if name != "attest-local-index":
             assert "inputs.mode == 'image'" in job["if"]
             assert "github.ref == 'refs/heads/main'" in job["if"]
+
+
+def test_legacy_image_signer_rejects_retargeted_tag(tmp_path):
+    workflow = yaml.load(
+        (WORKFLOWS / "sign-published-image.yml").read_text(), Loader=yaml.BaseLoader
+    )
+    step = workflow["jobs"]["sign-published-image"]["steps"][-1]
+    script = (
+        step["run"]
+        .replace("${{ env.REGISTRY }}", "ghcr.io")
+        .replace("${{ env.IMAGE_NAME }}", "consiliency/code-index-mcp")
+    )
+    release_digest = "sha256:" + "a" * 64
+    other_digest = "sha256:" + "b" * 64
+    gh = tmp_path / "gh"
+    gh.write_text(
+        '#!/bin/sh\nprintf \'%s\\n\' "$RELEASE_DIGEST" > "$RUNNER_TEMP/image-digest.txt"\n'
+    )
+    docker = tmp_path / "docker"
+    docker.write_text(
+        "#!/bin/sh\n"
+        'case "$1 $2" in\n'
+        "  'buildx imagetools') printf '%s\\n' \"$TAG_DIGEST\" ;;\n"
+        "  'image inspect') printf '%s\\n' \"$EXPECTED_SOURCE_SHA\" ;;\n"
+        "  'pull '*) exit 0 ;;\n"
+        "  *) exit 2 ;;\n"
+        "esac\n"
+    )
+    cosign = tmp_path / "cosign"
+    cosign.write_text('#!/bin/sh\ntouch "$RUNNER_TEMP/signed"\n')
+    for stub in (gh, docker, cosign):
+        stub.chmod(0o700)
+    script = script.replace("gh release download", f'"{gh}" release download')
+    script = script.replace("docker ", f'"{docker}" ')
+    script = script.replace("cosign sign", f'"{cosign}" sign')
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in {"BASH_ENV", "ENV"} and not key.startswith("BASH_FUNC_")
+    }
+    env.update(
+        {
+            "EXPECTED_DIGEST": release_digest,
+            "RELEASE_DIGEST": release_digest,
+            "EXPECTED_SOURCE_SHA": "c" * 40,
+            "REF_NAME": "v1.4.1",
+            "RUNNER_TEMP": str(tmp_path),
+            "TAG_DIGEST": other_digest,
+        }
+    )
+    rejected = subprocess.run(["bash", "-e", "-c", script], env=env, capture_output=True)
+    assert rejected.returncode != 0
+    assert not (tmp_path / "signed").exists()
+    env["TAG_DIGEST"] = release_digest
+    accepted = subprocess.run(["bash", "-e", "-c", script], env=env, capture_output=True)
+    assert accepted.returncode == 0, accepted.stderr
+    assert (tmp_path / "signed").exists()

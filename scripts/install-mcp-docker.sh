@@ -180,12 +180,24 @@ create_launcher() {
 # Default settings
 MCP_IMAGE_REF='@MCP_IMAGE_REF@'
 WORKSPACE="${WORKSPACE:-$(pwd)}"
+MCP_REGISTRY_DIR="${MCP_REGISTRY_DIR:-$WORKSPACE/.mcp-index/docker-registry}"
+mkdir -p "$MCP_REGISTRY_DIR"
 
 # Handle commands
 case "$1" in
     setup)
-        echo "Running MCP Index setup wizard..."
-        docker run -it --rm -v "$WORKSPACE:/workspace" "$MCP_IMAGE_REF" index-it-mcp setup
+        echo "Registering workspace with MCP Index..."
+        docker run -i --rm \
+            --user "$(id -u):$(id -g)" \
+            --workdir /workspace \
+            -v "$WORKSPACE:/workspace" \
+            -v "$MCP_REGISTRY_DIR:/app/.mcp" \
+            -e HOME=/app \
+            -e MCP_ENVIRONMENT=development \
+            -e MCP_REPO_REGISTRY=/app/.mcp/repository_registry.json \
+            -e MCP_WORKSPACE_ROOT=/workspace \
+            -e MCP_ALLOWED_ROOTS=/workspace \
+            "$MCP_IMAGE_REF" index-it-mcp repository register /workspace
         ;;
     upgrade)
         echo "Refreshing the pinned image. Rerun the installer to select another release."
@@ -194,8 +206,15 @@ case "$1" in
     *)
         # Run MCP server with all arguments passed through
         docker run -i --rm \
+            --user "$(id -u):$(id -g)" \
+            --workdir /workspace \
             -v "$WORKSPACE:/workspace" \
-            -v "$HOME/.mcp-index:/app/.mcp-index" \
+            -v "$MCP_REGISTRY_DIR:/app/.mcp" \
+            -e HOME=/app \
+            -e MCP_ENVIRONMENT=development \
+            -e MCP_REPO_REGISTRY=/app/.mcp/repository_registry.json \
+            -e MCP_WORKSPACE_ROOT=/workspace \
+            -e MCP_ALLOWED_ROOTS=/workspace \
             -e VOYAGE_API_KEY="${VOYAGE_API_KEY:-}" \
             -e MCP_ARTIFACT_SYNC="${MCP_ARTIFACT_SYNC:-true}" \
             "$MCP_IMAGE_REF" index-it-mcp "${@:-stdio}"
@@ -223,17 +242,8 @@ setup_mcp_json() {
 {
   "mcpServers": {
     "code-index": {
-      "command": "docker",
-      "args": [
-        "run", 
-        "-i", 
-        "--rm",
-        "-v", "\${workspace}:/workspace",
-        "-v", "\${HOME}/.mcp-index:/app/.mcp-index",
-        "-e", "VOYAGE_API_KEY=\${VOYAGE_API_KEY:-}",
-        "-e", "MCP_ARTIFACT_SYNC=\${MCP_ARTIFACT_SYNC:-true}",
-        "${MCP_IMAGE_REF}", "index-it-mcp", "stdio"
-      ]
+      "command": "mcp-index",
+      "args": ["stdio"]
     }
   }
 }
@@ -250,8 +260,9 @@ print_next_steps() {
     echo "1. Test the installation:"
     echo "   mcp-index --version"
     echo
-    echo "2. Index your current directory:"
-    echo "   mcp-index"
+    echo "2. Register and index your current directory:"
+    echo "   mcp-index setup"
+    echo "   mcp-index repository sync"
     echo
     
     echo "3. Optional: configure semantic search:"

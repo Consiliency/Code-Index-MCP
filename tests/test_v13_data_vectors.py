@@ -9,6 +9,7 @@ import sys
 import uuid
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -515,3 +516,50 @@ def test_maintenance_interruption_retries_without_payload_corruption(
                 if operation == "move"
                 else point.payload["is_deleted"] is True
             )
+
+
+@pytest.mark.parametrize("staging", [False, True])
+@pytest.mark.parametrize("operation", ["symbol", "document", "remove", "move", "mark"])
+def test_mutation_rejects_acknowledged_without_completion(
+    real_indexer, monkeypatch, tmp_path, staging, operation
+):
+    indexer = real_indexer
+    indexer.staging = staging
+    if operation in {"remove", "move", "mark"}:
+        _seed(indexer, 1)
+    before = _points(indexer)
+    method = (
+        "upsert"
+        if operation in {"symbol", "document"}
+        else ("delete" if operation == "remove" else "set_payload")
+    )
+    original = getattr(indexer.qdrant, method)
+
+    def acknowledged(**kwargs):
+        if method == "delete" and kwargs["points_selector"].points == [0]:
+            return original(**kwargs)
+        return SimpleNamespace(status=models.UpdateStatus.ACKNOWLEDGED)
+
+    monkeypatch.setattr(indexer.qdrant, method, acknowledged)
+    with pytest.raises(RuntimeError):
+        if operation == "symbol":
+            indexer.index_symbol(
+                file="source.py",
+                name="chunk",
+                kind="chunk",
+                signature="chunk",
+                line=1,
+                span=(1, 1),
+                content="chunk",
+            )
+        elif operation == "document":
+            document = tmp_path / "document.txt"
+            document.write_text("Synthetic document\n")
+            indexer.index_document(document)
+        elif operation == "remove":
+            indexer.remove_file("source.py")
+        elif operation == "move":
+            indexer.move_file("source.py", "moved.py")
+        else:
+            indexer.mark_file_deleted("source.py")
+    assert _points(indexer) == before

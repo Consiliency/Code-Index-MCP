@@ -1063,11 +1063,12 @@ class SemanticIndexer:
         for start in range(0, len(points), batch_size):
             batch = points[start : start + batch_size]
             result = self.qdrant.upsert(collection_name=self.collection, points=batch, wait=True)
-            if self.staging and getattr(result, "status", None) not in {
-                "completed",
-                models.UpdateStatus.COMPLETED,
-            }:
-                raise RuntimeError("Staged vector write was not acknowledged")
+            self._require_completed(result, "Vector write")
+
+    @staticmethod
+    def _require_completed(result: Any, operation: str) -> None:
+        if getattr(result, "status", None) not in {"completed", models.UpdateStatus.COMPLETED}:
+            raise RuntimeError(f"{operation} was not acknowledged complete")
 
     def _init_qdrant_client(self, qdrant_path: str) -> QdrantClient:
         """Open exactly the selected backend, without lock removal or fallback."""
@@ -2593,10 +2594,8 @@ class SemanticIndexer:
         # Attest + persist the provenance profile BEFORE any point write.
         self._prepare_for_writes()
         embeds = self._embed_texts(prep["embedding_inputs"], input_type="document")
+        self._invalidate_collection_provenance(strict=True)
         result = self._store_file_embeddings(path, prep, embeds)
-        # Incremental single-file mutation: invalidate the collection provenance
-        # sentinel so only a clean full rebuild can re-attest the collection.
-        self._invalidate_collection_provenance()
         return result
 
     def index_files_batch(
@@ -2962,11 +2961,7 @@ class SemanticIndexer:
             vector[0] = 1.0
         point = models.PointStruct(id=self.PROVENANCE_POINT_ID, vector=vector, payload=payload)
         result = self.qdrant.upsert(collection_name=self.collection, points=[point], wait=True)
-        if self.staging and getattr(result, "status", None) not in {
-            "completed",
-            models.UpdateStatus.COMPLETED,
-        }:
-            raise RuntimeError("Staged provenance write was not acknowledged")
+        self._require_completed(result, "Provenance write")
         logger.info(
             "Wrote collection-provenance sentinel to '%s' (point_set_id=%s)",
             self.collection,
@@ -3016,11 +3011,12 @@ class SemanticIndexer:
                 raise RuntimeError("Qdrant unavailable for provenance invalidation")
             return
         try:
-            self.qdrant.delete(
+            result = self.qdrant.delete(
                 collection_name=collection or self.collection,
                 points_selector=models.PointIdsList(points=[self.PROVENANCE_POINT_ID]),
                 wait=True,
             )
+            self._require_completed(result, "Collection provenance invalidation")
         except Exception as exc:  # pragma: no cover - defensive best-effort guard
             if strict:
                 raise RuntimeError("Collection provenance invalidation failed") from None
@@ -3124,7 +3120,11 @@ class SemanticIndexer:
                 raise RuntimeError("Qdrant is not available - cannot index symbol")
 
             try:
-                self.qdrant.upsert(collection_name=self.collection, points=[point])
+                self._invalidate_collection_provenance(strict=True)
+                result = self.qdrant.upsert(
+                    collection_name=self.collection, points=[point], wait=True
+                )
+                self._require_completed(result, "Symbol write")
 
                 chunk_id = (metadata or {}).get("chunk_id") if metadata else None
                 if chunk_id and sqlite_store is not None:
@@ -3143,9 +3143,6 @@ class SemanticIndexer:
                 self._qdrant_available = False
                 raise RuntimeError(f"Failed to store symbol '{name}' in Qdrant: {upsert_error}")
 
-            # Incremental mutation: the last clean full build's point-set binding
-            # is now stale, so drop the provenance sentinel (fail-closed).
-            self._invalidate_collection_provenance()
         except Exception as e:
             if "API key" in str(e) or "authentication" in str(e).lower():
                 raise RuntimeError(
@@ -3507,7 +3504,11 @@ class SemanticIndexer:
 
             self._prepare_for_writes()
             try:
-                self.qdrant.upsert(collection_name=self.collection, points=points)
+                self._invalidate_collection_provenance(strict=True)
+                result = self.qdrant.upsert(
+                    collection_name=self.collection, points=points, wait=True
+                )
+                self._require_completed(result, "Document write")
             except Exception as e:
                 logger.error(
                     f"Failed to upsert {len(points)} sections for document {path}: "
@@ -3686,11 +3687,12 @@ class SemanticIndexer:
         try:
             for batch in self._point_batches(condition):
                 self._invalidate_collection_provenance(strict=True)
-                self.qdrant.delete(
+                result = self.qdrant.delete(
                     collection_name=self.collection,
                     points_selector=models.PointIdsList(points=[point.id for point in batch]),
                     wait=True,
                 )
+                self._require_completed(result, "File vector deletion")
                 removed += len(batch)
         except Exception as exc:
             raise RuntimeError(f"File vector deletion failed ({type(exc).__name__})") from None
@@ -3714,12 +3716,13 @@ class SemanticIndexer:
         try:
             for batch in self._point_batches(Filter(must=conditions)):
                 self._invalidate_collection_provenance(strict=True)
-                self.qdrant.set_payload(
+                result = self.qdrant.set_payload(
                     collection_name=self.collection,
                     payload={"relative_path": new_relative, "file": str(new_path)},
                     points=[point.id for point in batch],
                     wait=True,
                 )
+                self._require_completed(result, "File vector move")
                 updated += len(batch)
         except Exception as exc:
             raise RuntimeError(f"File vector move failed ({type(exc).__name__})") from None
@@ -3746,12 +3749,13 @@ class SemanticIndexer:
         try:
             for batch in self._point_batches(condition):
                 self._invalidate_collection_provenance(strict=True)
-                self.qdrant.set_payload(
+                result = self.qdrant.set_payload(
                     collection_name=self.collection,
                     payload={"is_deleted": True},
                     points=[point.id for point in batch],
                     wait=True,
                 )
+                self._require_completed(result, "File vector marking")
                 updated += len(batch)
         except Exception as exc:
             raise RuntimeError(f"File vector marking failed ({type(exc).__name__})") from None

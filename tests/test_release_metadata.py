@@ -75,11 +75,61 @@ setup_mcp_json
     calls = (tmp_path / "docker-args").read_text().splitlines()
     assert calls == (["image", "inspect", expected] if case == "local" else ["pull", expected])
     config = json.loads((tmp_path / ".mcp.json").read_text())
-    assert config["mcpServers"]["code-index"]["args"][-3:] == [expected, "index-it-mcp", "stdio"]
+    assert config["mcpServers"]["code-index"] == {"command": "mcp-index", "args": ["stdio"]}
     if case != "local":
         url = (tmp_path / "curl-args").read_text().splitlines()[-1]
         selector_path = "latest/download" if case == "latest" else "download/v1.4.1"
         assert url.endswith(f"/releases/{selector_path}/image-reference.txt")
+
+
+def test_docker_launcher_registers_and_reuses_mounted_workspace(tmp_path):
+    source = (REPO / "scripts/install-mcp-docker.sh").read_text()
+    launcher = source.split("cat > /tmp/mcp-index << 'EOF'\n", 1)[1].split("\nEOF", 1)[0]
+    launcher = launcher.replace("@MCP_IMAGE_REF@", "synthetic-image")
+    script = tmp_path / "mcp-index"
+    script.write_text(launcher)
+    script.chmod(0o700)
+    docker = tmp_path / "docker"
+    docker.write_text('#!/bin/sh\nprintf \'%s\\n\' "$@" > "$DOCKER_ARGS"\n')
+    docker.chmod(0o700)
+    workspace = tmp_path / "repo"
+    workspace.mkdir()
+    env = {
+        **os.environ,
+        "PATH": f"{tmp_path}:{os.environ['PATH']}",
+        "WORKSPACE": str(workspace),
+        "MCP_REGISTRY_DIR": str(tmp_path / "registry"),
+        "DOCKER_ARGS": str(tmp_path / "args"),
+    }
+    for command, suffix in (
+        ("setup", ["repository", "register", "/workspace"]),
+        ("stdio", ["index-it-mcp", "stdio"]),
+    ):
+        result = subprocess.run([str(script), command], env=env, capture_output=True, text=True)
+        assert result.returncode == 0, result.stderr
+        args = (tmp_path / "args").read_text().splitlines()
+        assert args[-len(suffix) :] == suffix
+        assert args[args.index("--workdir") + 1] == "/workspace"
+        assert f"{workspace}:/workspace" in args
+        assert f"{tmp_path / 'registry'}:/app/.mcp" in args
+        assert args[args.index("--user") + 1] == f"{os.getuid()}:{os.getgid()}"
+        assert "MCP_ENVIRONMENT=development" in args
+        assert "MCP_REPO_REGISTRY=/app/.mcp/repository_registry.json" in args
+        assert "MCP_WORKSPACE_ROOT=/workspace" in args
+        assert "MCP_ALLOWED_ROOTS=/workspace" in args
+    powershell = (REPO / "scripts/install-mcp-docker.ps1").read_text()
+    for value in (
+        "repository register /workspace",
+        "--workdir /workspace",
+        "MCP_REGISTRY_DIR=%WORKSPACE%\\.mcp-index\\docker-registry",
+        "%MCP_REGISTRY_DIR%:/app/.mcp",
+        "MCP_WORKSPACE_ROOT=/workspace",
+        "MCP_ALLOWED_ROOTS=/workspace",
+        "MCP_ENVIRONMENT=development",
+        "VOYAGE_API_KEY",
+    ):
+        assert value in powershell
+    assert "VOYAGE_AI_API_KEY" not in powershell
 
 
 @pytest.mark.parametrize(
@@ -101,7 +151,12 @@ def test_generated_docker_launcher_keeps_selected_digest(tmp_path, args):
             *args,
         ],
         cwd=tmp_path,
-        env={**os.environ, "CALLS": str(tmp_path / "calls"), "MCP_VARIANT": "untrusted-tag"},
+        env={
+            **os.environ,
+            "CALLS": str(tmp_path / "calls"),
+            "MCP_REGISTRY_DIR": str(tmp_path / "registry"),
+            "MCP_VARIANT": "untrusted-tag",
+        },
         capture_output=True,
         text=True,
         timeout=5,
@@ -111,6 +166,13 @@ def test_generated_docker_launcher_keeps_selected_digest(tmp_path, args):
     assert image in calls and "untrusted-tag" not in calls
     if args == ["upgrade"]:
         assert calls == ["pull", image]
+    elif args == ["setup"]:
+        assert calls[calls.index(image) + 1 :] == [
+            "index-it-mcp",
+            "repository",
+            "register",
+            "/workspace",
+        ]
     else:
         assert calls[calls.index(image) + 1 :] == ["index-it-mcp", *(args or ["stdio"])]
 
