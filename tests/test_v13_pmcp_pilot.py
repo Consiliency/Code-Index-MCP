@@ -323,6 +323,34 @@ async def test_browser_teardown_attempts_every_owned_process():
     assert calls == ["inspector", "admin"]
 
 
+def test_pilot_fingerprint_includes_configured_enrichment_identity():
+    from mcp_server.artifacts.semantic_profiles import SemanticProfile
+    from scripts.v13_pmcp_pilot import expected_profile_fingerprint
+
+    profile = {
+        "provider": "openai_compatible",
+        "model_name": "embed",
+        "model_version": "unreported",
+        "vector_dimension": 8,
+        "distance_metric": "cosine",
+        "normalization_policy": "provider-default",
+        "chunk_schema_version": "1",
+        "chunker_version": "4.0.0",
+        "build_metadata": {
+            "enrichment_model_name": "chat",
+            "enrichment_api_base": "http://127.0.0.1:1234/v1",
+        },
+    }
+    explicit = copy.deepcopy(profile)
+    explicit["build_metadata"].update(
+        enrichment_model="chat", enrichment_base_url="http://127.0.0.1:1234/v1"
+    )
+    assert (
+        expected_profile_fingerprint({"selected_profile": profile})
+        == SemanticProfile.from_dict("pilot", explicit).compatibility_fingerprint
+    )
+
+
 @pytest.mark.parametrize("valid", [True, False])
 def test_prepare_delivered_wheel_never_builds(tmp_path, monkeypatch, valid):
     from scripts import release_smoke

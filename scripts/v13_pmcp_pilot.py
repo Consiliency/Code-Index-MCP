@@ -96,6 +96,12 @@ def expected_profile_fingerprint(metadata: dict) -> str:
     profile = metadata.get("selected_profile")
     if not isinstance(profile, dict):
         raise PilotRefused("pilot_profile_missing")
+    profile = dict(profile)
+    build_metadata = dict(profile.get("build_metadata") or {})
+    if build_metadata.get("enrichment_model_name") and build_metadata.get("enrichment_api_base"):
+        build_metadata["enrichment_model"] = build_metadata["enrichment_model_name"]
+        build_metadata["enrichment_base_url"] = build_metadata["enrichment_api_base"]
+    profile["build_metadata"] = build_metadata
     return SemanticProfile.from_dict("pilot", profile).compatibility_fingerprint
 
 
