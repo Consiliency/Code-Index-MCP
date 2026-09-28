@@ -2679,6 +2679,19 @@ class SemanticIndexer:
         # Attest + persist the provenance profile BEFORE any embedding/point write
         # so a provider or metadata failure mutates zero collection/metadata state.
         self._prepare_for_writes()
+        # A selected-file batch may add to an existing collection. Only an empty
+        # collection can be fully described by this batch's paths and point IDs.
+        try:
+            existing, _ = self.qdrant.scroll(
+                collection_name=self.collection,
+                limit=2,
+                with_payload=False,
+                with_vectors=False,
+            )
+            complete_build = all(point.id == self.PROVENANCE_POINT_ID for point in existing)
+        except Exception:
+            complete_build = False
+        self._invalidate_collection_provenance(strict=True)
 
         # Phase 3: embed in token-aware batches.
         # Voyage AI enforces a hard 120 000-token-per-request limit in addition to
@@ -2732,7 +2745,7 @@ class SemanticIndexer:
                 logger.error("Failed to store semantic embeddings: %s", type(exc).__name__)
                 failed += 1
 
-        # Phase 5: stamp collection-resident provenance for this successful build.
+        # Phase 5: stamp provenance only when this batch built the whole collection.
         # Best-effort: a provenance-write failure is logged but never fails the
         # index build that already durably wrote its points. The corpus digest is
         # computed from the SET of indexed relative paths using the same recipe as
@@ -2740,7 +2753,7 @@ class SemanticIndexer:
         # included relative paths joined by '\n', no trailing newline) so a
         # collection built from the frozen corpus emits a ``corpus_sha256`` that
         # verifies against the benchmark's recorded value.
-        if indexed and not failed and not blocked_files:
+        if complete_build and indexed and not failed and not blocked_files:
             corpus_sha256 = self._compute_corpus_sha256(indexed_relative_paths)
             self._write_collection_provenance_best_effort(
                 point_ids=built_point_ids, corpus_sha256=corpus_sha256

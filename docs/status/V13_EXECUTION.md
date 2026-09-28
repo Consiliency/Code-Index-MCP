@@ -681,3 +681,17 @@ source change requires a new exact-head gate and review. Fable's first-party
 attempt timed out and Grok's CLI returned HTTP 402; replacement seats require
 owner approval under the PREP plan. No live inference or signing allowance has
 been consumed, and PREP remains blocked.
+
+Sol's full review of `2d49b4b` identified two further code blockers. The
+installed Docker launcher could not follow a linked worktree's `.git` pointer
+outside `/workspace`; batch semantic indexing could publish a receipt for only
+the selected files while older collection points remained. The subsequent
+candidate mounts the Git common directory read-only and supplies a
+container-relative worktree pointer on Unix and Windows. A real linked
+synthetic worktree now passes installed-image registration, sync, STDIO
+`search_code`, and `symbol_lookup`. Batch indexing invalidates prior
+collection provenance before writes and only stamps its own receipt when the
+collection was empty before the batch; staged publication still verifies and
+stamps the complete generation. Focused tests pass (65). Qdrant file mode
+passes 19 controls. These repairs require another exact-head gate and review;
+the PR remains draft and both one-shot allowances remain unconsumed.

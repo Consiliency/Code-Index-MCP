@@ -145,9 +145,72 @@ def test_docker_launcher_registers_and_reuses_mounted_workspace(tmp_path):
             "MCP_REPO_REGISTRY=/app/.mcp/repository_registry.json",
             "MCP_WORKSPACE_ROOT=/workspace",
             "MCP_ALLOWED_ROOTS=/workspace",
+            "%GIT_MOUNTS%",
         ):
             assert value in invocation
+    assert 'git -C "%WORKSPACE%" rev-parse --path-format=absolute --git-common-dir' in batch
+    assert "gitdir: /mcp-git/worktrees/%GIT_WORKTREE_NAME%" in batch
     assert "VOYAGE_AI_API_KEY" not in powershell
+
+
+def test_docker_launcher_mounts_linked_git_worktree(tmp_path):
+    source = _read_text("scripts/install-mcp-docker.sh")
+    template = source.split("cat > /tmp/mcp-index << 'EOF'\n", 1)[1].split("\nEOF", 1)[0]
+    launcher = tmp_path / "launcher"
+    launcher.write_text(template.replace("@MCP_IMAGE_REF@", "synthetic-image"))
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    subprocess.run(["git", "init", "-b", "main", str(repository)], check=True, capture_output=True)
+    (repository / "sample.py").write_text("def sample():\n    return 1\n")
+    subprocess.run(["git", "-C", str(repository), "add", "sample.py"], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repository),
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.com",
+            "commit",
+            "-m",
+            "sample",
+        ],
+        check=True,
+        capture_output=True,
+    )
+    linked = tmp_path / "linked"
+    subprocess.run(
+        ["git", "-C", str(repository), "worktree", "add", "-b", "linked", str(linked)],
+        check=True,
+        capture_output=True,
+    )
+    calls = tmp_path / "calls"
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            'docker() { printf "%s\\n" "$@" > "$CALLS"; }; export -f docker; bash "$@"',
+            "test",
+            str(launcher),
+            "setup",
+        ],
+        env={
+            **os.environ,
+            "WORKSPACE": str(linked),
+            "MCP_REGISTRY_DIR": str(tmp_path / "registry"),
+            "CALLS": str(calls),
+        },
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    args = calls.read_text().splitlines()
+    common = (repository / ".git").resolve()
+    pointer = tmp_path / "registry" / "worktree-pointer.git"
+    assert f"{common}:/mcp-git:ro" in args
+    assert f"{pointer}:/workspace/.git:ro" in args
+    assert pointer.read_text() == "gitdir: /mcp-git/worktrees/linked\n"
 
 
 @pytest.mark.parametrize(

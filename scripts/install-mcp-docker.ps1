@@ -142,11 +142,13 @@ SET WORKSPACE=%CD%
 SET MCP_REGISTRY_DIR=%WORKSPACE%\.mcp-index\docker-registry
 IF NOT EXIST "%MCP_REGISTRY_DIR%" MKDIR "%MCP_REGISTRY_DIR%"
 IF NOT DEFINED MCP_ARTIFACT_SYNC SET MCP_ARTIFACT_SYNC=true
+SET GIT_MOUNTS=
+IF EXIST "%WORKSPACE%\.git" IF NOT EXIST "%WORKSPACE%\.git\HEAD" (CALL :worktree_mounts || EXIT /B 1)
 
 IF "%1"=="setup" (
     echo Registering workspace with MCP Index...
     docker run -i --rm --workdir /workspace ^
-        -v "%WORKSPACE%:/workspace" -v "%MCP_REGISTRY_DIR%:/app/.mcp" ^
+        -v "%WORKSPACE%:/workspace" -v "%MCP_REGISTRY_DIR%:/app/.mcp" %GIT_MOUNTS% ^
         -e HOME=/app/.mcp -e MCP_REPO_REGISTRY=/app/.mcp/repository_registry.json ^
         -e MCP_ENVIRONMENT=development ^
         -e MCP_WORKSPACE_ROOT=/workspace -e MCP_ALLOWED_ROOTS=/workspace ^
@@ -163,7 +165,7 @@ IF "%1"=="upgrade" (
 REM Run MCP server with all arguments
 IF "%1"=="" (
     docker run -i --rm --workdir /workspace ^
-        -v "%WORKSPACE%:/workspace" -v "%MCP_REGISTRY_DIR%:/app/.mcp" ^
+        -v "%WORKSPACE%:/workspace" -v "%MCP_REGISTRY_DIR%:/app/.mcp" %GIT_MOUNTS% ^
         -e HOME=/app/.mcp -e MCP_REPO_REGISTRY=/app/.mcp/repository_registry.json ^
         -e MCP_ENVIRONMENT=development ^
         -e MCP_WORKSPACE_ROOT=/workspace -e MCP_ALLOWED_ROOTS=/workspace ^
@@ -174,7 +176,7 @@ IF "%1"=="" (
 docker run -i --rm ^
     --workdir /workspace ^
     -v "%WORKSPACE%:/workspace" ^
-    -v "%MCP_REGISTRY_DIR%:/app/.mcp" ^
+    -v "%MCP_REGISTRY_DIR%:/app/.mcp" %GIT_MOUNTS% ^
     -e HOME=/app/.mcp ^
     -e MCP_REPO_REGISTRY=/app/.mcp/repository_registry.json ^
     -e MCP_ENVIRONMENT=development ^
@@ -183,6 +185,18 @@ docker run -i --rm ^
     -e VOYAGE_API_KEY ^
     -e MCP_ARTIFACT_SYNC ^
     %MCP_IMAGE_REF% index-it-mcp %*
+EXIT /B
+
+:worktree_mounts
+FOR /F "delims=" %%G IN ('git -C "%WORKSPACE%" rev-parse --path-format=absolute --git-common-dir 2^>NUL') DO SET "GIT_COMMON=%%G"
+FOR /F "delims=" %%G IN ('git -C "%WORKSPACE%" rev-parse --path-format=absolute --git-dir 2^>NUL') DO SET "GIT_DIR=%%G"
+IF NOT DEFINED GIT_COMMON EXIT /B 1
+IF NOT DEFINED GIT_DIR EXIT /B 1
+FOR %%G IN ("%GIT_DIR%") DO SET "GIT_WORKTREE_NAME=%%~nxG"
+IF NOT EXIST "%GIT_COMMON%/worktrees/%GIT_WORKTREE_NAME%/HEAD" EXIT /B 1
+>"%MCP_REGISTRY_DIR%\worktree-pointer.git" ECHO gitdir: /mcp-git/worktrees/%GIT_WORKTREE_NAME%
+SET GIT_MOUNTS=-v "%GIT_COMMON%:/mcp-git:ro" -v "%MCP_REGISTRY_DIR%\worktree-pointer.git:/workspace/.git:ro"
+EXIT /B 0
 '@
     $launcherContent = $launcherContent.Replace('@MCP_IMAGE_REF@', $MCPImageRef)
 

@@ -38,6 +38,12 @@ class _FakeQdrantClient:
         self.upserts.append((collection_name, list(points)))
         return SimpleNamespace(status="completed")
 
+    def scroll(self, *, collection_name, **kwargs):
+        return [], None
+
+    def delete(self, *, collection_name, points_selector, wait=False):
+        return SimpleNamespace(status="completed")
+
     def get_collections(self):
         return SimpleNamespace(
             collections=[SimpleNamespace(name=name) for name in self.collections.keys()]

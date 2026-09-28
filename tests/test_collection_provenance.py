@@ -422,6 +422,28 @@ def test_index_files_batch_writes_non_null_corpus_sha256():
     assert manifest["corpus_sha256"] == _corpus_sha256(["pkg/a.py", "pkg/b.py"])
 
 
+def test_selected_file_batch_invalidates_existing_collection_provenance():
+    qdrant = FakeQdrant()
+    ix = _make_indexer(qdrant, attestation=_attestation())
+    qdrant.points[999] = SimpleNamespace(
+        id=999, vector=[0.1] * 8, payload={"relative_path": "pkg/old.py"}
+    )
+    ix.write_collection_provenance([999], corpus_sha256=_corpus_sha256(["pkg/old.py"]))
+    ix._preflight_blocker_details = lambda *a, **k: None  # type: ignore[assignment]
+    ix._prepare_for_writes = lambda *a, **k: None  # type: ignore[assignment]
+    ix._prepare_file_for_indexing = lambda p: {  # type: ignore[assignment]
+        "embedding_inputs": ["chunk-new"],
+        "relative_path": "pkg/new.py",
+        "missing_summary_chunk_ids": [],
+    }
+    ix._embed_texts = lambda texts, input_type=None: [[0.0] * 8 for _ in texts]  # type: ignore[assignment]
+    ix._store_file_embeddings = lambda *a: {"point_ids": [111]}  # type: ignore[assignment]
+
+    result = ix.index_files_batch([Path("new.py")])
+    assert result["files_indexed"] == 1
+    assert ix.read_collection_provenance() is None
+
+
 # ===========================================================================
 # 7. Incremental mutation invalidates the sentinel -> provenance_missing
 # ===========================================================================

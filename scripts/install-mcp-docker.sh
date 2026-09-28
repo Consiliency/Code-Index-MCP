@@ -182,6 +182,21 @@ MCP_IMAGE_REF='@MCP_IMAGE_REF@'
 WORKSPACE="${WORKSPACE:-$(pwd)}"
 MCP_REGISTRY_DIR="${MCP_REGISTRY_DIR:-$WORKSPACE/.mcp-index/docker-registry}"
 mkdir -p "$MCP_REGISTRY_DIR"
+GIT_MOUNTS=()
+if [ -f "$WORKSPACE/.git" ]; then
+    git_common=$(git -C "$WORKSPACE" rev-parse --path-format=absolute --git-common-dir)
+    git_dir=$(git -C "$WORKSPACE" rev-parse --path-format=absolute --git-dir)
+    worktree_name="${git_dir##*/}"
+    if [ "$git_dir" != "$git_common/worktrees/$worktree_name" ]; then
+        echo "Unsupported Git worktree metadata layout" >&2
+        exit 1
+    fi
+    pointer="$MCP_REGISTRY_DIR/worktree-pointer.git"
+    temporary_pointer=$(mktemp "$MCP_REGISTRY_DIR/worktree-pointer.XXXXXX")
+    printf 'gitdir: /mcp-git/worktrees/%s\n' "$worktree_name" > "$temporary_pointer"
+    mv "$temporary_pointer" "$pointer"
+    GIT_MOUNTS=(-v "$git_common:/mcp-git:ro" -v "$pointer:/workspace/.git:ro")
+fi
 
 # Handle commands
 case "$1" in
@@ -192,6 +207,7 @@ case "$1" in
             --workdir /workspace \
             -v "$WORKSPACE:/workspace" \
             -v "$MCP_REGISTRY_DIR:/app/.mcp" \
+            "${GIT_MOUNTS[@]}" \
             -e HOME=/app/.mcp \
             -e MCP_ENVIRONMENT=development \
             -e MCP_REPO_REGISTRY=/app/.mcp/repository_registry.json \
@@ -210,6 +226,7 @@ case "$1" in
             --workdir /workspace \
             -v "$WORKSPACE:/workspace" \
             -v "$MCP_REGISTRY_DIR:/app/.mcp" \
+            "${GIT_MOUNTS[@]}" \
             -e HOME=/app/.mcp \
             -e MCP_ENVIRONMENT=development \
             -e MCP_REPO_REGISTRY=/app/.mcp/repository_registry.json \
