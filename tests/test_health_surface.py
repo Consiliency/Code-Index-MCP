@@ -255,6 +255,37 @@ class TestStdioHandleGetStatusRepositories:
         assert data["repositories"] == []
 
 
+def test_stdio_health_omits_plugin_exception_text(monkeypatch):
+    from types import SimpleNamespace
+
+    from mcp_server.cli.tool_handlers import handle_get_status
+    from mcp_server.dispatcher.dispatcher_enhanced import EnhancedDispatcher
+    from mcp_server.dispatcher.simple_dispatcher import SimpleDispatcher
+
+    marker = "private-plugin-exception-marker"
+    plugin = SimpleNamespace(get_indexed_count=lambda: (_ for _ in ()).throw(RuntimeError(marker)))
+    enhanced = EnhancedDispatcher.__new__(EnhancedDispatcher)
+    enhanced._lang_cache = {"python": plugin}
+    enhanced._use_factory = False
+    enhanced._lazy_load = False
+    monkeypatch.setattr(enhanced, "_managed_plugin_count", lambda repo_id: 1)
+    monkeypatch.setattr(enhanced, "supported_languages", lambda: ["python"])
+    monkeypatch.setattr(
+        enhanced,
+        "get_runtime_feature_status",
+        lambda ctx: {"graph": {"status": "unavailable"}},
+    )
+    health = enhanced.health_check(SimpleNamespace(repo_id="test-repo"))
+    assert health["plugins"]["python"]["error"] == "plugin_health_failed"
+
+    dispatcher = SimpleDispatcher()
+    monkeypatch.setattr(dispatcher, "get_statistics", lambda: {})
+    monkeypatch.setattr(dispatcher, "health_check", lambda: health)
+    result = asyncio.run(handle_get_status(arguments={}, dispatcher=dispatcher, repo_resolver=None))
+    assert marker not in result[0].text
+    assert "plugin_health_failed" in result[0].text
+
+
 # ---------------------------------------------------------------------------
 # HTTP gateway.get_status includes repositories
 # ---------------------------------------------------------------------------

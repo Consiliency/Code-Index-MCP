@@ -2635,6 +2635,7 @@ class EnhancedDispatcher:
                     "Required semantic mutation did not complete",
                     semantic=semantic_stats,
                 )
+            self._require_pending_vector_deletions_drained(ctx, _sem)
             try:
                 stat = path.stat()
                 with self._file_cache_lock:
@@ -3693,6 +3694,23 @@ class EnhancedDispatcher:
                 result.get("groups_failed"),
             )
 
+    def _require_pending_vector_deletions_drained(
+        self, ctx: RepoContext, sem: Optional[SemanticIndexer]
+    ) -> None:
+        """Fence a direct mutation until its orphaned remote vectors are deleted."""
+        store = ctx.sqlite_store
+        if ctx.staging or not isinstance(store, SQLiteStore):
+            return
+        if not store.get_pending_vector_deletions():
+            return
+        if sem is None:
+            raise RuntimeError("Required semantic deletion did not complete")
+        outcome = store.drain_pending_vector_deletions(
+            lambda collection, point_ids: sem.delete_remote_points(point_ids, collection=collection)
+        )
+        if outcome["rows_remaining"] or outcome["groups_failed"]:
+            raise RuntimeError("Required semantic deletion did not complete")
+
     @_semantic_operation
     def index_directory(
         self,
@@ -4207,8 +4225,12 @@ class EnhancedDispatcher:
                 if hasattr(plugin, "get_indexed_count"):
                     plugin_health["indexed_files"] = plugin.get_indexed_count()
             except Exception as e:
-                plugin_health = {"status": "error", "error": str(e)}
-                health["errors"].append(f"Plugin {lang}: {str(e)}")
+                plugin_health = {
+                    "status": "error",
+                    "error": "plugin_health_failed",
+                    "exception_type": type(e).__name__,
+                }
+                health["errors"].append(f"Plugin {lang}: plugin_health_failed")
 
             health["plugins"][lang] = plugin_health
 
@@ -4274,6 +4296,7 @@ class EnhancedDispatcher:
                             invalidation=invalidation,
                             sqlite_store=ctx.sqlite_store,
                         )
+                    self._require_pending_vector_deletions_drained(ctx, _sem)
                 except Exception as e:
                     logger.error(f"Error removing from SQLite: {type(e).__name__}")
                     primary_result = IndexResult(

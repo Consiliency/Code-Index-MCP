@@ -361,7 +361,9 @@ def test_prepare_delivered_wheel_never_builds(tmp_path, monkeypatch, valid):
     root = tmp_path / "owned"
     calls = []
     monkeypatch.setattr(pilot, "source_identity", lambda: {"source": "a" * 40})
-    monkeypatch.setattr(pilot, "pmcp_distribution_identity", lambda path: {"version": "2.7.3"})
+    monkeypatch.setattr(
+        pilot, "pmcp_distribution_identity", lambda path, expected=None: {"version": "2.7.3"}
+    )
     monkeypatch.setattr(release_smoke, "validate_wheel_source", lambda *args: {"version": "1.4.1"})
 
     def run(command, directory, label, **kwargs):
@@ -410,7 +412,9 @@ def test_prepared_runtime_identity_rejects_manifest_tampering(tmp_path, monkeypa
     executable.write_bytes(b"#!/bin/sh\n")
     monkeypatch.setattr(pilot, "source_identity", lambda: {"source": "a" * 40})
     monkeypatch.setattr(pilot.shutil, "which", lambda name: str(executable))
-    monkeypatch.setattr(pilot, "pmcp_distribution_identity", lambda path: {"version": "2.7.3"})
+    monkeypatch.setattr(
+        pilot, "pmcp_distribution_identity", lambda path, expected=None: {"version": "2.7.3"}
+    )
     for name in pilot.PILOT_HELPERS:
         (tmp_path / name).write_bytes((pilot.REPO / "scripts" / name).read_bytes())
     python = str(Path(sys.base_prefix) / "bin/python3.12")
@@ -436,9 +440,44 @@ def test_prepared_runtime_identity_rejects_manifest_tampering(tmp_path, monkeypa
         "helper_sha256": {name: pilot.digest_file(tmp_path / name) for name in pilot.PILOT_HELPERS},
     }
     pilot.validate_manifest(tmp_path, manifest)
+    original = manifest[field]
     manifest[field] = "tampered"
     with pytest.raises(PilotRefused):
         pilot.validate_manifest(tmp_path, manifest)
+    manifest[field] = original
+
+    for artifact, rejection in (
+        (wheel, "wheel_binding_changed"),
+        (tmp_path / "constraints.txt", "constraints_binding_changed"),
+    ):
+        artifact.write_bytes(b"tampered")
+        monkeypatch.setattr(
+            pilot,
+            "run_command",
+            lambda *args, **kwargs: pytest.fail("executed untrusted artifact"),
+        )
+        with pytest.raises(PilotRefused, match=rejection):
+            pilot.validate_manifest(tmp_path, manifest, execute=True)
+        artifact.write_bytes(b"wheel" if artifact == wheel else b"dependency==1\n")
+
+
+def test_pmcp_interpreter_digest_checked_before_execution(tmp_path, monkeypatch):
+    from scripts import v13_pmcp_pilot as pilot
+
+    interpreter = tmp_path / "python"
+    interpreter.write_bytes(b"tampered interpreter")
+    launcher = tmp_path / "pmcp"
+    launcher.write_bytes(f"#!{interpreter}\n".encode())
+    monkeypatch.setattr(
+        pilot.subprocess,
+        "run",
+        lambda *args, **kwargs: pytest.fail("executed tampered interpreter"),
+    )
+    with pytest.raises(PilotRefused, match="pmcp_interpreter_changed"):
+        pilot.pmcp_distribution_identity(
+            launcher,
+            expected={"interpreter": str(interpreter), "interpreter_sha256": "0" * 64},
+        )
 
 
 def test_semantic_sample_refuses_lexical_fallback_and_wrong_generation():

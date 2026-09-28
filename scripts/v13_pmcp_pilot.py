@@ -125,7 +125,7 @@ def digest_file(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def pmcp_distribution_identity(executable: Path) -> dict:
+def pmcp_distribution_identity(executable: Path, expected: dict | None = None) -> dict:
     """Bind the launcher, interpreter, and every installed distribution file."""
     first_line = executable.read_bytes().split(b"\n", 1)[0]
     if not first_line.startswith(b"#!/"):
@@ -133,6 +133,12 @@ def pmcp_distribution_identity(executable: Path) -> dict:
     interpreter = Path(first_line[2:].decode().strip()).resolve()
     if not interpreter.is_file():
         raise PilotRefused("pmcp_interpreter_unknown")
+    interpreter_sha256 = digest_file(interpreter)
+    if expected is not None and (
+        expected.get("interpreter") != str(interpreter)
+        or expected.get("interpreter_sha256") != interpreter_sha256
+    ):
+        raise PilotRefused("pmcp_interpreter_changed")
     script = (
         "import hashlib, importlib.metadata, json, pathlib\n"
         "d = importlib.metadata.distribution('pmcp')\n"
@@ -161,7 +167,7 @@ def pmcp_distribution_identity(executable: Path) -> dict:
     identity = json.loads(result.stdout)
     return {
         "interpreter": str(interpreter),
-        "interpreter_sha256": digest_file(interpreter),
+        "interpreter_sha256": interpreter_sha256,
         **identity,
     }
 
@@ -497,7 +503,10 @@ def prepare(root: Path, wheel_path: Path | None = None, expected_sha256: str | N
     }
     manifest["pmcp_sha256"] = digest_file(Path(manifest["pmcp_path"]))
     manifest["pmcp_distribution"] = pmcp_distribution_identity(Path(manifest["pmcp_path"]))
-    if manifest["pmcp_version"] != "pmcp 2.7.3" or manifest["pmcp_distribution"]["version"] != "2.7.3":
+    if (
+        manifest["pmcp_version"] != "pmcp 2.7.3"
+        or manifest["pmcp_distribution"]["version"] != "2.7.3"
+    ):
         raise PilotRefused("pmcp_version_mismatch")
     write_json(root / "manifest.json", manifest, exclusive=True)
     return manifest
@@ -543,6 +552,10 @@ def validate_manifest(root: Path, manifest: dict, *, execute: bool = False) -> N
     wheel = root / "dist" / manifest["wheel"]
     if wheel.name != manifest["wheel"] or not wheel.is_file():
         raise PilotRefused("wheel_binding_changed")
+    if digest_file(wheel) != manifest["wheel_sha256"]:
+        raise PilotRefused("wheel_binding_changed")
+    if digest_file(root / "constraints.txt") != manifest["constraints_sha256"]:
+        raise PilotRefused("constraints_binding_changed")
     python = str(Path(sys.base_prefix) / "bin" / "python3.12")
     if manifest.get("python") != python or manifest.get("uvx_prefix") != uvx_prefix(
         root, wheel, python
@@ -560,15 +573,17 @@ def validate_manifest(root: Path, manifest: dict, *, execute: bool = False) -> N
     ):
         raise PilotRefused("installed_identity_changed")
     pmcp = Path(manifest.get("pmcp_path", ""))
+    expected_pmcp = manifest.get("pmcp_distribution")
     if (
-        not pmcp.is_absolute()
+        not isinstance(expected_pmcp, dict)
+        or not pmcp.is_absolute()
         or pmcp != pmcp.resolve()
         or not pmcp.is_file()
         or digest_file(pmcp) != manifest.get("pmcp_sha256")
         or str(Path(shutil.which("pmcp") or "pmcp").resolve()) != str(pmcp)
-        or pmcp_distribution_identity(pmcp) != manifest.get("pmcp_distribution")
+        or pmcp_distribution_identity(pmcp, expected=expected_pmcp) != expected_pmcp
         or manifest.get("pmcp_version") != "pmcp 2.7.3"
-        or manifest["pmcp_distribution"].get("version") != "2.7.3"
+        or expected_pmcp.get("version") != "2.7.3"
     ):
         raise PilotRefused("pmcp_binding_changed")
     expected_helpers = {name: digest_file(REPO / "scripts" / name) for name in PILOT_HELPERS}
@@ -601,10 +616,6 @@ def validate_manifest(root: Path, manifest: dict, *, execute: bool = False) -> N
             env={**clean_env(root), "PYTHONUSERBASE": str(pmcp.parents[1])},
         ).strip() != manifest.get("pmcp_version"):
             raise PilotRefused("runtime_identity_changed")
-    if digest_file(wheel) != manifest["wheel_sha256"]:
-        raise PilotRefused("wheel_binding_changed")
-    if digest_file(root / "constraints.txt") != manifest["constraints_sha256"]:
-        raise PilotRefused("constraints_binding_changed")
 
 
 def load_manifest(root: Path) -> dict:
@@ -2397,7 +2408,7 @@ async def inference_pilot(
         if ledger:
             budget = ledger.snapshot()
             budget["elapsed_seconds"] = (
-                time.time() - budget["started_wall"] if budget["started_wall"] else 0
+                time.monotonic() - budget["started_monotonic"] if budget["started_monotonic"] else 0
             )
             result["budget"] = budget
             write_json(directory / "budget.json", budget)

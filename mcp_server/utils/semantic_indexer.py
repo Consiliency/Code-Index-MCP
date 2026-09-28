@@ -1073,6 +1073,8 @@ class SemanticIndexer:
         """Open exactly the selected backend, without lock removal or fallback."""
         client = None
         self._qdrant_available = False
+        if not qdrant_path:
+            raise ValueError("An explicit Qdrant backend is required")
         if qdrant_path == ":memory:":
             mode, kwargs = "memory", {"location": ":memory:"}
         elif qdrant_path.startswith(("http://", "https://")):
@@ -1081,10 +1083,8 @@ class SemanticIndexer:
                 "api_key": get_qdrant_api_key(),
                 "timeout": 5,
             }
-        elif qdrant_path:
-            mode, kwargs = "file", {"path": qdrant_path}
         else:
-            raise ValueError("An explicit Qdrant backend is required")
+            mode, kwargs = "file", {"path": qdrant_path}
         try:
             client = QdrantClient(**kwargs)
             client.get_collections()

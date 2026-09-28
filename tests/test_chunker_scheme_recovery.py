@@ -570,6 +570,68 @@ def test_dispatcher_drain_wiring_noops_without_semantic(tmp_path):
     store.close()
 
 
+@pytest.mark.parametrize("remote_fails", [False, True])
+def test_direct_remove_fences_on_remote_vector_deletion(tmp_path, monkeypatch, remote_fails):
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+    import threading
+
+    from mcp_server.dispatcher.dispatcher_enhanced import EnhancedDispatcher, IndexResultStatus
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    path = repo / "source.py"
+    path.write_text("value = 1\n")
+    store = SQLiteStore(str(tmp_path / "code_index.db"))
+    repo_id = store.ensure_repository_row(repo, name="test-repo")
+    file_id = store.store_file(repo_id, path=path, relative_path="source.py", language="python")
+    _store_code_chunk(store, file_id, "code-chunk-1")
+    store.upsert_semantic_point("profile-a", "code-chunk-1", 101, "col-a")
+    client = _FakeVectorClient({"col-a"} if remote_fails else set())
+    sem = SimpleNamespace(
+        semantic_profile=SimpleNamespace(profile_id="profile-a"),
+        cleanup_stale_semantic_artifacts=lambda **kwargs: {},
+        delete_remote_points=client.delete_remote_points,
+    )
+    dispatcher = EnhancedDispatcher.__new__(EnhancedDispatcher)
+    dispatcher._file_cache = {}
+    dispatcher._file_cache_lock = threading.Lock()
+    dispatcher._operation_stats = {}
+    monkeypatch.setattr(dispatcher, "_semantic_lease", lambda ctx: nullcontext())
+    monkeypatch.setattr(dispatcher, "_get_semantic_indexer", lambda ctx: sem)
+    monkeypatch.setattr(dispatcher, "_sqlite_repository_id", lambda ctx: repo_id)
+    monkeypatch.setattr(dispatcher, "_match_plugin", lambda ctx, path: None)
+    ctx = SimpleNamespace(staging=False, sqlite_store=store, workspace_root=repo)
+
+    result = dispatcher.remove_file(ctx, path)
+    assert result.status == (IndexResultStatus.ERROR if remote_fails else IndexResultStatus.DELETED)
+    assert client.calls == [("col-a", [101])]
+    assert len(store.get_pending_vector_deletions()) == (1 if remote_fails else 0)
+    store.close()
+
+
+def test_direct_replacement_requires_vector_debt_to_drain(tmp_path):
+    from types import SimpleNamespace
+
+    from mcp_server.dispatcher.dispatcher_enhanced import EnhancedDispatcher
+
+    store = SQLiteStore(str(tmp_path / "code_index.db"))
+    _seed_ledger(
+        store,
+        [{"profile_id": "profile-a", "chunk_id": "old", "point_id": 101, "collection": "col-a"}],
+    )
+    client = _FakeVectorClient({"col-a"})
+    ctx = SimpleNamespace(staging=False, sqlite_store=store)
+    with pytest.raises(RuntimeError, match="Required semantic deletion"):
+        EnhancedDispatcher._require_pending_vector_deletions_drained(None, ctx, client)
+    assert len(store.get_pending_vector_deletions()) == 1
+    client._fail.clear()
+    EnhancedDispatcher._require_pending_vector_deletions_drained(None, ctx, client)
+    assert client.calls == [("col-a", [101]), ("col-a", [101])]
+    assert store.get_pending_vector_deletions() == []
+    store.close()
+
+
 def test_drain_skips_revived_point_ids_but_clears_their_ledger_rows(tmp_path):
     """(e) Finding 1: point ids are deterministic and content-derived, so an
     incremental index pass can legitimately RE-CREATE a ledger point id (fresh

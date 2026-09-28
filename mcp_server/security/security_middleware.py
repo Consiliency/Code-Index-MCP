@@ -203,7 +203,8 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
     def _is_excluded_path(self, path: str) -> bool:
         """Check if path is excluded from authentication."""
         return any(
-            path == excluded or path.startswith(excluded.rstrip("/") + "/")
+            path == excluded
+            or (excluded in {"/docs", "/redoc"} and path.startswith(excluded + "/"))
             for excluded in self.excluded_paths
         )
 

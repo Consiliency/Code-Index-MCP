@@ -22,7 +22,7 @@ from mcp_server.security import (
 # ---------------------------------------------------------------------------
 # Routes that are intentionally public (no auth required).
 # ---------------------------------------------------------------------------
-_PUBLIC_ROUTE_PREFIXES = {
+_PUBLIC_ROUTES = {
     "/health",
     "/ready",
     "/liveness",
@@ -83,7 +83,7 @@ def _protected_routes() -> List[Tuple[str, str]]:
         if not isinstance(route, APIRoute):
             continue
         path: str = route.path
-        if any(path == pub or path.startswith(pub.rstrip("/")) for pub in _PUBLIC_ROUTE_PREFIXES):
+        if path in _PUBLIC_ROUTES or any(path.startswith(pub + "/") for pub in ("/docs", "/redoc")):
             continue
         for method in route.methods or []:
             results.append((method.upper(), path))
@@ -131,6 +131,8 @@ def test_public_path_matching_does_not_expose_prefix_collisions() -> None:
 
     assert client.get("/readiness-private").status_code == 401
     assert client.get("/health-private").status_code == 401
+    assert client.get("/health/detailed").status_code == 401
+    assert client.get("/health/database").status_code == 401
 
 
 def test_all_protected_routes_return_401_without_token() -> None:
