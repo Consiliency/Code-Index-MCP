@@ -38,7 +38,7 @@ QUERY_TEXTS = {
 QDRANT_IMAGE = (
     "qdrant/qdrant@sha256:f1c7272cdac52b38c1a0e89313922d940ba50afd90d593a1605dbbc214e66ffb"
 )
-REHEARSAL_INDEX_DELAY_SECONDS = 2
+REHEARSAL_INDEX_DELAY_SECONDS = 4
 GOALS = {
     "offline": {
         "installed_identity",

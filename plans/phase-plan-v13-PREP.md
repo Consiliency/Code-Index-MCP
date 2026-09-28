@@ -366,9 +366,12 @@ in each proof. The rehearsal/live driver may use `--qdrant-network host` for its
 disposable Qdrant container, without changing providers, allowance or budget.
 SL-0 also owns `scripts/release_smoke.py` for this bounded route.
 Synthetic contention uses three committed source revisions per window and a
-two-second source-embedding delay in the fake rehearsal provider so measured
-queries overlap actual indexing. The frozen overlap and latency limits remain.
-This changes no inference budget, provider, or signing allowance.
+four-second source-embedding delay in the fake rehearsal provider so measured
+queries overlap actual indexing. The ten-call summary envelope covers the two
+initial builds, six contention revisions, rename, and delete recovery; its
+worst-case estimate remains below 100000 input units. The frozen overlap and
+latency limits remain. This changes no approved inference budget, provider, or
+signing allowance.
 
 ## Lane Index & Dependencies
 

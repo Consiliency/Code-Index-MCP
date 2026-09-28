@@ -19,7 +19,7 @@ SYNTHETIC_CORPUS = {
 # PILOT must enforce these bounds against serialized input before each request.
 # Retries consume another slot; these are budgets, not measured inference costs.
 REQUEST_ENVELOPES = {
-    "summary": {"requests": 8, "max_input_utf8_bytes": 4096, "framing_input_units": 128},
+    "summary": {"requests": 10, "max_input_utf8_bytes": 4096, "framing_input_units": 128},
     "document_embedding": {"requests": 12, "max_input_utf8_bytes": 2048, "framing_input_units": 32},
     "query_embedding": {"requests": 48, "max_input_utf8_bytes": 512, "framing_input_units": 32},
     "provenance_probe": {"requests": 20, "max_input_utf8_bytes": 128, "framing_input_units": 33},
