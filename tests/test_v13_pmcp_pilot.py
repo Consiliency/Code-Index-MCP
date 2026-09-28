@@ -12,6 +12,7 @@ import pytest
 
 from scripts.v13_pmcp_pilot import (
     GOALS,
+    REHEARSAL_INDEX_DELAY_SECONDS,
     OwnedContainer,
     OwnedProcess,
     PilotRefused,
@@ -562,6 +563,7 @@ def live_records(tmp_path, manifest, request, monkeypatch):
         "request_envelopes": REQUEST_ENVELOPES,
         "query_texts": QUERY_TEXTS,
         "measured_queries_per_class_per_repository": 20,
+        "rehearsal_index_delay_seconds": 0,
         "rehearsal": False,
         "manifest_sha256": digest_json(manifest),
     }
@@ -768,6 +770,7 @@ def test_saved_rehearsal_requires_actual_bound_records(tmp_path, manifest, live_
 
     result, ledger, documents = live_records
     result["rehearsal"] = documents["workload"]["rehearsal"] = True
+    documents["workload"]["rehearsal_index_delay_seconds"] = REHEARSAL_INDEX_DELAY_SECONDS
     documents["runtime_metadata"]["workload_sha256"] = digest_json(documents["workload"])
     paths = {"allowance_ledger": (ledger.root / "ledger.sqlite").relative_to(tmp_path).as_posix()}
     for role, document in documents.items():

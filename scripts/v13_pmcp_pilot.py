@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import errno
 import hashlib
 import json
 import math
@@ -37,6 +38,7 @@ QUERY_TEXTS = {
 QDRANT_IMAGE = (
     "qdrant/qdrant@sha256:f1c7272cdac52b38c1a0e89313922d940ba50afd90d593a1605dbbc214e66ffb"
 )
+REHEARSAL_INDEX_DELAY_SECONDS = 2
 GOALS = {
     "offline": {
         "installed_identity",
@@ -559,7 +561,9 @@ def cgroup_processes(group: Path) -> list[psutil.Process]:
     for path in group.rglob("cgroup.procs") if group.exists() else []:
         try:
             pids = path.read_text().split()
-        except FileNotFoundError:
+        except OSError as exc:
+            if exc.errno not in {errno.ENOENT, errno.ENODEV}:
+                raise
             continue
         for value in pids:
             try:
@@ -1405,6 +1409,8 @@ def _verify_live_records(
             or workload["request_envelopes"] != REQUEST_ENVELOPES
             or workload["query_texts"] != QUERY_TEXTS
             or workload["measured_queries_per_class_per_repository"] != 20
+            or workload.get("rehearsal_index_delay_seconds")
+            != (REHEARSAL_INDEX_DELAY_SECONDS if rehearsal else 0)
             or metadata["workload_sha256"] != digest_json(workload)
             or metadata["qdrant_image"] != QDRANT_IMAGE
             or (not rehearsal and metadata["endpoints"] != ENDPOINTS)
@@ -1545,6 +1551,8 @@ def rehearsal_provider() -> ThreadingHTTPServer:
                 inputs = value["input"]
                 if isinstance(inputs, str):
                     inputs = [inputs]
+                if any(not any(query in item for query in QUERY_TEXTS.values()) for item in inputs):
+                    time.sleep(REHEARSAL_INDEX_DELAY_SECONDS)
                 self.respond(
                     {
                         "object": "list",
@@ -1699,6 +1707,7 @@ async def inference_pilot(
         "measured_queries_per_class_per_repository": 20,
         "semantic_tool_attempt_limit": 48,
         "max_rebuilds_per_contention_window": 3,
+        "rehearsal_index_delay_seconds": REHEARSAL_INDEX_DELAY_SECONDS if rehearsal else 0,
         "query_texts": QUERY_TEXTS,
         "mutation": "append a synthetic function-body comment",
         "rename": "ledger/balance.py to ledger/bookkeeping.py",
@@ -1954,7 +1963,11 @@ async def inference_pilot(
                 queries_finished = asyncio.Event()
 
                 async def indexing_window():
-                    for _ in range(3):
+                    for revision in range(3):
+                        path.write_text(
+                            path.read_text() + f"    # Synthetic contention revision {revision}.\n"
+                        )
+                        commit_fixture(path.parent, fixture["env"])
                         await rebuild(client, tools, indexing)
                         if queries_finished.is_set():
                             break
