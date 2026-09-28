@@ -719,3 +719,9 @@ pass, including the inherited object-directory and alternate-object-directory
 cases. The `9bc7545` full suite is diagnostic for this later change; a final
 exact-head suite and review are still required. No one-shot inference or
 signing allowance has been consumed.
+
+That `9bc7545` display suite ended with 3,974 passing tests and one test
+fixture failure: the synthetic release tag inherited the host's Git signing
+and editor configuration. The fixture now creates an explicitly unsigned,
+annotated tag with a fixed message and identity. Its focused test passes; the
+final candidate still needs a clean full-suite result.

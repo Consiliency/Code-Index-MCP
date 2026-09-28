@@ -539,7 +539,26 @@ def test_legacy_image_signer_accepts_protected_main_ancestor(tmp_path):
     tree = subprocess.check_output(
         ["git", "-C", str(repo), "rev-parse", "HEAD^{tree}"], text=True
     ).strip()
-    subprocess.run(["git", "-C", str(repo), "tag", "v1.4.0"], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo),
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.com",
+            "-c",
+            "tag.gpgSign=false",
+            "tag",
+            "-a",
+            "-m",
+            "release",
+            "v1.4.0",
+        ],
+        check=True,
+        capture_output=True,
+    )
     commit_version("1.4.1")
     main = subprocess.check_output(["git", "-C", str(repo), "rev-parse", "HEAD"], text=True).strip()
     remote = tmp_path / "remote.git"
