@@ -1390,7 +1390,9 @@ def _verify_receipt_artifacts(root, manifest, kind, result, copies, expected_app
             matches = [
                 row
                 for row in admin
-                if row.get("path") == path and row.get("fields", {}).get(field) == value
+                if row.get("path") == path
+                and row.get("fields", {}).get(field) == value
+                and (field == "repository" or row.get("fields", {}).get("repository") != sibling)
             ]
             if len(matches) != 1 or matches[0].get("marker_found") is not True:
                 raise PilotRefused("browser_admin_observation_invalid")

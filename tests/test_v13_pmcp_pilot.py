@@ -611,6 +611,7 @@ def test_browser_artifact_contents_are_verified(tmp_path, manifest, damage):
             }
         ]
     )
+    observations[3]["fields"]["symbol"] = "available_balance"
     if damage == "results":
         observations.pop()
     elif damage == "forged":
