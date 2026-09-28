@@ -290,6 +290,10 @@ def test_index_file_uses_chunker_retrieval_metadata(monkeypatch, tmp_path):
     captured = {}
 
     class _QdrantStub:
+        def delete(self, collection_name, points_selector, wait=False):
+            assert wait and points_selector.points == [0]
+            return SimpleNamespace(status="completed")
+
         def upsert(self, collection_name, points, wait=False):
             captured["collection_name"] = collection_name
             captured["points"] = points
@@ -366,6 +370,10 @@ def test_index_file_splits_oversize_embedding_units(monkeypatch, tmp_path):
     captured = {}
 
     class _QdrantStub:
+        def delete(self, collection_name, points_selector, wait=False):
+            assert wait and points_selector.points == [0]
+            return SimpleNamespace(status="completed")
+
         def upsert(self, collection_name, points, wait=False):
             captured["points"] = points
             return SimpleNamespace(status="completed")
@@ -461,6 +469,10 @@ def test_index_file_falls_back_to_text_chunks_for_unknown_language(monkeypatch, 
     captured = {}
 
     class _QdrantStub:
+        def delete(self, collection_name, points_selector, wait=False):
+            assert wait and points_selector.points == [0]
+            return SimpleNamespace(status="completed")
+
         def upsert(self, collection_name, points, wait=False):
             captured["points"] = points
             return SimpleNamespace(status="completed")

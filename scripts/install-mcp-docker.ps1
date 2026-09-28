@@ -147,6 +147,7 @@ IF "%1"=="setup" (
     echo Registering workspace with MCP Index...
     docker run -i --rm --workdir /workspace ^
         -v "%WORKSPACE%:/workspace" -v "%MCP_REGISTRY_DIR%:/app/.mcp" ^
+        -e HOME=/app/.mcp -e MCP_REPO_REGISTRY=/app/.mcp/repository_registry.json ^
         -e MCP_ENVIRONMENT=development ^
         -e MCP_WORKSPACE_ROOT=/workspace -e MCP_ALLOWED_ROOTS=/workspace ^
         %MCP_IMAGE_REF% index-it-mcp repository register /workspace
@@ -163,6 +164,7 @@ REM Run MCP server with all arguments
 IF "%1"=="" (
     docker run -i --rm --workdir /workspace ^
         -v "%WORKSPACE%:/workspace" -v "%MCP_REGISTRY_DIR%:/app/.mcp" ^
+        -e HOME=/app/.mcp -e MCP_REPO_REGISTRY=/app/.mcp/repository_registry.json ^
         -e MCP_ENVIRONMENT=development ^
         -e MCP_WORKSPACE_ROOT=/workspace -e MCP_ALLOWED_ROOTS=/workspace ^
         -e VOYAGE_API_KEY -e MCP_ARTIFACT_SYNC ^
@@ -173,6 +175,8 @@ docker run -i --rm ^
     --workdir /workspace ^
     -v "%WORKSPACE%:/workspace" ^
     -v "%MCP_REGISTRY_DIR%:/app/.mcp" ^
+    -e HOME=/app/.mcp ^
+    -e MCP_REPO_REGISTRY=/app/.mcp/repository_registry.json ^
     -e MCP_ENVIRONMENT=development ^
     -e MCP_WORKSPACE_ROOT=/workspace ^
     -e MCP_ALLOWED_ROOTS=/workspace ^

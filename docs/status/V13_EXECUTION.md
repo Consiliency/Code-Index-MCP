@@ -659,3 +659,25 @@ requires structured browser observations and nonblank screenshots, and
 attempts every browser process stop. Targeted unit tests pass; exact-head
 gates and final four-seat review remain pending. The original ledger and both
 one-shot allowances remain untouched.
+
+### PREP Installed Runtime Repair Checkpoint — 2026-09-28
+
+Draft Code-Index-MCP#97 reached `2d49b4b` after reconciling Sol's full-review
+findings: the Docker launchers now bind and register the mounted workspace,
+Qdrant mutations require completed writes and invalidate provenance before
+incremental changes, and the legacy image signer checks the released digest
+against the protected source commit and tree. The Unix launcher indexed a
+private synthetic checkout and returned the expected symbol through both
+STDIO query tools after a new container started. The protected Agent Gate and
+Docker smoke passed; local BAML regeneration, installed PMCP
+prepare/offline/rehearsal, and Qdrant file/server checks passed. The broad
+suite and complete independent review of that commit are still in progress.
+
+A Gemini diagnostic of the repair delta found that a host-UID container could
+try to write model caches under unwritable `/app`; its home is now the writable
+repository-scoped registry mount. Both installers explicitly bind the same
+registry path, and tests check each generated launcher invocation. This later
+source change requires a new exact-head gate and review. Fable's first-party
+attempt timed out and Grok's CLI returned HTTP 402; replacement seats require
+owner approval under the PREP plan. No live inference or signing allowance has
+been consumed, and PREP remains blocked.

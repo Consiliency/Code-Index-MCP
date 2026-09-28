@@ -113,6 +113,7 @@ def test_docker_launcher_registers_and_reuses_mounted_workspace(tmp_path):
         assert f"{workspace}:/workspace" in args
         assert f"{tmp_path / 'registry'}:/app/.mcp" in args
         assert args[args.index("--user") + 1] == f"{os.getuid()}:{os.getgid()}"
+        assert "HOME=/app/.mcp" in args
         assert "MCP_ENVIRONMENT=development" in args
         assert "MCP_REPO_REGISTRY=/app/.mcp/repository_registry.json" in args
         assert "MCP_WORKSPACE_ROOT=/workspace" in args
@@ -126,9 +127,26 @@ def test_docker_launcher_registers_and_reuses_mounted_workspace(tmp_path):
         "MCP_WORKSPACE_ROOT=/workspace",
         "MCP_ALLOWED_ROOTS=/workspace",
         "MCP_ENVIRONMENT=development",
+        "HOME=/app/.mcp",
+        "MCP_REPO_REGISTRY=/app/.mcp/repository_registry.json",
         "VOYAGE_API_KEY",
     ):
         assert value in powershell
+    batch = powershell.split("$launcherContent = @'\n", 1)[1].split("\n'@", 1)[0]
+    runs = batch.split("docker run ")[1:]
+    assert len(runs) == 3
+    for run in runs:
+        invocation = run.split("%MCP_IMAGE_REF% index-it-mcp", 1)[0]
+        for value in (
+            "--workdir /workspace",
+            "%WORKSPACE%:/workspace",
+            "%MCP_REGISTRY_DIR%:/app/.mcp",
+            "HOME=/app/.mcp",
+            "MCP_REPO_REGISTRY=/app/.mcp/repository_registry.json",
+            "MCP_WORKSPACE_ROOT=/workspace",
+            "MCP_ALLOWED_ROOTS=/workspace",
+        ):
+            assert value in invocation
     assert "VOYAGE_AI_API_KEY" not in powershell
 
 

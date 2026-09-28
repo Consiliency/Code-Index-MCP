@@ -192,7 +192,7 @@ case "$1" in
             --workdir /workspace \
             -v "$WORKSPACE:/workspace" \
             -v "$MCP_REGISTRY_DIR:/app/.mcp" \
-            -e HOME=/app \
+            -e HOME=/app/.mcp \
             -e MCP_ENVIRONMENT=development \
             -e MCP_REPO_REGISTRY=/app/.mcp/repository_registry.json \
             -e MCP_WORKSPACE_ROOT=/workspace \
@@ -210,7 +210,7 @@ case "$1" in
             --workdir /workspace \
             -v "$WORKSPACE:/workspace" \
             -v "$MCP_REGISTRY_DIR:/app/.mcp" \
-            -e HOME=/app \
+            -e HOME=/app/.mcp \
             -e MCP_ENVIRONMENT=development \
             -e MCP_REPO_REGISTRY=/app/.mcp/repository_registry.json \
             -e MCP_WORKSPACE_ROOT=/workspace \
