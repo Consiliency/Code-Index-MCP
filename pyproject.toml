@@ -49,7 +49,7 @@ dependencies = [
     "qdrant-client>=1.7.0",
     "numpy>=1.24.0",
     "psutil>=5.9.0",
-    "baml-py>=0.220.0",
+    "baml-bridge==0.20.1",
 ]
 
 [project.optional-dependencies]
@@ -161,7 +161,7 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["mcp_server*"]
+include = ["mcp_server*", "baml_sdk*"]
 exclude = ["tests*", "data*", "logs*", "config*", "backup*", "docker*", "ai_docs*", "test_results*", "architecture*", "nginx*", "k8s*"]
 
 [tool.setuptools.package-data]

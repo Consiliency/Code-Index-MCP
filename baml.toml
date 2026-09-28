@@ -1,0 +1,9 @@
+[package]
+name = "code-index-mcp"
+
+# Generate with BAML v1 0.20.1 to match the baml-bridge pin in pyproject.toml.
+# Run scripts/generate_baml_sdk.py with that toolchain on PATH.
+[generator.python]
+output_type = "python/pydantic"
+output_dir = "."
+naming_convention = "preserve-case"

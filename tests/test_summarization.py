@@ -33,6 +33,84 @@ def _deny_network_connections(monkeypatch):
     monkeypatch.setattr(socket.socket, "connect", deny_connect)
 
 
+def test_baml_v1_generated_specs_keep_source_and_chunk_identity(monkeypatch):
+    from baml_sdk import ChunkInput, SummarizeChunkAlone_spec, SummarizeFileChunks_spec
+
+    monkeypatch.setenv("CEREBRAS_API_KEY", "dummy-offline")
+    batch = SummarizeFileChunks_spec(
+        language="python",
+        file_path="sample.py",
+        file_content="def alpha(): return 1",
+        chunks=[
+            ChunkInput(
+                chunk_id="chunk-1",
+                symbol="alpha",
+                node_type="function_definition",
+                line_start=1,
+                line_end=1,
+                content="return 1",
+            )
+        ],
+    )
+    messages = batch.prompt().messages()
+    assert [message.role for message in messages] == ["system", "user"]
+    assert "chunk_id" in messages[0].content
+    assert messages[1].content.index("Full source file:") < messages[1].content.index(
+        "chunk_id: chunk-1"
+    )
+    assert "return 1" in messages[1].content
+    assert batch.client_id() == "openai-generic/gpt-oss-120b"
+
+    single = SummarizeChunkAlone_spec(
+        language="python",
+        symbol="alpha",
+        line_start=1,
+        line_end=1,
+        content="return 1",
+        parent_context="",
+        file_context="sample.py",
+    )
+    assert 'Set chunk_id to "alpha"' in single.prompt().messages()[1].content
+    request = single.build_request()
+    assert request.method == "POST"
+    assert request.url == "https://api.cerebras.ai/v1/chat/completions"
+    assert json.loads(request.body)["max_tokens"] == 4096
+
+
+@pytest.mark.asyncio
+async def test_baml_v1_batch_call_uses_generated_chunk_model(tmp_path, monkeypatch):
+    import baml_sdk
+
+    seen = {}
+
+    async def fake_batch(**kwargs):
+        seen.update(kwargs)
+        return baml_sdk.FileSummaryResult(
+            summaries=[baml_sdk.ChunkSummary(chunk_id="chunk-1", summary="Returns one.")]
+        )
+
+    monkeypatch.setattr(baml_sdk, "SummarizeFileChunks_async", fake_batch)
+    summarizer = FileBatchSummarizer(db_path=str(tmp_path / "summaries.db"), qdrant_client=None)
+    summaries = await summarizer._call_batch_api(
+        file_id=1,
+        file_path="sample.py",
+        file_content="def alpha(): return 1",
+        chunks=[
+            {
+                "chunk_id": "chunk-1",
+                "language": "python",
+                "node_type": "function_definition",
+                "line_start": 1,
+                "line_end": 1,
+                "content": "return 1",
+            }
+        ],
+        symbol_map={},
+    )
+    assert seen["chunks"][0].chunk_id == "chunk-1"
+    assert summaries[0].summary == "Returns one."
+
+
 def _seed_chunk_summary_tables(db_path: Path, tmp_path: Path) -> tuple[SQLiteStore, int]:
     store = SQLiteStore(str(db_path))
     repo_id = store.ensure_repository_row(tmp_path)
@@ -705,7 +783,7 @@ async def test_file_batch_summarizer_preserves_authoritative_metadata_on_batch_r
     )
 
     async def _raise_runtime_mismatch(*_args, **_kwargs):
-        raise ImportError("generated client 0.220.0 is incompatible with baml-py 0.221.0")
+        raise ImportError("generated client is incompatible with baml-bridge")
 
     async def _fake_profile_api(_system: str, _prompt: str, **_kwargs) -> tuple[str, str]:
         return "Recovered authoritative summary", "cyankiwi/gemma-4-26B-A4B-it-AWQ-4bit"
@@ -824,7 +902,7 @@ async def test_file_batch_summarizer_uses_profile_batch_fallback_before_per_chun
     )
 
     async def _raise_runtime_mismatch(*_args, **_kwargs):
-        raise ImportError("generated client 0.220.0 is incompatible with baml-py 0.221.0")
+        raise ImportError("generated client is incompatible with baml-bridge")
 
     async def _fake_profile_batch(*_args, **_kwargs):
         return [
