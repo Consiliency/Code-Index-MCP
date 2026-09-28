@@ -1769,9 +1769,7 @@ def _verify_live_records(
             if record["repository"] == "ledger":
                 corpus_paths.remove("balance.py")
                 corpus_paths.add("bookkeeping.py")
-            expected_corpus = hashlib.sha256(
-                "\n".join(sorted(corpus_paths)).encode()
-            ).hexdigest()
+            expected_corpus = hashlib.sha256("\n".join(sorted(corpus_paths)).encode()).hexdigest()
             if (
                 record["attested"] is not True
                 or not record["generation"]
@@ -2107,8 +2105,12 @@ async def inference_pilot(
         port = free_port()
         network_args = (
             [
-                "--network", "host", "-e", "QDRANT__SERVICE__HOST=127.0.0.1",
-                "-e", f"QDRANT__SERVICE__HTTP_PORT={port}",
+                "--network",
+                "host",
+                "-e",
+                "QDRANT__SERVICE__HOST=127.0.0.1",
+                "-e",
+                f"QDRANT__SERVICE__HTTP_PORT={port}",
             ]
             if qdrant_network == "host"
             else ["-p", f"127.0.0.1:{port}:6333"]

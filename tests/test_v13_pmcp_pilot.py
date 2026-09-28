@@ -386,7 +386,16 @@ def test_prepare_delivered_wheel_never_builds(tmp_path, monkeypatch, valid):
 
 
 @pytest.mark.parametrize(
-    "field", ["schema", "uvx_prefix", "python", "installed", "pmcp_path", "pmcp_sha256", "pmcp_distribution"]
+    "field",
+    [
+        "schema",
+        "uvx_prefix",
+        "python",
+        "installed",
+        "pmcp_path",
+        "pmcp_sha256",
+        "pmcp_distribution",
+    ],
 )
 def test_prepared_runtime_identity_rejects_manifest_tampering(tmp_path, monkeypatch, field):
     from scripts import v13_pmcp_pilot as pilot

@@ -157,9 +157,7 @@ def test_artifact_pull_fails_when_no_index_restored(monkeypatch, tmp_path, capsy
         result = runner.invoke(artifact, ["pull", "--latest"])
 
     assert result.exit_code != 0
-    assert "no local index files were restored" in (
-        result.output + capsys.readouterr().err
-    ).lower()
+    assert "no local index files were restored" in (result.output + capsys.readouterr().err).lower()
 
 
 def test_artifact_recover_confirms_local_restore(monkeypatch, tmp_path, capsys):
