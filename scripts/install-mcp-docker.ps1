@@ -188,6 +188,9 @@ docker run -i --rm ^
 EXIT /B
 
 :worktree_mounts
+SET "GIT_COMMON="
+SET "GIT_DIR="
+SET "GIT_WORKTREE_NAME="
 FOR /F "delims=" %%G IN ('git -C "%WORKSPACE%" rev-parse --path-format=absolute --git-common-dir 2^>NUL') DO SET "GIT_COMMON=%%G"
 FOR /F "delims=" %%G IN ('git -C "%WORKSPACE%" rev-parse --path-format=absolute --git-dir 2^>NUL') DO SET "GIT_DIR=%%G"
 IF NOT DEFINED GIT_COMMON EXIT /B 1

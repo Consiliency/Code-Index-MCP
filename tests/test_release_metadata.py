@@ -149,6 +149,8 @@ def test_docker_launcher_registers_and_reuses_mounted_workspace(tmp_path):
         ):
             assert value in invocation
     assert 'git -C "%WORKSPACE%" rev-parse --path-format=absolute --git-common-dir' in batch
+    assert 'SET "GIT_COMMON="' in batch
+    assert 'SET "GIT_DIR="' in batch
     assert "gitdir: /mcp-git/worktrees/%GIT_WORKTREE_NAME%" in batch
     assert "VOYAGE_AI_API_KEY" not in powershell
 
