@@ -113,7 +113,8 @@ def run(root: Path, entrypoint: str, env: dict[str, str]):
                     {"name": "reindex", "arguments": {"repository": str(fixture)}},
                     2,
                 )
-                assert not receive(proc, 2).get("isError")
+                indexed = receive(proc, 2)
+                assert not indexed.get("isError"), indexed
                 # A committed JavaScript rebuild exercises an actual plugin worker.
                 worker_source.write_text(
                     f"export function PRIVATE_QUERY_SENTINEL_73051() {{ return {len(receipts)}; }}\n"

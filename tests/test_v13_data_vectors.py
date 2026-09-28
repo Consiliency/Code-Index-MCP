@@ -44,7 +44,7 @@ def real_indexer(tmp_path, monkeypatch):
                     "docker",
                     "inspect",
                     "--format",
-                    '{"name":{{json .Name}},"ports":{{json .NetworkSettings.Ports}}}',
+                    '{"name":{{json .Name}},"network":{{json .HostConfig.NetworkMode}},"ports":{{json .NetworkSettings.Ports}}}',
                     container,
                 ],
                 text=True,
@@ -52,7 +52,11 @@ def real_indexer(tmp_path, monkeypatch):
             )
         )
         assert state["name"].startswith("/v13-qdrant-")
-        assert endpoint == "http://127.0.0.1:" + state["ports"]["6333/tcp"][0]["HostPort"]
+        if os.environ.get("V13_TEST_QDRANT_NETWORK") == "host":
+            assert state["network"] == "host"
+            assert endpoint == "http://127.0.0.1:6335"
+        else:
+            assert endpoint == "http://127.0.0.1:" + state["ports"]["6333/tcp"][0]["HostPort"]
     profile = replace(
         _profile(), build_metadata={"collection_name": "v13-proof-" + uuid.uuid4().hex}
     )
@@ -249,7 +253,7 @@ def test_explicit_server_backend_never_contacts_default_server(monkeypatch):
     monkeypatch.setenv("QDRANT_USE_SERVER", "true")
     indexer = SemanticIndexer.__new__(SemanticIndexer)
     indexer._init_qdrant_client("http://127.0.0.1:6339")
-    factory.assert_called_once_with(url="http://127.0.0.1:6339", timeout=5)
+    factory.assert_called_once_with(url="http://127.0.0.1:6339", api_key=None, timeout=5)
 
 
 def test_file_backend_refuses_live_lock_without_unlink_or_fallback(tmp_path, monkeypatch):

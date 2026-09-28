@@ -347,6 +347,23 @@ one-shot operational allowance has been consumed.
   tests and installed/browser evidence, then obtain four complete independent
   code verdicts. The existing SL-1 effect/reconciliation sequence is unchanged.
 
+## BAML v1 Merge Reconciliation - 2026-09-28
+
+Code-Index-MCP#99 merged before PREP acceptance. Reconcile its v1 SDK, production
+image, source-bound wheel audit, Qdrant credentials and summarization tests while
+preserving the accepted historical FREEZE contract bytes. SL-0 additionally owns
+`tests/test_baml_contract.py`, `tests/test_summarization.py`,
+`tests/test_v13_data_vectors.py`, `scripts/validate_v13_freeze.py`, and
+`scripts/v13_qdrant_smoke.py`. SL-0 also owns
+`scripts/safety_runtime_smoke.py` for diagnostics in the container acceptance
+route. The four-seat exact-candidate review and both
+one-shot operational proofs must bind a new head after this reconciliation.
+The team host's Docker bridge does not forward published ports or resolve
+package mirrors. The server-mode Qdrant proof may use `--network host`; the
+production container smoke may use `--docker-network host`. Record the topology
+in each proof. SL-0 also owns `scripts/release_smoke.py` for this bounded route.
+This changes no inference budget, provider, or signing allowance.
+
 ## Lane Index & Dependencies
 
 SL-0 — Version, release docs and candidate proof
@@ -438,7 +455,9 @@ No upstream roadmap, contract, audit input or accepted receipt edits.
 - `uv sync --locked --python 3.12 --extra dev`
 - `uv run --locked --extra dev python scripts/v13_release_candidate.py`
 - `make agent-gate` and `make release-smoke-container`
-- `uv run --locked --extra dev python scripts/v13_qdrant_smoke.py --mode file` and `--mode server`.
+- On team hosts with a broken Docker bridge, run the equivalent production
+  smoke with `scripts/release_smoke.py --container --docker-network host`.
+- `uv run --locked --extra dev python scripts/v13_qdrant_smoke.py --mode file` and `--mode server` (use `--network host` for the server proof on team hosts whose Docker bridge cannot forward ports).
 - Separate Git-manager and broad offline pytest suites exclude only requires_network/benchmark markers, with all skips recorded.
 - Candidate PILOT driver prepare/offline/rehearsal/browser/verify-browser, then exactly one approved live mode and read-only verify-live on its fixed renewed ledger.
 - `uv run --locked --extra dev python scripts/v13_release_candidate.py --renewed-pilot-root <owned-candidate-root>`; original mode must still reject changed runtime.

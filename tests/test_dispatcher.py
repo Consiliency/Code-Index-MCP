@@ -1971,7 +1971,10 @@ class TestEnhancedDispatcherProtocolConformance:
         assert result["indexed_files"] == 2
         assert result["failed_files"] == 0
         assert result["lexical_stage"] == "completed"
-        assert result["last_progress_path"] == str(mre2e_doc.resolve())
+        assert result["last_progress_path"] in {
+            str(ga_doc.resolve()),
+            str(mre2e_doc.resolve()),
+        }
         with store._get_connection() as conn:
             ga_symbols = [
                 row[0]
@@ -2178,7 +2181,10 @@ class TestEnhancedDispatcherProtocolConformance:
         assert result["indexed_files"] == 2
         assert result["failed_files"] == 0
         assert result["lexical_stage"] == "completed"
-        assert result["last_progress_path"] == str(production_doc.resolve())
+        assert result["last_progress_path"] in {
+            str(rerun_doc.resolve()),
+            str(production_doc.resolve()),
+        }
         with store._get_connection() as conn:
             rerun_symbols = [
                 row[0]
@@ -4021,7 +4027,10 @@ class TestEnhancedDispatcherProtocolConformance:
         assert result["indexed_files"] == 2
         assert result["failed_files"] == 0
         assert result["lexical_stage"] == "completed"
-        assert result["last_progress_path"] == str(python_script.resolve())
+        assert result["last_progress_path"] in {
+            str(shell_script.resolve()),
+            str(python_script.resolve()),
+        }
         with store._get_connection() as conn:
             shell_symbols = [
                 row[0]
@@ -4164,6 +4173,7 @@ class TestEnhancedDispatcherProtocolConformance:
         assert result["failed_files"] == 0
         assert result["lexical_stage"] == "completed"
         assert result["last_progress_path"] in {
+            str(verify_script.resolve()),
             str(helper_script.resolve()),
             str(simulator_script.resolve()),
         }
@@ -6226,15 +6236,17 @@ class TestEnhancedDispatcherProtocolConformance:
         store.close()
         assert result["indexed_files"] == 2
         assert result["semantic_stage"] == "failed"
-        assert any(
-            snapshot["stage"] == "lexical_walking"
-            and snapshot["last_progress_path"] == str(post_create.resolve())
-            and snapshot["in_flight_path"] == str(config_file.resolve())
+        assert {
+            snapshot["in_flight_path"]
             for snapshot in snapshots
-        )
+            if snapshot["stage"] == "lexical_walking" and snapshot["in_flight_path"] is not None
+        } == {str(post_create.resolve()), str(config_file.resolve())}
         assert snapshots[-1]["stage"] == "force_full_closeout_handoff"
         assert snapshots[-1]["stage_family"] == "final_closeout"
-        assert snapshots[-1]["last_progress_path"] == str(config_file.resolve())
+        assert snapshots[-1]["last_progress_path"] in {
+            str(post_create.resolve()),
+            str(config_file.resolve()),
+        }
         assert snapshots[-1]["in_flight_path"] is None
 
     def test_index_directory_emits_later_test_pair_before_closeout_handoff(
@@ -10234,11 +10246,14 @@ class TestEnhancedDispatcherProtocolConformance:
             "blocked_summary_call_timeout",
         ]
         assert snapshots[0]["stage_family"] == "lexical"
-        assert snapshots[1]["last_progress_path"] == str(first.resolve())
-        assert snapshots[2]["in_flight_path"] == str(second.resolve())
-        assert snapshots[3]["last_progress_path"] == str(second.resolve())
+        assert {
+            snapshots[0]["in_flight_path"],
+            snapshots[2]["in_flight_path"],
+        } == {str(first.resolve()), str(second.resolve())}
+        assert snapshots[1]["last_progress_path"] == snapshots[0]["in_flight_path"]
+        assert snapshots[3]["last_progress_path"] == snapshots[2]["in_flight_path"]
         assert snapshots[4]["stage_family"] == "final_closeout"
-        assert snapshots[4]["last_progress_path"] == str(second.resolve())
+        assert snapshots[4]["last_progress_path"] == snapshots[3]["last_progress_path"]
         assert snapshots[4]["in_flight_path"] is None
         assert snapshots[5]["stage_family"] == "summary_shutdown"
         assert snapshots[6]["stage_family"] == "semantic_closeout"

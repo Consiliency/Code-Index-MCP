@@ -281,7 +281,7 @@ def _poll_health(port: int, *, timeout: float = 60.0) -> None:
     raise RuntimeError(f"Container health timeout ({last_error})")
 
 
-def smoke_container(image_ref: str | None = None) -> None:
+def smoke_container(image_ref: str | None = None, *, network: str = "bridge") -> None:
     if image_ref is not None and not re.fullmatch(
         r"ghcr\.io/[a-z0-9_./-]+@sha256:[0-9a-f]{64}", image_ref
     ):
@@ -290,7 +290,17 @@ def smoke_container(image_ref: str | None = None) -> None:
         raise RuntimeError("docker is required for --container smoke")
     if image_ref is None:
         _run(
-            ["docker", "build", "-f", "docker/dockerfiles/Dockerfile.production", "-t", IMAGE, "."],
+            [
+                "docker",
+                "build",
+                "--network",
+                network,
+                "-f",
+                "docker/dockerfiles/Dockerfile.production",
+                "-t",
+                IMAGE,
+                ".",
+            ],
             timeout=600,
         )
     else:
@@ -389,12 +399,14 @@ with patch("socket.socket.connect", side_effect=AssertionError("BAML smoke must 
         root.chmod(0o777)
         shutil.copyfile(PROBE, root / PROBE.name)
         shutil.copyfile(SAFETY_PROBE, root / SAFETY_PROBE.name)
+        (root / PROBE.name).chmod(0o644)
+        (root / SAFETY_PROBE.name).chmod(0o644)
         mount = ["-v", f"{root}:/smoke"]
         probe = ["python", "-I", "/smoke/installed_runtime_smoke.py", "--root", "/smoke"]
         # The image's configured USER owns the fixture; no root override or fake services.
         for mode in ("schema", "prepare", "python"):
             _run(["docker", "run", "--rm", *mount, image_id, *probe, "--mode", mode])
-        port = _free_port()
+        port = 8000 if network == "host" else _free_port()
         env = {
             "HOME": "/smoke/home",
             "MCP_REPO_REGISTRY": "/smoke/registry.json",
@@ -422,8 +434,11 @@ with patch("socket.socket.connect", side_effect=AssertionError("BAML smoke must 
                     container,
                     "-d",
                     *mount,
-                    "-p",
-                    f"127.0.0.1:{port}:8000",
+                    *(
+                        ["--network", "host"]
+                        if network == "host"
+                        else ["-p", f"127.0.0.1:{port}:8000"]
+                    ),
                     *args,
                     image_id,
                 ],
@@ -486,6 +501,7 @@ def parse_args() -> argparse.Namespace:
         "--container", action="store_true", help="Exercise the configured non-root image"
     )
     parser.add_argument("--all", action="store_true", help="Run wheel/STDIO and container smoke")
+    parser.add_argument("--docker-network", choices=("bridge", "host"), default="bridge")
     parser.add_argument("--wheel-path", type=Path, help="Use a delivered wheel without building")
     parser.add_argument("--wheel-sha256", help="Expected SHA256 from the package registry")
     parser.add_argument(
@@ -515,7 +531,7 @@ def main() -> None:
     if args.wheel or args.stdio:
         smoke_wheel(args.wheel_path, args.wheel_sha256)
     if args.container:
-        smoke_container(args.image_ref)
+        smoke_container(args.image_ref, network=args.docker_network)
 
 
 if __name__ == "__main__":

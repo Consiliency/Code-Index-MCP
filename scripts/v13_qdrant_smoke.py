@@ -26,6 +26,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mode", choices=("file", "server"), required=True)
+    parser.add_argument("--network", choices=("bridge", "host"), default="bridge")
     args = parser.parse_args()
     started = datetime.now(timezone.utc).isoformat()
     env = os.environ.copy()
@@ -37,6 +38,11 @@ def main() -> None:
     try:
         if args.mode == "server":
             name = "v13-qdrant-" + uuid.uuid4().hex[:12]
+            network_args = (
+                ["--network", "host"]
+                if args.network == "host"
+                else ["--publish", "127.0.0.1::6333"]
+            )
             container = subprocess.check_output(
                 [
                     "docker",
@@ -47,23 +53,36 @@ def main() -> None:
                     "--rm",
                     "--name",
                     name,
-                    "--publish",
-                    "127.0.0.1::6333",
+                    *network_args,
                     "--env",
                     "QDRANT__TELEMETRY_DISABLED=true",
+                    *(
+                        ["--env", "QDRANT__SERVICE__HTTP_PORT=6335"]
+                        if args.network == "host"
+                        else []
+                    ),
                     IMAGE,
                 ],
                 text=True,
                 timeout=30,
             ).strip()
-            ports = json.loads(
-                subprocess.check_output(
-                    ["docker", "inspect", "--format", "{{json .NetworkSettings.Ports}}", container],
-                    text=True,
-                    timeout=10,
+            if args.network == "host":
+                endpoint = "http://127.0.0.1:6335"
+            else:
+                ports = json.loads(
+                    subprocess.check_output(
+                        [
+                            "docker",
+                            "inspect",
+                            "--format",
+                            "{{json .NetworkSettings.Ports}}",
+                            container,
+                        ],
+                        text=True,
+                        timeout=10,
+                    )
                 )
-            )
-            endpoint = "http://127.0.0.1:" + ports["6333/tcp"][0]["HostPort"]
+                endpoint = "http://127.0.0.1:" + ports["6333/tcp"][0]["HostPort"]
             deadline = time.monotonic() + 30
             while time.monotonic() < deadline:
                 try:
@@ -76,6 +95,7 @@ def main() -> None:
                 raise RuntimeError("Disposable Qdrant did not become ready")
             env["V13_TEST_QDRANT_URL"] = endpoint
             env["V13_TEST_QDRANT_CONTAINER"] = container
+            env["V13_TEST_QDRANT_NETWORK"] = args.network
 
         with tempfile.TemporaryDirectory(prefix="v13-qdrant-proof-") as tmp:
             report = Path(tmp) / "junit.xml"
@@ -127,6 +147,7 @@ def main() -> None:
                 json.dumps(
                     {
                         "proof": "qdrant-" + args.mode,
+                        "network": args.network if args.mode == "server" else None,
                         "status": "passed" if passed else "failed",
                         "started_at": started,
                         "finished_at": datetime.now(timezone.utc).isoformat(),
