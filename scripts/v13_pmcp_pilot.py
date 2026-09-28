@@ -90,6 +90,24 @@ def digest_json(value: dict) -> str:
     ).hexdigest()
 
 
+def expected_profile_fingerprint(metadata: dict) -> str:
+    from mcp_server.artifacts.semantic_profiles import SemanticProfile
+
+    profile = metadata.get("selected_profile")
+    if not isinstance(profile, dict):
+        raise PilotRefused("pilot_profile_missing")
+    return SemanticProfile.from_dict("pilot", profile).compatibility_fingerprint
+
+
+def expected_provider_revision(provenance: dict) -> str:
+    revision = provenance.get("model_revision", {})
+    return (
+        str(revision.get("value"))
+        if revision.get("source") == "reported" and revision.get("value")
+        else revision.get("source", "unknown")
+    )
+
+
 def digest_file(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -390,8 +408,10 @@ def prepare(root: Path, wheel_path: Path | None = None, expected_sha256: str | N
         "installed": installed,
         "uvx_prefix": prefix,
         "python": python,
+        "pmcp_path": str(Path(shutil.which("pmcp") or "pmcp").resolve()),
         "pmcp_version": run_command(["pmcp", "--version"], root, "pmcp-version").strip(),
     }
+    manifest["pmcp_sha256"] = digest_file(Path(manifest["pmcp_path"]))
     write_json(root / "manifest.json", manifest, exclusive=True)
     return manifest
 
@@ -423,14 +443,67 @@ def installed_identity(wheel: Path) -> dict:
     }
 
 
-def load_manifest(root: Path) -> dict:
-    manifest = json.loads((root / "manifest.json").read_text())
+def validate_manifest(root: Path, manifest: dict, *, execute: bool = False) -> None:
+    if manifest.get("schema") != "v13-pilot-manifest.v1":
+        raise PilotRefused("manifest_schema_changed")
     if any(manifest[key] != value for key, value in source_identity().items()):
         raise PilotRefused("candidate_binding_changed")
-    if digest_file(root / "dist" / manifest["wheel"]) != manifest["wheel_sha256"]:
+    wheel = root / "dist" / manifest["wheel"]
+    if wheel.name != manifest["wheel"] or not wheel.is_file():
+        raise PilotRefused("wheel_binding_changed")
+    python = str(Path(sys.base_prefix) / "bin" / "python3.12")
+    if manifest.get("python") != python or manifest.get("uvx_prefix") != uvx_prefix(
+        root, wheel, python
+    ):
+        raise PilotRefused("runtime_command_changed")
+    installed = manifest.get("installed")
+    if (
+        not isinstance(installed, dict)
+        or installed.get("version") != manifest["wheel_source_contract"]["version"]
+        or installed.get("python_version", [])[:2] != [3, 12]
+        or type(installed.get("wheel_files_verified")) is not int
+        or installed["wheel_files_verified"] <= 0
+    ):
+        raise PilotRefused("installed_identity_changed")
+    pmcp = Path(manifest.get("pmcp_path", ""))
+    if (
+        not pmcp.is_absolute()
+        or pmcp != pmcp.resolve()
+        or not pmcp.is_file()
+        or digest_file(pmcp) != manifest.get("pmcp_sha256")
+        or str(Path(shutil.which("pmcp") or "pmcp").resolve()) != str(pmcp)
+    ):
+        raise PilotRefused("pmcp_binding_changed")
+    if execute:
+        observed = json.loads(
+            run_command(
+                manifest["uvx_prefix"]
+                + [
+                    "python",
+                    "-I",
+                    str(root / "v13_pmcp_pilot.py"),
+                    "--mode",
+                    "identity",
+                    "--wheel",
+                    str(wheel),
+                ],
+                root,
+                "installed-identity-recheck",
+            )
+        )
+        if observed != installed or run_command(
+            [str(pmcp), "--version"], root, "pmcp-version-recheck"
+        ).strip() != manifest.get("pmcp_version"):
+            raise PilotRefused("runtime_identity_changed")
+    if digest_file(wheel) != manifest["wheel_sha256"]:
         raise PilotRefused("wheel_binding_changed")
     if digest_file(root / "constraints.txt") != manifest["constraints_sha256"]:
         raise PilotRefused("constraints_binding_changed")
+
+
+def load_manifest(root: Path) -> dict:
+    manifest = json.loads((root / "manifest.json").read_text())
+    validate_manifest(root, manifest, execute=True)
     return manifest
 
 
@@ -528,7 +601,7 @@ def create_fixture(root: Path, manifest: dict, *, label: str) -> dict:
             "prompts": {"denylist": ["*"]},
         },
     )
-    return {"root": fixture, "env": env, "secret": secret}
+    return {"root": fixture, "env": env, "secret": secret, "pmcp_path": manifest["pmcp_path"]}
 
 
 def commit_fixture(path: Path, env: dict) -> None:
@@ -756,7 +829,7 @@ async def gateway(fixture: dict, label: str):
     port = free_port()
     owner = OwnedProcess(
         [
-            shutil.which("pmcp") or "pmcp",
+            fixture["pmcp_path"],
             "-p",
             str(root / "project"),
             "-c",
@@ -1064,6 +1137,16 @@ async def offline(root: Path, manifest: dict) -> dict:
     return result
 
 
+async def stop_browser_processes(processes: list) -> bool:
+    cleanup_failed = False
+    for process in reversed(processes):
+        try:
+            await asyncio.to_thread(process.stop)
+        except Exception:
+            cleanup_failed = True
+    return cleanup_failed
+
+
 async def browser_session(root: Path, manifest: dict, inspector: Path) -> dict:
     package = json.loads((inspector.resolve().parents[3] / "package.json").read_text())
     if (
@@ -1185,8 +1268,7 @@ async def browser_session(root: Path, manifest: dict, inspector: Path) -> dict:
                 await asyncio.sleep(0.1)
             result["explicit_stop"] = (directory / "stop").is_file()
     finally:
-        for process in reversed(processes):
-            await asyncio.to_thread(process.stop)
+        cleanup_failed = await stop_browser_processes(processes)
         all_processes = processes + fixture.get("processes", [])
         result.update(
             {
@@ -1196,6 +1278,8 @@ async def browser_session(root: Path, manifest: dict, inspector: Path) -> dict:
             }
         )
         write_json(directory / "session.json", result)
+        if cleanup_failed:
+            raise PilotRefused("browser_process_cleanup_failed")
     return result
 
 
@@ -1216,6 +1300,7 @@ def verify_saved_receipt(
             "inspector_screenshot",
             "admin_screenshot",
             "browser_actions",
+            "browser_results",
             "browser_session",
         },
         "live": {
@@ -1253,19 +1338,112 @@ def _verify_receipt_artifacts(root, manifest, kind, result, copies, expected_app
         from PIL import Image
 
         evidence = {}
-        for role in ("browser_session", "browser_actions"):
+        for role in ("browser_session", "browser_actions", "browser_results"):
             paths = [copies[root / item["path"]] for item in artifacts if item["role"] == role]
             if len(paths) != 1:
                 raise PilotRefused("browser_artifact_ambiguous")
             evidence[role] = json.loads(paths[0].read_text())
-            for key in ("source", "wheel_sha256", "manifest_sha256"):
-                if evidence[role].get(key) != result[key]:
-                    raise PilotRefused("browser_artifact_binding_mismatch")
+            if role != "browser_results":
+                for key in ("source", "wheel_sha256", "manifest_sha256"):
+                    if evidence[role].get(key) != result[key]:
+                        raise PilotRefused("browser_artifact_binding_mismatch")
         session = evidence["browser_session"]
         if session.get("session_started") is not True:
             raise PilotRefused("browser_session_not_started")
         validate_receipt({**result, **session}, manifest, "browser")
         actions = evidence["browser_actions"].get("events", [])
+        if (
+            len(actions) != len(GOALS["browser"])
+            or {event.get("goal") for event in actions} != GOALS["browser"]
+        ):
+            raise PilotRefused("browser_actions_incomplete")
+        observations = evidence["browser_results"]
+        if not isinstance(observations, list) or len(observations) != 10:
+            raise PilotRefused("browser_results_incomplete")
+        if any(row.get("page_errors") != [] for row in observations):
+            raise PilotRefused("browser_console_errors")
+        admin = [row for row in observations if row.get("surface") == "admin"]
+        inspector = [row for row in observations if row.get("surface") == "inspector"]
+        if len(admin) != 5 or len(inspector) != 5:
+            raise PilotRefused("browser_results_incomplete")
+        sibling = str(root / "browser" / "repos" / "ledger-sibling")
+
+        def admin_row(path, field, value):
+            matches = [
+                row
+                for row in admin
+                if row.get("path") == path and row.get("fields", {}).get(field) == value
+            ]
+            if len(matches) != 1 or matches[0].get("marker_found") is not True:
+                raise PilotRefused("browser_admin_observation_invalid")
+            return matches[0]
+
+        for path, field, value in (
+            ("/symbol", "symbol", "available_balance"),
+            ("/search", "q", "find_product"),
+            ("/search", "q", "absent_739152"),
+            ("/reindex", "repository", "catalog"),
+        ):
+            row = admin_row(path, field, value)
+            if row.get("status") != "200" or row.get("refusal") is not False:
+                raise PilotRefused("browser_admin_observation_invalid")
+        if admin_row("/search", "q", "absent_739152").get("empty_result") is not True:
+            raise PilotRefused("browser_admin_no_match_missing")
+        refusal = admin_row("/symbol", "repository", sibling)
+        if refusal.get("refusal") is not True or not str(refusal.get("status", "")).startswith(
+            "503"
+        ):
+            raise PilotRefused("browser_admin_refusal_missing")
+        for repository, query, no_match in (
+            ("ledger", "available_balance", False),
+            ("catalog", "find_product", False),
+            ("ledger", "absent_739152", True),
+        ):
+            matches = [
+                row
+                for row in inspector
+                if row.get("repository") == repository and row.get("query") == query
+            ]
+            if len(matches) != 1 or any(
+                matches[0].get(key) is not value
+                for key, value in (
+                    ("ok", True),
+                    ("result_found", True),
+                    ("not_found", no_match),
+                    ("refusal", False),
+                )
+            ):
+                raise PilotRefused("browser_inspector_observation_invalid")
+        refusal_rows = [row for row in inspector if row.get("repository") == sibling]
+        reconnect = [row for row in inspector if row.get("reconnected") is True]
+        if (
+            len(refusal_rows) != 1
+            or refusal_rows[0].get("refusal") is not True
+            or len(reconnect) != 1
+            or reconnect[0].get("query_after_reconnect") is not True
+        ):
+            raise PilotRefused("browser_inspector_flow_invalid")
+        expected_actions = {
+            "admin_queries": {"symbol": "200", "search": "200", "no_match": True},
+            "admin_refusals": {"sibling_status": refusal["status"], "index_unavailable": True},
+            "admin_reindex": {"repository": "catalog", "status": "200"},
+            "inspector_queries": {"ledger": True, "catalog": True, "no_match": True},
+            "inspector_refusals": {"sibling_refused": True},
+            "inspector_reconnect": {"reconnected": True, "query_after_reconnect": True},
+            "console_checked": {"page_errors": 0},
+        }
+        for goal, observed in expected_actions.items():
+            matches = [event for event in actions if event.get("goal") == goal]
+            if len(matches) != 1 or matches[0].get("observed") != observed:
+                raise PilotRefused("browser_action_observation_mismatch")
+        screenshot_names = {
+            item["role"].split("_screenshot")[0]: Path(item["path"]).name
+            for item in artifacts
+            if item["role"].endswith("_screenshot")
+        }
+        screenshot_events = [event for event in actions if event.get("goal") == "screenshots"]
+        if len(screenshot_events) != 1 or screenshot_events[0].get("observed") != screenshot_names:
+            raise PilotRefused("browser_screenshot_binding_mismatch")
         for goal in GOALS["browser"]:
             matching = [event for event in actions if event.get("goal") == goal]
             if not matching or any(
@@ -1277,14 +1455,23 @@ def _verify_receipt_artifacts(root, manifest, kind, result, copies, expected_app
             for item in artifacts
             if item["role"].endswith("_screenshot")
         ]
-        if len(set(screenshot_paths)) < 2:
+        if len(screenshot_paths) != 2 or len(set(screenshot_paths)) != 2:
             raise PilotRefused("browser_screenshots_not_distinct")
         for path in screenshot_paths:
             try:
                 with Image.open(path) as picture:
                     if picture.format != "PNG" or min(picture.size) < 100:
                         raise PilotRefused("browser_screenshot_invalid")
-                    picture.verify()
+                    from PIL import ImageChops
+
+                    rgb = picture.convert("RGB")
+                    if (
+                        ImageChops.difference(
+                            rgb, Image.new("RGB", rgb.size, rgb.getpixel((0, 0)))
+                        ).getbbox()
+                        is None
+                    ):
+                        raise PilotRefused("browser_screenshot_blank")
             except (OSError, ValueError):
                 raise PilotRefused("browser_screenshot_invalid") from None
     else:
@@ -1424,6 +1611,7 @@ def _verify_live_records(
                 raise PilotRefused("live_model_missing")
         if type(metadata["dimension"]) is not int or metadata["dimension"] <= 0:
             raise PilotRefused("live_dimension_invalid")
+        profile_fingerprint = expected_profile_fingerprint(metadata)
 
         samples, intervals = result["samples"], result["index_intervals"]
         if len(samples) != 120 or not intervals:
@@ -1505,7 +1693,8 @@ def _verify_live_records(
                 or sentinel["point_set_id"]
                 != hashlib.sha256("\n".join(sorted(point_ids)).encode()).hexdigest()
                 or sentinel["corpus_sha256"] != hashlib.sha256(filename.encode()).hexdigest()
-                or not sentinel["profile_fingerprint"]
+                or sentinel["profile_fingerprint"] != profile_fingerprint
+                or sentinel["provider_revision"] != expected_provider_revision(provenance)
                 or sentinel["provenance_version"] != "collection-provenance.v1"
                 or sentinel["provider_id"] != metadata["models"]["embedding"]
                 or provenance["served_model_id"]["source"] != "reported"
@@ -1648,7 +1837,7 @@ async def runtime_provenance(fixture: dict, qdrant_url: str) -> list[dict]:
                 sentinel.get("indexed_commit") != info["last_indexed_commit"]
                 or sentinel.get("point_set_id") != expected_set
                 or sentinel.get("corpus_sha256") != expected_corpus
-                or not sentinel.get("profile_fingerprint")
+                or sentinel.get("profile_fingerprint") != expected_profile_fingerprint(reported)
             ):
                 raise PilotRefused("provenance_binding_mismatch")
             metadata_paths = list(database.with_suffix(".semantic").rglob(".index_metadata.json"))
@@ -1661,7 +1850,10 @@ async def runtime_provenance(fixture: dict, qdrant_url: str) -> list[dict]:
                 raise PilotRefused("provenance_attestation_missing")
             derived = profiles[0].get("provenance") or {}
             if (
-                derived.get("served_model_id", {}).get("source") != "reported"
+                profiles[0].get("compatibility_fingerprint")
+                != expected_profile_fingerprint(reported)
+                or sentinel.get("provider_revision") != expected_provider_revision(derived)
+                or derived.get("served_model_id", {}).get("source") != "reported"
                 or derived.get("served_model_id", {}).get("value")
                 != reported["models"]["embedding"]
                 or derived.get("dimension", {}).get("source") != "reported"
@@ -1943,6 +2135,7 @@ async def inference_pilot(
             directory / "runtime-metadata.json",
             {
                 "models": models,
+                "selected_profile": profile,
                 "dimension": len(vector),
                 "immutable_revision": "unreported",
                 "qdrant_image": image,

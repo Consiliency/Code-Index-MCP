@@ -162,6 +162,7 @@ def test_tampered_pilot_metadata_is_refused(tmp_path, damage):
 @pytest.fixture
 def renewed_candidate(candidate, monkeypatch):
     repo, _ = candidate
+    monkeypatch.setattr(release, "validate_manifest", lambda root, manifest: None)
     (repo / ".gitignore").write_text(".phase-loop/\n")
     commit(repo)
     runs = repo / ".phase-loop/runs"

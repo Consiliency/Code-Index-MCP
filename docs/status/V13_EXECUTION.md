@@ -642,3 +642,20 @@ support matrix still claimed BAML 0.221.0 while the locked generator and
 runtime are 0.20.1. That candidate is rejected. The matrix and its contract
 test are corrected for a new candidate; the completed diagnostic reports
 cannot serve as final approvals. No live or signing allowance was consumed.
+
+The next exact-head candidate, `8b10056`, passed the protected agent and Alpha
+Docker gates. Its display broad suite passed 3,897 tests (151 skipped, 31
+deselected); the separate Git suite passed nine. Installed wheel offline,
+loopback rehearsal and interactive browser checks passed 13, 10 and eight
+goals respectively with zero surviving children. Qdrant file and server modes
+each passed 19 cases. These results are diagnostic because the second panel's
+first cohort found four pilot-evidence defects: prepared runtime identity was
+not fully bound at reuse, collection provenance did not match the selected
+profile and provider revision, browser goal flags could be backed by fabricated
+rows and blank images, and a failed Inspector stop could skip admin cleanup.
+`8b10056` is rejected for live admission. The repair worktree now binds the
+prepared command and executable, checks profile and revision provenance,
+requires structured browser observations and nonblank screenshots, and
+attempts every browser process stop. Targeted unit tests pass; exact-head
+gates and final four-seat review remain pending. The original ledger and both
+one-shot allowances remain untouched.

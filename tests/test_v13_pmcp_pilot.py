@@ -304,6 +304,25 @@ def test_browser_goals_without_artifacts_cannot_pass(tmp_path, manifest):
         verify_saved_receipt(tmp_path, manifest, "browser")
 
 
+@pytest.mark.asyncio
+async def test_browser_teardown_attempts_every_owned_process():
+    from scripts.v13_pmcp_pilot import stop_browser_processes
+
+    calls = []
+
+    class Owner:
+        def __init__(self, name, fail=False):
+            self.name, self.fail = name, fail
+
+        def stop(self):
+            calls.append(self.name)
+            if self.fail:
+                raise RuntimeError("stop failed")
+
+    assert await stop_browser_processes([Owner("admin"), Owner("inspector", True)])
+    assert calls == ["inspector", "admin"]
+
+
 @pytest.mark.parametrize("valid", [True, False])
 def test_prepare_delivered_wheel_never_builds(tmp_path, monkeypatch, valid):
     from scripts import release_smoke
@@ -335,6 +354,40 @@ def test_prepare_delivered_wheel_never_builds(tmp_path, monkeypatch, valid):
         assert result["wheel_sha256"] == digest
         assert (root / "dist" / wheel.name).read_bytes() == wheel.read_bytes()
         assert (root / "dist" / wheel.name).as_uri() in " ".join(result["uvx_prefix"])
+
+
+@pytest.mark.parametrize(
+    "field", ["schema", "uvx_prefix", "python", "installed", "pmcp_path", "pmcp_sha256"]
+)
+def test_prepared_runtime_identity_rejects_manifest_tampering(tmp_path, monkeypatch, field):
+    from scripts import v13_pmcp_pilot as pilot
+
+    (tmp_path / "dist").mkdir()
+    wheel = tmp_path / "dist/fixture.whl"
+    wheel.write_bytes(b"wheel")
+    (tmp_path / "constraints.txt").write_text("dependency==1\n")
+    executable = tmp_path / "pmcp"
+    executable.write_bytes(b"#!/bin/sh\n")
+    monkeypatch.setattr(pilot, "source_identity", lambda: {"source": "a" * 40})
+    monkeypatch.setattr(pilot.shutil, "which", lambda name: str(executable))
+    python = str(Path(sys.base_prefix) / "bin/python3.12")
+    manifest = {
+        "schema": "v13-pilot-manifest.v1",
+        "source": "a" * 40,
+        "wheel": wheel.name,
+        "wheel_sha256": pilot.digest_file(wheel),
+        "constraints_sha256": pilot.digest_file(tmp_path / "constraints.txt"),
+        "wheel_source_contract": {"version": "1.4.1"},
+        "installed": {"version": "1.4.1", "python_version": [3, 12, 0], "wheel_files_verified": 1},
+        "uvx_prefix": pilot.uvx_prefix(tmp_path, wheel, python),
+        "python": python,
+        "pmcp_path": str(executable),
+        "pmcp_sha256": pilot.digest_file(executable),
+    }
+    pilot.validate_manifest(tmp_path, manifest)
+    manifest[field] = "tampered"
+    with pytest.raises(PilotRefused):
+        pilot.validate_manifest(tmp_path, manifest)
 
 
 @pytest.mark.asyncio
@@ -373,6 +426,7 @@ def test_artifact_replacement_cannot_change_the_validated_snapshot(tmp_path, man
             "inspector_screenshot",
             "admin_screenshot",
             "browser_actions",
+            "browser_results",
             "browser_session",
         )
     ]
@@ -444,9 +498,12 @@ def test_ambiguous_model_catalog_refused(catalog):
         select_model(catalog, "unreported")
 
 
-@pytest.mark.parametrize("damage", [None, "binding", "unstarted", "shutdown", "actions", "image"])
+@pytest.mark.parametrize(
+    "damage",
+    [None, "binding", "unstarted", "shutdown", "actions", "image", "blank", "results", "forged"],
+)
 def test_browser_artifact_contents_are_verified(tmp_path, manifest, damage):
-    from PIL import Image
+    from PIL import Image, ImageDraw
 
     from scripts.v13_pmcp_pilot import digest_file
 
@@ -462,9 +519,76 @@ def test_browser_artifact_contents_are_verified(tmp_path, manifest, damage):
     actions = {
         **binding,
         "events": [
-            {"goal": goal, "ok": True, "observed": {"fixture": True}} for goal in GOALS["browser"]
+            {"goal": goal, "ok": True, "observed": observed}
+            for goal, observed in {
+                "admin_queries": {"symbol": "200", "search": "200", "no_match": True},
+                "admin_refusals": {
+                    "sibling_status": "503\nUndocumented",
+                    "index_unavailable": True,
+                },
+                "admin_reindex": {"repository": "catalog", "status": "200"},
+                "inspector_queries": {"ledger": True, "catalog": True, "no_match": True},
+                "inspector_refusals": {"sibling_refused": True},
+                "inspector_reconnect": {"reconnected": True, "query_after_reconnect": True},
+                "console_checked": {"page_errors": 0},
+                "screenshots": {"admin": "admin.png", "inspector": "inspector.png"},
+            }.items()
         ],
     }
+    sibling = str(tmp_path / "browser/repos/ledger-sibling")
+    observations = (
+        [
+            {
+                "surface": "admin",
+                "path": path,
+                "fields": {field: value},
+                "status": status,
+                "marker_found": True,
+                "empty_result": value == "absent_739152",
+                "refusal": status.startswith("503"),
+                "page_errors": [],
+            }
+            for path, field, value, status in (
+                ("/symbol", "symbol", "available_balance", "200"),
+                ("/search", "q", "find_product", "200"),
+                ("/search", "q", "absent_739152", "200"),
+                ("/symbol", "repository", sibling, "503\nUndocumented"),
+                ("/reindex", "repository", "catalog", "200"),
+            )
+        ]
+        + [
+            {
+                "surface": "inspector",
+                "repository": repo,
+                "query": query,
+                "ok": True,
+                "result_found": True,
+                "not_found": query == "absent_739152",
+                "refusal": repo == sibling,
+                "page_errors": [],
+            }
+            for repo, query in (
+                ("ledger", "available_balance"),
+                ("catalog", "find_product"),
+                ("ledger", "absent_739152"),
+                (sibling, "available_balance"),
+            )
+        ]
+        + [
+            {
+                "surface": "inspector",
+                "reconnected": True,
+                "query_after_reconnect": True,
+                "page_errors": [],
+            }
+        ]
+    )
+    if damage == "results":
+        observations.pop()
+    elif damage == "forged":
+        actions["events"] = [
+            {"goal": goal, "ok": True, "observed": {"fixture": True}} for goal in GOALS["browser"]
+        ]
     if damage == "binding":
         session["source"] = "wrong"
     elif damage == "unstarted":
@@ -475,15 +599,21 @@ def test_browser_artifact_contents_are_verified(tmp_path, manifest, damage):
         actions["events"].pop()
     (tmp_path / "session.json").write_text(json.dumps(session))
     (tmp_path / "actions.json").write_text(json.dumps(actions))
+    (tmp_path / "results.json").write_text(json.dumps(observations))
     for name in ("admin", "inspector"):
-        Image.new("RGB", (100, 100), "white").save(tmp_path / (name + ".png"))
+        picture = Image.new("RGB", (100, 100), "white")
+        ImageDraw.Draw(picture).rectangle((10, 10, 90, 90), fill="black")
+        picture.save(tmp_path / (name + ".png"))
     if damage == "image":
         (tmp_path / "admin.png").write_bytes(b"not an image")
+    elif damage == "blank":
+        Image.new("RGB", (100, 100), "white").save(tmp_path / "admin.png")
     result["artifacts"] = [
         {"role": role, "path": name, "sha256": digest_file(tmp_path / name)}
         for role, name in (
             ("browser_session", "session.json"),
             ("browser_actions", "actions.json"),
+            ("browser_results", "results.json"),
             ("admin_screenshot", "admin.png"),
             ("inspector_screenshot", "inspector.png"),
         )
@@ -584,6 +714,16 @@ def live_records(tmp_path, manifest, request, monkeypatch):
     }
     metadata = {
         "models": {"embedding": "unit-fixture", "enrichment": "unit-chat"},
+        "selected_profile": {
+            "provider": "openai_compatible",
+            "model_name": "unit-fixture",
+            "model_version": "unreported",
+            "vector_dimension": 8,
+            "distance_metric": "cosine",
+            "normalization_policy": "provider-default",
+            "chunk_schema_version": "1",
+            "chunker_version": "4.0.0",
+        },
         "dimension": 8,
         "immutable_revision": "unreported",
         "qdrant_image": QDRANT_IMAGE,
@@ -591,6 +731,9 @@ def live_records(tmp_path, manifest, request, monkeypatch):
         "workload_sha256": digest_json(workload),
     }
     repositories = []
+    from scripts.v13_pmcp_pilot import expected_profile_fingerprint
+
+    fingerprint = expected_profile_fingerprint(metadata)
     for repo, filename in (("ledger", "bookkeeping.py"), ("catalog", "catalog.py")):
         repositories.append(
             {
@@ -605,8 +748,9 @@ def live_records(tmp_path, manifest, request, monkeypatch):
                     "indexed_commit": "a" * 40,
                     "point_set_id": hashlib.sha256(b"1").hexdigest(),
                     "corpus_sha256": hashlib.sha256(filename.encode()).hexdigest(),
-                    "profile_fingerprint": "c" * 32,
+                    "profile_fingerprint": fingerprint,
                     "provider_id": "unit-fixture",
+                    "provider_revision": "declared",
                     "provenance_version": "collection-provenance.v1",
                 },
                 "embedding_provenance": {
@@ -659,6 +803,8 @@ def live_records(tmp_path, manifest, request, monkeypatch):
         "dimension",
         "revision_missing",
         "revision_mismatch",
+        "profile_fingerprint",
+        "provider_revision",
         "rehearsal",
         "incomplete",
         "duplicate_artifact",
@@ -735,6 +881,14 @@ def test_live_record_reduction_is_consistent_and_read_only(
         ]
     elif damage == "revision_mismatch":
         documents["runtime_metadata"]["immutable_revision"] = "invented-revision"
+    elif damage == "profile_fingerprint":
+        documents["runtime_provenance"]["repositories"][0]["collection_manifest"][
+            "profile_fingerprint"
+        ] = ("a" * 64)
+    elif damage == "provider_revision":
+        documents["runtime_provenance"]["repositories"][0]["collection_manifest"][
+            "provider_revision"
+        ] = "invented-revision"
     elif damage == "rehearsal":
         documents["workload"]["rehearsal"] = True
     elif damage == "incomplete":
@@ -818,7 +972,7 @@ async def test_runtime_provenance_counts_points_separately_from_mappings(tmp_pat
     import hashlib
     import sqlite3
 
-    from scripts.v13_pmcp_pilot import runtime_provenance
+    from scripts.v13_pmcp_pilot import expected_profile_fingerprint, runtime_provenance
 
     repo = tmp_path / "repos/ledger"
     repo.mkdir(parents=True)
@@ -834,9 +988,22 @@ async def test_runtime_provenance_counts_points_separately_from_mappings(tmp_pat
         "last_indexed_commit": "a" * 40,
     }
     (tmp_path / "registry.json").write_text(json.dumps({"repo": info}))
-    (tmp_path / "runtime-metadata.json").write_text(
-        json.dumps({"models": {"embedding": "model"}, "dimension": 8})
-    )
+    reported = {
+        "models": {"embedding": "model"},
+        "dimension": 8,
+        "selected_profile": {
+            "provider": "openai_compatible",
+            "model_name": "model",
+            "model_version": "unreported",
+            "vector_dimension": 8,
+            "distance_metric": "cosine",
+            "normalization_policy": "provider-default",
+            "chunk_schema_version": "1",
+            "chunker_version": "4.0.0",
+        },
+    }
+    fingerprint = expected_profile_fingerprint(reported)
+    (tmp_path / "runtime-metadata.json").write_text(json.dumps(reported))
     metadata_dir = database.with_suffix(".semantic")
     metadata_dir.mkdir()
     (metadata_dir / ".index_metadata.json").write_text(
@@ -846,9 +1013,11 @@ async def test_runtime_provenance_counts_points_separately_from_mappings(tmp_pat
                     "pilot": {
                         "collection_name": "fixture",
                         "attested": True,
+                        "compatibility_fingerprint": fingerprint,
                         "provenance": {
                             "served_model_id": {"source": "reported", "value": "model"},
                             "dimension": {"source": "reported", "value": 8},
+                            "model_revision": {"source": "declared", "value": "unreported"},
                         },
                     }
                 }
@@ -860,7 +1029,8 @@ async def test_runtime_provenance_counts_points_separately_from_mappings(tmp_pat
         "indexed_commit": "a" * 40,
         "point_set_id": hashlib.sha256(b"1").hexdigest(),
         "corpus_sha256": hashlib.sha256(b"bookkeeping.py").hexdigest(),
-        "profile_fingerprint": "profile",
+        "profile_fingerprint": fingerprint,
+        "provider_revision": "declared",
     }
     httpx_mock.add_response(
         method="POST",

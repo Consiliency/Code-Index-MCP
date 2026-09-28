@@ -21,6 +21,7 @@ if __package__:
         digest_file,
         digest_json,
         evidence_snapshot,
+        validate_manifest,
         validate_receipt,
         verify_saved_receipt,
     )
@@ -32,6 +33,7 @@ else:
         digest_file,
         digest_json,
         evidence_snapshot,
+        validate_manifest,
         validate_receipt,
         verify_saved_receipt,
     )
@@ -575,6 +577,7 @@ def verify_renewed_pilot(repo: Path, root: Path) -> dict:
 
     try:
         manifest = json.loads(checked_file("manifest.json").read_text())
+        validate_manifest(root, manifest)
         identity = {
             "source": _git(repo, "rev-parse", "HEAD"),
             "tree": _git(repo, "rev-parse", "HEAD^{tree}"),
