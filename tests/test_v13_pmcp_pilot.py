@@ -480,6 +480,43 @@ def test_pmcp_interpreter_digest_checked_before_execution(tmp_path, monkeypatch)
         )
 
 
+@pytest.mark.parametrize("changed_file", ["dependency.py", "startup.pth"])
+def test_pmcp_runtime_drift_rejected_before_interpreter_execution(
+    tmp_path, monkeypatch, changed_file
+):
+    from scripts import v13_pmcp_pilot as pilot
+
+    interpreter = tmp_path / "python"
+    interpreter.write_bytes(b"trusted interpreter")
+    launcher = tmp_path / "pmcp"
+    launcher.write_bytes(f"#!{interpreter}\n".encode())
+    site = tmp_path / "site-packages"
+    site.mkdir()
+    (site / "dependency.py").write_text("value = 1\n")
+    (site / "startup.pth").write_text("# startup\n")
+    monkeypatch.setattr(pilot, "pmcp_runtime_roots", lambda executable, python: [site])
+    runtime_sha256, runtime_files = pilot.pmcp_runtime_digest([site])
+    expected = {
+        "interpreter": str(interpreter),
+        "interpreter_sha256": pilot.digest_file(interpreter),
+        "runtime_sha256": runtime_sha256,
+        "runtime_files_verified": runtime_files,
+    }
+    (site / changed_file).write_text("changed\n")
+    monkeypatch.setattr(
+        pilot.importlib.metadata,
+        "distributions",
+        lambda **kwargs: pytest.fail("inspected unverified distribution"),
+    )
+    monkeypatch.setattr(
+        pilot.subprocess,
+        "run",
+        lambda *args, **kwargs: pytest.fail("executed unverified interpreter"),
+    )
+    with pytest.raises(PilotRefused, match="pmcp_runtime_changed"):
+        pilot.pmcp_distribution_identity(launcher, expected=expected)
+
+
 def test_semantic_sample_refuses_lexical_fallback_and_wrong_generation():
     from scripts.v13_pmcp_pilot import semantic_sample_valid
 

@@ -382,6 +382,30 @@ class TestWatcherMutationTruth:
         dispatcher.remove_file.assert_called_once_with(ctx, old_path)
         parent.mark_repository_changed.assert_called_once_with("repo-1")
 
+    def test_failed_move_retries_new_path(self, tmp_path):
+        dispatcher = _make_dispatcher()
+        old_path = tmp_path / "old.py"
+        new_path = tmp_path / "new.py"
+        new_path.write_text("x = 1\n")
+        dispatcher.move_file.return_value = IndexResult(
+            status=IndexResultStatus.ERROR,
+            path=new_path,
+            observed_hash=None,
+            actual_hash=None,
+            error="Required semantic mutation did not complete",
+        )
+        parent = Mock(dispatcher=dispatcher, query_cache=None, path_resolver=None)
+        ctx = _make_repo_context(tmp_path)
+        with patch(
+            "mcp_server.watcher_multi_repo.subprocess.run",
+            return_value=Mock(stdout="main\n", returncode=0),
+        ):
+            handler = MultiRepositoryHandler("repo-1", tmp_path, parent, ctx=ctx)
+            handler._trigger_reindex_with_ctx = Mock(return_value=True)
+            handler.on_any_event(FileMovedEvent(str(old_path), str(new_path)))
+        handler._trigger_reindex_with_ctx.assert_called_once_with(new_path)
+        parent.mark_repository_changed.assert_called_once_with("repo-1")
+
     def test_move_with_missing_destination_only_marks_changed_on_successful_delete(self, tmp_path):
         dispatcher = _make_dispatcher()
         dispatcher.remove_file.return_value = IndexResult(

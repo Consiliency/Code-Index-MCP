@@ -6,6 +6,7 @@ import argparse
 import asyncio
 import errno
 import hashlib
+import importlib.metadata
 import json
 import math
 import os
@@ -125,8 +126,55 @@ def digest_file(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def pmcp_runtime_roots(executable: Path, interpreter: Path) -> list[Path]:
+    user_site = executable.parents[1] / "lib/python3.12/site-packages"
+    prefix = interpreter.parents[1]
+    roots = [
+        user_site,
+        prefix / "lib/python3.12",
+        prefix / "lib/python3/dist-packages",
+        prefix / "local/lib/python3.12/site-packages",
+        prefix / "local/lib/python3.12/dist-packages",
+    ]
+    if not user_site.is_dir():
+        raise PilotRefused("pmcp_distribution_unavailable")
+    return [root for root in roots if root.is_dir()]
+
+
+def pmcp_runtime_digest(roots: list[Path]) -> tuple[str, int]:
+    """Hash importable runtime files, including startup hooks and dependencies."""
+    hasher = hashlib.sha256()
+    pending = list(roots)
+    visited = set()
+    files = 0
+    while pending:
+        root = pending.pop(0)
+        resolved = root.resolve()
+        if resolved in visited:
+            continue
+        visited.add(resolved)
+        hasher.update(str(root).encode() + b"\0")
+        for path in sorted(root.rglob("*")):
+            hasher.update(path.relative_to(root).as_posix().encode() + b"\0")
+            if path.is_symlink():
+                hasher.update(os.readlink(path).encode() + b"\0")
+                if path.is_dir():
+                    pending.append(path.resolve())
+                    continue
+            if path.is_file():
+                with path.open("rb") as stream:
+                    file_hash = hashlib.sha256()
+                    for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                        file_hash.update(chunk)
+                hasher.update(file_hash.digest())
+                files += 1
+            elif not path.is_dir():
+                raise PilotRefused("pmcp_runtime_unreadable")
+    return hasher.hexdigest(), files
+
+
 def pmcp_distribution_identity(executable: Path, expected: dict | None = None) -> dict:
-    """Bind the launcher, interpreter, and every installed distribution file."""
+    """Bind the launcher, interpreter, and importable dependency closure."""
     first_line = executable.read_bytes().split(b"\n", 1)[0]
     if not first_line.startswith(b"#!/"):
         raise PilotRefused("pmcp_interpreter_unknown")
@@ -139,36 +187,34 @@ def pmcp_distribution_identity(executable: Path, expected: dict | None = None) -
         or expected.get("interpreter_sha256") != interpreter_sha256
     ):
         raise PilotRefused("pmcp_interpreter_changed")
-    script = (
-        "import hashlib, importlib.metadata, json, pathlib\n"
-        "d = importlib.metadata.distribution('pmcp')\n"
-        "files = sorted(d.files or [], key=str)\n"
-        "assert files\n"
-        "h = hashlib.sha256()\n"
-        "for name in files:\n"
-        " p = pathlib.Path(d.locate_file(name))\n"
-        " assert p.is_file()\n"
-        " h.update(str(name).encode() + b'\\0' + hashlib.sha256(p.read_bytes()).digest())\n"
-        "print(json.dumps({'version': d.version, 'distribution_sha256': h.hexdigest()}))\n"
-    )
-    result = subprocess.run(
-        [str(interpreter), "-c", script],
-        env={
-            "PATH": os.environ.get("PATH", os.defpath),
-            "HOME": os.environ.get("HOME", ""),
-            "PYTHONUSERBASE": str(executable.parents[1]),
-        },
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    if result.returncode:
+    roots = pmcp_runtime_roots(executable, interpreter)
+    runtime_sha256, runtime_files = pmcp_runtime_digest(roots)
+    if expected is not None and (
+        expected.get("runtime_sha256") != runtime_sha256
+        or expected.get("runtime_files_verified") != runtime_files
+    ):
+        raise PilotRefused("pmcp_runtime_changed")
+    distributions = [
+        distribution
+        for distribution in importlib.metadata.distributions(path=[str(roots[0])])
+        if distribution.metadata.get("Name", "").lower() == "pmcp"
+    ]
+    if len(distributions) != 1 or not distributions[0].files:
         raise PilotRefused("pmcp_distribution_unavailable")
-    identity = json.loads(result.stdout)
+    distribution = distributions[0]
+    distribution_hash = hashlib.sha256()
+    for name in sorted(distribution.files, key=str):
+        path = Path(distribution.locate_file(name))
+        if not path.is_file():
+            raise PilotRefused("pmcp_distribution_unavailable")
+        distribution_hash.update(str(name).encode() + b"\0" + bytes.fromhex(digest_file(path)))
     return {
         "interpreter": str(interpreter),
         "interpreter_sha256": interpreter_sha256,
-        **identity,
+        "runtime_sha256": runtime_sha256,
+        "runtime_files_verified": runtime_files,
+        "version": distribution.version,
+        "distribution_sha256": distribution_hash.hexdigest(),
     }
 
 
@@ -372,6 +418,7 @@ def clean_env(root: Path) -> dict[str, str]:
         "UV_NO_ENV_FILE": "1",
         "UV_NO_CONFIG": "1",
         "PYTHONUNBUFFERED": "1",
+        "PYTHONDONTWRITEBYTECODE": "1",
     }
 
 
@@ -478,6 +525,8 @@ def prepare(root: Path, wheel_path: Path | None = None, expected_sha256: str | N
     )
     if installed.get("version") != wheel_contract["version"]:
         raise PilotRefused("installed_version_mismatch")
+    pmcp_path = Path(shutil.which("pmcp") or "pmcp").resolve()
+    pmcp_identity = pmcp_distribution_identity(pmcp_path)
     manifest = {
         "schema": "v13-pilot-manifest.v1",
         **identity,
@@ -490,19 +539,19 @@ def prepare(root: Path, wheel_path: Path | None = None, expected_sha256: str | N
         "installed": installed,
         "uvx_prefix": prefix,
         "python": python,
-        "pmcp_path": str(Path(shutil.which("pmcp") or "pmcp").resolve()),
+        "pmcp_path": str(pmcp_path),
+        "pmcp_sha256": digest_file(pmcp_path),
+        "pmcp_distribution": pmcp_identity,
         "pmcp_version": run_command(
-            ["pmcp", "--version"],
+            [str(pmcp_path), "--version"],
             root,
             "pmcp-version",
             env={
                 **clean_env(root),
-                "PYTHONUSERBASE": str(Path(shutil.which("pmcp") or "pmcp").resolve().parents[1]),
+                "PYTHONUSERBASE": str(pmcp_path.parents[1]),
             },
         ).strip(),
     }
-    manifest["pmcp_sha256"] = digest_file(Path(manifest["pmcp_path"]))
-    manifest["pmcp_distribution"] = pmcp_distribution_identity(Path(manifest["pmcp_path"]))
     if (
         manifest["pmcp_version"] != "pmcp 2.7.3"
         or manifest["pmcp_distribution"]["version"] != "2.7.3"

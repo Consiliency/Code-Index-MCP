@@ -2942,6 +2942,7 @@ class EnhancedDispatcher:
                     "Required semantic mutation did not complete",
                     semantic=semantic_stats,
                 )
+            self._require_pending_vector_deletions_drained(ctx, _sem)
             try:
                 stat = path.stat()
                 with self._file_cache_lock:
@@ -4458,6 +4459,21 @@ class EnhancedDispatcher:
             semantic_stats = None
             if _sem is not None:
                 semantic_stats = self.rebuild_semantic_for_paths(ctx, [new_path])
+            if semantic_stats and (
+                semantic_stats.get("semantic_failed") or semantic_stats.get("semantic_blocked")
+            ):
+                with self._file_cache_lock:
+                    self._file_cache.pop(str(old_path), None)
+                    self._file_cache.pop(str(new_path), None)
+                return IndexResult(
+                    status=IndexResultStatus.ERROR,
+                    path=new_path,
+                    observed_hash=None,
+                    actual_hash=None,
+                    error="Required semantic mutation did not complete",
+                    semantic=semantic_stats,
+                )
+            self._require_pending_vector_deletions_drained(ctx, _sem)
             self._operation_stats["moves"] = self._operation_stats.get("moves", 0) + 1
             return IndexResult(
                 status=IndexResultStatus.MOVED,
@@ -4480,6 +4496,9 @@ class EnhancedDispatcher:
             raise err from exc
         except Exception as e:
             logger.error(f"Error moving file {old_path} -> {new_path}: {type(e).__name__}")
+            with self._file_cache_lock:
+                self._file_cache.pop(str(old_path), None)
+                self._file_cache.pop(str(new_path), None)
             return IndexResult(
                 status=IndexResultStatus.ERROR,
                 path=new_path,

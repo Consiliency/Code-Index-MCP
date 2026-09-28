@@ -572,9 +572,9 @@ def test_dispatcher_drain_wiring_noops_without_semantic(tmp_path):
 
 @pytest.mark.parametrize("remote_fails", [False, True])
 def test_direct_remove_fences_on_remote_vector_deletion(tmp_path, monkeypatch, remote_fails):
+    import threading
     from contextlib import nullcontext
     from types import SimpleNamespace
-    import threading
 
     from mcp_server.dispatcher.dispatcher_enhanced import EnhancedDispatcher, IndexResultStatus
 
@@ -629,6 +629,55 @@ def test_direct_replacement_requires_vector_debt_to_drain(tmp_path):
     EnhancedDispatcher._require_pending_vector_deletions_drained(None, ctx, client)
     assert client.calls == [("col-a", [101]), ("col-a", [101])]
     assert store.get_pending_vector_deletions() == []
+    store.close()
+
+
+@pytest.mark.parametrize("remote_fails", [False, True])
+def test_guarded_replacement_fences_orphaned_vectors(tmp_path, monkeypatch, remote_fails):
+    import hashlib
+    import threading
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    from mcp_server.core.repo_context import RepoContext
+    from mcp_server.dispatcher.dispatcher_enhanced import EnhancedDispatcher, IndexResultStatus
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    path = repo / "source.py"
+    path.write_text("value = 1\n")
+    store = SQLiteStore(str(tmp_path / "code_index.db"))
+    repo_id = store.ensure_repository_row(repo, name="test-repo")
+    file_id = store.store_file(repo_id, path=path, relative_path="source.py", language="python")
+    _store_code_chunk(store, file_id, "code-chunk-1")
+    store.upsert_semantic_point("profile-a", "code-chunk-1", 101, "col-a")
+    path.write_text("value = 2\n")
+    info = SimpleNamespace(path=repo, name="test-repo", tracked_branch="main")
+    ctx = RepoContext("test-repo", store, repo, "main", info)
+    client = _FakeVectorClient({"col-a"} if remote_fails else set())
+    dispatcher = EnhancedDispatcher.__new__(EnhancedDispatcher)
+    dispatcher._file_cache = {}
+    dispatcher._file_cache_lock = threading.RLock()
+    dispatcher._operation_stats = {"indexings": 0, "total_time": 0}
+    dispatcher._enable_advanced = False
+    dispatcher._router = None
+    plugin = SimpleNamespace(
+        lang="python", language="python", indexFile=lambda *args: {"symbols": []}
+    )
+    monkeypatch.setattr(dispatcher, "_semantic_lease", lambda current: nullcontext())
+    monkeypatch.setattr(dispatcher, "_get_semantic_indexer", lambda current: client)
+    monkeypatch.setattr(dispatcher, "_match_plugin", lambda current, target: plugin)
+    monkeypatch.setattr(
+        dispatcher,
+        "rebuild_semantic_for_paths",
+        lambda current, paths: {"semantic_failed": 0, "semantic_blocked": 0},
+    )
+    expected_hash = hashlib.sha256(path.read_bytes()).hexdigest()
+
+    result = dispatcher.index_file_guarded(ctx, path, expected_hash)
+    assert result.status == (IndexResultStatus.ERROR if remote_fails else IndexResultStatus.INDEXED)
+    assert client.calls == [("col-a", [101])]
+    assert len(store.get_pending_vector_deletions()) == (1 if remote_fails else 0)
     store.close()
 
 

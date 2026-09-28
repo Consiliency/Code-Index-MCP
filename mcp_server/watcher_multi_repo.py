@@ -340,6 +340,12 @@ class MultiRepositoryHandler(FileSystemEventHandler):
         result = self._mutate(move)
         if isinstance(result, IndexResult) and result.status == IndexResultStatus.MOVED:
             return True
+        if (
+            isinstance(result, IndexResult)
+            and result.status == IndexResultStatus.ERROR
+            and new_path.exists()
+        ):
+            return self._trigger_reindex_with_ctx(new_path)
         return self._landed_mutation(
             result,
             success_status=IndexResultStatus.DELETED,
