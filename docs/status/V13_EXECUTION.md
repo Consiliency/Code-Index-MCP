@@ -607,3 +607,32 @@ its setup now checkpoints before the byte-preservation comparison.
 All 140 Git manager tests pass. The disposable server now passes 19 explicit
 maintenance, filtered-ranking and signed-ID controls. These are diagnostic
 results, not phase acceptance; the repaired source still needs stamped gates.
+
+### PREP BAML v1 Reconciliation — 2026-09-28
+
+Code-Index-MCP#99 merged while PREP was open. The 1.4.1 candidate now includes
+the BAML v1 dependency and generated client reconciliation, source-bound wheel
+audit, Qdrant credential handling, and summarization coverage. The accepted
+historical FREEZE bytes and original PILOT ledger remain untouched. The
+replacement 100,000-unit inference allowance and one five-minute signing-only
+dispatch remain unconsumed.
+
+Pre-review source `6f60a8e` passed its protected agent and Docker CI gates. An
+installed wheel on display passed 13 offline, 10 loopback rehearsal and eight
+interactive admin/Inspector browser goals. The three measured peak process
+totals were 486, 1,131 and 934 MiB, respectively; each run reported zero
+surviving children. A Python-only browser plugin allowlist plus fast startup
+kept the admin fixture within the frozen 2,048 MiB cap. Qdrant file and
+host-network server modes each passed 19 selected controls. The separate Git
+integration suite passed nine tests. The shared dev0 broad pytest run ended
+without a summary under memory pressure. The display run finished with 3,895
+passed, 152 skipped, 31 deselected and one failed: a DATA test retained the
+old hard-coded pilot estimate of 88,084 units after the approved envelope was
+reduced to 87,138. The assertion is corrected and its focused test passes;
+the full gate must run again. These are diagnostic checks on a
+pre-documentation commit, not the final exact-candidate receipt.
+
+PREP remains blocked until the documented final candidate passes all gates,
+four independent exact-model reviews, the bounded live and signing proofs,
+four cross-model reconciliations, and the strict evidence reducer. The draft
+Code-Index-MCP#97 has not been merged or published.
