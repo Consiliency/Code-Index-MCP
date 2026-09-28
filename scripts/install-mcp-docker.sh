@@ -184,8 +184,8 @@ MCP_REGISTRY_DIR="${MCP_REGISTRY_DIR:-$WORKSPACE/.mcp-index/docker-registry}"
 mkdir -p "$MCP_REGISTRY_DIR"
 GIT_MOUNTS=()
 if [ -f "$WORKSPACE/.git" ]; then
-    git_common=$(git -C "$WORKSPACE" rev-parse --path-format=absolute --git-common-dir)
-    git_dir=$(git -C "$WORKSPACE" rev-parse --path-format=absolute --git-dir)
+    git_common=$(unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE; git -C "$WORKSPACE" rev-parse --path-format=absolute --git-common-dir)
+    git_dir=$(unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE; git -C "$WORKSPACE" rev-parse --path-format=absolute --git-dir)
     worktree_name="${git_dir##*/}"
     if [ "$git_dir" != "$git_common/worktrees/$worktree_name" ]; then
         echo "Unsupported Git worktree metadata layout" >&2

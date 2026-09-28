@@ -15,7 +15,7 @@ on:
         default: image
         options: [image, index-attestation]
       version:
-        description: 'Published tag to sign (e.g., v1.4.0). Must equal the current protected-main version.'
+        description: 'Published tag to sign (e.g., v1.4.0). Its source must be on protected-main history.'
         required: false
         type: string
       expected_digest:
@@ -75,12 +75,12 @@ jobs:
           [[ "$EXPECTED_SOURCE_TREE" =~ ^[0-9a-f]{40}$ ]]
           git fetch origin main --tags
           test "$(git rev-parse HEAD)" = "${{ github.sha }}"
-          test "$EXPECTED_SOURCE_SHA" = "${{ github.sha }}"
-          test "$(git rev-parse HEAD^{tree})" = "$EXPECTED_SOURCE_TREE"
           git merge-base --is-ancestor "${{ github.sha }}" origin/main
-          test "$(git rev-parse "${RELEASE_VERSION}^{commit}")" = "${{ github.sha }}"
-          grep -Fxq "version = \"$VERSION_NO_V\"" pyproject.toml
-          grep -Fxq "__version__ = \"$VERSION_NO_V\"" mcp_server/__init__.py
+          git merge-base --is-ancestor "$EXPECTED_SOURCE_SHA" "${{ github.sha }}"
+          test "$(git rev-parse "${RELEASE_VERSION}^{commit}")" = "$EXPECTED_SOURCE_SHA"
+          test "$(git rev-parse "${EXPECTED_SOURCE_SHA}^{tree}")" = "$EXPECTED_SOURCE_TREE"
+          git show "${EXPECTED_SOURCE_SHA}:pyproject.toml" | grep -Fxq "version = \"$VERSION_NO_V\""
+          git show "${EXPECTED_SOURCE_SHA}:mcp_server/__init__.py" | grep -Fxq "__version__ = \"$VERSION_NO_V\""
 
       - name: Install Cosign
         uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
@@ -96,14 +96,20 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Guard protected main before signing container images
+        env:
+          EXPECTED_SOURCE_SHA: ${{ inputs.expected_source_sha }}
+          EXPECTED_SOURCE_TREE: ${{ inputs.expected_source_tree }}
         run: |
           VERSION_NO_V=${RELEASE_VERSION#v}
           test -n "$VERSION_NO_V"
           git fetch origin main --tags
           test "$(git rev-parse HEAD)" = "${{ github.sha }}"
           git merge-base --is-ancestor "${{ github.sha }}" origin/main
-          grep -Fxq "version = \"$VERSION_NO_V\"" pyproject.toml
-          grep -Fxq "__version__ = \"$VERSION_NO_V\"" mcp_server/__init__.py
+          git merge-base --is-ancestor "$EXPECTED_SOURCE_SHA" "${{ github.sha }}"
+          test "$(git rev-parse "${RELEASE_VERSION}^{commit}")" = "$EXPECTED_SOURCE_SHA"
+          test "$(git rev-parse "${EXPECTED_SOURCE_SHA}^{tree}")" = "$EXPECTED_SOURCE_TREE"
+          git show "${EXPECTED_SOURCE_SHA}:pyproject.toml" | grep -Fxq "version = \"$VERSION_NO_V\""
+          git show "${EXPECTED_SOURCE_SHA}:mcp_server/__init__.py" | grep -Fxq "__version__ = \"$VERSION_NO_V\""
 
       - name: Sign the published container image (keyless)
         env:

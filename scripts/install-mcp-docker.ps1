@@ -136,6 +136,7 @@ function Create-Launcher {
     $launcherContent = @'
 @echo off
 REM MCP Index Docker Launcher for Windows
+SETLOCAL
 
 SET MCP_IMAGE_REF=@MCP_IMAGE_REF@
 SET WORKSPACE=%CD%
@@ -190,6 +191,8 @@ EXIT /B
 :worktree_mounts
 SET "GIT_COMMON="
 SET "GIT_DIR="
+SET "GIT_COMMON_DIR="
+SET "GIT_WORK_TREE="
 SET "GIT_WORKTREE_NAME="
 FOR /F "delims=" %%G IN ('git -C "%WORKSPACE%" rev-parse --path-format=absolute --git-common-dir 2^>NUL') DO SET "GIT_COMMON=%%G"
 FOR /F "delims=" %%G IN ('git -C "%WORKSPACE%" rev-parse --path-format=absolute --git-dir 2^>NUL') DO SET "GIT_DIR=%%G"

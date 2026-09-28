@@ -116,10 +116,15 @@ def test_every_workflow_release_mutation_has_an_adjacent_protected_main_guard() 
                 script = str(guard.get("run", ""))
                 assert "git merge-base --is-ancestor" in script
                 assert 'test "$(git rev-parse HEAD)" = "${{ github.sha }}"' in script
-                assert 'grep -Fxq "version = \\"$VERSION_NO_V\\"" pyproject.toml' in script
-                assert (
-                    'grep -Fxq "__version__ = \\"$VERSION_NO_V\\"" mcp_server/__init__.py' in script
-                )
+                if path.name == "sign-published-image.yml" and job_name == "sign-published-image":
+                    assert 'git show "${EXPECTED_SOURCE_SHA}:pyproject.toml"' in script
+                    assert 'git show "${EXPECTED_SOURCE_SHA}:mcp_server/__init__.py"' in script
+                else:
+                    assert 'grep -Fxq "version = \\"$VERSION_NO_V\\"" pyproject.toml' in script
+                    assert (
+                        'grep -Fxq "__version__ = \\"$VERSION_NO_V\\"" mcp_server/__init__.py'
+                        in script
+                    )
 
                 checkouts = [
                     candidate
@@ -489,3 +494,89 @@ def test_legacy_image_signer_rejects_retargeted_tag(tmp_path):
     accepted = subprocess.run(["bash", "-e", "-c", script], env=env, capture_output=True)
     assert accepted.returncode == 0, accepted.stderr
     assert (tmp_path / "signed").exists()
+
+
+def test_legacy_image_signer_accepts_protected_main_ancestor(tmp_path):
+    workflow = yaml.load(
+        (WORKFLOWS / "sign-published-image.yml").read_text(), Loader=yaml.BaseLoader
+    )
+    guards = [
+        step["run"]
+        for step in workflow["jobs"]["sign-published-image"]["steps"]
+        if step["name"] == "Guard protected main before signing container images"
+    ]
+    assert len(guards) == 2
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-b", "main", str(repo)], check=True, capture_output=True)
+    (repo / "mcp_server").mkdir()
+
+    def commit_version(version):
+        (repo / "pyproject.toml").write_text(f'[project]\nversion = "{version}"\n')
+        (repo / "mcp_server" / "__init__.py").write_text(f'__version__ = "{version}"\n')
+        subprocess.run(["git", "-C", str(repo), "add", "."], check=True)
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(repo),
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.com",
+                "commit",
+                "-m",
+                version,
+            ],
+            check=True,
+            capture_output=True,
+        )
+
+    commit_version("1.4.0")
+    source = subprocess.check_output(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"], text=True
+    ).strip()
+    tree = subprocess.check_output(
+        ["git", "-C", str(repo), "rev-parse", "HEAD^{tree}"], text=True
+    ).strip()
+    subprocess.run(["git", "-C", str(repo), "tag", "v1.4.0"], check=True)
+    commit_version("1.4.1")
+    main = subprocess.check_output(["git", "-C", str(repo), "rev-parse", "HEAD"], text=True).strip()
+    remote = tmp_path / "remote.git"
+    subprocess.run(["git", "init", "--bare", str(remote)], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(repo), "remote", "add", "origin", str(remote)], check=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "push", "-u", "origin", "main", "--tags"],
+        check=True,
+        capture_output=True,
+    )
+    env = {
+        **os.environ,
+        "RELEASE_VERSION": "v1.4.0",
+        "EXPECTED_SOURCE_SHA": source,
+        "EXPECTED_SOURCE_TREE": tree,
+    }
+    for guard in guards:
+        script = guard.replace("${{ github.sha }}", main)
+        accepted = subprocess.run(
+            ["bash", "-e", "-o", "pipefail", "-c", script],
+            cwd=repo,
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        assert accepted.returncode == 0, accepted.stderr
+        wrong_source = subprocess.run(
+            ["bash", "-e", "-o", "pipefail", "-c", script],
+            cwd=repo,
+            env={**env, "EXPECTED_SOURCE_SHA": main},
+            capture_output=True,
+        )
+        assert wrong_source.returncode != 0
+        wrong_tree = subprocess.run(
+            ["bash", "-e", "-o", "pipefail", "-c", script],
+            cwd=repo,
+            env={**env, "EXPECTED_SOURCE_TREE": "0" * 40},
+            capture_output=True,
+        )
+        assert wrong_tree.returncode != 0

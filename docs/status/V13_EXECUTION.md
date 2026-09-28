@@ -695,3 +695,17 @@ collection was empty before the batch; staged publication still verifies and
 stamps the complete generation. Focused tests pass (65). Qdrant file mode
 passes 19 controls. These repairs require another exact-head gate and review;
 the PR remains draft and both one-shot allowances remain unconsumed.
+
+The exact `d9c1d66` full suite passed 3,974 tests (128 skipped, 38 deselected,
+55.04% coverage), with protected Agent Gate and Docker CI, installed PMCP
+prepare/offline/rehearsal, Qdrant file/server (19 each), and nonroot container
+smoke passing. The first display browser interaction completed ten admin and
+Inspector observations, but its admin screenshot exposed Swagger's temporary
+authorization header; that capture is excluded from acceptance evidence.
+The exact-model Sol review then withheld code approval: inherited Git control
+variables could block worktree probing, and the legacy image signer could not
+sign the historical release its workflow advertised. The next candidate
+clears those variables and binds historical signing to the published tag's
+protected-main ancestor, source tree, version files, image digest and revision.
+It requires a fresh exact-head gate, browser receipt and independent review.
+No one-shot inference or signing allowance has been consumed.
