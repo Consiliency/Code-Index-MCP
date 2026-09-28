@@ -127,14 +127,23 @@ def digest_file(path: Path) -> str:
 
 
 def pmcp_runtime_roots(executable: Path, interpreter: Path) -> list[Path]:
-    user_site = executable.parents[1] / "lib/python3.12/site-packages"
+    match = re.fullmatch(r"python(3\.\d+)", interpreter.resolve().name)
+    if match is None:
+        raise PilotRefused("pmcp_interpreter_unknown")
+    version = match.group(1)
+    user_site = executable.parents[1] / f"lib/python{version}/site-packages"
     prefix = interpreter.parents[1]
+    base_prefix = interpreter.resolve().parents[1]
     roots = [
         user_site,
-        prefix / "lib/python3.12",
+        prefix / f"lib/python{version}",
         prefix / "lib/python3/dist-packages",
-        prefix / "local/lib/python3.12/site-packages",
-        prefix / "local/lib/python3.12/dist-packages",
+        prefix / f"local/lib/python{version}/site-packages",
+        prefix / f"local/lib/python{version}/dist-packages",
+        base_prefix / f"lib/python{version}",
+        base_prefix / "lib/python3/dist-packages",
+        base_prefix / f"local/lib/python{version}/site-packages",
+        base_prefix / f"local/lib/python{version}/dist-packages",
     ]
     if not user_site.is_dir():
         raise PilotRefused("pmcp_distribution_unavailable")
@@ -191,13 +200,40 @@ def pmcp_runtime_digest(roots: list[Path]) -> tuple[str, int]:
     return hasher.hexdigest(), files
 
 
+def pmcp_console_script(executable: Path) -> tuple[Path, Path | None]:
+    """Resolve the deployed release wrapper without executing shell text."""
+    if not executable.read_bytes().startswith(b"#!/bin/sh\n"):
+        return executable, None
+    lines = executable.read_text(encoding="utf-8").splitlines()
+    if len(lines) != 3:
+        raise PilotRefused("pmcp_launcher_unknown")
+    release = executable.parent.parent
+    path_line = re.fullmatch(r'export PATH=(/[^:\s"]+/node-[^/:\s"]+/bin):"\$PATH"', lines[1])
+    exec_line = re.fullmatch(r'exec (/[^\s"]+/python/bin/pmcp) "\$@"', lines[2])
+    if path_line is None or exec_line is None:
+        raise PilotRefused("pmcp_launcher_unknown")
+    node_bin = Path(path_line.group(1))
+    console = Path(exec_line.group(1))
+    if (
+        node_bin.parent.parent != release
+        or console != release / "python/bin/pmcp"
+        or not node_bin.resolve().is_relative_to(release.resolve())
+        or not console.resolve().is_relative_to(release.resolve())
+        or not node_bin.is_dir()
+        or not console.is_file()
+    ):
+        raise PilotRefused("pmcp_launcher_unknown")
+    return console, node_bin
+
+
 def pmcp_distribution_identity(executable: Path, expected: dict | None = None) -> dict:
     """Bind the launcher, interpreter, and importable dependency closure."""
-    first_line = executable.read_bytes().split(b"\n", 1)[0]
+    console, node_bin = pmcp_console_script(executable)
+    first_line = console.read_bytes().split(b"\n", 1)[0]
     if not first_line.startswith(b"#!/"):
         raise PilotRefused("pmcp_interpreter_unknown")
-    interpreter = Path(first_line[2:].decode().strip()).resolve()
-    if not interpreter.is_file():
+    interpreter = Path(first_line[2:].decode().strip())
+    if not interpreter.is_absolute() or not interpreter.is_file():
         raise PilotRefused("pmcp_interpreter_unknown")
     interpreter_sha256 = digest_file(interpreter)
     if expected is not None and (
@@ -205,7 +241,18 @@ def pmcp_distribution_identity(executable: Path, expected: dict | None = None) -
         or expected.get("interpreter_sha256") != interpreter_sha256
     ):
         raise PilotRefused("pmcp_interpreter_changed")
-    roots = pmcp_runtime_roots(executable, interpreter)
+    launcher_sha256 = digest_file(executable)
+    console_sha256 = digest_file(console)
+    if expected is not None and (
+        expected.get("launcher") != str(executable)
+        or expected.get("launcher_sha256") != launcher_sha256
+        or expected.get("console") != str(console)
+        or expected.get("console_sha256") != console_sha256
+    ):
+        raise PilotRefused("pmcp_launcher_changed")
+    roots = pmcp_runtime_roots(console, interpreter)
+    if node_bin is not None:
+        roots.append(node_bin)
     runtime_sha256, runtime_files = pmcp_runtime_digest(roots)
     if expected is not None and (
         expected.get("runtime_sha256") != runtime_sha256
@@ -227,6 +274,10 @@ def pmcp_distribution_identity(executable: Path, expected: dict | None = None) -
             raise PilotRefused("pmcp_distribution_unavailable")
         distribution_hash.update(str(name).encode() + b"\0" + bytes.fromhex(digest_file(path)))
     return {
+        "launcher": str(executable),
+        "launcher_sha256": launcher_sha256,
+        "console": str(console),
+        "console_sha256": console_sha256,
         "interpreter": str(interpreter),
         "interpreter_sha256": interpreter_sha256,
         "runtime_sha256": runtime_sha256,
@@ -437,6 +488,7 @@ def clean_env(root: Path) -> dict[str, str]:
         "UV_NO_CONFIG": "1",
         "PYTHONUNBUFFERED": "1",
         "PYTHONDONTWRITEBYTECODE": "1",
+        "PYTHONSAFEPATH": "1",
     }
 
 

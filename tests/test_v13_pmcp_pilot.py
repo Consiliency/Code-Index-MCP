@@ -497,6 +497,10 @@ def test_pmcp_runtime_drift_rejected_before_interpreter_execution(
     monkeypatch.setattr(pilot, "pmcp_runtime_roots", lambda executable, python: [site])
     runtime_sha256, runtime_files = pilot.pmcp_runtime_digest([site])
     expected = {
+        "launcher": str(launcher),
+        "launcher_sha256": pilot.digest_file(launcher),
+        "console": str(launcher),
+        "console_sha256": pilot.digest_file(launcher),
         "interpreter": str(interpreter),
         "interpreter_sha256": pilot.digest_file(interpreter),
         "runtime_sha256": runtime_sha256,
@@ -538,6 +542,54 @@ def test_pmcp_external_pth_path_is_refused_before_interpreter_execution(tmp_path
     )
     with pytest.raises(PilotRefused, match="pmcp_runtime_unbounded"):
         pilot.pmcp_distribution_identity(launcher)
+
+
+def test_pmcp_release_wrapper_binds_python_314_and_node_runtime(tmp_path, monkeypatch):
+    from scripts import v13_pmcp_pilot as pilot
+
+    release = tmp_path / "release"
+    launcher = release / "bin/pmcp"
+    console = release / "python/bin/pmcp"
+    interpreter = release / "python/bin/python3.14"
+    node_bin = release / "node-v24/bin"
+    site = release / "python/lib/python3.14/site-packages"
+    for directory in (launcher.parent, console.parent, node_bin, site):
+        directory.mkdir(parents=True, exist_ok=True)
+    interpreter.write_bytes(b"trusted python")
+    console.write_text(f"#!{interpreter}\n")
+    (node_bin / "node").write_bytes(b"trusted node")
+    (site / "dependency.py").write_text("value = 1\n")
+    launcher.write_text(f'#!/bin/sh\nexport PATH={node_bin}:"$PATH"\nexec {console} "$@"\n')
+    assert pilot.pmcp_console_script(launcher) == (console, node_bin)
+    assert site in pilot.pmcp_runtime_roots(console, interpreter)
+    monkeypatch.setattr(pilot, "pmcp_runtime_roots", lambda executable, python: [site])
+    roots = [site, node_bin]
+    runtime_sha256, runtime_files = pilot.pmcp_runtime_digest(roots)
+    expected = {
+        "launcher": str(launcher),
+        "launcher_sha256": pilot.digest_file(launcher),
+        "console": str(console),
+        "console_sha256": pilot.digest_file(console),
+        "interpreter": str(interpreter),
+        "interpreter_sha256": pilot.digest_file(interpreter),
+        "runtime_sha256": runtime_sha256,
+        "runtime_files_verified": runtime_files,
+    }
+    monkeypatch.setattr(
+        pilot.subprocess,
+        "run",
+        lambda *args, **kwargs: pytest.fail("executed unverified PMCP runtime"),
+    )
+    (node_bin / "node").write_bytes(b"changed node")
+    with pytest.raises(PilotRefused, match="pmcp_runtime_changed"):
+        pilot.pmcp_distribution_identity(launcher, expected=expected)
+    (node_bin / "node").write_bytes(b"trusted node")
+    console.write_text(f"#!{interpreter}\n# changed\n")
+    with pytest.raises(PilotRefused, match="pmcp_launcher_changed"):
+        pilot.pmcp_distribution_identity(launcher, expected=expected)
+    launcher.write_text(launcher.read_text() + "echo unbound\n")
+    with pytest.raises(PilotRefused, match="pmcp_launcher_unknown"):
+        pilot.pmcp_distribution_identity(launcher, expected=expected)
 
 
 def test_semantic_sample_refuses_lexical_fallback_and_wrong_generation():
