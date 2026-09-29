@@ -32,7 +32,15 @@ def release_backend(monkeypatch):
             from urllib.parse import unquote
 
             if command[2].endswith("/releases?per_page=100"):
-                return json.dumps(list(releases.values()))
+                assert command[3] == "--jq"
+                assert "{name, digest, state}" in command[4]
+                return json.dumps(
+                    [
+                        {key: release[key] for key in ("tag_name", "draft", "assets")}
+                        for release in releases.values()
+                        if json.dumps(release["tag_name"]) in command[4]
+                    ]
+                )
             tag = unquote(command[2].split("/tags/", 1)[1])
             if releases[tag]["draft"]:
                 raise subprocess.CalledProcessError(1, command)
@@ -126,7 +134,38 @@ def test_repeated_prepared_upload_is_idempotent_across_local_filenames(tmp_path,
     assert sum(command[:3] == ["gh", "release", "upload"] for command in calls) == 1
 
 
-@pytest.mark.parametrize("damage", ["extra", "digest", "incomplete", "draft"])
+def test_draft_verification_filters_large_release_listing(tmp_path, release_backend):
+    uploader, releases, calls = release_backend
+    for number in range(99):
+        tag = f"older-{number}"
+        releases[tag] = {"tag_name": tag, "draft": False, "assets": [], "body": "x" * 12000}
+    assert len(json.dumps(list(releases.values()))) > 1024**2
+    archive = tmp_path / "prepared.tar.gz"
+    archive.write_bytes(b"prepared")
+    uploader.upload_direct(
+        archive,
+        {"checksum": uploader._calculate_checksum(archive)},
+        release_tag="new-draft",
+    )
+    assert releases["new-draft"]["draft"] is False
+    assert any(command[:2] == ["gh", "api"] and "--jq" in command for command in calls)
+
+
+def test_identical_complete_draft_can_be_promoted_without_reupload(tmp_path, release_backend):
+    uploader, releases, calls = release_backend
+    archive = tmp_path / "prepared.tar.gz"
+    archive.write_bytes(b"prepared")
+    metadata = {"checksum": uploader._calculate_checksum(archive)}
+    uploader.upload_direct(archive, metadata, release_tag="index-explicit")
+    releases["index-explicit"]["draft"] = True
+    calls.clear()
+    uploader.upload_direct(archive, metadata, release_tag="index-explicit")
+    assert releases["index-explicit"]["draft"] is False
+    assert not any(command[:3] == ["gh", "release", "upload"] for command in calls)
+    assert sum(command[:3] == ["gh", "release", "edit"] for command in calls) == 1
+
+
+@pytest.mark.parametrize("damage", ["extra", "digest", "incomplete", "draft_incomplete"])
 def test_existing_release_mismatch_has_no_upload_or_promotion(tmp_path, release_backend, damage):
     uploader, releases, calls = release_backend
     archive = tmp_path / "original.tar.gz"
@@ -142,8 +181,9 @@ def test_existing_release_mismatch_has_no_upload_or_promotion(tmp_path, release_
         release["assets"][0]["digest"] = "sha256:bad"
     elif damage == "incomplete":
         release["assets"][0]["state"] = "starter"
-    else:
+    elif damage == "draft_incomplete":
         release["draft"] = True
+        release["assets"].pop()
     calls.clear()
     with pytest.raises(RuntimeError):
         uploader.upload_direct(archive, metadata, release_tag="index-explicit")

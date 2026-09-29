@@ -494,7 +494,15 @@ class IndexArtifactUploader:
         if draft:
             # GitHub's by-tag endpoint only returns published releases.
             result = self._run_gh(
-                ["gh", "api", f"/repos/{self.repo}/releases?per_page=100"],
+                [
+                    "gh",
+                    "api",
+                    f"/repos/{self.repo}/releases?per_page=100",
+                    "--jq",
+                    "map(select(.tag_name == "
+                    + json.dumps(tag)
+                    + ")) | map({tag_name, draft, assets: [.assets[] | {name, digest, state}]})",
+                ],
                 deadline=deadline,
             )
             releases = json.loads(result)
@@ -584,7 +592,8 @@ class IndexArtifactUploader:
         commit = source_commit[:8]
         target = ["--target", source_commit] if re.fullmatch(r"[0-9a-f]{40}", source_commit) else []
         deadline = time.monotonic() + 300
-        # Creating the draft acquires publication ownership. An existing release is read-only.
+        # Creating the draft acquires publication ownership. A retry may only
+        # promote a complete draft with the same prepared bytes.
         try:
             self._run_gh(
                 [
@@ -604,7 +613,17 @@ class IndexArtifactUploader:
                 deadline=deadline,
             )
         except subprocess.CalledProcessError:
-            self._verify_release_assets(tag, expected_assets, deadline=deadline)
+            try:
+                self._verify_release_assets(tag, expected_assets, deadline=deadline)
+            except RuntimeError as exc:
+                if str(exc) != "Published artifact release is unavailable":
+                    raise
+                self._verify_release_assets(tag, expected_assets, deadline=deadline, draft=True)
+                self._run_gh(
+                    ["gh", "release", "edit", tag, "--repo", self.repo, "--draft=false"],
+                    deadline=deadline,
+                )
+                self._verify_release_assets(tag, expected_assets, deadline=deadline)
             return bundle
 
         # Never clobber another attempt, including an incomplete draft.

@@ -253,6 +253,22 @@ async def test_concurrent_shutdown_callers_await_one_cleanup(monkeypatch):
     watcher.stop.assert_called_once()
 
 
+@pytest.mark.asyncio
+async def test_failed_stdio_watcher_retirement_keeps_dependencies_open(monkeypatch):
+    from mcp_server.cli import stdio_runner as runner
+
+    monkeypatch.setattr(runner, "_shutdown_called", False)
+    monkeypatch.setattr(runner, "_shutdown_task", None)
+    watcher = MagicMock()
+    watcher.stop.side_effect = RuntimeError("observer still running")
+    dispatcher = MagicMock()
+    registry = MagicMock()
+    with pytest.raises(RuntimeError, match="MultiRepositoryWatcher"):
+        await runner._graceful_shutdown(watcher, None, registry, None, dispatcher=dispatcher)
+    dispatcher.shutdown.assert_not_called()
+    registry.shutdown.assert_not_called()
+
+
 def test_metrics_bind_is_loopback_owned_and_reusable():
     from mcp_server.metrics.prometheus_exporter import PrometheusExporter
 

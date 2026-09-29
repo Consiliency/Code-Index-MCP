@@ -931,9 +931,14 @@ async def _graceful_shutdown(
         for name, component, method in components:
             if component is not None:
                 await stop_component(name, getattr(component, method))
+        if failures:
+            # A failed watcher may still own an index writer. Keep its stores open.
+            raise RuntimeError("Owned resource cleanup failed: " + ", ".join(failures))
         for thread in (_indexing_thread, _fts_rebuild_thread):
             if thread is not None and thread.is_alive():
                 await stop_component("IndexWorker", thread.join)
+        if failures:
+            raise RuntimeError("Owned resource cleanup failed: " + ", ".join(failures))
         for name, component, method in [
             ("Dispatcher", dispatcher, "shutdown"),
             ("StoreRegistry", store_registry, "shutdown"),

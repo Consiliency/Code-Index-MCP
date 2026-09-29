@@ -911,6 +911,11 @@ class GitAwareIndexManager:
             if any(row["collection"] != staged.collection for row in records):
                 raise RuntimeError("Staged vectors belong to another generation")
             ids = list(dict.fromkeys(row["point_id"] for row in records))
+            if not ids and not any(
+                collection.name == staged.collection
+                for collection in staged.qdrant.get_collections().collections
+            ):
+                return
             remote_count = staged.qdrant.count(
                 collection_name=staged.collection,
                 exact=True,
