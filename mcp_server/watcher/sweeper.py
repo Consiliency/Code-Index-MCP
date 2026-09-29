@@ -190,11 +190,11 @@ class WatcherSweeper:
         return drifted
 
     def _hash_file(self, path: Path) -> str:
-        digest = hashlib.sha256()
-        with path.open("rb") as handle:
-            for chunk in iter(lambda: handle.read(65536), b""):
-                digest.update(chunk)
-        return digest.hexdigest()
+        try:
+            content = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            content = path.read_text(encoding="latin-1")
+        return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
     def _indexed_path_should_report_delete(
         self, repo_root: Path, rel: str, gitignore_filter

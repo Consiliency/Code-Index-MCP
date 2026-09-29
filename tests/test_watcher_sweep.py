@@ -316,6 +316,49 @@ class TestSweeperNoopWhenNoDrift:
         finally:
             store.close()
 
+    @pytest.mark.parametrize("content", [b"value = 1\r\n", b"word = caf\xe9\n"])
+    def test_dispatcher_persisted_text_hash_converges(self, tmp_path, content):
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        from mcp_server.core.repo_context import RepoContext
+        from mcp_server.dispatcher.dispatcher_enhanced import EnhancedDispatcher, IndexResultStatus
+        from mcp_server.plugin_base import IPlugin
+
+        repo_root = tmp_path / "repo"
+        repo_root.mkdir()
+        source = repo_root / "source.py"
+        source.write_bytes(content)
+        store = _make_sqlite_store(tmp_path)
+        store.create_repository(str(repo_root), "repo")
+        plugin = MagicMock(spec=IPlugin, lang="python")
+        plugin.language = "python"
+        plugin.supports.return_value = True
+        plugin.indexFile.return_value = {"symbols": []}
+        dispatcher = EnhancedDispatcher([plugin], semantic_search_enabled=False)
+        ctx = RepoContext(
+            repo_id="repo",
+            sqlite_store=store,
+            workspace_root=repo_root,
+            tracked_branch="main",
+            registry_entry=SimpleNamespace(path=repo_root, name="repo"),
+        )
+        drift_calls = []
+        sweeper = WatcherSweeper(
+            on_missed_path=None,
+            repo_roots_provider=lambda: {"repo": repo_root},
+            store=store,
+            on_repository_drift=drift_calls.append,
+        )
+        try:
+            assert dispatcher.index_file(ctx, source).status == IndexResultStatus.INDEXED
+            assert sweeper.sweep_once() == []
+            assert sweeper.sweep_once() == []
+            assert drift_calls == []
+        finally:
+            dispatcher.shutdown()
+            store.close()
+
 
 # ---------------------------------------------------------------------------
 # test_sweeper_start_stop

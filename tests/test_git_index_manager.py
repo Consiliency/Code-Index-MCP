@@ -362,6 +362,51 @@ def test_staged_rebuild_quarantines_unproven_index_and_publishes(tmp_path):
     assert not list(repo_info.index_path.parent.glob(".current.db.staging-*"))
 
 
+def test_force_full_removes_tracked_files_excluded_from_index(tmp_path):
+    from mcp_server.watcher.sweeper import WatcherSweeper
+
+    repo = _make_git_repo(tmp_path)
+    excluded = ("pom.xml", "mcp_validation_results.json", "package.egg-info/info.json")
+    for relative in excluded:
+        path = repo / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("{}\n")
+    subprocess.run(["git", "add", "."], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "excluded inputs"], cwd=repo, check=True)
+    commit = _get_head_commit(repo)
+    repo_info = _make_repo_info(repo, commit)
+    repo_info.last_indexed_commit = None
+    for relative in ("hello.py", *excluded):
+        _seed_index(repo_info.index_path, repo, relative)
+
+    initial = SQLiteStore(str(repo_info.index_path))
+    initial_sweeper = WatcherSweeper(None, lambda: {"repo": repo}, initial)
+    try:
+        assert initial_sweeper.sweep_once() == ["repo"]
+    finally:
+        initial.close()
+
+    manager, _registry = _make_rebuild_manager(repo_info, commit)
+    result = manager.sync_repository_index(repo_info.repository_id, force_full=True)
+
+    assert result.action == "full_index", result.error
+    with sqlite3.connect(repo_info.index_path) as connection:
+        paths = {row[0] for row in connection.execute("SELECT relative_path FROM files")}
+    assert paths == {"hello.py"}
+
+    published = SQLiteStore(str(repo_info.index_path))
+    drift_calls = []
+    sweeper = WatcherSweeper(
+        None, lambda: {"repo": repo}, published, on_repository_drift=drift_calls.append
+    )
+    try:
+        assert sweeper.sweep_once() == []
+        assert sweeper.sweep_once() == []
+        assert drift_calls == []
+    finally:
+        published.close()
+
+
 def test_staged_rebuild_bootstraps_missing_index(tmp_path):
     repo = _make_git_repo(tmp_path)
     commit = _get_head_commit(repo)

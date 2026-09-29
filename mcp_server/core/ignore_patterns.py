@@ -61,12 +61,8 @@ INDEX_EXCLUDED_FILENAMES: frozenset[str] = frozenset(
 INDEX_EXCLUDED_SUFFIXES: frozenset[str] = frozenset({".xml"})
 
 
-def index_exclusion_reason(
-    path: Path,
-    root: Path,
-    is_excluded: Callable[[Path], bool],
-) -> Optional[str]:
-    """Return the shared file-admission exclusion used by indexing and sweeping."""
+def index_path_exclusion_reason(path: Path, root: Path) -> Optional[str]:
+    """Return deterministic path exclusions before a file is materialized."""
     relative_parts = path.relative_to(root).parts if path.is_relative_to(root) else path.parts
     if any(part.endswith(".egg-info") for part in relative_parts):
         return "egg_info"
@@ -74,6 +70,18 @@ def index_exclusion_reason(
         return "filename"
     if path.suffix.lower() in INDEX_EXCLUDED_SUFFIXES:
         return "suffix"
+    return None
+
+
+def index_exclusion_reason(
+    path: Path,
+    root: Path,
+    is_excluded: Callable[[Path], bool],
+) -> Optional[str]:
+    """Return the shared file-admission exclusion used by indexing and sweeping."""
+    path_reason = index_path_exclusion_reason(path, root)
+    if path_reason:
+        return path_reason
     if is_excluded(path):
         return "ignored"
     try:

@@ -1012,7 +1012,7 @@ class GitAwareIndexManager:
     def _snapshot_committed_inputs(
         repo_path: Path, commit: str, destination: Path
     ) -> Dict[str, str]:
-        from ..core.ignore_patterns import build_walker_filter
+        from ..core.ignore_patterns import build_walker_filter, index_path_exclusion_reason
         from ..plugins.generic_treesitter_plugin import GenericTreeSitterPlugin
 
         listing = subprocess.run(
@@ -1035,6 +1035,8 @@ class GitAwareIndexManager:
             if policy and mode not in {b"100644", b"100755"}:
                 raise ValueError("Committed ignore policy must be a regular file")
             if kind != b"blob" or mode not in {b"100644", b"100755"}:
+                continue
+            if index_path_exclusion_reason(destination / relative, destination):
                 continue
             bounded = GenericTreeSitterPlugin.uses_exact_bounded_json_path(
                 relative
