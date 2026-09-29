@@ -491,11 +491,30 @@ class IndexArtifactUploader:
     def _verify_release_assets(
         self, tag: str, expected_assets: Dict[str, str], *, deadline: float, draft: bool = False
     ) -> None:
-        result = self._run_gh(
-            ["gh", "api", f"/repos/{self.repo}/releases/tags/{quote(tag, safe='')}"],
-            deadline=deadline,
-        )
-        payload = json.loads(result or "{}")
+        if draft:
+            # GitHub's by-tag endpoint only returns published releases.
+            result = self._run_gh(
+                ["gh", "api", f"/repos/{self.repo}/releases?per_page=100"],
+                deadline=deadline,
+            )
+            releases = json.loads(result)
+            if not isinstance(releases, list):
+                raise RuntimeError("Artifact release listing is malformed")
+            matches = [
+                item for item in releases if isinstance(item, dict) and item.get("tag_name") == tag
+            ]
+            if len(matches) != 1:
+                raise RuntimeError("Artifact draft release is missing or ambiguous")
+            payload = matches[0]
+        else:
+            try:
+                result = self._run_gh(
+                    ["gh", "api", f"/repos/{self.repo}/releases/tags/{quote(tag, safe='')}"],
+                    deadline=deadline,
+                )
+            except subprocess.CalledProcessError as exc:
+                raise RuntimeError("Published artifact release is unavailable") from exc
+            payload = json.loads(result or "{}")
         if payload.get("tag_name") != tag or payload.get("draft") is not draft:
             raise RuntimeError("Artifact release identity or publication state does not match")
         assets = payload.get("assets")

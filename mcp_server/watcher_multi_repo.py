@@ -17,6 +17,7 @@ from watchdog.observers import Observer
 
 from .artifacts.commit_artifacts import CommitArtifactManager
 from .core.ignore_patterns import build_walker_filter
+from .core.lifecycle import retirement_watchdog
 from .core.repo_context import RepoContext
 from .core.repo_resolver import RepoResolver, run_repository_mutation
 from .dispatcher.dispatcher_enhanced import EnhancedDispatcher, IndexResult, IndexResultStatus
@@ -654,6 +655,10 @@ class MultiRepositoryWatcher:
             self.registry.unregister_repository(repo_id, expected_owner=repo_info)
 
     def _stop_repo_watcher(self, repo_id: str, repo_info=None) -> None:
+        with retirement_watchdog():
+            MultiRepositoryWatcher._retire_repo_watcher(self, repo_id, repo_info)
+
+    def _retire_repo_watcher(self, repo_id: str, repo_info=None) -> None:
         with self._watch_lock:
             observer = self.observers.pop(repo_id, None)
             handler = self.watchers.pop(repo_id, None)

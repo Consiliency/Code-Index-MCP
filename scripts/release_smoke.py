@@ -281,11 +281,15 @@ def _poll_health(port: int, *, timeout: float = 60.0) -> None:
     raise RuntimeError(f"Container health timeout ({last_error})")
 
 
-def smoke_container(image_ref: str | None = None, *, network: str = "bridge") -> None:
+def smoke_container(
+    image_ref: str | None = None, *, network: str = "bridge", image_signer_sha: str | None = None
+) -> None:
     if image_ref is not None and not re.fullmatch(
         r"ghcr\.io/[a-z0-9_./-]+@sha256:[0-9a-f]{64}", image_ref
     ):
         raise ValueError("Delivered image requires an immutable GHCR digest reference")
+    if image_signer_sha is not None and not re.fullmatch(r"[0-9a-f]{40}", image_signer_sha):
+        raise ValueError("Image signing workflow SHA is invalid")
     if shutil.which("docker") is None:
         raise RuntimeError("docker is required for --container smoke")
     if image_ref is None:
@@ -334,6 +338,20 @@ def smoke_container(image_ref: str | None = None, *, network: str = "bridge") ->
             raise ValueError("Delivered image labels differ from accepted source")
         if shutil.which("cosign") is None:
             raise RuntimeError("cosign is required to verify delivered image provenance")
+        if image_signer_sha is not None:
+            _run(["git", "merge-base", "--is-ancestor", source, image_signer_sha])
+            _run(["git", "merge-base", "--is-ancestor", image_signer_sha, "origin/main"])
+            _run(
+                [
+                    "git",
+                    "cat-file",
+                    "-e",
+                    image_signer_sha + ":.github/workflows/sign-published-image.yml",
+                ]
+            )
+        signer_workflow = (
+            "sign-published-image.yml" if image_signer_sha is not None else "release-automation.yml"
+        )
         _run(
             [
                 "cosign",
@@ -341,11 +359,12 @@ def smoke_container(image_ref: str | None = None, *, network: str = "bridge") ->
                 image_ref,
                 "--certificate-identity",
                 "https://github.com/Consiliency/Code-Index-MCP/.github/workflows/"
-                "release-automation.yml@refs/heads/main",
+                + signer_workflow
+                + "@refs/heads/main",
                 "--certificate-oidc-issuer",
                 "https://token.actions.githubusercontent.com",
                 "--certificate-github-workflow-sha",
-                source,
+                image_signer_sha or source,
             ],
             timeout=120,
         )
@@ -506,6 +525,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--image-ref", help="Use a delivered immutable GHCR digest without building"
     )
+    parser.add_argument(
+        "--image-signer-sha",
+        help="Protected-main workflow commit for an image signed after publication",
+    )
     return parser.parse_args()
 
 
@@ -513,6 +536,8 @@ def main() -> None:
     args = parse_args()
     if (args.wheel_path is None) != (args.wheel_sha256 is None):
         raise SystemExit("Supply both --wheel-path and --wheel-sha256")
+    if args.image_signer_sha is not None and args.image_ref is None:
+        raise SystemExit("--image-signer-sha requires --image-ref")
     delivered = args.wheel_path is not None or args.image_ref is not None
     if args.all:
         args.wheel = args.stdio = args.container = True
@@ -530,7 +555,9 @@ def main() -> None:
     if args.wheel or args.stdio:
         smoke_wheel(args.wheel_path, args.wheel_sha256)
     if args.container:
-        smoke_container(args.image_ref, network=args.docker_network)
+        smoke_container(
+            args.image_ref, network=args.docker_network, image_signer_sha=args.image_signer_sha
+        )
 
 
 if __name__ == "__main__":

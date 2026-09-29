@@ -123,6 +123,11 @@ For PMCP, run `v13_pmcp_pilot.py --mode prepare --root <owned-root> --wheel
 browser modes against that manifest. These supplied-artifact paths never build
 a replacement wheel or image. Record the registry digest independently before
 passing it to the runner; a locally calculated checksum alone is not registry proof.
+For an older image signed after publication by `sign-published-image.yml`, run
+the delivered image check from its accepted source checkout and pass
+`--image-signer-sha <protected-main-signing-workflow-commit>` with `--image-ref`.
+The verifier checks the signer commit follows the image source, belongs to
+protected-main history, and matches the image signature's workflow identity.
 
 ## Recovery And Rollout
 

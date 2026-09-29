@@ -4,11 +4,13 @@ The qdrant client and HTTP probes are mocked - no live server is used.
 """
 
 import io
+import sqlite3
 from types import SimpleNamespace
 from urllib import error
 
 import pytest
 
+from mcp_server.artifacts.secure_export import SecureIndexExporter
 from mcp_server.cli.index_management import _get_vector_backend_status
 from mcp_server.config.env_vars import get_qdrant_api_key
 from mcp_server.setup import semantic_preflight
@@ -112,6 +114,38 @@ def test_index_management_server_backend_passes_api_key(monkeypatch, tmp_path, a
     (client,) = RecordingQdrantClient.instances
     assert client.kwargs["url"] == "http://qdrant.test:6333"
     assert client.kwargs["api_key"] == api_key
+
+
+def test_secure_export_server_backend_passes_api_key(monkeypatch, tmp_path, api_key):
+    backend = "http://qdrant.test:6333"
+    monkeypatch.setenv("QDRANT_URL", backend)
+    monkeypatch.setattr("qdrant_client.QdrantClient", RecordingQdrantClient)
+    monkeypatch.setattr(
+        SecureIndexExporter,
+        "read_generation_metadata",
+        lambda *args: {
+            "qdrant_path": backend,
+            "semantic_profile": "profile",
+            "semantic_profiles": {"profile": {"attested": True}},
+            "collection_name": "collection",
+        },
+    )
+    monkeypatch.setattr(
+        RecordingQdrantClient,
+        "retrieve",
+        lambda self, *args, **kwargs: [
+            SimpleNamespace(id="point", payload={"relative_path": "sample.py"}, vector=[0.1])
+        ],
+        raising=False,
+    )
+    monkeypatch.setattr(RecordingQdrantClient, "close", lambda self: None, raising=False)
+    database = tmp_path / "current.db"
+    with sqlite3.connect(database) as db:
+        db.execute("CREATE TABLE semantic_points (profile_id TEXT, point_id TEXT, collection TEXT)")
+        db.execute("INSERT INTO semantic_points VALUES ('profile', 'point', 'collection')")
+    exporter = SecureIndexExporter(repo_path=tmp_path, index_location=tmp_path, index_path=database)
+    exporter._export_vectors(database, tmp_path / "vectors.jsonl")
+    assert RecordingQdrantClient.instances[0].kwargs["api_key"] == api_key
 
 
 def test_bootstrap_collection_passes_api_key(monkeypatch, api_key):

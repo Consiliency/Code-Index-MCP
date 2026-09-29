@@ -43,6 +43,35 @@ raise AssertionError('hung mutation returned without retiring its worker')
     assert result.returncode == 1, result.stderr
 
 
+def test_running_repository_sync_retires_process_before_closing_storage():
+    program = """
+import threading
+from concurrent.futures import Future
+from types import SimpleNamespace
+from mcp_server.core import lifecycle
+from mcp_server.watcher_multi_repo import MultiRepositoryWatcher
+lifecycle._RETIREMENT_GRACE_SECONDS = 0.15
+future = Future()
+future.set_running_or_notify_cancel()
+owner = SimpleNamespace(
+    _watch_lock=threading.RLock(),
+    observers={},
+    watchers={},
+    _pending_syncs={'repo': [(future, threading.Event())]},
+    store_registry=SimpleNamespace(close=lambda *a, **kw: print('unsafe close', flush=True)),
+    semantic_indexer_registry=None,
+    dispatcher=SimpleNamespace(),
+)
+MultiRepositoryWatcher._stop_repo_watcher(owner, 'repo', SimpleNamespace(path='repo'))
+raise AssertionError('hung writer escaped retirement')
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", program], capture_output=True, text=True, timeout=10
+    )
+    assert result.returncode == 1, result.stderr
+    assert "unsafe close" not in result.stdout
+
+
 @pytest.mark.parametrize("behavior", ["hang", "fail"])
 def test_gateway_shutdown_retires_process_after_failed_cleanup(behavior):
     program = """

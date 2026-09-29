@@ -617,16 +617,21 @@ def verify_renewed_pilot(repo: Path, root: Path) -> dict:
         if live["budget"]["approval"] != RENEWED_APPROVAL:
             raise CandidateRefused("renewed_approval_mismatch")
         canonical = runs / "v13-PILOT-allowance-20260915"
-        ledger = BudgetLedger(
-            canonical, digest_json(manifest), approval=RENEWED_APPROVAL, read_only=True
-        )
         archived = [item for item in live["artifacts"] if item["role"] == "allowance_ledger"]
-        if len(archived) != 1 or (
-            digest_file(canonical / "ledger.sqlite") != archived[0]["sha256"]
-            or ledger.snapshot()
-            != {key: value for key, value in live["budget"].items() if key != "elapsed_seconds"}
-        ):
-            raise CandidateRefused("renewed_canonical_ledger_mismatch")
+        canonical_ledger = canonical / "ledger.sqlite"
+        with evidence_snapshot([canonical_ledger]) as copies:
+            ledger = BudgetLedger(
+                copies[canonical_ledger].parent,
+                digest_json(manifest),
+                approval=RENEWED_APPROVAL,
+                read_only=True,
+            )
+            if len(archived) != 1 or (
+                digest_file(copies[canonical_ledger]) != archived[0]["sha256"]
+                or ledger.snapshot()
+                != {key: value for key, value in live["budget"].items() if key != "elapsed_seconds"}
+            ):
+                raise CandidateRefused("renewed_canonical_ledger_mismatch")
         return {
             **identity,
             "manifest_sha256": digest_json(manifest),

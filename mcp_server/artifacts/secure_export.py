@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Tuple
 
+from mcp_server.config.env_vars import get_qdrant_api_key
 from mcp_server.core.ignore_patterns import build_walker_filter
 from mcp_server.core.path_resolver import PathResolver
 
@@ -135,7 +136,7 @@ class SecureIndexExporter:
                 if backend.startswith(("http://", "https://")):
                     if backend != os.environ.get("QDRANT_URL"):
                         raise RuntimeError("Export backend is not the configured server")
-                    client = QdrantClient(url=backend, timeout=30)
+                    client = QdrantClient(url=backend, api_key=get_qdrant_api_key(), timeout=30)
                 elif backend and Path(backend).resolve().is_relative_to(
                     self.index_path.parent.resolve()
                 ):

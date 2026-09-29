@@ -571,6 +571,24 @@ def test_renewed_hashes_bind_the_receipt_bytes_actually_validated(renewed_candid
     assert result["proof_sha256"]["live"] != digest_file(path)
 
 
+def test_renewed_ledger_replacement_during_validation_is_refused(renewed_candidate, monkeypatch):
+    repo, root, _ = renewed_candidate
+    canonical = repo / ".phase-loop/runs/v13-PILOT-allowance-20260915/ledger.sqlite"
+    snapshot = budget.BudgetLedger.snapshot
+
+    def replace_during_snapshot(self):
+        result = snapshot(self)
+        replacement = canonical.with_suffix(".replacement")
+        replacement.write_bytes(canonical.read_bytes())
+        replacement.replace(canonical)
+        return result
+
+    monkeypatch.setattr(budget.BudgetLedger, "snapshot", replace_during_snapshot)
+    with pytest.raises(CandidateRefused, match="renewed_pilot_evidence_missing_or_invalid") as exc:
+        release.verify_renewed_pilot(repo, root)
+    assert isinstance(exc.value.__cause__, PilotRefused)
+
+
 @pytest.mark.parametrize("operation", ["claim_signing_dispatch", "inspect_signing_claim"])
 def test_signing_claim_cli_does_not_dispatch_or_consume_pilot(
     monkeypatch, tmp_path, capsys, operation

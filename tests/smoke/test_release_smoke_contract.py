@@ -255,6 +255,48 @@ def test_delivered_smoke_cli_cannot_fall_back_to_partial_build(monkeypatch):
         smoke.main()
 
 
+def test_delivered_image_accepts_explicit_recovery_signer_commit(monkeypatch):
+    from scripts import release_smoke as smoke
+
+    image = GHCR_IMAGE + "@sha256:" + "a" * 64
+    source, signer = "c" * 40, "d" * 40
+    calls = []
+    monkeypatch.setattr(smoke.shutil, "which", lambda _: "/usr/bin/cosign")
+
+    def output(command, **kwargs):
+        if command[:2] == ["git", "rev-parse"]:
+            return source
+        if "{{json .RepoDigests}}" in command:
+            return json.dumps([image])
+        if "{{json .Config.Labels}}" in command:
+            return json.dumps(
+                {
+                    "org.opencontainers.image.version": "v1.4.1",
+                    "org.opencontainers.image.revision": source,
+                }
+            )
+        return "sha256:" + "b" * 64
+
+    monkeypatch.setattr(smoke.subprocess, "check_output", output)
+
+    def run(command, **kwargs):
+        calls.append(command)
+        if command[:2] == ["docker", "run"]:
+            raise RuntimeError("reached delivered runtime")
+
+    monkeypatch.setattr(smoke, "_run", run)
+    with pytest.raises(RuntimeError, match="reached delivered runtime"):
+        smoke.smoke_container(image, image_signer_sha=signer)
+    assert ["git", "merge-base", "--is-ancestor", source, signer] in calls
+    assert ["git", "merge-base", "--is-ancestor", signer, "origin/main"] in calls
+    signature = next(command for command in calls if command[0] == "cosign")
+    assert signature[-2:] == ["--certificate-github-workflow-sha", signer]
+    assert (
+        "https://github.com/Consiliency/Code-Index-MCP/.github/workflows/"
+        "sign-published-image.yml@refs/heads/main"
+    ) in signature
+
+
 def test_pyproject_has_console_script_and_build_dependency():
     with (REPO / "pyproject.toml").open("rb") as f:
         data = tomllib.load(f)

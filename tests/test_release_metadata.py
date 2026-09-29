@@ -149,7 +149,7 @@ def test_docker_launcher_registers_and_reuses_mounted_workspace(tmp_path):
         ):
             assert value in invocation
     assert 'git -C "%WORKSPACE%" rev-parse --path-format=absolute --git-common-dir' in batch
-    assert 'git rev-parse --local-env-vars' in batch
+    assert "git rev-parse --local-env-vars" in batch
     assert 'DO SET "%%G="' in batch
     assert 'SET "WORKTREE_GIT_COMMON="' in batch
     assert 'SET "WORKTREE_GIT_DIR="' in batch
@@ -223,6 +223,29 @@ def test_docker_launcher_mounts_linked_git_worktree(tmp_path):
         assert f"{common}:/mcp-git:ro" in args
         assert f"{pointer}:/workspace/.git:ro" in args
         assert pointer.read_text() == "gitdir: /mcp-git/worktrees/linked\n"
+
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            'docker() { printf "%s\\n" "$@" > "$CALLS"; }; export -f docker; bash "$@"',
+            "test",
+            str(launcher),
+            "setup",
+        ],
+        env={
+            **os.environ,
+            "WORKSPACE": str(repository),
+            "MCP_REGISTRY_DIR": str(tmp_path / "registry"),
+            "CALLS": str(calls),
+        },
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert f"{common}:/mcp-git:ro" in calls.read_text().splitlines()
+    assert "MCP_GIT_COMMON_DIR=/mcp-git" in calls.read_text().splitlines()
+    assert pointer.read_text() == "gitdir: /mcp-git/worktrees/linked\n"
 
 
 @pytest.mark.parametrize(

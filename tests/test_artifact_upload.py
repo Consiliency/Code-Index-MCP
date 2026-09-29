@@ -31,7 +31,11 @@ def release_backend(monkeypatch):
         if command[:2] == ["gh", "api"]:
             from urllib.parse import unquote
 
+            if command[2].endswith("/releases?per_page=100"):
+                return json.dumps(list(releases.values()))
             tag = unquote(command[2].split("/tags/", 1)[1])
+            if releases[tag]["draft"]:
+                raise subprocess.CalledProcessError(1, command)
             return json.dumps(releases[tag])
         assert command[:2] == ["gh", "release"]
         operation, tag = command[2:4]
@@ -114,6 +118,10 @@ def test_repeated_prepared_upload_is_idempotent_across_local_filenames(tmp_path,
     release = next(iter(releases.values()))
     assert release["draft"] is False
     assert len(release["assets"]) == 3
+    assert any(
+        command[:2] == ["gh", "api"] and command[2].endswith("/releases?per_page=100")
+        for command in calls
+    )
     _payload_limits([item["name"] for item in release["assets"]])
     assert sum(command[:3] == ["gh", "release", "upload"] for command in calls) == 1
 

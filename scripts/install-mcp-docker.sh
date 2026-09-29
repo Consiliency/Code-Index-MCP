@@ -183,19 +183,22 @@ WORKSPACE="${WORKSPACE:-$(pwd)}"
 MCP_REGISTRY_DIR="${MCP_REGISTRY_DIR:-$WORKSPACE/.mcp-index/docker-registry}"
 mkdir -p "$MCP_REGISTRY_DIR"
 GIT_MOUNTS=()
-if [ -f "$WORKSPACE/.git" ]; then
+if [ -d "$WORKSPACE/.git" ]; then
+    git_common=$(while IFS= read -r git_variable; do unset "$git_variable"; done < <(git rev-parse --local-env-vars); git -C "$WORKSPACE" rev-parse --path-format=absolute --git-common-dir)
+    GIT_MOUNTS=(-v "$git_common:/mcp-git:ro" -e MCP_GIT_COMMON_DIR=/mcp-git)
+elif [ -f "$WORKSPACE/.git" ]; then
     git_common=$(while IFS= read -r git_variable; do unset "$git_variable"; done < <(git rev-parse --local-env-vars); git -C "$WORKSPACE" rev-parse --path-format=absolute --git-common-dir)
     git_dir=$(while IFS= read -r git_variable; do unset "$git_variable"; done < <(git rev-parse --local-env-vars); git -C "$WORKSPACE" rev-parse --path-format=absolute --git-dir)
+    pointer="$MCP_REGISTRY_DIR/worktree-pointer.git"
+    temporary_pointer=$(mktemp "$MCP_REGISTRY_DIR/worktree-pointer.XXXXXX")
     worktree_name="${git_dir##*/}"
     if [ "$git_dir" != "$git_common/worktrees/$worktree_name" ]; then
         echo "Unsupported Git worktree metadata layout" >&2
         exit 1
     fi
-    pointer="$MCP_REGISTRY_DIR/worktree-pointer.git"
-    temporary_pointer=$(mktemp "$MCP_REGISTRY_DIR/worktree-pointer.XXXXXX")
     printf 'gitdir: /mcp-git/worktrees/%s\n' "$worktree_name" > "$temporary_pointer"
     mv "$temporary_pointer" "$pointer"
-    GIT_MOUNTS=(-v "$git_common:/mcp-git:ro" -v "$pointer:/workspace/.git:ro")
+    GIT_MOUNTS=(-v "$git_common:/mcp-git:ro" -v "$pointer:/workspace/.git:ro" -e MCP_GIT_COMMON_DIR=/mcp-git)
 fi
 
 # Handle commands

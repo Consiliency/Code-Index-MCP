@@ -540,7 +540,10 @@ def test_uploaded_release_is_discovered_authenticated_and_restored(
             else:
                 pytest.fail("Unexpected release command")
         elif args[:2] == ["gh", "api"]:
+            if args[2].endswith("/releases?per_page=100"):
+                return subprocess.CompletedProcess(args, 0, json.dumps([release]), "")
             if "/releases/tags/" in args[2]:
+                assert release["draft"] is False
                 return subprocess.CompletedProcess(args, 0, json.dumps(release), "")
             assert "--paginate" in args
             response = json.dumps(release) if args[2].endswith("/releases") else ""
