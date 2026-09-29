@@ -156,7 +156,14 @@ _healthy_index_cache_lock = threading.Lock()
 
 
 def _inspect_index_uncached(index_path: Path) -> Optional[RepositoryReadinessState]:
-    required_tables = {"schema_version", "repositories", "files", "symbols", "code_chunks"}
+    required_tables = {
+        "schema_version",
+        "repositories",
+        "files",
+        "symbols",
+        "code_chunks",
+        "chunk_summaries",
+    }
     try:
         with sqlite3.connect(str(index_path)) as conn:
             integrity = conn.execute("PRAGMA quick_check").fetchone()

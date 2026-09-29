@@ -543,10 +543,19 @@ class SQLiteStore:
                         ).fetchone()
                     )
                     if has_code:
-                        if (
-                            not path.is_file()
-                            or hashlib.sha256(path.read_bytes()).hexdigest() != row["content_hash"]
-                        ):
+                        if not path.is_file():
+                            raise ValueError("Artifact source differs from committed input")
+                        raw_content = path.read_bytes()
+                        try:
+                            content = raw_content.decode("utf-8")
+                        except UnicodeDecodeError:
+                            content = raw_content.decode("latin-1")
+                        content = content.replace("\r\n", "\n").replace("\r", "\n")
+                        source_hashes = {
+                            hashlib.sha256(content.encode("utf-8")).hexdigest(),
+                            hashlib.sha256(raw_content).hexdigest(),
+                        }
+                        if row["content_hash"] not in source_hashes:
                             raise ValueError("Artifact source differs from committed input")
                         code_paths.add(relative)
                     existing = target.execute(
@@ -571,7 +580,7 @@ class SQLiteStore:
                         )
                         target.execute(
                             "INSERT INTO fts_code (content, file_id) VALUES (?, ?)",
-                            (path.read_text(encoding="utf-8", errors="replace"), file_id),
+                            (content, file_id),
                         )
                 for row in source.execute("SELECT * FROM symbols"):
                     if row["file_id"] in file_ids:
@@ -1015,6 +1024,9 @@ class SQLiteStore:
             except sqlite3.OperationalError:
                 current_version = 0
 
+            missing_chunk_summaries = not conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='chunk_summaries'"
+            ).fetchone()
             # Reconcile pre-v7 partial scripts once, including falsely advanced versions.
             for migration_file in migration_files:
                 # Extract version from filename (e.g., "002_relative_paths.sql" -> 2)
@@ -1023,7 +1035,11 @@ class SQLiteStore:
                 except (ValueError, IndexError):
                     continue
 
-                if version > current_version or (current_version < 7 and 2 <= version <= 7):
+                if (
+                    version > current_version
+                    or (current_version < 7 and 2 <= version <= 7)
+                    or (version == 5 and current_version == 7 and missing_chunk_summaries)
+                ):
                     logger.info(f"Running migration {migration_file.name}")
                     try:
                         conn.execute("BEGIN IMMEDIATE")

@@ -193,6 +193,19 @@ class SecureIndexExporter:
             database = root / "current.db"
             included, excluded = self.create_filtered_database(str(self.index_path), str(database))
             stats.update(files_included=included, files_excluded=excluded)
+            from mcp_server.storage.sqlite_store import SQLiteStore, evaluate_chunk_scheme
+
+            with closing(sqlite3.connect(database)) as connection:
+                version = connection.execute("SELECT MAX(version) FROM schema_version").fetchone()[
+                    0
+                ]
+                if version != SQLiteStore.SCHEMA_VERSION:
+                    raise ValueError("Exported index has an unsupported SQLite schema")
+                status, marker, target = evaluate_chunk_scheme(connection)
+                if status not in {"compatible", "compatible_legacy", "empty"}:
+                    raise ValueError("Exported index has an incompatible chunk identity scheme")
+                stats["schema_version"] = str(version)
+                stats["chunk_identity_algorithm"] = marker or target
             stats["components"].append("current.db")
             metadata = self._export_vectors(database, root / "semantic-vectors.jsonl")
             if metadata:

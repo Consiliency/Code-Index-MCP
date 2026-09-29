@@ -121,6 +121,31 @@ def _metadata(**overrides) -> dict:
     return payload
 
 
+def test_extracted_manifest_matches_database_schema_and_chunk_scheme(tmp_path):
+    from mcp_server.storage.sqlite_store import SQLiteStore, current_chunk_id_scheme
+
+    database = tmp_path / "current.db"
+    SQLiteStore(str(database)).close()
+    scheme = current_chunk_id_scheme()
+    with sqlite3.connect(database) as conn:
+        conn.execute(
+            "INSERT INTO index_config(config_key, config_value) VALUES (?, ?)",
+            ("chunk_identity_scheme", scheme),
+        )
+    manifest = {"schema_version": "7", "chunk_identity_algorithm": scheme}
+    downloader = IndexArtifactDownloader(repo="owner/repo")
+    downloader._validate_extracted_index_identity(tmp_path, {"manifest_v2": manifest})
+    with pytest.raises(ValueError, match="schema version disagrees"):
+        downloader._validate_extracted_index_identity(
+            tmp_path, {"manifest_v2": {**manifest, "schema_version": "2"}}
+        )
+    with pytest.raises(ValueError, match="chunk identity disagrees"):
+        downloader._validate_extracted_index_identity(
+            tmp_path,
+            {"manifest_v2": {**manifest, "chunk_identity_algorithm": "treesitter_chunk_id_v1"}},
+        )
+
+
 @pytest.mark.parametrize("advertised_url", [None, "", "https://example.invalid/bundle"])
 def test_enforce_requires_attestation_before_extraction(tmp_path, monkeypatch, advertised_url):
     monkeypatch.setenv("MCP_ATTESTATION_MODE", "enforce")
@@ -306,24 +331,32 @@ def test_download_selected_artifact_unsafe_override_reports_reasons(tmp_path: Pa
 
 
 def test_download_release_artifact_restores_direct_publish_payload(tmp_path: Path, monkeypatch):
+    from mcp_server.storage.sqlite_store import SQLiteStore, current_chunk_id_scheme
+
     monkeypatch.setenv("MCP_ATTESTATION_MODE", "skip")
     payload_dir = tmp_path / "release-assets"
     payload_dir.mkdir()
     archive_path = payload_dir / "index-archive.tar.gz"
     with tarfile.open(archive_path, "w:gz") as tar:
         current_db = tmp_path / "current.db"
-        current_db.write_text("db", encoding="utf-8")
+        SQLiteStore(str(current_db)).close()
+        with sqlite3.connect(current_db) as conn:
+            conn.execute(
+                "INSERT INTO index_config(config_key, config_value) VALUES (?, ?)",
+                ("chunk_identity_scheme", current_chunk_id_scheme()),
+            )
         tar.add(current_db, arcname="current.db")
     checksum = IndexArtifactDownloader(repo="owner/repo")._calculate_checksum(archive_path)
     (payload_dir / "artifact-metadata.json").write_text(
         json.dumps(
             _metadata(
+                schema_version="7",
                 checksum=checksum,
                 semantic_profile_hash="a" * 64,
                 compatibility={
-                    "schema_version": "2",
+                    "schema_version": "7",
                     "embedding_model": "lexical-only",
-                    "chunk_schema_version": "2",
+                    "chunk_schema_version": "7",
                 },
                 manifest_v2={
                     "logical_artifact_id": "logical-id",
@@ -331,12 +364,12 @@ def test_download_release_artifact_restores_direct_publish_payload(tmp_path: Pat
                     "tracked_branch": "main",
                     "branch": "main",
                     "commit": "abcdef123456",
-                    "schema_version": "2",
+                    "schema_version": "7",
                     "semantic_profile_hash": "a" * 64,
                     "checksum": checksum,
                     "artifact_type": "full",
-                    "chunk_schema_version": "2",
-                    "chunk_identity_algorithm": "treesitter_chunk_id_v1",
+                    "chunk_schema_version": "7",
+                    "chunk_identity_algorithm": current_chunk_id_scheme(),
                     "units": [
                         {
                             "unit_type": "lexical",
@@ -389,5 +422,6 @@ def test_download_release_artifact_restores_direct_publish_payload(tmp_path: Pat
 
     assert restored.parent == output_dir
     assert restored.name.startswith("verified-")
-    assert (restored / "current.db").read_text(encoding="utf-8") == "db"
+    with sqlite3.connect(restored / "current.db") as conn:
+        assert conn.execute("SELECT MAX(version) FROM schema_version").fetchone() == (7,)
     assert (restored / "artifact-metadata.json").exists()

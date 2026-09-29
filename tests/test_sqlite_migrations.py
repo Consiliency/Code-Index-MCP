@@ -112,6 +112,18 @@ def test_reopen_is_idempotent_and_repairs_legacy_version_gaps(tmp_path):
         assert conn.execute("SELECT * FROM migrations").fetchall() == logs
 
 
+def test_reopen_repairs_missing_chunk_summaries_with_v7_stamp(tmp_path):
+    path = tmp_path / "incomplete.db"
+    SQLiteStore(str(path)).close()
+    with sqlite3.connect(path) as conn:
+        conn.execute("DROP TABLE chunk_summaries")
+        assert conn.execute("SELECT MAX(version) FROM schema_version").fetchone() == (7,)
+    SQLiteStore(str(path)).close()
+    with sqlite3.connect(path) as conn:
+        assert conn.execute("PRAGMA table_info(chunk_summaries)").fetchall()
+        assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+
+
 def test_failed_migration_rolls_back_ddl_rows_and_version(tmp_path, monkeypatch):
     path = tmp_path / "rollback.db"
     store = SQLiteStore(str(path))

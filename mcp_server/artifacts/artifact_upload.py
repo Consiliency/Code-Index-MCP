@@ -129,6 +129,12 @@ class IndexArtifactUploader:
         stats = exporter.create_secure_archive(str(output_path))
         checksum = self._calculate_checksum(output_path)
         size = output_path.stat().st_size
+        self._prepared_archive_identity = (
+            checksum,
+            size,
+            stats["schema_version"],
+            stats["chunk_identity_algorithm"],
+        )
         print(f"Archive created: {output_path} ({size} bytes)")
         print(f"Files included: {stats['files_included']}; excluded: {stats['files_excluded']}")
         return output_path, checksum, size
@@ -175,7 +181,27 @@ class IndexArtifactUploader:
                 commit = commit or "unknown"
                 tracked_branch = tracked_branch or "unknown"
 
-        schema_version = schema_version or self._get_schema_version(index_path=index_path)
+        prepared_identity = getattr(self, "_prepared_archive_identity", None)
+        if prepared_identity and prepared_identity[:2] != (checksum, size):
+            raise ValueError("Metadata does not match the prepared archive")
+        if prepared_identity and prepared_identity[:2] == (checksum, size):
+            _, _, exported_schema, chunk_identity_algorithm = prepared_identity
+            if schema_version is not None and str(schema_version) != exported_schema:
+                raise ValueError("Requested schema version disagrees with exported index")
+            schema_version = exported_schema
+        else:
+            chunk_identity_algorithm = self._get_chunk_identity_algorithm(index_path)
+            actual_schema = self._get_schema_version(index_path=index_path)
+            if index_path is not None:
+                from mcp_server.storage.sqlite_store import SQLiteStore
+
+                if not actual_schema.isdigit() or int(actual_schema) > SQLiteStore.SCHEMA_VERSION:
+                    raise ValueError("Index has an unsupported SQLite schema")
+                if schema_version is not None and str(schema_version) != actual_schema:
+                    raise ValueError("Requested schema version disagrees with index")
+            schema_version = (
+                actual_schema if index_path is not None else schema_version or actual_schema
+            )
         compatibility = self._build_compatibility_metadata(
             schema_version, index_location=index_location, index_path=index_path
         )
@@ -202,7 +228,7 @@ class IndexArtifactUploader:
             checksum=checksum,
             artifact_type=artifact_type,
             chunk_schema_version=str(compatibility.get("chunk_schema_version", schema_version)),
-            chunk_identity_algorithm="treesitter_chunk_id_v1",
+            chunk_identity_algorithm=chunk_identity_algorithm,
             units=[
                 ManifestUnit(
                     unit_type="lexical",
@@ -335,6 +361,22 @@ class IndexArtifactUploader:
         except Exception as exc:
             record_handled_error(__name__, exc)
             return os.environ.get("INDEX_SCHEMA_VERSION", "2")
+
+    def _get_chunk_identity_algorithm(self, index_path: Path | str | None) -> str:
+        from mcp_server.storage.sqlite_store import (
+            LEGACY_CHUNK_ID_SCHEME,
+            evaluate_chunk_scheme,
+        )
+
+        if index_path is None:
+            return LEGACY_CHUNK_ID_SCHEME
+        with closing(
+            sqlite3.connect(Path(index_path).resolve().as_uri() + "?mode=ro", uri=True)
+        ) as conn:
+            status, marker, target = evaluate_chunk_scheme(conn)
+        if status not in {"compatible", "compatible_legacy", "empty"}:
+            raise ValueError("Index has an incompatible chunk identity scheme")
+        return marker or target
 
     def _get_index_stats(
         self,

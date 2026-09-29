@@ -424,6 +424,15 @@ def test_classifies_missing_schema(tmp_path):
     assert "quarantine" in (readiness.remediation or "").lower()
 
 
+def test_classifies_missing_chunk_summaries_as_missing_schema(tmp_path):
+    repo_info = make_repo_info(tmp_path)
+    with sqlite3.connect(repo_info.index_path) as conn:
+        conn.execute("DROP TABLE chunk_summaries")
+
+    readiness = ReadinessClassifier.classify_registered(repo_info)
+    assert readiness.state == RepositoryReadinessState.MISSING_SCHEMA
+
+
 def test_classifies_missing_provenance(tmp_path):
     repo_info = make_repo_info(tmp_path)
     repo_info.last_indexed_commit = None

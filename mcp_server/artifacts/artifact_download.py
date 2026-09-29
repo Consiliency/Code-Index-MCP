@@ -469,6 +469,7 @@ class IndexArtifactDownloader:
                         tar.extract(member, extracted, set_attrs=False)  # nosec B202 - owned output
             with (extracted / "artifact-metadata.json").open("xb") as handle:
                 handle.write(metadata_bytes)
+            self._validate_extracted_index_identity(extracted, metadata)
             return extracted
         except BaseException:
             shutil.rmtree(extracted)
@@ -480,6 +481,26 @@ class IndexArtifactDownloader:
             for chunk in iter(lambda: handle.read(8192), b""):
                 sha256.update(chunk)
         return sha256.hexdigest()
+
+    def _validate_extracted_index_identity(self, extracted: Path, metadata: Dict[str, Any]) -> None:
+        manifest = metadata.get("manifest_v2")
+        if not isinstance(manifest, dict):
+            return
+        database = extracted / "current.db"
+        if not database.is_file():
+            raise ValueError("Manifest artifact has no current.db")
+        with closing(sqlite3.connect(database.resolve().as_uri() + "?mode=ro", uri=True)) as conn:
+            version = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
+            from mcp_server.storage.sqlite_store import evaluate_chunk_scheme
+
+            status, marker, target = evaluate_chunk_scheme(conn)
+        if str(version) != str(manifest["schema_version"]):
+            raise ValueError("Manifest schema version disagrees with exported index")
+        if (
+            status in {"rebuilding", "missing_marker"}
+            or (marker or target) != manifest["chunk_identity_algorithm"]
+        ):
+            raise ValueError("Manifest chunk identity disagrees with exported index")
 
     def check_compatibility(self, metadata: Dict[str, Any]) -> Tuple[bool, List[str]]:
         from mcp_server.storage.sqlite_store import SQLiteStore

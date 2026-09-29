@@ -365,6 +365,75 @@ def test_compress_indexes_uses_repo_scoped_current_db(tmp_path: Path):
     )  # No fabricated semantic metadata for lexical-only export.
 
 
+def test_archive_metadata_uses_exported_schema_and_chunk_scheme(tmp_path: Path):
+    from mcp_server.artifacts.manifest_v2 import ArtifactManifestV2
+    from mcp_server.storage.sqlite_store import current_chunk_id_scheme
+
+    repo = tmp_path / "repo"
+    index_path = repo / ".mcp-index" / "current.db"
+    _sqlite_db(index_path)
+    with sqlite3.connect(index_path) as conn:
+        conn.execute("DELETE FROM schema_version WHERE version > 2")
+        conn.execute(
+            "INSERT INTO index_config(config_key, config_value) VALUES (?, ?)",
+            ("chunk_identity_scheme", current_chunk_id_scheme()),
+        )
+    uploader = IndexArtifactUploader(repo="owner/repo")
+    archive, checksum, size = uploader.compress_indexes(
+        tmp_path / "archive.tar.gz", repo_path=repo, index_path=index_path
+    )
+    metadata = uploader.create_metadata(checksum, size, tracked_branch="main", commit="abc")
+    assert metadata["schema_version"] == "7"
+    assert metadata["manifest_v2"]["chunk_identity_algorithm"] == current_chunk_id_scheme()
+    ArtifactManifestV2.from_dict(metadata["manifest_v2"])
+    with tarfile.open(archive) as bundle:
+        exported_db = tmp_path / "exported.db"
+        exported_db.write_bytes(bundle.extractfile("current.db").read())
+    with sqlite3.connect(exported_db) as conn:
+        assert conn.execute("SELECT MAX(version) FROM schema_version").fetchone() == (7,)
+        assert conn.execute(
+            "SELECT config_value FROM index_config WHERE config_key='chunk_identity_scheme'"
+        ).fetchone() == (current_chunk_id_scheme(),)
+    with pytest.raises(ValueError, match="disagrees with exported index"):
+        uploader.create_metadata(
+            checksum, size, tracked_branch="main", commit="abc", schema_version="2"
+        )
+
+
+def test_archive_rejects_future_sqlite_schema(tmp_path: Path):
+    repo = tmp_path / "repo"
+    index_path = repo / ".mcp-index" / "current.db"
+    _sqlite_db(index_path)
+    with sqlite3.connect(index_path) as conn:
+        conn.execute("INSERT INTO schema_version(version) VALUES (99)")
+    uploader = IndexArtifactUploader(repo="owner/repo")
+    with pytest.raises(ValueError, match="unsupported SQLite schema"):
+        uploader.compress_indexes(
+            tmp_path / "archive.tar.gz", repo_path=repo, index_path=index_path
+        )
+
+
+def test_metadata_only_rejects_schema_override(tmp_path: Path):
+    index_path = tmp_path / "current.db"
+    _sqlite_db(index_path)
+    uploader = IndexArtifactUploader(repo="owner/repo")
+    with pytest.raises(ValueError, match="disagrees with index"):
+        uploader.create_metadata(
+            "deadbeef",
+            123,
+            tracked_branch="main",
+            commit="abc",
+            index_path=index_path,
+            schema_version="99",
+        )
+    with sqlite3.connect(index_path) as conn:
+        conn.execute("INSERT INTO schema_version(version) VALUES (99)")
+    with pytest.raises(ValueError, match="unsupported SQLite schema"):
+        uploader.create_metadata(
+            "deadbeef", 123, tracked_branch="main", commit="abc", index_path=index_path
+        )
+
+
 def test_create_metadata_includes_full_p31_identity(tmp_path: Path):
     index_location = tmp_path / ".mcp-index"
     index_location.mkdir()
@@ -482,7 +551,7 @@ def test_write_metadata_file_matches_create_metadata_contract(tmp_path: Path):
         repo_id="repo-id",
         tracked_branch="main",
         commit="abcdef123456",
-        schema_version="2",
+        schema_version="7",
         index_location=index_location,
         index_path=index_path,
     )
@@ -491,7 +560,7 @@ def test_write_metadata_file_matches_create_metadata_contract(tmp_path: Path):
     assert payload["repo_id"] == "repo-id"
     assert payload["tracked_branch"] == "main"
     assert payload["commit"] == "abcdef123456"
-    assert payload["schema_version"] == "2"
+    assert payload["schema_version"] == "7"
     assert payload["checksum"] == "deadbeef"
     assert payload["artifact_type"] == "full"
     assert (

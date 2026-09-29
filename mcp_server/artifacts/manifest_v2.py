@@ -108,7 +108,12 @@ class ArtifactManifestV2:
         """Validate manifest invariants required for reliable consumption."""
         if self.manifest_version != "2":
             raise ValueError(f"Unsupported manifest version: {self.manifest_version}")
-        if self.chunk_identity_algorithm != "treesitter_chunk_id_v1":
+        from mcp_server.storage.sqlite_store import LEGACY_CHUNK_ID_SCHEME, current_chunk_id_scheme
+
+        if self.chunk_identity_algorithm not in {
+            LEGACY_CHUNK_ID_SCHEME,
+            current_chunk_id_scheme(),
+        }:
             raise ValueError(
                 f"Unsupported chunk identity algorithm: {self.chunk_identity_algorithm}"
             )
