@@ -31,6 +31,55 @@ def test_sweep_hash_streams_normalized_source(tmp_path, monkeypatch, content, no
     assert sweeper._hash_file(source) == hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
+@pytest.mark.parametrize("change", ["modify", "delete"])
+def test_sweep_skips_uncommitted_tracked_changes(tmp_path, change):
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo_root)], check=True)
+    source = repo_root / "source.py"
+    source.write_text("value = 1\n")
+    subprocess.run(["git", "add", "source.py"], cwd=repo_root, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "-qm",
+            "fixture",
+        ],
+        cwd=repo_root,
+        check=True,
+    )
+    store = _make_sqlite_store(tmp_path)
+    repo_id = store.create_repository(str(repo_root), "repo")
+    store.store_file(
+        file_path=source,
+        language="python",
+        repository_id=repo_id,
+        relative_path="source.py",
+        content_hash=hashlib.sha256(source.read_bytes()).hexdigest(),
+    )
+    if change == "modify":
+        source.write_text("value = 2\n")
+    else:
+        source.unlink()
+    drift_calls = []
+    sweeper = WatcherSweeper(
+        None,
+        lambda: {"repo": repo_root},
+        store,
+        on_repository_drift=drift_calls.append,
+    )
+    try:
+        assert sweeper.sweep_once() == []
+        assert drift_calls == []
+    finally:
+        store.close()
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

@@ -14,6 +14,7 @@ import sqlite3
 import subprocess
 import tempfile
 import uuid
+from contextlib import closing
 from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
@@ -402,7 +403,23 @@ class GitAwareIndexManager:
         def restore(ctx):
             if ctx.registry_entry.current_commit != expected_commit:
                 raise ValueError("Artifact commit changed before staging")
-            mappings = ctx.sqlite_store.import_artifact_rows(database, ctx.workspace_root)
+            with closing(
+                sqlite3.connect(database.resolve().as_uri() + "?mode=ro", uri=True)
+            ) as source:
+                version = source.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
+            if version is None or version > SQLiteStore.SCHEMA_VERSION:
+                raise ValueError("Artifact SQLite schema is unsupported")
+            if version < SQLiteStore.SCHEMA_VERSION:
+                with tempfile.TemporaryDirectory(
+                    prefix=".artifact-upgrade-", dir=Path(ctx.sqlite_store.db_path).parent
+                ) as temporary:
+                    upgraded = Path(temporary) / "current.db"
+                    SQLiteStore.snapshot_database(database, upgraded)
+                    migrated = SQLiteStore(str(upgraded))
+                    migrated.close()
+                    mappings = ctx.sqlite_store.import_artifact_rows(upgraded, ctx.workspace_root)
+            else:
+                mappings = ctx.sqlite_store.import_artifact_rows(database, ctx.workspace_root)
             if mappings:
                 self._restore_artifact_vectors(ctx, extracted, mappings)
             with ctx.sqlite_store._get_connection() as connection:
@@ -2013,7 +2030,7 @@ class GitAwareIndexManager:
         }
 
         # Check index file
-        index_path = Path(repo_info.index_location) / "current.db"
+        index_path = Path(repo_info.index_path or Path(repo_info.index_location) / "current.db")
         if index_path.exists():
             status["index_exists"] = True
             status["index_size_mb"] = index_path.stat().st_size / (1024 * 1024)

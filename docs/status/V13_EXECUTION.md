@@ -799,3 +799,17 @@ an exact-head full suite, installed/browser validation and complete independent
 reviews. The Gemini full-candidate pass reported partial coverage and is
 `UNVERIFIED`; it is not counted as approval. Both bounded live allowances
 remain unused and Code-Index-MCP#97 remains draft.
+
+The exact `bbd74be` serial suite passed 4,040 tests (135 skipped, 40
+deselected, 55.26% coverage), with both protected CI checks green. Opus's
+file-pointer delta review confirmed its scoped-summary blocker is closed, but
+did not claim full-candidate coverage. The two Sol exact-candidate reads of
+`38163b7` identified an older-schema registered restore gap, stale summary
+readiness, an incorrect published-index status probe, and dirty-worktree
+sweep noise. The local follow-up upgrades an isolated artifact copy before
+restore, checks summary authority and the active fingerprint for readiness,
+reports the registered generation path, and suppresses sweep drift on dirty
+tracked worktrees. Focused controls and 317 surrounding tests pass. The
+follow-up source is not yet exact-head accepted or fully reviewed. Gemini's
+small delta batches are diagnostic only. PREP remains unaccepted, both bounded
+effects are unused, and Code-Index-MCP#97 remains draft.

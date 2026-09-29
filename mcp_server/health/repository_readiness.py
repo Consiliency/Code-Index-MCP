@@ -771,7 +771,22 @@ def _semantic_evidence(
     if not callable(getter):
         return None
     try:
-        result = getter(profile_id, collection=expected_collection)
+        from mcp_server.config.settings import reload_settings
+        from mcp_server.indexing.summarization import ComprehensiveChunkWriter
+
+        settings = reload_settings()
+        config = settings.get_profile_summarization_config(profile_id)
+        config.setdefault("profile_id", profile_id)
+        fingerprint = ComprehensiveChunkWriter(
+            db_path=sqlite_store.db_path,
+            qdrant_client=None,
+            summarization_config=config,
+        )._prompt_fingerprint()
+        result = getter(
+            profile_id,
+            collection=expected_collection,
+            expected_prompt_fingerprint=fingerprint,
+        )
         return result if isinstance(result, dict) else None
     except Exception:
         return None

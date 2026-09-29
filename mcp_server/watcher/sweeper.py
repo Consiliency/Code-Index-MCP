@@ -121,6 +121,15 @@ class WatcherSweeper:
             tracked_blobs = None
             transformed_paths: set[str] = set()
             if (repo_root / ".git").exists():
+                clean = subprocess.run(
+                    ["git", "diff", "--quiet", "HEAD", "--"],
+                    cwd=repo_root,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=30,
+                )
+                if clean.returncode != 0:
+                    continue
                 tracked_blobs = {}
                 listing = subprocess.run(
                     ["git", "ls-tree", "-r", "-l", "-z", "HEAD"],

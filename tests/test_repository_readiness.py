@@ -184,11 +184,21 @@ def _seed_semantic_rows(
         (file_id, "def demo():\n    return 1\n"),
     )
     if with_summary:
+        from mcp_server.config.settings import reload_settings
+        from mcp_server.indexing.summarization import ComprehensiveChunkWriter
+
+        settings = reload_settings()
+        config = settings.get_profile_summarization_config("oss_high")
+        config.setdefault("profile_id", "oss_high")
+        fingerprint = ComprehensiveChunkWriter(
+            db_path=str(index_path), qdrant_client=None, summarization_config=config
+        )._prompt_fingerprint()
         conn.execute(
             """INSERT INTO chunk_summaries
-               (chunk_hash, file_id, chunk_start, chunk_end, summary_text, is_authoritative, llm_model)
-               VALUES ('chunk-1', ?, 0, 10, 'demo summary', 1, 'chat')""",
-            (file_id,),
+               (chunk_hash, file_id, chunk_start, chunk_end, summary_text,
+                is_authoritative, llm_model, profile_id, prompt_fingerprint)
+               VALUES ('chunk-1', ?, 0, 10, 'demo summary', 1, 'chat', 'oss_high', ?)""",
+            (file_id, fingerprint),
         )
     if with_vector:
         conn.execute(
@@ -290,6 +300,33 @@ def test_semantic_readiness_reports_vectors_missing_when_summaries_exist(tmp_pat
     semantic = ReadinessClassifier.classify_semantic_registered(info, store)
 
     assert semantic.state == SemanticReadinessState.VECTORS_MISSING
+
+
+@pytest.mark.parametrize("drift", ["prompt", "non_authoritative", "profile"])
+def test_semantic_readiness_refuses_stale_summary_provenance(tmp_path, monkeypatch, drift):
+    import mcp_server.health.repository_readiness as readiness_module
+
+    info, store = _make_semantic_repo_info(tmp_path)
+    _seed_semantic_rows(info.index_path, with_summary=True, with_vector=True)
+    monkeypatch.setattr(readiness_module, "_current_semantic_profile", lambda: _profile())
+    (Path(info.path) / ".index_metadata.json").write_text(
+        '{"semantic_profile":"oss_high","semantic_profiles":{"oss_high":'
+        '{"compatibility_fingerprint":"fingerprint-1","model_dimension":4096,'
+        '"collection_name":"code_index__oss_high__v1"}}}',
+        encoding="utf-8",
+    )
+    with store._get_connection() as connection:
+        if drift == "prompt":
+            connection.execute("UPDATE chunk_summaries SET prompt_fingerprint='old'")
+        elif drift == "profile":
+            connection.execute("UPDATE chunk_summaries SET profile_id='other'")
+        else:
+            connection.execute("UPDATE chunk_summaries SET is_authoritative=0")
+
+    semantic = ReadinessClassifier.classify_semantic_registered(info, store)
+
+    assert semantic.state == SemanticReadinessState.SUMMARIES_MISSING
+    assert semantic.evidence["missing_summaries"] == 1
 
 
 def test_semantic_readiness_reports_stale_when_fingerprint_mismatches(tmp_path, monkeypatch):

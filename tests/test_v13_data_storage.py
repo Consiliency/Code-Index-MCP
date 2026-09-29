@@ -205,6 +205,55 @@ def test_stage_has_early_fence_own_context_and_immutable_source(runtime, monkeyp
     assert registry.get(repo_id).staleness_reason == "partial_index_failure"
 
 
+def test_repository_status_reports_published_generation_path(runtime):
+    _repo, registry, repo_id, _store, manager = runtime
+    assert manager.rebuild_repository_index(repo_id).action == "full_index"
+    published = registry.get(repo_id).index_path
+    assert published.exists()
+    assert published.name != "current.db"
+    status = manager.get_repository_status(repo_id)
+    assert status["index_exists"] is True
+    assert status["index_size_mb"] == published.stat().st_size / (1024 * 1024)
+
+
+def test_registered_restore_upgrades_isolated_legacy_artifact(runtime, tmp_path):
+    from importlib import resources
+
+    repo, registry, repo_id, _store, manager = runtime
+    assert manager.rebuild_repository_index(repo_id).action == "full_index"
+    extracted = tmp_path / "legacy-artifact"
+    extracted.mkdir()
+    database = extracted / "current.db"
+    with closing(sqlite3.connect(database)) as connection:
+        connection.executescript(
+            resources.files("mcp_server.storage")
+            .joinpath("migrations/001_initial_schema.sql")
+            .read_text(encoding="utf-8")
+        )
+        connection.execute(
+            "INSERT INTO repositories(id, path, name) VALUES(1, ?, 'fixture')", (str(repo),)
+        )
+        connection.execute(
+            "INSERT INTO files(repository_id, path, relative_path, language, "
+            "size, hash, content_hash) VALUES(1, ?, 'hello.py', 'python', ?, ?, ?)",
+            (
+                str(repo / "hello.py"),
+                (repo / "hello.py").stat().st_size,
+                hashlib.sha256((repo / "hello.py").read_bytes()).hexdigest(),
+                hashlib.sha256((repo / "hello.py").read_bytes()).hexdigest(),
+            ),
+        )
+    original = database.read_bytes()
+    result = manager.restore_verified_artifact(
+        repo_id, extracted, expected_commit=_get_head_commit(repo)
+    )
+    assert result.action == "full_index", result.error
+    assert database.read_bytes() == original
+    with closing(sqlite3.connect(database)) as connection:
+        assert connection.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 1
+    assert registry.get(repo_id).staleness_reason is None
+
+
 @pytest.mark.parametrize(
     "stage", ["stage_created", "before_replacement", "after_replacement", "before_provenance"]
 )

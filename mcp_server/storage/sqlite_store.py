@@ -4042,17 +4042,33 @@ class SQLiteStore:
         profile_id: str,
         *,
         collection: Optional[str] = None,
+        expected_prompt_fingerprint: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Summarize durable semantic evidence without mutating the store."""
         with self._get_connection() as conn:
             total_chunks = int(conn.execute("SELECT COUNT(*) FROM code_chunks").fetchone()[0])
-            summary_count = int(
-                conn.execute("SELECT COUNT(DISTINCT chunk_hash) FROM chunk_summaries").fetchone()[0]
-            )
-            missing_summaries = int(conn.execute("""SELECT COUNT(*)
-                       FROM code_chunks c
-                       LEFT JOIN chunk_summaries cs ON c.chunk_id = cs.chunk_hash
-                       WHERE cs.chunk_hash IS NULL""").fetchone()[0])
+            if expected_prompt_fingerprint is None:
+                missing_summaries = int(conn.execute("""SELECT COUNT(*)
+                           FROM code_chunks c
+                           LEFT JOIN chunk_summaries cs ON c.chunk_id = cs.chunk_hash
+                           WHERE cs.chunk_hash IS NULL""").fetchone()[0])
+                summary_count = int(
+                    conn.execute(
+                        "SELECT COUNT(DISTINCT chunk_hash) FROM chunk_summaries"
+                    ).fetchone()[0]
+                )
+            else:
+                missing_summaries = int(
+                    conn.execute(
+                        """SELECT COUNT(*)
+                           FROM code_chunks c
+                           LEFT JOIN chunk_summaries cs ON c.chunk_id = cs.chunk_hash
+                           WHERE cs.chunk_hash IS NULL OR cs.is_authoritative != 1
+                              OR cs.profile_id IS NOT ? OR cs.prompt_fingerprint IS NOT ?""",
+                        (profile_id, expected_prompt_fingerprint),
+                    ).fetchone()[0]
+                )
+                summary_count = total_chunks - missing_summaries
 
             vector_link_count = int(
                 conn.execute(
