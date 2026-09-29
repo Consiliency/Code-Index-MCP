@@ -759,6 +759,24 @@ def test_artifact_schema_tracks_current_sqlite_migrations(runtime, monkeypatch):
         downloader.check_compatibility(metadata)
 
 
+def test_legacy_database_in_cwd_does_not_limit_artifact_schema(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("INDEX_SCHEMA_VERSION", raising=False)
+    with sqlite3.connect("code_index.db") as connection:
+        connection.execute("CREATE TABLE schema_version (version INTEGER)")
+        connection.execute("INSERT INTO schema_version VALUES (2)")
+    metadata = {
+        "compatibility": {
+            "schema_version": str(SQLiteStore.SCHEMA_VERSION),
+            "embedding_model": None,
+        }
+    }
+    assert IndexArtifactDownloader(repo="synthetic/example").check_compatibility(metadata) == (
+        True,
+        [],
+    )
+
+
 def test_repository_retirement_joins_observer_before_closing_resources(tmp_path):
     from mcp_server.watcher_multi_repo import MultiRepositoryWatcher
 

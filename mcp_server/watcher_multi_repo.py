@@ -489,8 +489,6 @@ class MultiRepositoryWatcher:
             )
             return {repo_id: Path(repo.path) for repo_id, repo in owners.items()}
 
-        if not self.registry.get_all_repositories():
-            return None
         return WatcherSweeper(
             on_missed_path=None,
             repo_roots_provider=_repo_roots,

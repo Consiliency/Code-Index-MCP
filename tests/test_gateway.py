@@ -177,6 +177,32 @@ class TestGatewayStartupShutdown:
             with startup_test_client:
                 pass
 
+    @patch("mcp_server.gateway.SQLiteStore")
+    def test_mid_startup_failure_closes_started_cache_and_store(
+        self, mock_store, startup_test_client, monkeypatch
+    ):
+        from unittest.mock import AsyncMock
+
+        import mcp_server.gateway as gateway
+
+        cache = Mock()
+        cache.initialize = AsyncMock()
+        cache.shutdown = AsyncMock()
+        monkeypatch.setenv("CACHE_BACKEND", "memory")
+        monkeypatch.setattr(
+            gateway.CacheManagerFactory, "create_memory_cache", lambda **_kwargs: cache
+        )
+        monkeypatch.setattr(
+            gateway,
+            "run_semantic_preflight",
+            Mock(side_effect=RuntimeError("synthetic semantic preflight failure")),
+        )
+        with pytest.raises(RuntimeError, match="synthetic semantic preflight failure"):
+            with startup_test_client:
+                pass
+        cache.shutdown.assert_awaited_once()
+        mock_store.return_value.close.assert_called_once()
+
     @pytest.mark.parametrize(
         "boundary", ["watcher_construct", "poller_construct", "watcher_start", "poller_start"]
     )

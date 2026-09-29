@@ -76,6 +76,19 @@ def test_sweeper_and_git_monitor_respect_disabled_repository(tmp_path, disabled)
     monitor.callback.assert_not_called()
 
 
+def test_empty_startup_constructs_sweeper_for_later_registration(tmp_path):
+    watcher = MultiRepositoryWatcher.__new__(MultiRepositoryWatcher)
+    watcher.registry = _make_registry()
+    watcher.index_manager = Mock()
+    sweeper = watcher._build_default_sweeper()
+    assert sweeper is not None
+    assert sweeper._repo_roots_provider() == {}
+    watcher.registry.get_all_repositories.return_value = {
+        "new-repo": _make_repo_info(str(tmp_path))
+    }
+    assert sweeper._repo_roots_provider() == {"new-repo": tmp_path}
+
+
 def _make_dispatcher():
     from mcp_server.dispatcher.dispatcher_enhanced import IndexResult, IndexResultStatus
 

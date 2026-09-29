@@ -106,6 +106,12 @@ class ArtifactManifestV2:
 
     def validate(self) -> None:
         """Validate manifest invariants required for reliable consumption."""
+        if self.manifest_version != "2":
+            raise ValueError(f"Unsupported manifest version: {self.manifest_version}")
+        if self.chunk_identity_algorithm != "treesitter_chunk_id_v1":
+            raise ValueError(
+                f"Unsupported chunk identity algorithm: {self.chunk_identity_algorithm}"
+            )
         if not self.repo_id:
             raise ValueError("Manifest v2 requires repo_id")
         if not self.canonical_tracked_branch:
@@ -126,6 +132,8 @@ class ArtifactManifestV2:
         lexical_units = [u for u in self.units if u.unit_type == "lexical"]
         if len(lexical_units) != 1:
             raise ValueError("Manifest v2 requires exactly one lexical unit")
+        if lexical_units[0].checksum != self.resolved_checksum:
+            raise ValueError("Manifest lexical checksum disagrees with archive checksum")
 
         seen_ids = set()
         for unit in self.units:

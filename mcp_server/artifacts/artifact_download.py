@@ -493,24 +493,7 @@ class IndexArtifactDownloader:
         artifact_schema = str(compatibility.get("schema_version"))
         artifact_profiles = extract_semantic_profile_metadata(compatibility)
 
-        required_schema = os.environ.get("INDEX_SCHEMA_VERSION")
-        if not required_schema:
-            local_db = Path("code_index.db")
-            if local_db.exists():
-                conn = None
-                try:
-                    conn = sqlite3.connect(str(local_db))
-                    required_schema = str(
-                        conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
-                    )
-                except Exception as exc:
-                    record_handled_error(__name__, exc)
-                    required_schema = None
-                finally:
-                    if conn is not None:
-                        conn.close()
-        if not required_schema:
-            required_schema = str(SQLiteStore.SCHEMA_VERSION)
+        required_schema = os.environ.get("INDEX_SCHEMA_VERSION") or str(SQLiteStore.SCHEMA_VERSION)
         if artifact_schema not in supported_schemas:
             raise UnknownSchemaVersionError(
                 f"Artifact schema version {artifact_schema!r} is unknown; "

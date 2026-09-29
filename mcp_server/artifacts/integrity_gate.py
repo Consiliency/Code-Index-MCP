@@ -117,13 +117,60 @@ def validate_artifact_integrity(
 
     manifest_v2_validated = False
     manifest_v2_payload = _extract_manifest_v2_payload(metadata)
-    if manifest_v2_payload is not None:
+    if "manifest_v2" in metadata or "artifact_manifest_v2" in metadata:
+        if (
+            "manifest_v2" in metadata
+            and "artifact_manifest_v2" in metadata
+            and (metadata["manifest_v2"] != metadata["artifact_manifest_v2"])
+        ):
+            reasons.append("manifest_v2 aliases disagree")
         if not isinstance(manifest_v2_payload, dict):
             reasons.append("manifest_v2 must be an object")
         else:
             try:
-                ArtifactManifestV2.from_dict(manifest_v2_payload)
-                manifest_v2_validated = True
+                manifest = ArtifactManifestV2.from_dict(manifest_v2_payload)
+                bound_fields = {
+                    "repo_id": manifest.repo_id,
+                    "tracked_branch": manifest.canonical_tracked_branch,
+                    "commit": manifest.commit,
+                    "schema_version": manifest.schema_version,
+                    "semantic_profile_hash": manifest.semantic_profile_hash,
+                    "checksum": manifest.resolved_checksum,
+                    "artifact_type": manifest.artifact_type,
+                }
+                manifest_reasons = []
+                for key, value in bound_fields.items():
+                    outer = metadata.get(key)
+                    if key == "tracked_branch":
+                        outer = outer or metadata.get("branch")
+                    if str(outer) != str(value):
+                        manifest_reasons.append(f"manifest_v2 {key} disagrees with metadata")
+                if "logical_artifact_id" in metadata and (
+                    manifest.logical_artifact_id != metadata["logical_artifact_id"]
+                ):
+                    manifest_reasons.append(
+                        "manifest_v2 logical_artifact_id disagrees with metadata"
+                    )
+                compatibility = metadata.get("compatibility")
+                if isinstance(compatibility, dict):
+                    if str(compatibility.get("schema_version")) != str(manifest.schema_version):
+                        manifest_reasons.append("manifest_v2 schema disagrees with compatibility")
+                    if "chunk_schema_version" in compatibility and str(
+                        compatibility["chunk_schema_version"]
+                    ) != str(manifest.chunk_schema_version):
+                        manifest_reasons.append(
+                            "manifest_v2 chunk schema disagrees with compatibility"
+                        )
+                lexical = next(unit for unit in manifest.units if unit.unit_type == "lexical")
+                if lexical.size_bytes != archive_path.stat().st_size:
+                    manifest_reasons.append("manifest_v2 lexical size disagrees with archive")
+                if (
+                    "compressed_size" in metadata
+                    and metadata["compressed_size"] != lexical.size_bytes
+                ):
+                    manifest_reasons.append("manifest_v2 compressed size disagrees with metadata")
+                reasons.extend(manifest_reasons)
+                manifest_v2_validated = not manifest_reasons
             except (KeyError, TypeError, ValueError) as exc:
                 reasons.append(f"invalid manifest_v2: {exc}")
 

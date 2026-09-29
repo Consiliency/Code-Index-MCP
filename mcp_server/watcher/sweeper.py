@@ -11,56 +11,12 @@ from typing import Callable, Dict, List, Optional
 
 from ..core.ignore_patterns import build_walker_filter
 from ..metrics.prometheus_exporter import mcp_watcher_sweep_errors_total
+from ..plugins.language_registry import get_all_extensions
 from ..storage.sqlite_store import SQLiteStore
 
 logger = logging.getLogger(__name__)
 
-# Supported code-file extensions (mirrors _Handler.code_extensions)
-_CODE_EXTENSIONS = {
-    ".py",
-    ".js",
-    ".ts",
-    ".jsx",
-    ".tsx",
-    ".java",
-    ".c",
-    ".cpp",
-    ".cc",
-    ".cxx",
-    ".h",
-    ".hpp",
-    ".cs",
-    ".go",
-    ".rb",
-    ".rs",
-    ".swift",
-    ".kt",
-    ".scala",
-    ".php",
-    ".r",
-    ".m",
-    ".mm",
-    ".dart",
-    ".lua",
-    ".pl",
-    ".sh",
-    ".sql",
-    ".html",
-    ".css",
-    ".scss",
-    ".vue",
-    ".elm",
-    ".ex",
-    ".exs",
-    ".erl",
-    ".clj",
-    ".cljs",
-    ".hs",
-    ".ml",
-    ".mli",
-    ".f90",
-    ".f95",
-}
+_CODE_EXTENSIONS = get_all_extensions()
 
 ENV_SWEEP_MINUTES: str = "MCP_WATCHER_SWEEP_MINUTES"
 DEFAULT_SWEEP_MINUTES: int = 60

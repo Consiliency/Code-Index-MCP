@@ -42,6 +42,25 @@ def _store_file(store, repo_id_int: int, relative_path: str, content_hash: str =
 class TestSweeperRecoversMissedEvent:
     """Sweeper detects a file present on disk but absent from SQLite."""
 
+    @pytest.mark.parametrize("extension", [".md", ".txt", ".pyw", ".mjs", ".yaml"])
+    def test_sweep_recovers_every_supported_file_family(self, tmp_path, extension):
+        root = tmp_path / "repo"
+        root.mkdir()
+        (root / f"missed{extension}").write_text("synthetic content\n")
+        store = _make_sqlite_store(tmp_path)
+        store.create_repository(str(root), "repo")
+        calls = []
+        sweeper = WatcherSweeper(
+            on_missed_path=lambda repo, path: calls.append((repo, path)),
+            repo_roots_provider=lambda: {"repo": root},
+            store=store,
+        )
+        try:
+            assert sweeper.sweep_once() == ["repo"]
+            assert calls == [("repo", f"missed{extension}")]
+        finally:
+            store.close()
+
     def test_sweeper_detects_changed_content_at_an_existing_path(self, tmp_path):
         root = tmp_path / "repo"
         root.mkdir()

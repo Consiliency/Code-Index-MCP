@@ -659,6 +659,7 @@ async def startup_event():
             )
             logger.info("Using memory cache backend")
 
+        background_startup_complete = True
         await cache_manager.initialize()
 
         # Initialize query result cache
@@ -1187,6 +1188,10 @@ async def shutdown_event():
                 raise RuntimeError("Plugin manager shutdown failed")
         if cache_manager:
             await cache_manager.shutdown()
+        if _store_registry:
+            _store_registry.shutdown()
+        if sqlite_store:
+            sqlite_store.close()
         logger.info("Owned service resources stopped successfully")
 
 

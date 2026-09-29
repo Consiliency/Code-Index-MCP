@@ -574,6 +574,14 @@ class IndexArtifactUploader:
     ) -> "ReleaseAssetBundle":
         if metadata.get("checksum") != self._calculate_checksum(archive_path):
             raise ValueError("Prepared archive checksum does not match its metadata")
+        if "manifest_v2" in metadata or "artifact_manifest_v2" in metadata:
+            from .integrity_gate import validate_artifact_integrity
+
+            integrity = validate_artifact_integrity(metadata, archive_path)
+            if not integrity.passed:
+                raise ValueError(
+                    "Prepared artifact integrity validation failed: " + "; ".join(integrity.reasons)
+                )
         bundle = self._build_release_asset_bundle(archive_path, metadata, attestation=attestation)
         if attestation is None:
             attestation = attest(bundle.metadata_path, repo=self.repo)
