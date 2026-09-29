@@ -551,8 +551,9 @@ class SQLiteStore:
                         except UnicodeDecodeError:
                             content = raw_content.decode("latin-1")
                         content = content.replace("\r\n", "\n").replace("\r", "\n")
+                        normalized_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
                         source_hashes = {
-                            hashlib.sha256(content.encode("utf-8")).hexdigest(),
+                            normalized_hash,
                             hashlib.sha256(raw_content).hexdigest(),
                         }
                         if row["content_hash"] not in source_hashes:
@@ -569,10 +570,16 @@ class SQLiteStore:
                         file_id = existing[0]
                         target.execute(
                             "UPDATE files SET path=?, hash=?, content_hash=?, language=?, is_deleted=0 WHERE id=?",
-                            (canonical, row["hash"], row["content_hash"], row["language"], file_id),
+                            (canonical, row["hash"], normalized_hash, row["language"], file_id),
                         )
                     else:
-                        file_id = insert("files", row, repository_id=repository_id, path=canonical)
+                        file_id = insert(
+                            "files",
+                            row,
+                            repository_id=repository_id,
+                            path=canonical,
+                            **({"content_hash": normalized_hash} if has_code else {}),
+                        )
                     file_ids[row["id"]] = file_id
                     if has_code:
                         target.execute(

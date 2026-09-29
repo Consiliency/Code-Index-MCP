@@ -678,12 +678,23 @@ def test_installed_cli_prepares_once_and_uploads_only_matching_signed_identity(
     upload.assert_called_once()
     signature.assert_called_once_with(metadata_path, repo="synthetic/example")
     assert registry.get(repo_id).artifact_health == "published"
+    assert json.loads(before)["index_generation"] == registry.get(repo_id).index_generation
     metadata = json.loads(before)
     metadata["repo_id"] = "other-repository"
     metadata_path.write_bytes(_metadata_bytes(metadata))
     refused = runner.invoke(artifact, command)
     assert refused.exit_code != 0
     assert "identity mismatch" in refused.output
+    upload.assert_called_once()
+    signature.assert_called_once()
+    metadata_path.write_bytes(before)
+    registry.update_indexed_commit(
+        repo_id, registry.get(repo_id).last_indexed_commit, branch="main"
+    )
+    assert registry.get(repo_id).index_generation != metadata["index_generation"]
+    stale = runner.invoke(artifact, command)
+    assert stale.exit_code != 0
+    assert "index generation differs" in stale.output
     upload.assert_called_once()
     signature.assert_called_once()
 

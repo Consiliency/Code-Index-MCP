@@ -55,6 +55,10 @@ def test_import_artifact_rows_accepts_indexed_text_hash(
         assert target.import_artifact_rows(tmp_path / "source.db", repo) == []
         with target._get_connection() as conn:
             assert conn.execute("SELECT content FROM fts_code").fetchone()[0] == normalized
+            assert (
+                conn.execute("SELECT content_hash FROM files").fetchone()[0]
+                == hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+            )
         source_file.write_bytes(source_bytes + b"# changed\n")
         with pytest.raises(ValueError, match="Artifact source differs"):
             target.import_artifact_rows(tmp_path / "source.db", repo)

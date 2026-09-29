@@ -379,6 +379,7 @@ def push(
             "repo_id": repo_info.repository_id if repo_info else None,
             "commit": repo_info.last_indexed_commit if repo_info else None,
             "tracked_branch": repo_info.tracked_branch if repo_info else None,
+            "index_generation": repo_info.index_generation if repo_info else None,
         }
         if prepared_archive:
             assert prepared_metadata is not None

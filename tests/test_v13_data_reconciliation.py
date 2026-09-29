@@ -1,5 +1,6 @@
 """Production committed-source and watcher reconciliation controls."""
 
+import hashlib
 import subprocess
 
 import pytest
@@ -8,6 +9,23 @@ from mcp_server.core.repo_resolver import RepoResolver
 from mcp_server.storage.store_registry import StoreRegistry
 from mcp_server.watcher_multi_repo import MultiRepositoryWatcher
 from tests.test_v13_data_storage import runtime
+
+
+@pytest.mark.parametrize("source_bytes", [b"name = 1\r\n", b"# caf\xe9\n"])
+def test_committed_snapshot_hash_matches_indexed_text(runtime, tmp_path, source_bytes):
+    repo, _registry, _repo_id, _store, manager = runtime
+    (repo / "hello.py").write_bytes(source_bytes)
+    subprocess.run(["git", "add", "hello.py"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "Synthetic encoded source"], cwd=repo, check=True)
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True
+    ).stdout.strip()
+    destination = tmp_path / "snapshot"
+    destination.mkdir()
+    hashes = manager._snapshot_committed_inputs(repo, head, destination)
+    normalized = source_bytes.decode("utf-8" if b"\xe9" not in source_bytes else "latin-1")
+    normalized = normalized.replace("\r\n", "\n")
+    assert hashes["hello.py"] == hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
 def test_pilot_estimate_is_offline_and_bounds_every_request_class():

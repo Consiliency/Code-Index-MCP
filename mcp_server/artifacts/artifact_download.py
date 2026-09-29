@@ -156,6 +156,7 @@ class IndexArtifactDownloader:
         print("🔍 Fetching available artifacts...")
         deadline = time.monotonic() + 60
         actions = io.BytesIO()
+        available = 0
         try:
             _download_bounded(
                 [
@@ -170,10 +171,9 @@ class IndexArtifactDownloader:
                 8 * 1024**2,
                 deadline,
             )
-        except FileNotFoundError as exc:
-            raise RuntimeError("gh CLI is required for artifact download flows") from exc
-        except subprocess.CalledProcessError as exc:
-            raise RuntimeError(f"Failed to list artifacts: {exc.stderr or exc}") from exc
+            available += 1
+        except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            actions = io.BytesIO()
 
         artifacts = []
         for count, line in enumerate(actions.getvalue().decode("utf-8").splitlines(), 1):
@@ -190,12 +190,18 @@ class IndexArtifactDownloader:
                     artifacts.append(artifact)
 
         releases = io.BytesIO()
-        _download_bounded(
-            ["gh", "api", f"/repos/{self.repo}/releases", "--paginate", "--jq", ".[]"],
-            releases,
-            8 * 1024**2,
-            deadline,
-        )
+        try:
+            _download_bounded(
+                ["gh", "api", f"/repos/{self.repo}/releases", "--paginate", "--jq", ".[]"],
+                releases,
+                8 * 1024**2,
+                deadline,
+            )
+            available += 1
+        except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            releases = io.BytesIO()
+            if not available:
+                raise RuntimeError("Artifact discovery failed for both GitHub backends") from None
         for count, line in enumerate(releases.getvalue().decode("utf-8").splitlines(), 1):
             if count > 10_000:
                 raise ValueError("Release discovery exceeds the item limit")
@@ -483,7 +489,7 @@ class IndexArtifactDownloader:
         return sha256.hexdigest()
 
     def _validate_extracted_index_identity(self, extracted: Path, metadata: Dict[str, Any]) -> None:
-        manifest = metadata.get("manifest_v2")
+        manifest = metadata.get("manifest_v2") or metadata.get("artifact_manifest_v2")
         if not isinstance(manifest, dict):
             return
         database = extracted / "current.db"

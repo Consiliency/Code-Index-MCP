@@ -158,6 +158,7 @@ class IndexArtifactUploader:
         repo_id: Optional[str] = None,
         tracked_branch: Optional[str] = None,
         commit: Optional[str] = None,
+        index_generation: Optional[str] = None,
         schema_version: Optional[str] = None,
         semantic_profile_hash: Optional[str] = None,
         index_location: Path | str | None = None,
@@ -243,6 +244,7 @@ class IndexArtifactUploader:
             "timestamp": datetime.utcnow().isoformat() + "Z",
             "repo_id": repo_id,
             "commit": commit,
+            "index_generation": index_generation,
             "tracked_branch": tracked_branch,
             "branch": tracked_branch,
             "schema_version": schema_version,
@@ -434,6 +436,7 @@ class IndexArtifactUploader:
         repo_id: Optional[str] = None,
         tracked_branch: Optional[str] = None,
         commit: Optional[str] = None,
+        index_generation: Optional[str] = None,
         schema_version: Optional[str] = None,
         semantic_profile_hash: Optional[str] = None,
         index_location: Path | str | None = None,
@@ -450,6 +453,7 @@ class IndexArtifactUploader:
             repo_id=repo_id,
             tracked_branch=tracked_branch,
             commit=commit,
+            index_generation=index_generation,
             schema_version=schema_version,
             semantic_profile_hash=semantic_profile_hash,
             index_location=index_location,
@@ -591,6 +595,7 @@ class IndexArtifactUploader:
         repo_id: Optional[str] = None,
         tracked_branch: Optional[str] = None,
         commit: Optional[str] = None,
+        index_generation: Optional[str] = None,
     ) -> "ReleaseAssetBundle":
         """Verify and upload existing signed bytes without rebuilding metadata."""
         from .artifact_download import IndexArtifactDownloader
@@ -607,6 +612,8 @@ class IndexArtifactUploader:
         )
         if reasons:
             raise ValueError("Prepared artifact identity mismatch: " + "; ".join(reasons))
+        if index_generation is not None and metadata.get("index_generation") != index_generation:
+            raise ValueError("Prepared artifact identity mismatch: index generation differs")
         attestation = attest(metadata_path, repo=self.repo)
         return self.upload_direct(archive_path, metadata, attestation=attestation)
 

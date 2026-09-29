@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import subprocess
 import tarfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -13,6 +14,48 @@ import pytest
 from mcp_server.artifacts.artifact_download import ArtifactIdentityMismatch, IndexArtifactDownloader
 from mcp_server.artifacts.attestation import AttestationError
 from mcp_server.artifacts.freshness import FreshnessVerdict
+
+
+@pytest.mark.parametrize("failed_backend", ["actions", "releases"])
+def test_artifact_discovery_uses_available_backend(monkeypatch, failed_backend):
+    downloader = IndexArtifactDownloader(repo="owner/repo")
+
+    def fetch(command, output, limit, deadline):
+        backend = "actions" if "actions/artifacts" in command[2] else "releases"
+        if backend == failed_backend:
+            output.write(b'{"name":"index-partial"}\n')
+            raise subprocess.CalledProcessError(1, command)
+        if backend == "actions":
+            item = {"id": 1, "name": "index-main", "expired": False, "created_at": "2026-01-01"}
+        else:
+            item = {
+                "tag_name": "index-main",
+                "draft": False,
+                "created_at": "2026-01-01",
+                "assets": [
+                    {"name": "artifact-metadata.json", "size": 1},
+                    {"name": "index.tar.gz", "size": 1},
+                ],
+            }
+        output.write((json.dumps(item) + "\n").encode())
+
+    monkeypatch.setattr("mcp_server.artifacts.artifact_download._download_bounded", fetch)
+    artifacts = downloader.list_artifacts()
+    assert len(artifacts) == 1
+    assert artifacts[0]["artifact_backend"] == (
+        "github_release" if failed_backend == "actions" else "github_actions"
+    )
+
+
+def test_artifact_discovery_reports_when_both_backends_fail(monkeypatch):
+    downloader = IndexArtifactDownloader(repo="owner/repo")
+
+    def fail(command, output, limit, deadline):
+        raise subprocess.CalledProcessError(1, command)
+
+    monkeypatch.setattr("mcp_server.artifacts.artifact_download._download_bounded", fail)
+    with pytest.raises(RuntimeError, match="both GitHub backends"):
+        downloader.list_artifacts()
 
 
 def test_latest_tries_authenticated_identity_after_stale_promoted_artifact(tmp_path, monkeypatch):
@@ -143,6 +186,10 @@ def test_extracted_manifest_matches_database_schema_and_chunk_scheme(tmp_path):
         downloader._validate_extracted_index_identity(
             tmp_path,
             {"manifest_v2": {**manifest, "chunk_identity_algorithm": "treesitter_chunk_id_v1"}},
+        )
+    with pytest.raises(ValueError, match="schema version disagrees"):
+        downloader._validate_extracted_index_identity(
+            tmp_path, {"artifact_manifest_v2": {**manifest, "schema_version": "2"}}
         )
 
 

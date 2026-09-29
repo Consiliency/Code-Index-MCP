@@ -1048,7 +1048,6 @@ class GitAwareIndexManager:
             entries.append((relative, oid.decode("ascii"), policy))
 
         hashes = {}
-        resolver = PathResolver(repo_path)
 
         def copy_blob(entry):
             relative, oid, _policy = entry
@@ -1063,7 +1062,13 @@ class GitAwareIndexManager:
                     check=True,
                     timeout=30,
                 )
-            hashes[relative.as_posix()] = resolver.compute_content_hash(target)
+            content = target.read_bytes()
+            try:
+                normalized = content.decode("utf-8")
+            except UnicodeDecodeError:
+                normalized = content.decode("latin-1")
+            normalized = normalized.replace("\r\n", "\n").replace("\r", "\n")
+            hashes[relative.as_posix()] = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
         # Load committed policies from parents first, before reading ordinary blobs.
         policies = sorted(
