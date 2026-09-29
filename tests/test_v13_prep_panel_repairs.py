@@ -541,8 +541,8 @@ def test_uploaded_release_is_discovered_authenticated_and_restored(
                 pytest.fail("Unexpected release command")
         elif args[:2] == ["gh", "api"]:
             if args[2].endswith("/releases?per_page=100"):
-                assert args[3] == "--jq"
-                return subprocess.CompletedProcess(args, 0, json.dumps([release]), "")
+                assert args[3:5] == ["--paginate", "--jq"]
+                return subprocess.CompletedProcess(args, 0, json.dumps(release), "")
             if "/releases/tags/" in args[2]:
                 assert release["draft"] is False
                 return subprocess.CompletedProcess(args, 0, json.dumps(release), "")
@@ -1270,7 +1270,7 @@ def test_upload_deadlines_are_shared_and_failures_are_not_retried(tmp_path, monk
         if step == boundary:
             raise subprocess.TimeoutExpired(command, 300)
         if step == "list":
-            output.write(b"[]")
+            output.write(b"")
 
     def verify(tag, expected_assets, *, deadline, draft=False):
         calls.append(("verify", 1024**2, deadline))

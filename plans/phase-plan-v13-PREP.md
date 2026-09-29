@@ -160,6 +160,15 @@ code approval. The operational limits and sequencing above remain unchanged.
 No additional approval is needed for the already-authorized pilot/signing
 effects, and no fleet expansion or unbounded inference is authorized.
 
+### Owner Seat Replacement — 2026-09-29
+
+The owner's later instruction supersedes the historical roster above for this
+PREP candidate: use `gpt-6-sol` and `gpt-5.6-sol` through Codex subscriptions,
+`claude-opus-5-5` through the tool-enabled TUI adapter, and `Gemini 3.1 Pro
+(High)` through Gemini. Launch the latter two manually with small file-pointer
+briefs. Do not use Grok or Fable. Keep four independent complete-candidate
+approvals and four cross-model reconciliations on one frozen source identity.
+
 ## Diagnostic Panel Repair Amendment - 2026-09-17
 
 Candidate 5219192 passed all standalone runner nodes but is not accepted:

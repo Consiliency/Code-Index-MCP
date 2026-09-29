@@ -822,9 +822,20 @@ class MultiRepositoryWatcher:
                         from contextlib import nullcontext
 
                         semantic = getattr(self.dispatcher, "_semantic_registry", None)
-                        lease = (
-                            semantic.lease(repo_id) if semantic is not None else nullcontext(None)
-                        )
+                        if semantic is not None:
+                            ctx = (
+                                self.repo_resolver.resolve(repo_info.path)
+                                if self.repo_resolver is not None
+                                else None
+                            )
+                            if (
+                                ctx is None
+                                or ctx.registry_entry.registration_id != repo_info.registration_id
+                            ):
+                                raise RuntimeError("Semantic publication owner is unavailable")
+                            lease = semantic.lease(repo_id, ctx=ctx)
+                        else:
+                            lease = nullcontext(None)
                         with lease as indexer:
                             self._artifact_publisher.publish_on_reindex(
                                 repo_id,

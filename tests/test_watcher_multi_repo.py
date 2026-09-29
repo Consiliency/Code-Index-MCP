@@ -601,6 +601,46 @@ class TestArtifactPublishTriggers:
             artifact_health="published",
         )
 
+    def test_publish_leases_semantic_indexer_with_resolved_store(self, tmp_path):
+        from contextlib import contextmanager
+
+        watcher, registry, _ = self._watcher_for_sync(tmp_path, "full_index")
+        repo = registry.get_repository("repo-1")
+        ctx = _make_repo_context(Path(repo.path))
+        ctx.registry_entry.registration_id = repo.registration_id
+        watcher.repo_resolver = Mock()
+        watcher.repo_resolver.resolve.return_value = ctx
+
+        @contextmanager
+        def lease(repo_id, *, ctx):
+            assert repo_id == "repo-1"
+            assert ctx.sqlite_store is not None
+            yield "semantic-indexer"
+
+        watcher.dispatcher._semantic_registry = Mock(lease=lease)
+        watcher._sync_repository("repo-1", "callback123")
+
+        watcher.repo_resolver.resolve.assert_called_once_with(repo.path)
+        assert (
+            watcher._artifact_publisher.publish_on_reindex.call_args.kwargs["semantic_indexer"]
+            == "semantic-indexer"
+        )
+
+    def test_publish_refuses_unscoped_semantic_owner(self, tmp_path):
+        watcher, registry, _ = self._watcher_for_sync(tmp_path, "full_index")
+        semantic = Mock()
+        watcher.dispatcher._semantic_registry = semantic
+
+        watcher._sync_repository("repo-1", "callback123")
+
+        semantic.lease.assert_not_called()
+        watcher._artifact_publisher.publish_on_reindex.assert_not_called()
+        registry.update_artifact_state.assert_called_once_with(
+            "repo-1",
+            expected_owner=registry.get_repository("repo-1"),
+            artifact_health="publish_failed",
+        )
+
     @pytest.mark.parametrize("action", ["wrong_branch", "up_to_date", "downloaded", "failed"])
     def test_non_mutating_sync_actions_do_not_publish(self, tmp_path, action):
         watcher, _registry, artifact_manager = self._watcher_for_sync(tmp_path, action)

@@ -1,7 +1,7 @@
 # V13 Manual Execution
 
-Updated 2026-09-17. Branch: `codex/v13-audit-remediation`.
-Worktree: `/mnt/workspace/worktrees/Code-Index-MCP-v13-audit-remediation`.
+Updated 2026-09-29. Branch: `codex/v13-audit-remediation`.
+Worktree: `/mnt/workspace/worktrees/viperjuice/Code-Index-MCP-v13-audit-remediation-closure`.
 
 ## Progress
 
@@ -725,3 +725,35 @@ fixture failure: the synthetic release tag inherited the host's Git signing
 and editor configuration. The fixture now creates an explicitly unsigned,
 annotated tag with a fixed message and identity. Its focused test passes; the
 final candidate still needs a clean full-suite result.
+
+### PREP Manual Review And Browser Checkpoint — 2026-09-29
+
+The owner replaced unavailable Grok and Fable seats with Sol, Opus 5.5 through
+the TUI adapter, and Gemini. Manual seats receive small file-pointer briefs.
+At `4d20d01`, the serial suite passed 4,023 tests (135 skipped, 38 deselected,
+55.21% coverage); protected Agent Gate and Docker smoke passed. Installed wheel,
+Qdrant file/server, nonroot container, offline, and loopback rehearsal checks
+passed without consuming the renewed live or signing allowances. An interactive
+admin/Inspector session recorded ten observations, no page errors, eight goals,
+and zero surviving children. Its browser receipt was sealed; the separate
+candidate-bound verifier must be rerun on a clean matching candidate.
+
+Broader independent reviews found two further release-upload defects: a
+successful upload retained a full staging archive, and release lookup examined
+only the first 100 results. `cb60628` cleans successful bundles and paginates
+lookup; its focused upload suite passed 26 tests. Protected Agent Gate and
+Docker smoke passed. The first broad suite on this later commit had 4,018
+passing tests and six failures in fixtures that still modeled a one-page
+release response. All eight affected focused cases passed after updating those
+fixtures; the clean final full suite remains pending. The Windows pipe limitation remains
+outside the current Linux rollout and is recorded for Windows validation.
+These diagnostic passes do not constitute four complete-candidate approvals.
+PREP remains unaccepted; neither one-shot allowance has been consumed, and
+Code-Index-MCP#97 remains a draft.
+
+A subsequent Sol storage review found that artifact publication leased a
+semantic indexer without the repository's SQLite store, leaving the later
+query lease unusable. The watcher now resolves a scoped repository context
+before publication and fails closed if the owner is unavailable. Both focused
+regressions pass. This source change also requires a new exact-head suite and
+independent review before PREP can use either one-shot allowance.
