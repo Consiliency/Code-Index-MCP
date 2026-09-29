@@ -60,6 +60,27 @@ def test_staged_reindex_output_matches_advertised_schema():
         },
         schema,
     )
+    jsonschema.validate(
+        {
+            "error": "Whole-repository rebuild does not support task mode",
+            "code": "task_scope_unsupported",
+            "mutation_performed": False,
+            "hint": "Retry synchronously.",
+        },
+        schema,
+    )
+    for mutation_performed in (False, True):
+        jsonschema.validate(
+            {
+                "path": "/synthetic/fixture/file.py",
+                "mode": "file",
+                "indexed_files": 0,
+                "durable_files": 1,
+                "mutation_performed": mutation_performed,
+                "message": "File unchanged",
+            },
+            schema,
+        )
 
 
 def _schema_advertises_repository(tool_schema: dict) -> bool:

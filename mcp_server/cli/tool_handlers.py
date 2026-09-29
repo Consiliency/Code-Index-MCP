@@ -1233,14 +1233,23 @@ async def handle_reindex(
             await anyio.to_thread.run_sync(
                 run_repository_mutation, repo_resolver, ctx, index_file, abandon_on_cancel=False
             )
+            mutation_performed = bool(indexed_files) or isinstance(repo_resolver, RepoResolver)
             return _json_text_response(
                 {
                     "path": str(target_path),
                     "mode": "file",
                     "indexed_files": indexed_files,
                     "durable_files": durable_files,
-                    "mutation_performed": bool(indexed_files),
-                    "message": f"Reindexed file: {path}" if indexed_files else "File unchanged",
+                    "mutation_performed": mutation_performed,
+                    "message": (
+                        f"Reindexed file: {path}"
+                        if indexed_files
+                        else (
+                            "File unchanged; index generation refreshed"
+                            if mutation_performed
+                            else "File unchanged"
+                        )
+                    ),
                 }
             )
         except Exception as e:

@@ -524,17 +524,22 @@ class IndexItClient:
             )
         target_path = Path(path).expanduser() if path is not None else ctx.workspace_root
         if target_path.is_file():
-            run_repository_mutation(
+            result = run_repository_mutation(
                 self.repo_resolver,
                 ctx,
                 lambda current: self.dispatcher.index_file(current, target_path),
             )
+            indexed_files = int(getattr(result, "status", None) == "indexed")
             return ClientReindexResult(
                 path=str(target_path),
                 mode="file",
                 mutation_performed=True,
-                indexed_files=1,
-                message=f"Reindexed file: {target_path}",
+                indexed_files=indexed_files,
+                message=(
+                    f"Reindexed file: {target_path}"
+                    if indexed_files
+                    else "File unchanged; index generation refreshed"
+                ),
             )
 
         def index_directory(current):

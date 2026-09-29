@@ -757,3 +757,15 @@ query lease unusable. The watcher now resolves a scoped repository context
 before publication and fails closed if the owner is unavailable. Both focused
 regressions pass. This source change also requires a new exact-head suite and
 independent review before PREP can use either one-shot allowance.
+
+The following runtime-lane review found that two valid reindex outputs were
+outside the MCP schema, an unchanged-file request could refresh a generation
+while reporting no mutation, and `/search` could return an unstructured 500
+during a generation transition. The handler, task and client reports now state
+the generation refresh; the schema covers both file outcomes and the task
+scope refusal; `/search` checks generation state on its exception path.
+Focused regression checks pass. A broad run on the prior commit had 4,024
+passing tests and two failures caused by synthetic tests discovering an index
+created in the checkout by another test. Those fixtures now use their own
+index path and pass focused checks. Full exact-source acceptance, complete
+reviews, and both bounded effects remain pending.

@@ -1651,14 +1651,14 @@ async def search(
     repo_bm25: Optional[BM25Indexer] = None
     repo_fuzzy: Optional[FuzzyIndexer] = None
     repo_hybrid: Optional[HybridSearch] = None
-    if mode in {"hybrid", "bm25", "fuzzy"} or ctx.repo_id == _FALLBACK_REPO_ID:
-        repo_bm25, repo_fuzzy, repo_hybrid = _search_backends_for_repo(ctx)
     explicit_repository = request.query_params.get("repository")
     service_repo_resolver = repo_resolver
     if explicit_repository is None and ctx.repo_id == _FALLBACK_REPO_ID:
         service_repo_resolver = None
     start_time = time.time()
     try:
+        if mode in {"hybrid", "bm25", "fuzzy"} or ctx.repo_id == _FALLBACK_REPO_ID:
+            repo_bm25, repo_fuzzy, repo_hybrid = _search_backends_for_repo(ctx)
         # Determine effective search mode
         effective_mode = mode
         filtered_search_requested = bool(
@@ -1919,6 +1919,7 @@ async def search(
     except HTTPException:
         raise
     except Exception as e:
+        _require_current_generation(ctx)
         duration = time.time() - start_time
         business_metrics.record_search_performed(
             query=q, semantic=semantic, results_count=0, duration=duration
@@ -2266,15 +2267,12 @@ async def reindex(
                     source_target = current.workspace_root / target_path.relative_to(workspace_root)
                 if target_path.is_file():
                     result = dispatcher.index_file(current, source_target)
-                    failed = getattr(result, "status", None) in {
-                        "error",
-                        "not_found",
-                        "skipped_toctou",
-                    }
+                    status = getattr(result, "status", None)
+                    failed = status not in {"indexed", "skipped_unchanged"}
                     semantic = getattr(result, "semantic", None)
                     return {
                         **(semantic if isinstance(semantic, dict) else {}),
-                        "indexed_files": int(not failed),
+                        "indexed_files": int(status == "indexed"),
                         "failed_files": int(failed),
                     }
                 return dispatcher.index_directory(current, source_target, recursive=True)
@@ -2289,7 +2287,11 @@ async def reindex(
             logger.info(f"Successfully reindexed {indexed_count} files in {path}")
             return {
                 "status": "completed",
-                "message": f"Reindexed {indexed_count} files in {path}",
+                "message": (
+                    f"Reindexed {indexed_count} files in {path}"
+                    if indexed_count
+                    else f"Index generation refreshed; no files changed in {path}"
+                ),
             }
         else:
             if ctx.repo_id == _FALLBACK_REPO_ID or git_index_manager is None:

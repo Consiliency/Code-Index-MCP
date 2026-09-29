@@ -137,13 +137,14 @@ class TestMultiRepositoryManager:
         expected = Path.home() / ".mcp" / "repository_registry.json"
         assert manager.central_index_path == expected
 
-    def test_repository_registration(self, manager):
+    def test_repository_registration(self, manager, monkeypatch):
         """Test registering a repository."""
         # Create mock repository with index
         with tempfile.TemporaryDirectory() as temp_dir:
             repo_path = Path(temp_dir)
             index_dir = repo_path / ".mcp-index"
             index_dir.mkdir()
+            monkeypatch.setenv("MCP_INDEX_PATHS", str(index_dir))
             index_path = index_dir / "code_index.db"
 
             # Create minimal SQLite index

@@ -697,6 +697,30 @@ class TestSearchEndpoint:
         assert response.status_code == 500
         assert "Internal error during search" in response.json()["detail"]
 
+    def test_search_backend_transition_returns_unavailable(
+        self, test_client_with_dispatcher, monkeypatch
+    ):
+        from fastapi import HTTPException
+
+        import mcp_server.gateway as gateway
+
+        def unavailable(_ctx):
+            raise RuntimeError("retired search store")
+
+        def generation_changed(_ctx):
+            raise HTTPException(
+                503,
+                detail={"code": "index_unavailable", "safe_fallback": "native_search"},
+            )
+
+        monkeypatch.setattr(gateway, "_search_backends_for_repo", unavailable)
+        monkeypatch.setattr(gateway, "_require_current_generation", generation_changed)
+
+        response = test_client_with_dispatcher.get("/search?q=test&mode=bm25")
+
+        assert response.status_code == 503
+        assert response.json()["detail"]["code"] == "index_unavailable"
+
     @pytest.mark.parametrize(
         "query,expected_results",
         [
@@ -911,7 +935,11 @@ class TestReindexEndpoint:
         self, test_client_with_dispatcher, temp_code_directory, monkeypatch
     ):
         """Test reindexing a specific file."""
-        test_client_with_dispatcher.app.state.dispatcher.index_file = Mock()
+        from types import SimpleNamespace
+
+        test_client_with_dispatcher.app.state.dispatcher.index_file = Mock(
+            return_value=SimpleNamespace(status="indexed", semantic=None)
+        )
         file_path = temp_code_directory / "sample.py"
         import mcp_server.gateway as gateway
 

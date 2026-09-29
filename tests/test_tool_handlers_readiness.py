@@ -731,6 +731,36 @@ def test_reindex_single_file_success_returns_object_payload(tmp_path, monkeypatc
     assert "Reindexed file:" in data["message"]
 
 
+def test_reindex_unchanged_file_reports_generation_refresh(tmp_path):
+    import jsonschema
+
+    from mcp_server.cli.stdio_runner import _build_tool_list
+    from mcp_server.dispatcher.dispatcher_enhanced import IndexResult, IndexResultStatus
+    from tests.fixtures.multi_repo import boot_test_server, build_temp_repo
+
+    repo, repo_id = build_temp_repo(
+        tmp_path, "unchanged_reindex", seed_files={"seed.py": "def seed():\n    return 1\n"}
+    )
+    source = repo / "seed.py"
+    with boot_test_server(tmp_path, [repo]) as server:
+        first = server.call_tool("reindex", {"path": str(source)})
+        prior_generation = server.registry.get_repository(repo_id).index_generation
+        server.dispatcher.index_file = MagicMock(
+            return_value=IndexResult(IndexResultStatus.SKIPPED_UNCHANGED, source, None, None)
+        )
+        second = server.call_tool("reindex", {"path": str(source)})
+        generation = server.registry.get_repository(repo_id).index_generation
+
+    assert first["mutation_performed"] is True
+    assert second["mode"] == "file"
+    assert second["indexed_files"] == 0
+    assert second["mutation_performed"] is True
+    assert second["message"] == "File unchanged; index generation refreshed"
+    assert generation and generation != prior_generation
+    schema = next(tool.outputSchema for tool in _build_tool_list() if tool.name == "reindex")
+    jsonschema.validate(second, schema)
+
+
 @pytest.mark.parametrize("failure", ["raise", "error", "semantic_failed", "semantic_blocked"])
 def test_reindex_single_file_failure_returns_structured_error(tmp_path, monkeypatch, failure):
     from mcp_server.cli.tool_handlers import handle_reindex

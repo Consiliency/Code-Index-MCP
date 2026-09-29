@@ -653,11 +653,23 @@ def _build_tool_list() -> list[types.Tool]:
                     ),
                     _object_schema(
                         {
+                            "error": {
+                                "const": "Whole-repository rebuild does not support task mode"
+                            },
+                            "code": {"const": "task_scope_unsupported"},
+                            "mutation_performed": {"const": False},
+                            "hint": {"type": "string"},
+                        },
+                        required=("error", "code", "mutation_performed"),
+                        additional_properties=True,
+                    ),
+                    _object_schema(
+                        {
                             "path": {"type": "string"},
                             "mode": {"const": "file"},
-                            "indexed_files": {"const": 1},
+                            "indexed_files": {"type": "integer", "minimum": 0},
                             "durable_files": {"type": ["integer", "null"]},
-                            "mutation_performed": {"const": True},
+                            "mutation_performed": {"type": "boolean"},
                             "message": {"type": "string"},
                         },
                         required=(

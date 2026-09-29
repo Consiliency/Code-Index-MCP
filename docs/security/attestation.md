@@ -81,8 +81,9 @@ are refused. Failed restores remove only their fresh extraction directory; prior
 outputs remain untouched. No archive upload or signing is automatic.
 
 Actions and Release listing each cap responses at 8 MiB and 10000 records,
-sharing a one-minute deadline. Upload creation, transfer and verification share
-five minutes with 1 MiB response caps. Expired deadlines refuse before spawning
+with a separate one-minute deadline for each backend. Upload creation, transfer
+and verification share five minutes with 1 MiB response caps. Expired deadlines
+refuse before spawning
 another command. Timeout or ambiguous mutation outcomes are never retried
 automatically; inspect remote state before any owner-authorized recovery.
 

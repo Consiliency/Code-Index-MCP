@@ -292,6 +292,8 @@ async def run_reindex_task(
 
     clear_checkpoint(ctx.workspace_root)
     if requested_path and target_path.is_file():
+        if outcome.get("mutation_performed") and not outcome.get("indexed_files"):
+            outcome["message"] = "File unchanged; index generation refreshed"
         return _call_tool_result(outcome)
     durable_files = outcome["durable_files"]
     lexical_rows = outcome["lexical_rows"]
