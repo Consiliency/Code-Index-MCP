@@ -320,6 +320,11 @@ def test_download_release_artifact_restores_direct_publish_payload(tmp_path: Pat
             _metadata(
                 checksum=checksum,
                 semantic_profile_hash="a" * 64,
+                compatibility={
+                    "schema_version": "2",
+                    "embedding_model": "lexical-only",
+                    "chunk_schema_version": "2",
+                },
                 manifest_v2={
                     "logical_artifact_id": "logical-id",
                     "repo_id": "repo-id",
