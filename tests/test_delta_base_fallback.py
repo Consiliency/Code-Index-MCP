@@ -19,6 +19,7 @@ def test_delta_restore_refuses_without_rewriting_signed_metadata(
     downloader, payload, metadata, _verified = artifact_payload
     if kind == "delta":
         metadata.update(artifact_type="delta", base_commit="b" * 40, target_commit="a" * 40)
+        metadata["compatibility"]["chunk_schema_version"] = "2"
         archive = payload / "index.tar.gz"
         build_delta_archive(DeltaManifest("b" * 40, "a" * 40, [], {}), tmp_path, archive)
         metadata["checksum"] = hashlib.sha256(archive.read_bytes()).hexdigest()

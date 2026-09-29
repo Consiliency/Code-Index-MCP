@@ -1222,7 +1222,7 @@ async def test_single_file_http_reindex_preserves_semantic_failure(runtime, monk
     assert registry.get(repo_id).staleness_reason == "partial_index_failure"
 
 
-@pytest.mark.parametrize("boundary", ["probe", "create", "upload", "verify"])
+@pytest.mark.parametrize("boundary", ["probe", "list", "create", "upload", "verify"])
 def test_upload_deadlines_are_shared_and_failures_are_not_retried(tmp_path, monkeypatch, boundary):
     monkeypatch.setenv("MCP_ATTESTATION_MODE", "skip")
     archive = tmp_path / "index.tar.gz"
@@ -1232,25 +1232,38 @@ def test_upload_deadlines_are_shared_and_failures_are_not_retried(tmp_path, monk
 
     def bounded(command, output, limit, deadline):
         step = (
-            "verify"
-            if command[1] == "api"
-            else {
-                "--version": "probe",
-                "create": "create",
-                "upload": "upload",
-                "view": "verify",
-            }.get(command[1] if command[1] == "--version" else command[2])
+            "list"
+            if command[1] == "api" and "/releases?" in command[2]
+            else (
+                "verify"
+                if command[1] == "api"
+                else {
+                    "--version": "probe",
+                    "create": "create",
+                    "upload": "upload",
+                    "view": "verify",
+                }.get(command[1] if command[1] == "--version" else command[2])
+            )
         )
         calls.append((step, limit, deadline))
         assert limit == 1024**2
         assert time.monotonic() < deadline <= time.monotonic() + 301
         if step == boundary:
             raise subprocess.TimeoutExpired(command, 300)
+        if step == "list":
+            output.write(b"[]")
+
+    def verify(tag, expected_assets, *, deadline, draft=False):
+        calls.append(("verify", 1024**2, deadline))
+        raise subprocess.TimeoutExpired(["gh", "release", "view", tag], 300)
 
     monkeypatch.setattr("mcp_server.artifacts.artifact_download._download_bounded", bounded)
+    monkeypatch.setattr(uploader, "_verify_release_assets", verify)
     with pytest.raises(subprocess.TimeoutExpired):
         uploader.upload_direct(archive, {"checksum": uploader._calculate_checksum(archive)})
-    assert [step for step, _, _ in calls] == ["probe", "create", "upload", "verify"][: len(calls)]
+    assert [step for step, _, _ in calls] == ["probe", "list", "create", "upload", "verify"][
+        : len(calls)
+    ]
     assert len({deadline for step, _, deadline in calls if step != "probe"}) <= 1
 
 
