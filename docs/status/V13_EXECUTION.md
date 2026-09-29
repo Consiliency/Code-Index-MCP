@@ -813,3 +813,19 @@ tracked worktrees. Focused controls and 317 surrounding tests pass. The
 follow-up source is not yet exact-head accepted or fully reviewed. Gemini's
 small delta batches are diagnostic only. PREP remains unaccepted, both bounded
 effects are unused, and Code-Index-MCP#97 remains draft.
+
+The exact `d1a518c` serial suite passed 4,047 tests (135 skipped, 40
+deselected, 55.28% coverage). Protected Agent Gate and Docker, both Qdrant
+modes, and installed wheel/nonroot container smoke passed. The new Sol 6 and
+Sol 5.6 complete-candidate reads found a nullable-authority gap in strict
+summary predicates; Sol 6 also found that summary-only refresh could leave
+old vector links ready. Sol 5.6 found a semantic constructor shutdown race
+and raw default-profile alias use in summary writers. Opus found no blocker in
+its inspected paths but withheld full approval for remaining coverage gaps;
+Gemini's small file-pointer batches remain diagnostic. The local repair uses
+null-safe authority checks, invalidates vector links with durable deletion
+debt when a summary changes, waits for in-flight semantic constructors at
+shutdown, and resolves the default profile consistently. Focused and nearby
+regressions pass, but the repaired source still needs an exact-head full suite
+and four complete independent code approvals. PREP remains unaccepted, both
+one-shot allowances are unused, and Code-Index-MCP#97 remains draft.

@@ -2964,10 +2964,9 @@ class EnhancedDispatcher:
         from ..indexing.summarization import ComprehensiveChunkWriter
 
         settings = reload_settings()
-        summarization_config = settings.get_profile_summarization_config(
-            settings.semantic_default_profile
-        )
-        summarization_config.setdefault("profile_id", settings.semantic_default_profile)
+        profile_id = settings.get_semantic_default_profile()
+        summarization_config = settings.get_profile_summarization_config(profile_id)
+        summarization_config["profile_id"] = profile_id
         writer = ComprehensiveChunkWriter(
             db_path=active_store.db_path,
             qdrant_client=None,
@@ -3043,10 +3042,9 @@ class EnhancedDispatcher:
         )
 
         settings = reload_settings()
-        summarization_config = settings.get_profile_summarization_config(
-            settings.semantic_default_profile
-        )
-        summarization_config.setdefault("profile_id", settings.semantic_default_profile)
+        profile_id = settings.get_semantic_default_profile()
+        summarization_config = settings.get_profile_summarization_config(profile_id)
+        summarization_config["profile_id"] = profile_id
         writer = ComprehensiveChunkWriter(
             db_path=active_store.db_path,
             qdrant_client=None,
@@ -3255,7 +3253,7 @@ class EnhancedDispatcher:
             if blocker.get("code") == "collection_missing":
                 collection_bootstrap = bootstrap_active_profile_collection(
                     settings=settings,
-                    profile=settings.semantic_default_profile,
+                    profile=profile_id,
                 ).to_dict()
                 stats["semantic_collection_bootstrap"] = collection_bootstrap
                 semantic_preflight = run_semantic_preflight(
@@ -3356,7 +3354,7 @@ class EnhancedDispatcher:
                     JOIN files f ON c.file_id = f.id
                     LEFT JOIN chunk_summaries cs ON c.chunk_id = cs.chunk_hash
                     WHERE (? IS NULL OR ? IS NULL OR cs.chunk_hash IS NULL
-                           OR cs.is_authoritative != 1
+                           OR cs.is_authoritative IS NOT 1
                            OR cs.profile_id IS NOT ? OR cs.prompt_fingerprint IS NOT ?)
                       AND f.path IN ({placeholders})""",
                 (profile_id, prompt_fingerprint, profile_id, prompt_fingerprint, *normalized_paths),

@@ -1118,7 +1118,7 @@ class ComprehensiveChunkWriter(FileBatchSummarizer):
             params: list[Any] = []
             if profile_id := self.summarization_config.get("profile_id"):
                 where_clauses = [
-                    "(cs.chunk_hash IS NULL OR cs.is_authoritative != 1 "
+                    "(cs.chunk_hash IS NULL OR cs.is_authoritative IS NOT 1 "
                     "OR cs.profile_id IS NOT ? OR cs.prompt_fingerprint IS NOT ?)"
                 ]
                 params.extend((profile_id, self._prompt_fingerprint()))
@@ -1155,7 +1155,7 @@ class ComprehensiveChunkWriter(FileBatchSummarizer):
             params: list[Any] = []
             if profile_id := self.summarization_config.get("profile_id"):
                 where_clauses = [
-                    "(cs.chunk_hash IS NULL OR cs.is_authoritative != 1 "
+                    "(cs.chunk_hash IS NULL OR cs.is_authoritative IS NOT 1 "
                     "OR cs.profile_id IS NOT ? OR cs.prompt_fingerprint IS NOT ?)"
                 ]
                 params.extend((profile_id, self._prompt_fingerprint()))

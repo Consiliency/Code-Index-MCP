@@ -776,7 +776,7 @@ def _semantic_evidence(
 
         settings = reload_settings()
         config = settings.get_profile_summarization_config(profile_id)
-        config.setdefault("profile_id", profile_id)
+        config["profile_id"] = profile_id
         fingerprint = ComprehensiveChunkWriter(
             db_path=sqlite_store.db_path,
             qdrant_client=None,

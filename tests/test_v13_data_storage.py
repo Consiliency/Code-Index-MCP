@@ -387,9 +387,32 @@ def test_staged_summary_scope_matches_snapshot_input(runtime, tmp_path):
         )
         assert manager.dispatcher._count_missing_summaries_for_paths(ctx, [source]) == 0
         with store._get_connection() as connection:
+            connection.execute(
+                "UPDATE chunk_summaries SET is_authoritative = NULL WHERE chunk_hash = ?",
+                (chunk_id,),
+            )
+        assert manager.dispatcher._count_missing_summaries_for_paths(ctx, [source]) == 1
+        with store._get_connection() as connection:
             assert connection.execute("SELECT path FROM files").fetchone()[0] == str(source)
     finally:
         store.close()
+
+
+def test_summary_contract_uses_resolved_default_profile(runtime, monkeypatch):
+    repo, registry, repo_id, store, manager = runtime
+    settings = MagicMock()
+    settings.semantic_default_profile = "legacy-default"
+    settings.get_semantic_default_profile.return_value = "fixture"
+    settings.get_profile_summarization_config.return_value = {}
+    monkeypatch.setattr(
+        "mcp_server.dispatcher.dispatcher_enhanced.reload_settings", lambda: settings
+    )
+    ctx = RepoContext(repo_id, store, repo, "main", registry.get(repo_id))
+
+    contract = manager.dispatcher.get_semantic_summary_contract(ctx)
+
+    assert contract["profile_id"] == "fixture"
+    settings.get_profile_summarization_config.assert_called_once_with("fixture")
 
 
 def test_code_refresh_retains_document_rows_and_records_all_profile_vector_debt(runtime):
@@ -917,6 +940,55 @@ def test_export_rejects_vector_backend_escaping_generation(runtime, monkeypatch,
     with pytest.raises(RuntimeError, match="not owned by this generation"):
         exporter._export_vectors(Path(store.db_path), repo.parent / "vectors.jsonl")
     connect.assert_not_called()
+
+
+def test_summary_refresh_invalidates_vector_links_and_records_cleanup(runtime):
+    repo, _registry, _repo_id, store, _manager = runtime
+    repository_id = store.ensure_repository_row(repo)
+    file_id = store.store_file(repository_id, repo / "hello.py", "hello.py")
+    store.store_chunk(
+        file_id=file_id,
+        content="hello",
+        content_start=0,
+        content_end=5,
+        line_start=1,
+        line_end=1,
+        chunk_id="summary-refresh",
+        node_id="summary-refresh",
+        treesitter_file_id="fixture",
+    )
+    kwargs = {
+        "llm_model": "fixture",
+        "profile_id": "fixture",
+        "prompt_fingerprint": "fingerprint-a",
+        "is_authoritative": True,
+    }
+    assert store.store_chunk_summary("summary-refresh", file_id, 0, 5, "old", **kwargs)
+    store.upsert_semantic_point("fixture", "summary-refresh", 404, "fixture-collection")
+    assert store.store_chunk_summary("summary-refresh", file_id, 0, 5, "old", **kwargs)
+    assert store.get_semantic_point_ids("fixture", ["summary-refresh"]) == [404]
+    assert store.get_pending_vector_deletions() == []
+
+    assert store.store_chunk_summary("summary-refresh", file_id, 0, 5, "new", **kwargs)
+    assert store.get_semantic_point_ids("fixture", ["summary-refresh"]) == []
+    assert [
+        (row["point_id"], row["collection"]) for row in store.get_pending_vector_deletions()
+    ] == [(404, "fixture-collection")]
+    evidence = store.get_semantic_readiness_evidence(
+        "fixture", collection="fixture-collection", expected_prompt_fingerprint="fingerprint-a"
+    )
+    assert evidence["missing_summaries"] == 0
+    assert evidence["missing_vectors"] == 1
+
+    with store._get_connection() as connection:
+        connection.execute(
+            "UPDATE chunk_summaries SET is_authoritative = NULL WHERE chunk_hash = ?",
+            ("summary-refresh",),
+        )
+    evidence = store.get_semantic_readiness_evidence(
+        "fixture", collection="fixture-collection", expected_prompt_fingerprint="fingerprint-a"
+    )
+    assert evidence["missing_summaries"] == 1
 
 
 def test_hard_delete_records_vector_debt_and_clears_inbound_references(runtime):

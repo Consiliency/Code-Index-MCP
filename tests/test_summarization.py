@@ -1028,7 +1028,9 @@ def test_fetch_unsummarized_rows_filters_scope_before_limit(tmp_path):
     assert rows[0][9] == str(in_scope)
 
 
-@pytest.mark.parametrize("summary_state", ["valid", "prompt", "profile", "non_authoritative"])
+@pytest.mark.parametrize(
+    "summary_state", ["valid", "prompt", "profile", "non_authoritative", "null_authority"]
+)
 def test_scoped_writer_selects_summaries_outside_active_contract(tmp_path, summary_state):
     db_path = tmp_path / "summaries.db"
     store = SQLiteStore(str(db_path))
@@ -1058,8 +1060,14 @@ def test_scoped_writer_selects_summaries_outside_active_contract(tmp_path, summa
         llm_model="fixture",
         profile_id="profile-b" if summary_state == "profile" else "profile-a",
         prompt_fingerprint=("stale" if summary_state == "prompt" else writer._prompt_fingerprint()),
-        is_authoritative=summary_state != "non_authoritative",
+        is_authoritative=summary_state not in {"non_authoritative", "null_authority"},
     )
+    if summary_state == "null_authority":
+        with store._get_connection() as connection:
+            connection.execute(
+                "UPDATE chunk_summaries SET is_authoritative = NULL WHERE chunk_hash = ?",
+                ("chunk-1",),
+            )
     expected = summary_state != "valid"
     assert bool(writer._fetch_unsummarized_rows(limit=1, target_paths=[source])) is expected
     assert writer._count_unsummarized_rows(target_paths=[source]) == int(expected)

@@ -40,6 +40,8 @@ class SemanticIndexerRegistry:
         self._lock = threading.Condition(threading.RLock())
         self._build_locks: Dict[str, threading.Lock] = {}
         self._epochs: Dict[str, int] = {}
+        self._builders = 0
+        self._construction_close_failed = False
         self._closed = False
 
     def _build_lock(self, repo_id: str) -> threading.Lock:
@@ -182,19 +184,25 @@ class SemanticIndexerRegistry:
                     raise RuntimeError("Semantic owner is bound to a different SQLite handle")
                 return key, entry
             epoch = self._epochs.get(repo_id, 0)
+            self._builders += 1
 
-        indexer = self._construct(repo_id, info, binding, ctx)
-        with self._lock:
-            try:
+        try:
+            indexer = self._construct(repo_id, info, binding, ctx)
+            with self._lock:
                 _, current, _ = self._resolve(repo_id, ctx)
                 if current != binding or self._epochs.get(repo_id, 0) != epoch:
                     raise RuntimeError("Semantic generation changed during construction")
                 entry = _Entry(indexer)
                 self._entries[key] = entry
                 return key, entry
-            except Exception:
+        except Exception:
+            if "indexer" in locals():
                 self._close_indexer(indexer)
-                raise
+            raise
+        finally:
+            with self._lock:
+                self._builders -= 1
+                self._lock.notify_all()
 
     def get(self, repo_id: str) -> "SemanticIndexer":
         """Legacy unscoped access; runtime queries and writes must use ``lease``."""
@@ -255,11 +263,13 @@ class SemanticIndexerRegistry:
                 self._finish_retirement(key, entry)
             return bool(entries)
 
-    @staticmethod
-    def _close_indexer(indexer: "SemanticIndexer") -> None:
+    def _close_indexer(self, indexer: "SemanticIndexer") -> None:
         try:
             indexer.qdrant.close()
         except Exception:
+            with self._lock:
+                if self._closed:
+                    self._construction_close_failed = True
             raise RuntimeError("Semantic resource close failed") from None
 
     def shutdown(self) -> None:
@@ -268,7 +278,9 @@ class SemanticIndexerRegistry:
             self._closed = True
             for entry in self._entries.values():
                 entry.retired = True
-            while any(entry.borrowers for entry in self._entries.values()):
+            while self._builders or any(entry.borrowers for entry in self._entries.values()):
                 self._lock.wait()
             for key, entry in list(self._entries.items()):
                 self._finish_retirement(key, entry)
+            if self._construction_close_failed:
+                raise RuntimeError("Semantic resource close failed")

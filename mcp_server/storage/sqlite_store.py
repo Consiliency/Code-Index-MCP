@@ -3820,12 +3820,30 @@ class SQLiteStore:
         with self._get_connection() as conn:
             # Check if authoritative summary exists
             cursor = conn.execute(
-                "SELECT is_authoritative FROM chunk_summaries WHERE chunk_hash = ?",
+                """SELECT is_authoritative, summary_text, profile_id,
+                          prompt_fingerprint FROM chunk_summaries WHERE chunk_hash = ?""",
                 (chunk_hash,),
             )
             row = cursor.fetchone()
             if row and row[0] and not is_authoritative:
                 return False  # Cannot overwrite authoritative summary with non-authoritative
+
+            if row is None or (
+                row[1] != summary_text
+                or row[2] != profile_id
+                or row[3] != prompt_fingerprint
+                or bool(row[0]) != bool(is_authoritative)
+            ):
+                points = [
+                    dict(point)
+                    for point in conn.execute(
+                        """SELECT profile_id, chunk_id, point_id, collection
+                           FROM semantic_points WHERE chunk_id = ?""",
+                        (chunk_hash,),
+                    ).fetchall()
+                ]
+                self._record_pending_vector_deletions(conn, points)
+                conn.execute("DELETE FROM semantic_points WHERE chunk_id = ?", (chunk_hash,))
 
             conn.execute(
                 """INSERT INTO chunk_summaries 
@@ -4063,7 +4081,7 @@ class SQLiteStore:
                         """SELECT COUNT(*)
                            FROM code_chunks c
                            LEFT JOIN chunk_summaries cs ON c.chunk_id = cs.chunk_hash
-                           WHERE cs.chunk_hash IS NULL OR cs.is_authoritative != 1
+                           WHERE cs.chunk_hash IS NULL OR cs.is_authoritative IS NOT 1
                               OR cs.profile_id IS NOT ? OR cs.prompt_fingerprint IS NOT ?""",
                         (profile_id, expected_prompt_fingerprint),
                     ).fetchone()[0]

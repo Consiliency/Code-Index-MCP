@@ -479,6 +479,51 @@ def test_eviction_during_construction_refuses_late_owner(tmp_path):
         registry.shutdown()
 
 
+@pytest.mark.parametrize("close_fails", [False, True])
+def test_shutdown_waits_for_constructor_and_reports_close_failure(tmp_path, close_fails):
+    import threading
+    import time
+    from concurrent.futures import ThreadPoolExecutor
+
+    from mcp_server.utils.semantic_indexer_registry import SemanticIndexerRegistry
+
+    started = threading.Event()
+    release = threading.Event()
+    created = MagicMock()
+    if close_fails:
+        created.qdrant.close.side_effect = OSError("private close payload")
+
+    def construct(**kwargs):
+        started.set()
+        assert release.wait(5)
+        return created
+
+    registry = SemanticIndexerRegistry(_make_registry_with_repos(tmp_path))
+    with patch("mcp_server.utils.semantic_indexer.SemanticIndexer", side_effect=construct):
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            builder = pool.submit(registry.get, "repo-a")
+            assert started.wait(5)
+            shutdown = pool.submit(registry.shutdown)
+            try:
+                deadline = time.monotonic() + 5
+                while not registry._closed and time.monotonic() < deadline:
+                    threading.Event().wait(0.01)
+                with registry._lock:
+                    assert registry._closed
+                    assert registry._builders == 1
+                assert not shutdown.done()
+            finally:
+                release.set()
+            with pytest.raises(RuntimeError, match="shutting down|resource close failed"):
+                builder.result(timeout=5)
+            if close_fails:
+                with pytest.raises(RuntimeError, match="resource close failed"):
+                    shutdown.result(timeout=5)
+            else:
+                shutdown.result(timeout=5)
+    created.qdrant.close.assert_called_once()
+
+
 def test_real_generation_clients_coexist_until_lease_drain(tmp_path, monkeypatch):
     from qdrant_client import models
 
