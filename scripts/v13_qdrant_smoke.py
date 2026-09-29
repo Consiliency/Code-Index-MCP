@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import json
 import os
+import socket
 import subprocess
 import sys
 import tempfile
@@ -34,10 +35,17 @@ def main() -> None:
     env.pop("V13_TEST_QDRANT_URL", None)
     env.pop("V13_TEST_QDRANT_CONTAINER", None)
     container = None
+    name = None
+    run_token = None
     server_version = None
     try:
         if args.mode == "server":
-            name = "v13-qdrant-" + uuid.uuid4().hex[:12]
+            run_token = uuid.uuid4().hex
+            name = "v13-qdrant-" + run_token[:12]
+            if args.network == "host":
+                with socket.socket() as probe:
+                    if probe.connect_ex(("127.0.0.1", 6335)) == 0:
+                        raise RuntimeError("Qdrant host proof port is already occupied")
             network_args = (
                 ["--network", "host"]
                 if args.network == "host"
@@ -53,6 +61,8 @@ def main() -> None:
                     "--rm",
                     "--name",
                     name,
+                    "--label",
+                    f"v13.smoke.token={run_token}",
                     *network_args,
                     "--env",
                     "QDRANT__TELEMETRY_DISABLED=true",
@@ -93,6 +103,19 @@ def main() -> None:
                     time.sleep(0.2)
             if not server_version:
                 raise RuntimeError("Disposable Qdrant did not become ready")
+            details = json.loads(
+                subprocess.check_output(["docker", "inspect", container], text=True, timeout=10)
+            )[0]
+            if (
+                details["Name"] != "/" + name
+                or not details["State"]["Running"]
+                or details["Config"]["Labels"].get("v13.smoke.token") != run_token
+                or (
+                    args.network == "host"
+                    and "QDRANT__SERVICE__HTTP_PORT=6335" not in details["Config"]["Env"]
+                )
+            ):
+                raise RuntimeError("Disposable Qdrant does not own the proof endpoint")
             env["V13_TEST_QDRANT_URL"] = endpoint
             env["V13_TEST_QDRANT_CONTAINER"] = container
             env["V13_TEST_QDRANT_NETWORK"] = args.network
@@ -167,13 +190,27 @@ def main() -> None:
             if not passed:
                 raise SystemExit(1)
     finally:
-        if container:
-            subprocess.run(
-                ["docker", "stop", "--time", "2", container],
-                stdout=subprocess.DEVNULL,
-                check=True,
-                timeout=15,
+        if name and run_token:
+            identity = subprocess.run(
+                [
+                    "docker",
+                    "inspect",
+                    "--format",
+                    '{{ index .Config.Labels "v13.smoke.token" }}',
+                    name,
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=10,
             )
+            if identity.returncode == 0 and identity.stdout.strip() == run_token:
+                subprocess.run(
+                    ["docker", "stop", "--time", "2", name],
+                    stdout=subprocess.DEVNULL,
+                    check=True,
+                    timeout=15,
+                )
 
 
 if __name__ == "__main__":

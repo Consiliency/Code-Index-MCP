@@ -161,6 +161,7 @@ def test_identical_complete_draft_can_be_promoted_without_reupload(tmp_path, rel
     calls.clear()
     uploader.upload_direct(archive, metadata, release_tag="index-explicit")
     assert releases["index-explicit"]["draft"] is False
+    assert not any(command[:3] == ["gh", "release", "create"] for command in calls)
     assert not any(command[:3] == ["gh", "release", "upload"] for command in calls)
     assert sum(command[:3] == ["gh", "release", "edit"] for command in calls) == 1
 
@@ -187,6 +188,7 @@ def test_existing_release_mismatch_has_no_upload_or_promotion(tmp_path, release_
     calls.clear()
     with pytest.raises(RuntimeError):
         uploader.upload_direct(archive, metadata, release_tag="index-explicit")
+    assert not any(command[:3] == ["gh", "release", "create"] for command in calls)
     assert not any(
         command[:3] in (["gh", "release", "upload"], ["gh", "release", "edit"]) for command in calls
     )

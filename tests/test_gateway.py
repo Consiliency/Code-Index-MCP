@@ -203,6 +203,26 @@ class TestGatewayStartupShutdown:
         cache.shutdown.assert_awaited_once()
         mock_store.return_value.close.assert_called_once()
 
+    def test_shutdown_closes_standalone_semantic_client(self, monkeypatch):
+        import asyncio
+
+        import mcp_server.gateway as gateway
+
+        semantic = Mock()
+        for owner in (
+            "ref_poller",
+            "multi_watcher",
+            "dispatcher",
+            "plugin_manager",
+            "cache_manager",
+            "_store_registry",
+            "sqlite_store",
+        ):
+            monkeypatch.setattr(gateway, owner, None)
+        monkeypatch.setattr(gateway, "semantic_indexer", semantic)
+        asyncio.run(gateway.shutdown_event())
+        semantic.qdrant.close.assert_called_once()
+
     @pytest.mark.parametrize(
         "boundary", ["watcher_construct", "poller_construct", "watcher_start", "poller_start"]
     )

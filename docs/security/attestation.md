@@ -37,9 +37,10 @@ failure retains local bytes and partial releases for explicit recovery;
 
 Uploads create a draft, transfer a canonical `index-archive.tar.gz` plus its
 sidecars without clobbering, verify the exact uploaded asset names and SHA-256
-digests, then publish and verify again. Existing releases are read-only: only
-an already-published identical asset set is a successful retry. An incomplete
-draft or conflicting bytes require explicit recovery, never automatic overwrite.
+digests, then publish and verify again. An already-published identical asset set
+is a successful retry. A complete draft with identical bytes can be promoted on
+a deliberate retry. Incomplete drafts and conflicting bytes require explicit
+recovery, never automatic overwrite.
 Default release tags include the canonical metadata digest. Preserve the prepared
 archive and metadata for retries; re-preparing creates different metadata bytes.
 

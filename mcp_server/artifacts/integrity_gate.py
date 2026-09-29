@@ -28,6 +28,12 @@ def validate_required_metadata_fields(metadata: Dict[str, Any]) -> List[str]:
     if "tracked_branch" not in metadata and "branch" in metadata:
         metadata = dict(metadata)
         metadata["tracked_branch"] = metadata["branch"]
+    elif (
+        "tracked_branch" in metadata
+        and "branch" in metadata
+        and (metadata["tracked_branch"] != metadata["branch"])
+    ):
+        reasons.append("metadata branch aliases disagree")
 
     required_keys = [
         "repo_id",
@@ -155,9 +161,11 @@ def validate_artifact_integrity(
                 if isinstance(compatibility, dict):
                     if str(compatibility.get("schema_version")) != str(manifest.schema_version):
                         manifest_reasons.append("manifest_v2 schema disagrees with compatibility")
-                    if "chunk_schema_version" in compatibility and str(
-                        compatibility["chunk_schema_version"]
-                    ) != str(manifest.chunk_schema_version):
+                    if "chunk_schema_version" not in compatibility:
+                        manifest_reasons.append("manifest_v2 chunk schema is unbound")
+                    elif str(compatibility["chunk_schema_version"]) != str(
+                        manifest.chunk_schema_version
+                    ):
                         manifest_reasons.append(
                             "manifest_v2 chunk schema disagrees with compatibility"
                         )

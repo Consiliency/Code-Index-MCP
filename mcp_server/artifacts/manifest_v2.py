@@ -116,6 +116,8 @@ class ArtifactManifestV2:
             raise ValueError("Manifest v2 requires repo_id")
         if not self.canonical_tracked_branch:
             raise ValueError("Manifest v2 requires tracked_branch")
+        if self.tracked_branch and self.branch and self.tracked_branch != self.branch:
+            raise ValueError("Manifest branch aliases disagree")
         if not self.commit:
             raise ValueError("Manifest v2 requires commit")
         if not self.schema_version:
@@ -189,6 +191,12 @@ class ArtifactManifestV2:
     @classmethod
     def from_dict(cls, payload: Dict[str, Any]) -> "ArtifactManifestV2":
         """Create and validate manifest from JSON payload."""
+        if (
+            "tracked_branch" in payload
+            and "branch" in payload
+            and (payload["tracked_branch"] != payload["branch"])
+        ):
+            raise ValueError("Manifest branch aliases disagree")
         units = [ManifestUnit(**unit) for unit in payload.get("units", [])]
         manifest = cls(
             manifest_version=str(payload.get("manifest_version", "2")),

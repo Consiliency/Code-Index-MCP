@@ -29,6 +29,28 @@ from tests.test_embedding_provenance import (
 pytestmark = [pytest.mark.requires_network] if os.environ.get("V13_TEST_QDRANT_URL") else []
 
 
+def test_qdrant_smoke_retires_owned_container_after_ambiguous_launch(monkeypatch):
+    from scripts import v13_qdrant_smoke as smoke
+
+    token = "a" * 32
+    calls = []
+    monkeypatch.setattr(smoke.uuid, "uuid4", lambda: SimpleNamespace(hex=token))
+    monkeypatch.setattr(smoke.sys, "argv", ["v13_qdrant_smoke.py", "--mode", "server"])
+
+    def launch(*args, **kwargs):
+        raise subprocess.TimeoutExpired(args[0], 30)
+
+    def docker_run(command, **kwargs):
+        calls.append(command)
+        return SimpleNamespace(returncode=0, stdout=token)
+
+    monkeypatch.setattr(smoke.subprocess, "check_output", launch)
+    monkeypatch.setattr(smoke.subprocess, "run", docker_run)
+    with pytest.raises(subprocess.TimeoutExpired):
+        smoke.main()
+    assert calls[-1] == ["docker", "stop", "--time", "2", "v13-qdrant-aaaaaaaaaaaa"]
+
+
 @pytest.fixture
 def real_indexer(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)

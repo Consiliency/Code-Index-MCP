@@ -282,6 +282,9 @@ class IndexArtifactUploader:
         primary_profile = primary_profile or {}
         compatibility: Dict[str, Any] = {
             "schema_version": schema_version,
+            "chunk_schema_version": str(
+                index_metadata.get("chunk_schema_version") or schema_version
+            ),
             "embedding_model": primary_profile.get("embedding_model")
             or index_metadata.get("embedding_model")
             or settings.semantic_embedding_model,
@@ -488,29 +491,30 @@ class IndexArtifactUploader:
             asset_paths=tuple(assets),
         )
 
+    def _release_matches(self, tag: str, *, deadline: float) -> list[Dict[str, Any]]:
+        # GitHub's by-tag endpoint only returns published releases.
+        result = self._run_gh(
+            [
+                "gh",
+                "api",
+                f"/repos/{self.repo}/releases?per_page=100",
+                "--jq",
+                "map(select(.tag_name == "
+                + json.dumps(tag)
+                + ")) | map({tag_name, draft, assets: [.assets[] | {name, digest, state}]})",
+            ],
+            deadline=deadline,
+        )
+        releases = json.loads(result)
+        if not isinstance(releases, list):
+            raise RuntimeError("Artifact release listing is malformed")
+        return [item for item in releases if isinstance(item, dict) and item.get("tag_name") == tag]
+
     def _verify_release_assets(
         self, tag: str, expected_assets: Dict[str, str], *, deadline: float, draft: bool = False
     ) -> None:
         if draft:
-            # GitHub's by-tag endpoint only returns published releases.
-            result = self._run_gh(
-                [
-                    "gh",
-                    "api",
-                    f"/repos/{self.repo}/releases?per_page=100",
-                    "--jq",
-                    "map(select(.tag_name == "
-                    + json.dumps(tag)
-                    + ")) | map({tag_name, draft, assets: [.assets[] | {name, digest, state}]})",
-                ],
-                deadline=deadline,
-            )
-            releases = json.loads(result)
-            if not isinstance(releases, list):
-                raise RuntimeError("Artifact release listing is malformed")
-            matches = [
-                item for item in releases if isinstance(item, dict) and item.get("tag_name") == tag
-            ]
+            matches = self._release_matches(tag, deadline=deadline)
             if len(matches) != 1:
                 raise RuntimeError("Artifact draft release is missing or ambiguous")
             payload = matches[0]
@@ -600,6 +604,21 @@ class IndexArtifactUploader:
         commit = source_commit[:8]
         target = ["--target", source_commit] if re.fullmatch(r"[0-9a-f]{40}", source_commit) else []
         deadline = time.monotonic() + 300
+        existing = self._release_matches(tag, deadline=deadline)
+        if len(existing) > 1:
+            raise RuntimeError("Artifact release tag is ambiguous")
+        if existing:
+            draft = existing[0].get("draft")
+            if type(draft) is not bool:
+                raise RuntimeError("Artifact release publication state is malformed")
+            self._verify_release_assets(tag, expected_assets, deadline=deadline, draft=draft)
+            if draft:
+                self._run_gh(
+                    ["gh", "release", "edit", tag, "--repo", self.repo, "--draft=false"],
+                    deadline=deadline,
+                )
+                self._verify_release_assets(tag, expected_assets, deadline=deadline)
+            return bundle
         # Creating the draft acquires publication ownership. A retry may only
         # promote a complete draft with the same prepared bytes.
         try:

@@ -493,6 +493,9 @@ def test_prepared_upload_restore_preserves_signed_metadata_bytes(
     def gh(args, **kwargs):
         if args[:3] == ["gh", "attestation", "verify"]:
             return verify_signature(args, **kwargs)
+        if args[:2] == ["gh", "api"]:
+            assert args[2].endswith("/releases?per_page=100")
+            return subprocess.CompletedProcess(args, 0, "[]", "")
         assert args[:2] == ["gh", "release"]
         if args[2] == "upload":
             for name in args[args.index("--repo") + 2 :]:

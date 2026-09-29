@@ -142,12 +142,25 @@ def test_integrity_gate_validates_optional_manifest_v2_payload(tmp_path: Path):
         ],
     )
     metadata = _base_metadata(checksum)
+    metadata["compatibility"]["chunk_schema_version"] = "2.0"
     metadata["manifest_v2"] = manifest.to_dict()
 
     result = validate_artifact_integrity(metadata=metadata, archive_path=archive_path)
 
     assert result.passed is True
     assert result.manifest_v2_validated is True
+
+    metadata["branch"] = "other"
+    assert (
+        "metadata branch aliases disagree"
+        in validate_artifact_integrity(metadata, archive_path).reasons
+    )
+    metadata["branch"] = "main"
+    metadata["compatibility"].pop("chunk_schema_version")
+    assert (
+        "manifest_v2 chunk schema is unbound"
+        in validate_artifact_integrity(metadata, archive_path).reasons
+    )
 
 
 @pytest.mark.parametrize(
@@ -158,12 +171,14 @@ def test_integrity_gate_validates_optional_manifest_v2_payload(tmp_path: Path):
         ("checksum", "0" * 64),
         ("chunk_identity_algorithm", "unsupported"),
         ("manifest_version", "99"),
+        ("branch", "other"),
     ],
 )
 def test_integrity_gate_rejects_conflicting_manifest_metadata(tmp_path, field, value):
     archive_path = _write_archive(tmp_path)
     checksum = hashlib.sha256(archive_path.read_bytes()).hexdigest()
     metadata = _base_metadata(checksum)
+    metadata["compatibility"]["chunk_schema_version"] = "2.0"
     metadata["manifest_v2"] = ArtifactManifestV2(
         logical_artifact_id="repo-main-abc123",
         repo_id=metadata["repo_id"],

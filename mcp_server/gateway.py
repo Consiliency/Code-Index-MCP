@@ -1188,6 +1188,8 @@ async def shutdown_event():
                 raise RuntimeError("Plugin manager shutdown failed")
         if cache_manager:
             await cache_manager.shutdown()
+        if semantic_indexer:
+            semantic_indexer.qdrant.close()
         if _store_registry:
             _store_registry.shutdown()
         if sqlite_store:
