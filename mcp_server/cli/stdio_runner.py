@@ -912,9 +912,12 @@ async def _graceful_shutdown(
     """Await one cleanup owner; a timeout never abandons a resource owner."""
     global _shutdown_called, _shutdown_task
     failures = []
+    critical_failures = []
 
     def record_failure(name: str, exc: Exception) -> None:
         failures.append(f"{name} ({type(exc).__name__})")
+        if name in {"MultiRepositoryWatcher", "RefPoller", "FileWatcher", "IndexWorker"}:
+            critical_failures.append(name)
         logger.error("%s cleanup failed (%s)", name, type(exc).__name__)
 
     async def cleanup() -> None:
@@ -931,13 +934,13 @@ async def _graceful_shutdown(
         for name, component, method in components:
             if component is not None:
                 await stop_component(name, getattr(component, method))
-        if failures:
+        if critical_failures:
             # A failed watcher may still own an index writer. Keep its stores open.
             raise RuntimeError("Owned resource cleanup failed: " + ", ".join(failures))
         for thread in (_indexing_thread, _fts_rebuild_thread):
             if thread is not None and thread.is_alive():
                 await stop_component("IndexWorker", thread.join)
-        if failures:
+        if critical_failures:
             raise RuntimeError("Owned resource cleanup failed: " + ", ".join(failures))
         for name, component, method in [
             ("Dispatcher", dispatcher, "shutdown"),

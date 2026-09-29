@@ -78,7 +78,7 @@ def test_freshness_preserves_timestamp_offset(monkeypatch):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failed_owner", ["watcher", "summarizer"])
-async def test_shutdown_error_still_drains_later_owners(monkeypatch, failed_owner):
+async def test_shutdown_error_only_drains_safe_later_owners(monkeypatch, failed_owner):
     from unittest.mock import AsyncMock
 
     from mcp_server.cli import stdio_runner as runner
@@ -103,9 +103,14 @@ async def test_shutdown_error_still_drains_later_owners(monkeypatch, failed_owne
     with pytest.raises(RuntimeError) as raised:
         await runner._graceful_shutdown(watcher, None, stores, exporter, dispatcher)
     assert "private-sentinel" not in str(raised.value)
-    dispatcher.shutdown.assert_called_once()
-    stores.shutdown.assert_called_once()
-    exporter.stop.assert_called_once()
+    if failed_owner == "watcher":
+        dispatcher.shutdown.assert_not_called()
+        stores.shutdown.assert_not_called()
+        exporter.stop.assert_not_called()
+    else:
+        dispatcher.shutdown.assert_called_once()
+        stores.shutdown.assert_called_once()
+        exporter.stop.assert_called_once()
 
 
 def test_failed_client_close_keeps_owner_but_refuses_service_reuse(monkeypatch):
