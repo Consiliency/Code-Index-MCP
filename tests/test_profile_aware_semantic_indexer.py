@@ -145,6 +145,13 @@ class _FakeSQLiteStore:
     def upsert_semantic_point(self, **kwargs):
         self.semantic_points.append(kwargs)
 
+    def get_semantic_point_ids(self, profile_id, chunk_ids):
+        return [
+            point["point_id"]
+            for point in self.semantic_points
+            if point["profile_id"] == profile_id and point["chunk_id"] in chunk_ids
+        ]
+
     def admit_semantic_point_links(self, links, expected_summaries):
         for chunk_id, expected in expected_summaries.items():
             summary = self.get_chunk_summary(chunk_id)
@@ -506,11 +513,13 @@ def test_overlapping_summary_builds_use_distinct_vector_ids(monkeypatch, tmp_pat
     sqlite_store.summary_text = "new summary"
     new_prep = indexer._prepare_file_for_indexing(source)
     written = []
-    monkeypatch.setattr(
-        indexer,
-        "_upsert_points_batched",
-        lambda _path, points: written.append({int(point.id) for point in points}),
-    )
+    remote_points = {}
+
+    def upsert(_path, points):
+        written.append({int(point.id) for point in points})
+        remote_points.update({int(point.id): point for point in points})
+
+    monkeypatch.setattr(indexer, "_upsert_points_batched", upsert)
 
     def embeddings(prep):
         return [[0.1, 0.2, 0.3] for _ in prep["embedding_inputs"]]
@@ -522,6 +531,23 @@ def test_overlapping_summary_builds_use_distinct_vector_ids(monkeypatch, tmp_pat
 
     assert written[0].isdisjoint(written[1])
     assert sqlite_store.semantic_points == current_links
+
+    monkeypatch.setattr(indexer, "_provider_supports_provenance", lambda: False)
+    monkeypatch.setattr(indexer, "_embed_texts", lambda *_args, **_kwargs: [[0.1, 0.2, 0.3]])
+    monkeypatch.setattr(indexer, "_semantic_result_metadata", lambda: {})
+    monkeypatch.setattr(indexer, "_rerank_query_results", lambda _text, rows, _limit: rows)
+    indexer.qdrant.search = lambda **_kwargs: [
+        SimpleNamespace(id=point.id, payload=point.payload, score=1.0)
+        for point in remote_points.values()
+    ]
+
+    visible = list(indexer.query("alpha"))
+    assert len(visible) == len(written[0])
+    assert {item["embedding_text"] for item in visible} == {
+        point.payload["embedding_text"]
+        for point_id, point in remote_points.items()
+        if point_id in written[0] and "embedding_text" in point.payload
+    }
 
 
 def test_preflight_blocker_prevents_any_qdrant_upsert(monkeypatch, tmp_path):

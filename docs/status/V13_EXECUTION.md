@@ -863,3 +863,17 @@ exact-head suite and independent review. A first PMCP prepare attempt for
 container smoke was running; its failed scratch is retained for diagnosis.
 No live pilot or signing allowance was consumed. PREP stays unaccepted and
 Code-Index-MCP#97 stays draft.
+
+The exact `3354ff0` serial suite passed 4,058 tests (135 skipped, 40
+deselected, 54.73% coverage), and installed wheel preparation and offline
+controls passed. Opus and Gemini gave whole-candidate code `AGREE` verdicts,
+but Sol 6 found that very long metadata could fill a split embedding input
+before its code body. The split path now caps metadata to reserve space for
+the part marker and code; the focused regression requires each part's code
+sentinel and passes. Sol 5.6 found that a rejected old vector could remain
+query-visible until the deletion ledger drains. Semantic results with chunk
+identities now require a current SQLite point link; the overlapping-build
+regression keeps both remote versions present and proves only admitted points
+are returned. A new exact-head suite, installed gates and independent
+reviews are required. PREP remains unaccepted; the live and signing allowances
+remain unused.

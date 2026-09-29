@@ -424,7 +424,7 @@ def test_split_embedding_units_include_authoritative_summary(monkeypatch, signat
         signature=signature,
         parent_symbol=None,
         metadata={},
-        chunk_content="\n".join("x" * 320 for _ in range(8)),
+        chunk_content="\n".join(f"BODY_{index}_SENTINEL" + "x" * 320 for index in range(8)),
         start_line=1,
         end_line=8,
         summary_text="AUTH_SUMMARY_SENTINEL",
@@ -432,6 +432,14 @@ def test_split_embedding_units_include_authoritative_summary(monkeypatch, signat
 
     assert len(units) > 1
     assert all("AUTH_SUMMARY_SENTINEL" in unit.embedding_text for unit in units)
+    assert all(
+        f"chunk part {index} of {len(units)}" in unit.embedding_text
+        and all(
+            f"BODY_{line - 1}_SENTINEL" in unit.embedding_text
+            for line in range(unit.start_line, unit.end_line + 1)
+        )
+        for index, unit in enumerate(units, start=1)
+    )
     assert all(len(unit.embedding_text) <= 1200 for unit in units)
 
 

@@ -970,13 +970,17 @@ class SemanticIndexer:
             span=(1, max(1, len(local_lines))),
             parent_symbol=parent_symbol,
         )
-        prefix_chars = len("\n".join(parts))
-        summary_budget = max(80, self._max_embedding_chars() - prefix_chars - 300)
+        max_chars = self._max_embedding_chars()
+        summary_budget = max(80, max_chars // 5)
         split_summary = summary_text[:summary_budget] if summary_text else None
-        split_parts = ["Summary:", split_summary, *parts] if split_summary else parts
-        content_budget = max(
-            200, self._max_embedding_chars() - prefix_chars - len(split_summary or "") - 80
-        )
+        split_parts = ["Summary:", split_summary] if split_summary else []
+        header_budget = max_chars - 300
+        for part in parts:
+            remaining = header_budget - len("\n".join(split_parts)) - 1
+            if remaining <= 0:
+                break
+            split_parts.append(part[:remaining])
+        content_budget = max(200, max_chars - len("\n".join(split_parts)) - 80)
         local_chunks = self._split_symbol_chunks(
             local_symbol, local_lines, max_chars=content_budget
         )
@@ -2887,11 +2891,36 @@ class SemanticIndexer:
                 )
                 results = list(getattr(response, "points", []) or [])
 
+            sqlite_store = getattr(self, "sqlite_store", None)
+            live_point_ids = None
+            if sqlite_store is not None:
+                chunk_ids = {
+                    str(chunk_id)
+                    for res in results
+                    for chunk_id in (
+                        (res.payload or {}).get("chunk_id"),
+                        (res.payload or {}).get("source_chunk_id"),
+                    )
+                    if chunk_id
+                }
+                live_point_ids = {
+                    str(point_id)
+                    for point_id in sqlite_store.get_semantic_point_ids(
+                        self.semantic_profile.profile_id, sorted(chunk_ids)
+                    )
+                }
+
             rerank_input: List[dict[str, Any]] = []
             for res in results:
                 payload = dict(res.payload or {})
                 # Never surface the reserved collection-provenance sentinel.
                 if payload.get(self.PROVENANCE_TAG) or payload.get("is_deleted"):
+                    continue
+                if (
+                    live_point_ids is not None
+                    and (payload.get("chunk_id") or payload.get("source_chunk_id"))
+                    and str(res.id) not in live_point_ids
+                ):
                     continue
                 payload["score"] = res.score
                 payload.update(self._semantic_result_metadata())
