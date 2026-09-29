@@ -890,3 +890,13 @@ timed out during isolated installation and a local Agent Gate setup hit a
 workspace cache extraction error; protected CI Agent Gate passed. The source
 fix needs new exact-head gates and all four complete reviews. PREP and both
 one-shot allowances remain untouched.
+
+The exact `7393388` run exposed an offset-unaware Qdrant test stub in
+`test_semantic_query_results_include_stable_metadata`; the focused test
+reproduced its failure, and the stub now pages like the client API. Installed
+wheel preparation, offline checks, synthetic rehearsal, and the local Agent
+Gate with the SHA-verified BAML 0.20.1 toolchain passed. A concurrent file-mode
+Qdrant proof hit its 300-second test subprocess timeout and needs a quiet
+rerun. Sol 6 withheld code approval for the stub failure; Opus approved the
+production fix. All exact-head gates and four reviews must be repeated for
+the next commit before either one-shot allowance is used.

@@ -824,12 +824,12 @@ def test_semantic_query_results_include_stable_metadata():
             self.score = 0.91
 
     class _QdrantStub:
-        def search(self, collection_name, query_vector, limit, query_filter):
+        def search(self, collection_name, query_vector, limit, query_filter, offset=0):
             assert {condition.key for condition in query_filter.must_not} == {
                 "__provenance__",
                 "is_deleted",
             }
-            return [_Point()]
+            return [_Point()][offset : offset + limit]
 
     indexer.qdrant = cast(Any, _QdrantStub())
 
