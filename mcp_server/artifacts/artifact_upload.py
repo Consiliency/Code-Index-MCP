@@ -544,15 +544,16 @@ class IndexArtifactUploader:
                 "gh",
                 "api",
                 f"/repos/{self.repo}/releases?per_page=100",
+                "--paginate",
                 "--jq",
-                "map(select(.tag_name == "
+                ".[] | select(.tag_name == "
                 + json.dumps(tag)
-                + ")) | map({tag_name, draft, assets: [.assets[] | {name, digest, state}]})",
+                + ") | {tag_name, draft, assets: [.assets[] | {name, digest, state}]}",
             ],
             deadline=deadline,
         )
-        releases = json.loads(result)
-        if not isinstance(releases, list):
+        releases = [json.loads(line) for line in result.splitlines() if line.strip()]
+        if any(not isinstance(item, dict) for item in releases):
             raise RuntimeError("Artifact release listing is malformed")
         return [item for item in releases if isinstance(item, dict) and item.get("tag_name") == tag]
 
@@ -596,7 +597,7 @@ class IndexArtifactUploader:
         tracked_branch: Optional[str] = None,
         commit: Optional[str] = None,
         index_generation: Optional[str] = None,
-    ) -> "ReleaseAssetBundle":
+    ) -> None:
         """Verify and upload existing signed bytes without rebuilding metadata."""
         from .artifact_download import IndexArtifactDownloader
 
@@ -623,7 +624,7 @@ class IndexArtifactUploader:
                     "Prepared artifact integrity validation failed: " + "; ".join(integrity.reasons)
                 )
         attestation = attest(metadata_path, repo=self.repo)
-        return self.upload_direct(archive_path, metadata, attestation=attestation)
+        self.upload_direct(archive_path, metadata, attestation=attestation)
 
     def upload_direct(
         self,
@@ -632,7 +633,7 @@ class IndexArtifactUploader:
         *,
         release_tag: Optional[str] = None,
         attestation: Optional[Attestation] = None,
-    ) -> "ReleaseAssetBundle":
+    ) -> None:
         if metadata.get("checksum") != self._calculate_checksum(archive_path):
             raise ValueError("Prepared archive checksum does not match its metadata")
         if "manifest_v2" in metadata or "artifact_manifest_v2" in metadata:
@@ -675,7 +676,8 @@ class IndexArtifactUploader:
                     deadline=deadline,
                 )
                 self._verify_release_assets(tag, expected_assets, deadline=deadline)
-            return bundle
+            shutil.rmtree(bundle.archive_path.parent)
+            return
         # Creating the draft acquires publication ownership. A retry may only
         # promote a complete draft with the same prepared bytes.
         try:
@@ -708,7 +710,8 @@ class IndexArtifactUploader:
                     deadline=deadline,
                 )
                 self._verify_release_assets(tag, expected_assets, deadline=deadline)
-            return bundle
+            shutil.rmtree(bundle.archive_path.parent)
+            return
 
         # Never clobber another attempt, including an incomplete draft.
         self._run_gh(
@@ -734,7 +737,7 @@ class IndexArtifactUploader:
             f"✅ Uploaded {archive_path.name} ({size_mb:.1f} MB) to "
             f"https://github.com/{self.repo}/releases/tag/{tag}"
         )
-        return bundle
+        shutil.rmtree(bundle.archive_path.parent)
 
 
 def build_parser() -> argparse.ArgumentParser:

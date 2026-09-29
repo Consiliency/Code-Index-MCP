@@ -32,14 +32,12 @@ def release_backend(monkeypatch):
             from urllib.parse import unquote
 
             if command[2].endswith("/releases?per_page=100"):
-                assert command[3] == "--jq"
-                assert "{name, digest, state}" in command[4]
-                return json.dumps(
-                    [
-                        {key: release[key] for key in ("tag_name", "draft", "assets")}
-                        for release in releases.values()
-                        if json.dumps(release["tag_name"]) in command[4]
-                    ]
+                assert command[3:5] == ["--paginate", "--jq"]
+                assert "{name, digest, state}" in command[5]
+                return "\n".join(
+                    json.dumps({key: release[key] for key in ("tag_name", "draft", "assets")})
+                    for release in releases.values()
+                    if json.dumps(release["tag_name"]) in command[5]
                 )
             tag = unquote(command[2].split("/tags/", 1)[1])
             if releases[tag]["draft"]:
@@ -132,6 +130,7 @@ def test_repeated_prepared_upload_is_idempotent_across_local_filenames(tmp_path,
     )
     _payload_limits([item["name"] for item in release["assets"]])
     assert sum(command[:3] == ["gh", "release", "upload"] for command in calls) == 1
+    assert not list(tmp_path.glob(".mcp-artifact-release-*"))
 
 
 def test_draft_verification_filters_large_release_listing(tmp_path, release_backend):
@@ -149,6 +148,24 @@ def test_draft_verification_filters_large_release_listing(tmp_path, release_back
     )
     assert releases["new-draft"]["draft"] is False
     assert any(command[:2] == ["gh", "api"] and "--jq" in command for command in calls)
+
+
+def test_old_draft_on_later_release_page_is_reused(tmp_path, release_backend):
+    uploader, releases, calls = release_backend
+    archive = tmp_path / "prepared.tar.gz"
+    archive.write_bytes(b"prepared")
+    metadata = {"checksum": uploader._calculate_checksum(archive)}
+    uploader.upload_direct(archive, metadata, release_tag="old-draft")
+    releases["old-draft"]["draft"] = True
+    for number in range(101):
+        tag = f"newer-{number}"
+        releases[tag] = {"tag_name": tag, "draft": False, "assets": []}
+    calls.clear()
+    uploader.upload_direct(archive, metadata, release_tag="old-draft")
+    assert releases["old-draft"]["draft"] is False
+    assert not any(command[:3] == ["gh", "release", "create"] for command in calls)
+    assert not any(command[:3] == ["gh", "release", "upload"] for command in calls)
+    assert not list(tmp_path.glob(".mcp-artifact-release-*"))
 
 
 def test_identical_complete_draft_can_be_promoted_without_reupload(tmp_path, release_backend):
