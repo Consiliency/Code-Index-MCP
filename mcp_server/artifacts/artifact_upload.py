@@ -4,19 +4,30 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import io
 import json
 import os
+import re
+import shutil
 import sqlite3
 import subprocess
 import sys
-import tarfile
 import tempfile
+import time
+from contextlib import closing
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, NamedTuple, Optional, Tuple
+from urllib.parse import quote, urlsplit
 
-from mcp_server.artifacts.attestation import Attestation
-from mcp_server.artifacts.delta_policy import DeltaPolicy
+from mcp_server.artifacts.attestation import (
+    Attestation,
+    AttestationError,
+    _attestation_mode,
+    attest,
+    verify_attestation,
+)
 from mcp_server.config.settings import get_settings
 from mcp_server.core.errors import record_handled_error
 
@@ -33,11 +44,26 @@ from .semantic_profiles import (
 )
 
 
+def _metadata_bytes(metadata: Dict[str, Any]) -> bytes:
+    """Keep prepared and uploaded attestation subjects byte-identical."""
+    return (json.dumps(metadata, indent=2, sort_keys=True, allow_nan=False) + "\n").encode("utf-8")
+
+
 class IndexArtifactUploader:
     """Handle uploading index files to GitHub Actions Artifacts."""
 
-    def __init__(self, repo: Optional[str] = None, token: Optional[str] = None):
-        self.repo = repo or self._detect_repository()
+    def __init__(
+        self,
+        repo: Optional[str] = None,
+        token: Optional[str] = None,
+        *,
+        repo_path: Path | str | None = None,
+    ):
+        self.repo = repo or (
+            self._detect_repository(repo_path)
+            if repo_path is not None
+            else self._detect_repository()
+        )
         self.token = token or os.environ.get("GITHUB_TOKEN", "")
         self.index_files = [
             "current.db",
@@ -45,26 +71,37 @@ class IndexArtifactUploader:
             ".index_metadata.json",
         ]
 
-    def _detect_repository(self) -> str:
+    def _detect_repository(self, repo_path: Path | str | None = None) -> str:
         try:
             result = subprocess.run(
                 ["git", "remote", "get-url", "origin"],
                 capture_output=True,
                 text=True,
                 check=True,
+                cwd=repo_path,
+                timeout=10,
             )
             url = result.stdout.strip()
-            if "github.com" not in url:
-                raise ValueError(f"Not a GitHub repository: {url}")
             if url.startswith("git@"):
-                parts = url.split(":", 1)[1]
-            else:
-                parts = url.split("github.com/", 1)[1]
-            return parts.rstrip(".git")
+                url = "ssh://" + url.replace(":", "/", 1)
+            parsed = urlsplit(url)
+            parts = parsed.path.strip("/").removesuffix(".git").split("/")
+            if (
+                parsed.hostname != "github.com"
+                or parsed.query
+                or parsed.fragment
+                or len(parts) != 2
+                or any(
+                    part in {".", ".."} or not re.fullmatch(r"[A-Za-z0-9_.-]+", part)
+                    for part in parts
+                )
+            ):
+                raise ValueError("Origin is not a supported GitHub repository")
+            return "/".join(parts)
         except Exception as exc:
             raise RuntimeError(
                 "Failed to detect repository. Pass --repo owner/name or run inside a "
-                f"git clone with origin configured: {exc}"
+                f"git clone with origin configured ({type(exc).__name__})"
             ) from exc
 
     def compress_indexes(
@@ -75,48 +112,31 @@ class IndexArtifactUploader:
         repo_path: Path | str = ".",
         index_location: Path | str | None = None,
         index_path: Path | str | None = None,
+        semantic_indexer=None,
     ) -> Tuple[Path, str, int]:
         repo_root = Path(repo_path)
         index_root = (
             Path(index_location) if index_location is not None else repo_root / ".mcp-index"
         )
         db_path = Path(index_path) if index_path is not None else index_root / "current.db"
-        if secure:
-            print("🔒 Creating secure index archive (filtering sensitive files)...")
-            exporter = SecureIndexExporter(
-                repo_path=repo_root,
-                index_location=index_root,
-                index_path=db_path,
-            )
-            stats = exporter.create_secure_archive(str(output_path))
-            checksum = self._calculate_checksum(output_path)
-            size = output_path.stat().st_size
-            print(f"✅ Secure archive created: {output_path} ({size / 1024 / 1024:.1f} MB)")
-            print(f"   Files included: {stats['files_included']}")
-            print(f"   Files excluded: {stats['files_excluded']}")
-            print(f"   Checksum: {checksum}")
-            return output_path, checksum, size
-
-        print("📦 Compressing index files (unsafe mode - includes all files)...")
-        with tarfile.open(output_path, "w:gz", compresslevel=9) as tar:
-            candidates = [
-                (db_path, "current.db"),
-                (index_root / ".index_metadata.json", ".index_metadata.json"),
-                (index_root / "vector_index.qdrant", "vector_index.qdrant"),
-            ]
-            if not db_path.exists():
-                candidates[0] = (repo_root / "code_index.db", "code_index.db")
-            for file_path, arcname in candidates:
-                if file_path.exists():
-                    print(f"  Adding {arcname}...")
-                    tar.add(file_path, arcname=arcname)
-                else:
-                    print(f"  ⚠️  Skipping {arcname} (not found)")
-
+        exporter = SecureIndexExporter(
+            repo_path=repo_root,
+            index_location=index_root,
+            index_path=db_path,
+            semantic_indexer=semantic_indexer,
+            secure=secure,
+        )
+        stats = exporter.create_secure_archive(str(output_path))
         checksum = self._calculate_checksum(output_path)
         size = output_path.stat().st_size
-        print(f"✅ Compressed to {output_path} ({size / 1024 / 1024:.1f} MB)")
-        print(f"   Checksum: {checksum}")
+        self._prepared_archive_identity = (
+            checksum,
+            size,
+            stats["schema_version"],
+            stats["chunk_identity_algorithm"],
+        )
+        print(f"Archive created: {output_path} ({size} bytes)")
+        print(f"Files included: {stats['files_included']}; excluded: {stats['files_excluded']}")
         return output_path, checksum, size
 
     def _calculate_checksum(self, file_path: Path) -> str:
@@ -138,6 +158,7 @@ class IndexArtifactUploader:
         repo_id: Optional[str] = None,
         tracked_branch: Optional[str] = None,
         commit: Optional[str] = None,
+        index_generation: Optional[str] = None,
         schema_version: Optional[str] = None,
         semantic_profile_hash: Optional[str] = None,
         index_location: Path | str | None = None,
@@ -161,9 +182,29 @@ class IndexArtifactUploader:
                 commit = commit or "unknown"
                 tracked_branch = tracked_branch or "unknown"
 
-        schema_version = schema_version or self._get_schema_version(index_path=index_path)
+        prepared_identity = getattr(self, "_prepared_archive_identity", None)
+        if prepared_identity and prepared_identity[:2] != (checksum, size):
+            raise ValueError("Metadata does not match the prepared archive")
+        if prepared_identity and prepared_identity[:2] == (checksum, size):
+            _, _, exported_schema, chunk_identity_algorithm = prepared_identity
+            if schema_version is not None and str(schema_version) != exported_schema:
+                raise ValueError("Requested schema version disagrees with exported index")
+            schema_version = exported_schema
+        else:
+            chunk_identity_algorithm = self._get_chunk_identity_algorithm(index_path)
+            actual_schema = self._get_schema_version(index_path=index_path)
+            if index_path is not None:
+                from mcp_server.storage.sqlite_store import SQLiteStore
+
+                if not actual_schema.isdigit() or int(actual_schema) > SQLiteStore.SCHEMA_VERSION:
+                    raise ValueError("Index has an unsupported SQLite schema")
+                if schema_version is not None and str(schema_version) != actual_schema:
+                    raise ValueError("Requested schema version disagrees with index")
+            schema_version = (
+                actual_schema if index_path is not None else schema_version or actual_schema
+            )
         compatibility = self._build_compatibility_metadata(
-            schema_version, index_location=index_location
+            schema_version, index_location=index_location, index_path=index_path
         )
         semantic_profiles = compatibility.get("semantic_profiles")
         semantic_profile_hash = semantic_profile_hash or build_semantic_profile_hash(
@@ -188,7 +229,7 @@ class IndexArtifactUploader:
             checksum=checksum,
             artifact_type=artifact_type,
             chunk_schema_version=str(compatibility.get("chunk_schema_version", schema_version)),
-            chunk_identity_algorithm="treesitter_chunk_id_v1",
+            chunk_identity_algorithm=chunk_identity_algorithm,
             units=[
                 ManifestUnit(
                     unit_type="lexical",
@@ -203,6 +244,7 @@ class IndexArtifactUploader:
             "timestamp": datetime.utcnow().isoformat() + "Z",
             "repo_id": repo_id,
             "commit": commit,
+            "index_generation": index_generation,
             "tracked_branch": tracked_branch,
             "branch": tracked_branch,
             "schema_version": schema_version,
@@ -244,16 +286,33 @@ class IndexArtifactUploader:
         return payload if isinstance(payload, dict) else {}
 
     def _build_compatibility_metadata(
-        self, schema_version: str, index_location: Path | str | None = None
+        self,
+        schema_version: str,
+        index_location: Path | str | None = None,
+        *,
+        index_path: Path | str | None = None,
     ) -> Dict[str, Any]:
-        index_metadata = self._read_index_metadata(index_location=index_location)
+        index_metadata = (
+            SecureIndexExporter.read_generation_metadata(
+                Path(index_path), Path(index_location or Path(index_path).parent)
+            )
+            if index_path is not None
+            else self._read_index_metadata(index_location=index_location)
+        )
         profile_id, primary_profile = get_primary_semantic_profile_metadata(index_metadata)
         semantic_profiles = extract_semantic_profile_metadata(index_metadata)
+        semantic_profiles = {
+            name: {key: value for key, value in profile.items() if key != "qdrant_path"}
+            for name, profile in semantic_profiles.items()
+        }
         settings = get_settings()
 
         primary_profile = primary_profile or {}
         compatibility: Dict[str, Any] = {
             "schema_version": schema_version,
+            "chunk_schema_version": str(
+                index_metadata.get("chunk_schema_version") or schema_version
+            ),
             "embedding_model": primary_profile.get("embedding_model")
             or index_metadata.get("embedding_model")
             or settings.semantic_embedding_model,
@@ -305,6 +364,22 @@ class IndexArtifactUploader:
             record_handled_error(__name__, exc)
             return os.environ.get("INDEX_SCHEMA_VERSION", "2")
 
+    def _get_chunk_identity_algorithm(self, index_path: Path | str | None) -> str:
+        from mcp_server.storage.sqlite_store import (
+            LEGACY_CHUNK_ID_SCHEME,
+            evaluate_chunk_scheme,
+        )
+
+        if index_path is None:
+            return LEGACY_CHUNK_ID_SCHEME
+        with closing(
+            sqlite3.connect(Path(index_path).resolve().as_uri() + "?mode=ro", uri=True)
+        ) as conn:
+            status, marker, target = evaluate_chunk_scheme(conn)
+        if status not in {"compatible", "compatible_legacy", "empty"}:
+            raise ValueError("Index has an incompatible chunk identity scheme")
+        return marker or target
+
     def _get_index_stats(
         self,
         *,
@@ -313,7 +388,7 @@ class IndexArtifactUploader:
     ) -> Dict[str, Any]:
         stats: Dict[str, Any] = {}
         db_path = Path(index_path) if index_path is not None else Path(".mcp-index/current.db")
-        if not db_path.exists():
+        if not db_path.exists() and index_path is None:
             db_path = Path("code_index.db")
         if db_path.exists():
             size = db_path.stat().st_size
@@ -337,7 +412,7 @@ class IndexArtifactUploader:
             if index_location is not None
             else Path(".mcp-index/vector_index.qdrant")
         )
-        if not vector_path.exists():
+        if not vector_path.exists() and index_location is None and index_path is None:
             vector_path = Path("vector_index.qdrant")
         if vector_path.exists():
             total_size = sum(
@@ -361,6 +436,7 @@ class IndexArtifactUploader:
         repo_id: Optional[str] = None,
         tracked_branch: Optional[str] = None,
         commit: Optional[str] = None,
+        index_generation: Optional[str] = None,
         schema_version: Optional[str] = None,
         semantic_profile_hash: Optional[str] = None,
         index_location: Path | str | None = None,
@@ -377,6 +453,7 @@ class IndexArtifactUploader:
             repo_id=repo_id,
             tracked_branch=tracked_branch,
             commit=commit,
+            index_generation=index_generation,
             schema_version=schema_version,
             semantic_profile_hash=semantic_profile_hash,
             index_location=index_location,
@@ -384,7 +461,8 @@ class IndexArtifactUploader:
         )
         destination = Path(output_path)
         destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+        with destination.open("xb") as handle:
+            handle.write(_metadata_bytes(metadata))
         return destination
 
     def trigger_workflow(self, archive_path: Path, metadata: Dict[str, Any]) -> None:
@@ -394,11 +472,20 @@ class IndexArtifactUploader:
     def _ensure_gh_cli(self) -> None:
         # Verify gh CLI is available
         try:
-            subprocess.run(["gh", "--version"], capture_output=True, check=True)
+            self._run_gh(["gh", "--version"], deadline=time.monotonic() + 5)
         except (FileNotFoundError, subprocess.CalledProcessError) as exc:
             raise RuntimeError(
                 "gh CLI is required for artifact upload. " "Install from https://cli.github.com"
             ) from exc
+
+    @staticmethod
+    def _run_gh(command: list[str], *, deadline: float) -> str:
+        """Bound CLI metadata and mutation responses without automatic retries."""
+        from .artifact_download import _download_bounded
+
+        output = io.BytesIO()
+        _download_bounded(command, output, 1024**2, deadline)
+        return output.getvalue().decode("utf-8")
 
     def _build_release_asset_bundle(
         self,
@@ -413,19 +500,30 @@ class IndexArtifactUploader:
             raise ValueError("artifact metadata checksum is required for direct upload")
 
         if bundle_dir is None:
-            bundle_dir = Path(tempfile.mkdtemp(prefix="mcp-artifact-release-"))
+            bundle_dir = Path(
+                tempfile.mkdtemp(prefix=".mcp-artifact-release-", dir=archive_path.parent)
+            )
         bundle_dir.mkdir(parents=True, exist_ok=True)
 
+        published_archive = bundle_dir / "index-archive.tar.gz"
+        with archive_path.open("rb") as source, published_archive.open("xb") as target:
+            shutil.copyfileobj(source, target)
+        if self._calculate_checksum(published_archive) != checksum:
+            raise ValueError("Prepared archive changed while constructing the release bundle")
+        archive_path = published_archive
+
         metadata_path = bundle_dir / "artifact-metadata.json"
-        metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+        with metadata_path.open("xb") as handle:
+            handle.write(_metadata_bytes(metadata))
 
         checksum_path = bundle_dir / f"{archive_path.name}.sha256"
         checksum_path.write_text(f"{checksum}  {archive_path.name}\n", encoding="utf-8")
 
         attestation_path: Optional[Path] = None
         if attestation is not None and attestation.bundle_path and attestation.bundle_path.exists():
-            attestation_path = bundle_dir / attestation.bundle_path.name
-            attestation_path.write_bytes(attestation.bundle_path.read_bytes())
+            attestation_path = bundle_dir / "artifact-metadata.json.attestation.jsonl"
+            with attestation_path.open("xb") as handle:
+                handle.write(attestation.bundle_path.read_bytes())
 
         assets = [archive_path, metadata_path, checksum_path]
         if attestation_path is not None:
@@ -439,27 +537,94 @@ class IndexArtifactUploader:
             asset_paths=tuple(assets),
         )
 
-    def _verify_release_assets(self, tag: str, expected_names: set[str]) -> None:
-        result = subprocess.run(
-            ["gh", "release", "view", tag, "--repo", self.repo, "--json", "assets"],
-            capture_output=True,
-            text=True,
-            check=True,
+    def _release_matches(self, tag: str, *, deadline: float) -> list[Dict[str, Any]]:
+        # GitHub's by-tag endpoint only returns published releases.
+        result = self._run_gh(
+            [
+                "gh",
+                "api",
+                f"/repos/{self.repo}/releases?per_page=100",
+                "--paginate",
+                "--jq",
+                ".[] | select(.tag_name == "
+                + json.dumps(tag)
+                + ") | {tag_name, draft, assets: [.assets[] | {name, digest, state}]}",
+            ],
+            deadline=deadline,
         )
-        payload = json.loads(result.stdout or "{}")
+        releases = [json.loads(line) for line in result.splitlines() if line.strip()]
+        if any(not isinstance(item, dict) for item in releases):
+            raise RuntimeError("Artifact release listing is malformed")
+        return [item for item in releases if isinstance(item, dict) and item.get("tag_name") == tag]
+
+    def _verify_release_assets(
+        self, tag: str, expected_assets: Dict[str, str], *, deadline: float, draft: bool = False
+    ) -> None:
+        if draft:
+            matches = self._release_matches(tag, deadline=deadline)
+            if len(matches) != 1:
+                raise RuntimeError("Artifact draft release is missing or ambiguous")
+            payload = matches[0]
+        else:
+            try:
+                result = self._run_gh(
+                    ["gh", "api", f"/repos/{self.repo}/releases/tags/{quote(tag, safe='')}"],
+                    deadline=deadline,
+                )
+            except subprocess.CalledProcessError as exc:
+                raise RuntimeError("Published artifact release is unavailable") from exc
+            payload = json.loads(result or "{}")
+        if payload.get("tag_name") != tag or payload.get("draft") is not draft:
+            raise RuntimeError("Artifact release identity or publication state does not match")
         assets = payload.get("assets")
-        if not isinstance(assets, list):
+        if not isinstance(assets, list) or any(not isinstance(item, dict) for item in assets):
             raise RuntimeError(f"Release {tag} returned malformed asset payload")
-        actual_names = {
-            str(item.get("name"))
-            for item in assets
-            if isinstance(item, dict) and item.get("name") is not None
-        }
-        missing = sorted(expected_names - actual_names)
-        if missing:
-            raise RuntimeError(
-                f"Release {tag} missing required assets after upload: {', '.join(missing)}"
-            )
+        actual = {item.get("name"): item.get("digest") for item in assets}
+        expected = {name: f"sha256:{digest}" for name, digest in expected_assets.items()}
+        if (
+            len(actual) != len(assets)
+            or actual != expected
+            or any(item.get("state") != "uploaded" for item in assets)
+        ):
+            raise RuntimeError("Artifact release assets do not match the exact prepared bytes")
+
+    def upload_prepared(
+        self,
+        archive_path: Path,
+        metadata_path: Path,
+        *,
+        repo_id: Optional[str] = None,
+        tracked_branch: Optional[str] = None,
+        commit: Optional[str] = None,
+        index_generation: Optional[str] = None,
+    ) -> None:
+        """Verify and upload existing signed bytes without rebuilding metadata."""
+        from .artifact_download import IndexArtifactDownloader
+
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        if not isinstance(metadata, dict) or metadata.get("checksum") != self._calculate_checksum(
+            archive_path
+        ):
+            raise ValueError("Prepared archive checksum does not match its metadata")
+        if metadata_path.read_bytes() != _metadata_bytes(metadata):
+            raise ValueError("Prepared metadata is not canonical; prepare and sign again")
+        reasons = IndexArtifactDownloader(repo=self.repo).validate_artifact_identity(
+            metadata, repo_id=repo_id, tracked_branch=tracked_branch, target_commit=commit
+        )
+        if reasons:
+            raise ValueError("Prepared artifact identity mismatch: " + "; ".join(reasons))
+        if index_generation is not None and metadata.get("index_generation") != index_generation:
+            raise ValueError("Prepared artifact identity mismatch: index generation differs")
+        if "manifest_v2" in metadata or "artifact_manifest_v2" in metadata:
+            from .integrity_gate import validate_artifact_integrity
+
+            integrity = validate_artifact_integrity(metadata, archive_path)
+            if not integrity.passed:
+                raise ValueError(
+                    "Prepared artifact integrity validation failed: " + "; ".join(integrity.reasons)
+                )
+        attestation = attest(metadata_path, repo=self.repo)
+        self.upload_direct(archive_path, metadata, attestation=attestation)
 
     def upload_direct(
         self,
@@ -468,32 +633,88 @@ class IndexArtifactUploader:
         *,
         release_tag: Optional[str] = None,
         attestation: Optional[Attestation] = None,
-    ) -> "ReleaseAssetBundle":
+    ) -> None:
+        if metadata.get("checksum") != self._calculate_checksum(archive_path):
+            raise ValueError("Prepared archive checksum does not match its metadata")
+        if "manifest_v2" in metadata or "artifact_manifest_v2" in metadata:
+            from .integrity_gate import validate_artifact_integrity
+
+            integrity = validate_artifact_integrity(metadata, archive_path)
+            if not integrity.passed:
+                raise ValueError(
+                    "Prepared artifact integrity validation failed: " + "; ".join(integrity.reasons)
+                )
+        bundle = self._build_release_asset_bundle(archive_path, metadata, attestation=attestation)
+        if attestation is None:
+            attestation = attest(bundle.metadata_path, repo=self.repo)
+        else:
+            attestation = replace(attestation, bundle_path=bundle.attestation_path)
+            verify_attestation(bundle.metadata_path, attestation, expected_repo=self.repo)
         self._ensure_gh_cli()
 
-        tag = str(release_tag or metadata.get("logical_artifact_id") or "index-latest")
-        commit = str(metadata.get("commit", ""))[:8]
-        bundle = self._build_release_asset_bundle(archive_path, metadata, attestation=attestation)
-
-        # Create the release if it doesn't exist (ignore failure if it already exists)
-        subprocess.run(
-            [
-                "gh",
-                "release",
-                "create",
-                tag,
-                "--repo",
-                self.repo,
-                "--title",
-                f"Index: latest ({commit})",
-                "--notes",
-                f"Auto-updated index artifact. Commit: {metadata.get('commit', 'unknown')}",
-            ],
-            capture_output=True,
+        metadata_digest = self._calculate_checksum(bundle.metadata_path)
+        tag = str(
+            release_tag
+            or f"{metadata.get('logical_artifact_id') or 'index-artifact'}-{metadata_digest}"
         )
+        expected_assets = {path.name: self._calculate_checksum(path) for path in bundle.asset_paths}
+        source_commit = str(metadata.get("commit", ""))
+        commit = source_commit[:8]
+        target = ["--target", source_commit] if re.fullmatch(r"[0-9a-f]{40}", source_commit) else []
+        deadline = time.monotonic() + 300
+        existing = self._release_matches(tag, deadline=deadline)
+        if len(existing) > 1:
+            raise RuntimeError("Artifact release tag is ambiguous")
+        if existing:
+            draft = existing[0].get("draft")
+            if type(draft) is not bool:
+                raise RuntimeError("Artifact release publication state is malformed")
+            self._verify_release_assets(tag, expected_assets, deadline=deadline, draft=draft)
+            if draft:
+                self._run_gh(
+                    ["gh", "release", "edit", tag, "--repo", self.repo, "--draft=false"],
+                    deadline=deadline,
+                )
+                self._verify_release_assets(tag, expected_assets, deadline=deadline)
+            shutil.rmtree(bundle.archive_path.parent)
+            return
+        # Creating the draft acquires publication ownership. A retry may only
+        # promote a complete draft with the same prepared bytes.
+        try:
+            self._run_gh(
+                [
+                    "gh",
+                    "release",
+                    "create",
+                    tag,
+                    "--repo",
+                    self.repo,
+                    "--draft",
+                    "--title",
+                    f"Index: latest ({commit})",
+                    "--notes",
+                    f"Auto-updated index artifact. Commit: {metadata.get('commit', 'unknown')}",
+                    *target,
+                ],
+                deadline=deadline,
+            )
+        except subprocess.CalledProcessError:
+            try:
+                self._verify_release_assets(tag, expected_assets, deadline=deadline)
+            except RuntimeError as exc:
+                if str(exc) != "Published artifact release is unavailable":
+                    raise
+                self._verify_release_assets(tag, expected_assets, deadline=deadline, draft=True)
+                self._run_gh(
+                    ["gh", "release", "edit", tag, "--repo", self.repo, "--draft=false"],
+                    deadline=deadline,
+                )
+                self._verify_release_assets(tag, expected_assets, deadline=deadline)
+            shutil.rmtree(bundle.archive_path.parent)
+            return
 
-        # Upload (overwrite) the archive and metadata assets
-        subprocess.run(
+        # Never clobber another attempt, including an incomplete draft.
+        self._run_gh(
             [
                 "gh",
                 "release",
@@ -501,19 +722,22 @@ class IndexArtifactUploader:
                 tag,
                 "--repo",
                 self.repo,
-                "--clobber",
                 *[str(asset_path) for asset_path in bundle.asset_paths],
             ],
-            check=True,
+            deadline=deadline,
         )
-        self._verify_release_assets(tag, {asset_path.name for asset_path in bundle.asset_paths})
+        self._verify_release_assets(tag, expected_assets, deadline=deadline, draft=True)
+        self._run_gh(
+            ["gh", "release", "edit", tag, "--repo", self.repo, "--draft=false"], deadline=deadline
+        )
+        self._verify_release_assets(tag, expected_assets, deadline=deadline)
 
         size_mb = archive_path.stat().st_size / 1024 / 1024
         print(
             f"✅ Uploaded {archive_path.name} ({size_mb:.1f} MB) to "
             f"https://github.com/{self.repo}/releases/tag/{tag}"
         )
-        return bundle
+        shutil.rmtree(bundle.archive_path.parent)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -551,11 +775,36 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--schema-version", help="Override schema version in metadata.")
     parser.add_argument("--artifact-type", choices=["full", "delta"], default="full")
     parser.add_argument("--delta-from", help="Base commit SHA for delta artifacts")
+    preparation = parser.add_mutually_exclusive_group()
+    preparation.add_argument(
+        "--prepare-only",
+        action="store_true",
+        help="Prepare archive and metadata for manual signing without upload.",
+    )
+    preparation.add_argument(
+        "--prepared-archive", help="Upload these already-prepared bytes without recompression."
+    )
+    parser.add_argument("--prepared-metadata", help="Metadata paired with --prepared-archive.")
     return parser
 
 
 def run_cli(args: argparse.Namespace) -> int:
+    if args.metadata_only and (
+        getattr(args, "prepare_only", False) or getattr(args, "prepared_archive", None)
+    ):
+        raise ValueError("--metadata-only cannot be combined with archive preparation or upload")
     uploader = IndexArtifactUploader(repo=args.repo)
+    if getattr(args, "prepared_archive", None):
+        if not args.prepared_metadata:
+            raise ValueError("--prepared-archive requires --prepared-metadata")
+        uploader.upload_prepared(Path(args.prepared_archive), Path(args.prepared_metadata))
+        return 0
+    if getattr(args, "prepared_metadata", None):
+        raise ValueError("--prepared-metadata requires --prepared-archive")
+    if getattr(args, "prepare_only", False):
+        destination = Path(args.metadata_output)
+        if destination.exists() or destination.is_symlink():
+            raise ValueError("Prepared metadata already exists; use a fresh output path")
     index_location = Path(args.index_location) if args.index_location else Path(".mcp-index")
     index_path = Path(args.index_path) if args.index_path else index_location / "current.db"
 
@@ -579,10 +828,23 @@ def run_cli(args: argparse.Namespace) -> int:
         print(f"✅ Wrote metadata: {metadata_path}")
         return 0
 
+    if not getattr(args, "prepare_only", False) and _attestation_mode() == "enforce":
+        raise AttestationError(
+            "ATTESTATION_PREREQ: use --prepare-only, sign the metadata digest, "
+            "then upload with --prepared-archive and --prepared-metadata"
+        )
+
     if args.validate:
         print("🔍 Validating indexes...")
+        with closing(sqlite3.connect(index_path.resolve().as_uri() + "?mode=ro", uri=True)) as conn:
+            if conn.execute("PRAGMA quick_check").fetchall() != [("ok",)]:
+                raise ValueError("Index integrity validation failed")
+            if conn.execute("PRAGMA foreign_key_check").fetchall():
+                raise ValueError("Index foreign-key validation failed")
         print("✅ Validation passed")
 
+    if args.artifact_type != "full" or args.delta_from:
+        raise ValueError("Archive preparation supports full snapshots only; omit delta options")
     secure = not args.no_secure
     archive_path, checksum, size = uploader.compress_indexes(
         Path(args.output),
@@ -591,21 +853,37 @@ def run_cli(args: argparse.Namespace) -> int:
         index_path=index_path,
     )
 
-    policy = DeltaPolicy()
-    decision = policy.decide(
-        compressed_size_bytes=size,
-        previous_artifact_id=args.delta_from,
-    )
-
     metadata = uploader.create_metadata(
         checksum,
         size,
         secure=secure,
-        artifact_type=decision.strategy,
-        delta_from=decision.base_artifact_id,
+        artifact_type="full",
+        delta_from=None,
+        repo_id=args.repo,
+        tracked_branch=args.tracked_branch,
+        commit=args.commit,
+        schema_version=args.schema_version,
         index_location=index_location,
         index_path=index_path,
     )
+    if getattr(args, "prepare_only", False):
+        destination = Path(args.metadata_output)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        with destination.open("xb") as handle:
+            handle.write(_metadata_bytes(metadata))
+        print(
+            json.dumps(
+                {
+                    "archive": str(archive_path),
+                    "metadata": str(destination),
+                    "sha256": uploader._calculate_checksum(destination),
+                    "signature_subject": "artifact-metadata.json",
+                    "archive_sha256": checksum,
+                    "uploaded": False,
+                }
+            )
+        )
+        return 0
     if args.method == "workflow":
         uploader.trigger_workflow(archive_path, metadata)
     else:

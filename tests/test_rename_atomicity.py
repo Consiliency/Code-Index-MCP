@@ -162,6 +162,35 @@ class TestRenameRollbackOnSemanticFailure:
         paths = [r[0] for r in rows]
         assert paths == ["foo.py"], f"Expected rollback to foo.py but got {paths}"
 
+    def test_move_reports_semantic_counter_failure(self, tmp_path):
+        repo_root = tmp_path / "repo"
+        repo_root.mkdir()
+        store = _make_store(tmp_path)
+        repo_int_id = store.create_repository(path=str(repo_root), name="testrepo")
+        old_path = repo_root / "foo.py"
+        new_path = repo_root / "bar.py"
+        new_path.write_text("x = 1\n")
+        store.store_file(
+            path=old_path, relative_path="foo.py", language="python", repository_id=repo_int_id
+        )
+        ctx = _make_ctx(store, workspace_root=repo_root)
+        dispatcher = _make_dispatcher(store)
+        sem = Mock()
+        sem.semantic_profile.profile_id = "oss-high"
+        with (
+            patch.object(dispatcher, "_get_semantic_indexer", return_value=sem),
+            patch.object(
+                dispatcher,
+                "rebuild_semantic_for_paths",
+                return_value={"semantic_failed": 1, "semantic_blocked": 0},
+            ),
+        ):
+            result = dispatcher.move_file(ctx, old_path, new_path, content_hash="abc123")
+        assert result.status == IndexResultStatus.ERROR
+        assert result.path == new_path
+        assert result.semantic["semantic_failed"] == 1
+        assert dispatcher._operation_stats.get("moves", 0) == 0
+
     def test_move_returns_not_found_when_primary_row_never_existed(self, tmp_path):
         repo_root = tmp_path / "repo"
         repo_root.mkdir()

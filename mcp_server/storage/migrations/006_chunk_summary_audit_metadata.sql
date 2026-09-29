@@ -9,4 +9,5 @@ INSERT OR REPLACE INTO schema_version (version, description)
 VALUES (6, 'Chunk summary audit metadata');
 
 INSERT INTO migrations (version_from, version_to, status)
-VALUES (5, 6, 'completed');
+SELECT 5, 6, 'completed'
+WHERE NOT EXISTS (SELECT 1 FROM migrations WHERE version_to = 6 AND status = 'completed');

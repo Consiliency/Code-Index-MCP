@@ -265,7 +265,7 @@ class TestIndexDiscovery:
         }
         assert discovery._validate_artifact_metadata(valid) is None
 
-    def test_find_index_in_legacy_location(self, temp_workspace, create_test_index):
+    def test_find_index_in_legacy_location(self, temp_workspace, create_test_index, monkeypatch):
         """Test finding index in legacy .mcp-index location."""
         # Create .mcp-index.json to enable indexing
         config_file = temp_workspace / ".mcp-index.json"
@@ -274,6 +274,7 @@ class TestIndexDiscovery:
         # Create index in legacy location
         legacy_index = temp_workspace / ".mcp-index" / "code_index.db"
         create_test_index(legacy_index)
+        monkeypatch.setenv("MCP_INDEX_PATHS", str(legacy_index.parent))
 
         discovery = IndexDiscovery(temp_workspace)
         index_path = discovery.get_local_index_path()

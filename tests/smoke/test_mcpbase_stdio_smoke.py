@@ -12,6 +12,7 @@ from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
 
 from tests.fixtures.multi_repo import boot_test_server, build_temp_repo
+from tests.test_release_metadata import EXPECTED_VERSION
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 RUNNER_PYTHON = REPO_ROOT / ".venv" / "bin" / "python"
@@ -70,7 +71,7 @@ async def test_official_sdk_client_can_initialize_list_tools_and_call_baseline_t
 
             status = _text_payload(await session.call_tool("get_status", {}))
             assert status["status"] in {"healthy", "unknown"}
-            assert status["version"] == "1.4.0"
+            assert status["version"] == EXPECTED_VERSION
 
             plugins = _text_payload(await session.call_tool("list_plugins", {}))
             assert "plugin_availability" in plugins

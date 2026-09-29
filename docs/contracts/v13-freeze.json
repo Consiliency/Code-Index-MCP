@@ -1,0 +1,936 @@
+{
+  "schema_version": "v13.freeze.v1",
+  "roadmap": "specs/phase-plans-v13.md",
+  "roadmap_sha256": "178b8328d8e7dc76ddc0804d7b72d3ccddb55e23577a3d52cb7cbd70d5fd5308",
+  "baseline": {
+    "commit": "d4e09c54232fdddd76c393c4027d0f4c01fbd5a4",
+    "audit_sha256": "de864227b7fa444e4407ec7b9428409e7abb3903a911f9a1bb3a640f5e7d4a47",
+    "counterexamples_sha256": "72aa3d3f63d828305123dd4f5dba9117206337a4113dda7e0e59e66881efe335",
+    "note": "Retained audit evidence, not rerun or repaired during FREEZE."
+  },
+  "findings": [
+    {
+      "id": "C01",
+      "owner": "STATE",
+      "source": {
+        "path": "mcp_server/storage/repository_registry.py",
+        "line": 234
+      },
+      "probe": {
+        "kind": "retained_counterexample",
+        "path": "docs/status/review-evidence-2026-09-09/test_counterexamples.py",
+        "symbol": "test_unregister_survives_reload"
+      },
+      "command": "PYTHONPATH=. SEMANTIC_SEARCH_ENABLED=false MCP_TEST_MODE=1 uv run --locked --extra dev --extra semantic pytest docs/status/review-evidence-2026-09-09/test_counterexamples.py::test_unregister_survives_reload -q --no-cov",
+      "tracking": "roadmap_only",
+      "disposition": "required",
+      "acceptance": "Deletion must survive reload and detach watchers.",
+      "evidence_status": "retained_red_at_unchanged_audit_base",
+      "rollout_consequence": "No fleet expansion until the owning phase and PILOT are accepted."
+    },
+    {
+      "id": "C02",
+      "owner": "STATE",
+      "source": {
+        "path": "mcp_server/storage/repository_registry.py",
+        "line": 217
+      },
+      "probe": {
+        "kind": "retained_counterexample",
+        "path": "docs/status/review-evidence-2026-09-09/test_counterexamples.py",
+        "symbol": "test_stale_writer_preserves_new_provenance"
+      },
+      "command": "PYTHONPATH=. SEMANTIC_SEARCH_ENABLED=false MCP_TEST_MODE=1 uv run --locked --extra dev --extra semantic pytest docs/status/review-evidence-2026-09-09/test_counterexamples.py::test_stale_writer_preserves_new_provenance -q --no-cov",
+      "tracking": "roadmap_only",
+      "disposition": "required",
+      "acceptance": "Field-scoped transactions and revision-aware reads preserve publication fences; add second-process readers and query-triggered writes.",
+      "evidence_status": "retained_red_at_unchanged_audit_base",
+      "rollout_consequence": "No fleet expansion until the owning phase and PILOT are accepted."
+    },
+    {
+      "id": "C03",
+      "owner": "STATE",
+      "source": {
+        "path": "mcp_server/storage/repository_registry.py",
+        "line": 240
+      },
+      "probe": {
+        "kind": "retained_counterexample",
+        "path": "docs/status/review-evidence-2026-09-09/test_counterexamples.py",
+        "symbol": "test_registry_does_not_ack_failed_persistence"
+      },
+      "command": "PYTHONPATH=. SEMANTIC_SEARCH_ENABLED=false MCP_TEST_MODE=1 uv run --locked --extra dev --extra semantic pytest docs/status/review-evidence-2026-09-09/test_counterexamples.py::test_registry_does_not_ack_failed_persistence -q --no-cov",
+      "tracking": "roadmap_only",
+      "disposition": "required",
+      "acceptance": "Failed durable writes raise and cannot acknowledge ready provenance.",
+      "evidence_status": "retained_red_at_unchanged_audit_base",
+      "rollout_consequence": "No fleet expansion until the owning phase and PILOT are accepted."
+    },
+    {
+      "id": "C04",
+      "owner": "STATE",
+      "source": {
+        "path": "mcp_server/storage/store_registry.py",
+        "line": 57
+      },
+      "probe": {
+        "kind": "retained_counterexample",
+        "path": "docs/status/review-evidence-2026-09-09/test_counterexamples.py",
+        "symbol": "test_cached_store_reopens_after_replacement"
+      },
+      "command": "PYTHONPATH=. SEMANTIC_SEARCH_ENABLED=false MCP_TEST_MODE=1 uv run --locked --extra dev --extra semantic pytest docs/status/review-evidence-2026-09-09/test_counterexamples.py::test_cached_store_reopens_after_replacement -q --no-cov",
+      "tracking": "roadmap_only",
+      "disposition": "required",
+      "acceptance": "Generation-bound readers and process writer admission; never unlink live sidecars.",
+      "evidence_status": "retained_red_at_unchanged_audit_base",
+      "rollout_consequence": "No fleet expansion until the owning phase and PILOT are accepted."
+    },
+    {
+      "id": "C05",
+      "owner": "DATA",
+      "source": {
+        "path": "mcp_server/storage/git_index_manager.py",
+        "line": 636
+      },
+      "probe": {
+        "kind": "retained_counterexample",
+        "path": "docs/status/review-evidence-2026-09-09/test_counterexamples.py",
+        "symbol": "test_staged_rebuild_preserves_synthetic_history"
+      },
+      "command": "PYTHONPATH=. SEMANTIC_SEARCH_ENABLED=false MCP_TEST_MODE=1 uv run --locked --extra dev --extra semantic pytest docs/status/review-evidence-2026-09-09/test_counterexamples.py::test_staged_rebuild_preserves_synthetic_history -q --no-cov",
+      "tracking": "roadmap_only",
+      "disposition": "required",
+      "acceptance": "Real rebuild preserves imported rows, relationships, summaries and vector cleanup debt.",
+      "evidence_status": "retained_red_at_unchanged_audit_base",
+      "rollout_consequence": "No fleet expansion until the owning phase and PILOT are accepted."
+    },
+    {
+      "id": "C06",
+      "owner": "DATA",
+      "source": {
+        "path": "mcp_server/dispatcher/dispatcher_enhanced.py",
+        "line": 1683
+      },
+      "probe": {
+        "kind": "static_risk",
+        "path": "mcp_server/dispatcher/dispatcher_enhanced.py",
+        "line": 1683
+      },
+      "command": "sed -n '1678,1718p' mcp_server/dispatcher/dispatcher_enhanced.py",
+      "tracking": "roadmap_only",
+      "disposition": "required",
+      "acceptance": "Stage vectors and SQLite as one admitted generation; inject failures at every publication boundary.",
+      "evidence_status": "source_review_requires_downstream_boundary_test",
+      "rollout_consequence": "No fleet expansion until the owning phase and PILOT are accepted."
+    },
+    {
+      "id": "C07",
+      "owner": "DATA",
+      "source": {
+        "path": "mcp_server/utils/semantic_indexer.py",
+        "line": 3728
+      },
+      "probe": {
+        "kind": "retained_counterexample",
+        "path": "docs/status/review-evidence-2026-09-09/test_counterexamples.py",
+        "symbol": "test_locked_qdrant_file_removal_api"
+      },
+      "command": "PYTHONPATH=. SEMANTIC_SEARCH_ENABLED=false MCP_TEST_MODE=1 uv run --locked --extra dev --extra semantic pytest docs/status/review-evidence-2026-09-09/test_counterexamples.py::test_locked_qdrant_file_removal_api -q --no-cov",
+      "tracking": "roadmap_only",
+      "disposition": "required",
+      "acceptance": "Locked SDK deletion/move/scroll with 1000/1001 points, interrupted retries, file-backed and real server modes.",
+      "evidence_status": "retained_red_at_unchanged_audit_base",
+      "rollout_consequence": "No fleet expansion until the owning phase and PILOT are accepted."
+    },
+    {
+      "id": "C08",
+      "owner": "DATA",
+      "source": {
+        "path": "mcp_server/utils/semantic_indexer.py",
+        "line": 558
+      },
+      "probe": {
+        "kind": "retained_counterexample",
+        "path": "docs/status/review-evidence-2026-09-09/test_counterexamples.py",
+        "symbol": "test_batch_embedding_revalidates_provenance"
+      },
+      "command": "PYTHONPATH=. SEMANTIC_SEARCH_ENABLED=false MCP_TEST_MODE=1 uv run --locked --extra dev --extra semantic pytest docs/status/review-evidence-2026-09-09/test_counterexamples.py::test_batch_embedding_revalidates_provenance -q --no-cov",
+      "tracking": "roadmap_only",
+      "disposition": "required",
+      "acceptance": "Validate complete per-batch provenance before writes, including partial responses and concurrent batches.",
+      "evidence_status": "retained_red_at_unchanged_audit_base",
+      "rollout_consequence": "No fleet expansion until the owning phase and PILOT are accepted."
+    },
+    {
+      "id": "C09",
+      "owner": "SAFETY",
+      "source": {
+        "path": "mcp_server/artifacts/artifact_download.py",
+        "line": 268
+      },
+      "probe": {
+        "kind": "retained_counterexample",
+        "path": "docs/status/review-evidence-2026-09-09/test_counterexamples.py",
+        "symbol": "test_enforce_rejects_unsigned_archive"
+      },
+      "command": "PYTHONPATH=. SEMANTIC_SEARCH_ENABLED=false MCP_TEST_MODE=1 uv run --locked --extra dev --extra semantic pytest docs/status/review-evidence-2026-09-09/test_counterexamples.py::test_enforce_rejects_unsigned_archive -q --no-cov",
+      "tracking": "roadmap_only",
+      "disposition": "required",
+      "acceptance": "Trusted policy rejects missing, tampered and wrong-producer attestations before extraction.",
+      "evidence_status": "retained_red_at_unchanged_audit_base",
+      "rollout_consequence": "No fleet expansion until the owning phase and PILOT are accepted."
+    },
+    {
+      "id": "C10",
+      "owner": "DIST",
+      "source": {
+        "path": "mcp_server/storage/sqlite_store.py",
+        "line": 730
+      },
+      "probe": {
+        "kind": "static_risk",
+        "path": "mcp_server/storage/sqlite_store.py",
+        "line": 730
+      },
+      "command": "sed -n '725,765p' mcp_server/storage/sqlite_store.py",
+      "tracking": "roadmap_only",
+      "disposition": "required",
+      "acceptance": "Installed-wheel fresh/upgrade schema parity and real register/index/query/restart outside checkout.",
+      "evidence_status": "source_review_requires_downstream_boundary_test",
+      "rollout_consequence": "No fleet expansion until the owning phase and PILOT are accepted."
+    },
+    {
+      "id": "C11",
+      "owner": "DIST",
+      "source": {
+        "path": "docker/dockerfiles/Dockerfile.production",
+        "line": 29
+      },
+      "probe": {
+        "kind": "static_risk",
+        "path": "docker/dockerfiles/Dockerfile.production",
+        "line": 29
+      },
+      "command": "sed -n '24,64p' docker/dockerfiles/Dockerfile.production",
+      "tracking": "roadmap_only",
+      "disposition": "required",
+      "acceptance": "Final non-root configured container has Git and indexes a mounted temporary repository.",
+      "evidence_status": "source_review_requires_downstream_boundary_test",
+      "rollout_consequence": "No fleet expansion until the owning phase and PILOT are accepted."
+    },
+    {
+      "id": "C12",
+      "owner": "DATA",
+      "source": {
+        "path": "mcp_server/storage/multi_repo_manager.py",
+        "line": 409
+      },
+      "probe": {
+        "kind": "retained_counterexample",
+        "path": "docs/status/review-evidence-2026-09-09/test_counterexamples.py",
+        "symbol": "test_legacy_cross_repo_search_refuses_wrong_branch"
+      },
+      "command": "PYTHONPATH=. SEMANTIC_SEARCH_ENABLED=false MCP_TEST_MODE=1 uv run --locked --extra dev --extra semantic pytest docs/status/review-evidence-2026-09-09/test_counterexamples.py::test_legacy_cross_repo_search_refuses_wrong_branch -q --no-cov",
+      "tracking": "roadmap_only",
+      "disposition": "required",
+      "acceptance": "All public query paths share readiness/generation admission; distinguish unavailable from no match.",
+      "evidence_status": "retained_red_at_unchanged_audit_base",
+      "rollout_consequence": "No fleet expansion until the owning phase and PILOT are accepted."
+    },
+    {
+      "id": "C13",
+      "owner": "SAFETY",
+      "source": {
+        "path": "mcp_server/artifacts/attestation.py",
+        "line": 32
+      },
+      "probe": {
+        "kind": "static_risk",
+        "path": "mcp_server/artifacts/attestation.py",
+        "line": 32
+      },
+      "command": "sed -n '27,67p' mcp_server/artifacts/attestation.py",
+      "tracking": "roadmap_only",
+      "disposition": "required",
+      "acceptance": "Replace unsupported local gh signing and token-display probe with an approved signer and exact verified roundtrip.",
+      "evidence_status": "source_review_requires_downstream_boundary_test",
+      "rollout_consequence": "No fleet expansion until the owning phase and PILOT are accepted."
+    },
+    {
+      "id": "C14",
+      "owner": "SAFETY",
+      "source": {
+        "path": "mcp_server/sandbox/caps_apply.py",
+        "line": 153
+      },
+      "probe": {
+        "kind": "retained_counterexample",
+        "path": "docs/status/review-evidence-2026-09-09/test_counterexamples.py",
+        "symbol": "test_sandbox_pathlib_enforces_read_roots"
+      },
+      "command": "PYTHONPATH=. SEMANTIC_SEARCH_ENABLED=false MCP_TEST_MODE=1 uv run --locked --extra dev --extra semantic pytest docs/status/review-evidence-2026-09-09/test_counterexamples.py::test_sandbox_pathlib_enforces_read_roots -q --no-cov",
+      "tracking": "roadmap_only",
+      "disposition": "required",
+      "acceptance": "Constrain supported filesystem and SQLite URI access; test descriptors/subprocesses without hostile-plugin containment claims.",
+      "evidence_status": "retained_red_at_unchanged_audit_base",
+      "rollout_consequence": "No fleet expansion until the owning phase and PILOT are accepted."
+    },
+    {
+      "id": "C15",
+      "owner": "SAFETY",
+      "source": {
+        "path": "mcp_server/cli/stdio_runner.py",
+        "line": 1558
+      },
+      "probe": {
+        "kind": "retained_counterexample",
+        "path": "docs/status/review-evidence-2026-09-09/test_counterexamples.py",
+        "symbol": "test_real_stdio_server_exits_on_sigterm"
+      },
+      "command": "PYTHONPATH=. SEMANTIC_SEARCH_ENABLED=false MCP_TEST_MODE=1 uv run --locked --extra dev --extra semantic pytest docs/status/review-evidence-2026-09-09/test_counterexamples.py::test_real_stdio_server_exits_on_sigterm -q --no-cov",
+      "tracking": "roadmap_only",
+      "disposition": "required",
+      "acceptance": "Actual installed STDIO signals, EOF, repeated signals and in-flight shutdown must terminate within bounds.",
+      "evidence_status": "retained_red_at_unchanged_audit_base",
+      "rollout_consequence": "No fleet expansion until the owning phase and PILOT are accepted."
+    },
+    {
+      "id": "C16",
+      "owner": "STATE",
+      "source": {
+        "path": "mcp_server/storage/connection_pool.py",
+        "line": 33
+      },
+      "probe": {
+        "kind": "retained_counterexample",
+        "path": "docs/status/review-evidence-2026-09-09/test_counterexamples.py",
+        "symbol": "test_pool_shutdown_unblocks_waiter"
+      },
+      "command": "PYTHONPATH=. SEMANTIC_SEARCH_ENABLED=false MCP_TEST_MODE=1 uv run --locked --extra dev --extra semantic pytest docs/status/review-evidence-2026-09-09/test_counterexamples.py::test_pool_shutdown_unblocks_waiter -q --no-cov",
+      "tracking": "roadmap_only",
+      "disposition": "required",
+      "acceptance": "Wake/drain every borrower; late connection construction cannot revive a closed pool.",
+      "evidence_status": "retained_red_at_unchanged_audit_base",
+      "rollout_consequence": "No fleet expansion until the owning phase and PILOT are accepted."
+    },
+    {
+      "id": "C17",
+      "owner": "DATA",
+      "source": {
+        "path": "mcp_server/health/repository_readiness.py",
+        "line": 249
+      },
+      "probe": {
+        "kind": "retained_counterexample",
+        "path": "docs/status/review-evidence-2026-09-09/test_counterexamples.py",
+        "symbol": "test_sha256_readiness_checks_live_branch"
+      },
+      "command": "PYTHONPATH=. SEMANTIC_SEARCH_ENABLED=false MCP_TEST_MODE=1 uv run --locked --extra dev --extra semantic pytest docs/status/review-evidence-2026-09-09/test_counterexamples.py::test_sha256_readiness_checks_live_branch -q --no-cov",
+      "tracking": "roadmap_only",
+      "disposition": "required",
+      "acceptance": "Read live identity for SHA-1 and SHA-256 Git, branch changes, detached HEAD and sibling worktrees.",
+      "evidence_status": "retained_red_at_unchanged_audit_base",
+      "rollout_consequence": "No fleet expansion until the owning phase and PILOT are accepted."
+    },
+    {
+      "id": "C18",
+      "owner": "DATA",
+      "source": {
+        "path": "mcp_server/dispatcher/dispatcher_enhanced.py",
+        "line": 1871
+      },
+      "probe": {
+        "kind": "retained_counterexample",
+        "path": "docs/status/review-evidence-2026-09-09/test_counterexamples.py",
+        "symbol": "test_source_metadata_filter_still_applies_query"
+      },
+      "command": "PYTHONPATH=. SEMANTIC_SEARCH_ENABLED=false MCP_TEST_MODE=1 uv run --locked --extra dev --extra semantic pytest docs/status/review-evidence-2026-09-09/test_counterexamples.py::test_source_metadata_filter_still_applies_query -q --no-cov",
+      "tracking": "roadmap_only",
+      "disposition": "required",
+      "acceptance": "Intersect metadata and query before rank/limit in lexical and semantic modes.",
+      "evidence_status": "retained_red_at_unchanged_audit_base",
+      "rollout_consequence": "No fleet expansion until the owning phase and PILOT are accepted."
+    },
+    {
+      "id": "C19",
+      "owner": "SAFETY",
+      "source": {
+        "path": "mcp_server/cli/stdio_runner.py",
+        "line": 1340
+      },
+      "probe": {
+        "kind": "static_risk",
+        "path": "mcp_server/cli/stdio_runner.py",
+        "line": 1340
+      },
+      "command": "sed -n '1335,1375p' mcp_server/cli/stdio_runner.py",
+      "tracking": "roadmap_only",
+      "disposition": "required",
+      "acceptance": "Exclude content sentinels from normal logs and error diagnostics, including multi_repo_manager.py.",
+      "evidence_status": "source_review_requires_downstream_boundary_test",
+      "rollout_consequence": "No fleet expansion until the owning phase and PILOT are accepted."
+    },
+    {
+      "id": "C20",
+      "owner": "SAFETY",
+      "source": {
+        "path": "mcp_server/metrics/prometheus_exporter.py",
+        "line": 357
+      },
+      "probe": {
+        "kind": "static_risk",
+        "path": "mcp_server/metrics/prometheus_exporter.py",
+        "line": 357
+      },
+      "command": "sed -n '352,392p' mcp_server/metrics/prometheus_exporter.py",
+      "tracking": "roadmap_only",
+      "disposition": "required",
+      "acceptance": "Metrics default loopback/disabled, explicit ownership and protected remote exposure; concurrent instance tests.",
+      "evidence_status": "source_review_requires_downstream_boundary_test",
+      "rollout_consequence": "No fleet expansion until the owning phase and PILOT are accepted."
+    },
+    {
+      "id": "C21",
+      "owner": "DIST",
+      "source": {
+        "path": "tests/docs/test_p8_historical_sweep.py",
+        "line": 20
+      },
+      "probe": {
+        "kind": "static_risk",
+        "path": "tests/docs/test_p8_historical_sweep.py",
+        "line": 20
+      },
+      "command": "sed -n '15,55p' tests/docs/test_p8_historical_sweep.py",
+      "tracking": "roadmap_only",
+      "disposition": "required",
+      "acceptance": "Repair genuine baseline census failures without weakening pin/cost policy or installed-boundary tests.",
+      "evidence_status": "source_review_requires_downstream_boundary_test",
+      "rollout_consequence": "No fleet expansion until the owning phase and PILOT are accepted."
+    },
+    {
+      "id": "R01",
+      "owner": "DATA",
+      "source": {
+        "path": "mcp_server/core/ignore_patterns.py",
+        "line": 49
+      },
+      "probe": {
+        "kind": "static_risk",
+        "path": "mcp_server/core/ignore_patterns.py",
+        "line": 49
+      },
+      "command": "sed -n '44,84p' mcp_server/core/ignore_patterns.py",
+      "tracking": "roadmap_only",
+      "disposition": "required",
+      "acceptance": "Git-compatible nested rules/negations, prune excluded paths and dry-run estimates before inference.",
+      "evidence_status": "source_review_requires_downstream_boundary_test",
+      "rollout_consequence": "No fleet expansion until the owning phase and PILOT are accepted."
+    },
+    {
+      "id": "R02",
+      "owner": "DATA",
+      "source": {
+        "path": "mcp_server/watcher/sweeper.py",
+        "line": 176
+      },
+      "probe": {
+        "kind": "static_risk",
+        "path": "mcp_server/watcher/sweeper.py",
+        "line": 176
+      },
+      "command": "sed -n '171,211p' mcp_server/watcher/sweeper.py",
+      "tracking": "roadmap_only",
+      "disposition": "required",
+      "acceptance": "Lost-event recovery converges to tracked/default-branch commits; never silently index dirty working-tree content.",
+      "evidence_status": "source_review_requires_downstream_boundary_test",
+      "rollout_consequence": "No fleet expansion until the owning phase and PILOT are accepted."
+    },
+    {
+      "id": "R03",
+      "owner": "STATE",
+      "source": {
+        "path": "mcp_server/indexer/reranker.py",
+        "line": 215
+      },
+      "probe": {
+        "kind": "static_risk",
+        "path": "mcp_server/indexer/reranker.py",
+        "line": 215
+      },
+      "command": "sed -n '210,250p' mcp_server/indexer/reranker.py",
+      "tracking": "roadmap_only",
+      "disposition": "required",
+      "acceptance": "Keys bind repo/generation/profile and complete candidate content, including candidates beyond ten.",
+      "evidence_status": "source_review_requires_downstream_boundary_test",
+      "rollout_consequence": "No fleet expansion until the owning phase and PILOT are accepted."
+    },
+    {
+      "id": "R04",
+      "owner": "SAFETY",
+      "source": {
+        "path": "mcp_server/security/auth_manager.py",
+        "line": 244
+      },
+      "probe": {
+        "kind": "static_risk",
+        "path": "mcp_server/security/auth_manager.py",
+        "line": 244
+      },
+      "command": "sed -n '239,279p' mcp_server/security/auth_manager.py",
+      "tracking": "roadmap_only",
+      "disposition": "required",
+      "acceptance": "Local ephemeral admin only; restarting invalidates sessions; no shared HTTP promotion without durable auth.",
+      "evidence_status": "source_review_requires_downstream_boundary_test",
+      "rollout_consequence": "No fleet expansion until the owning phase and PILOT are accepted."
+    },
+    {
+      "id": "R05",
+      "owner": "SAFETY",
+      "source": {
+        "path": "mcp_server/security/security_middleware.py",
+        "line": 85
+      },
+      "probe": {
+        "kind": "static_risk",
+        "path": "mcp_server/security/security_middleware.py",
+        "line": 85
+      },
+      "command": "sed -n '80,120p' mcp_server/security/security_middleware.py",
+      "tracking": "roadmap_only",
+      "disposition": "required",
+      "acceptance": "Ignore client-supplied forwarded identity except from explicitly trusted proxies.",
+      "evidence_status": "source_review_requires_downstream_boundary_test",
+      "rollout_consequence": "No fleet expansion until the owning phase and PILOT are accepted."
+    },
+    {
+      "id": "R06",
+      "owner": "DIST",
+      "source": {
+        "path": "mcp_server/storage/sqlite_store.py",
+        "line": 751
+      },
+      "probe": {
+        "kind": "static_risk",
+        "path": "mcp_server/storage/sqlite_store.py",
+        "line": 751
+      },
+      "command": "sed -n '746,786p' mcp_server/storage/sqlite_store.py",
+      "tracking": "roadmap_only",
+      "disposition": "required",
+      "acceptance": "Transactional idempotent upgrades compare complete schema, including partial prior migration.",
+      "evidence_status": "source_review_requires_downstream_boundary_test",
+      "rollout_consequence": "No fleet expansion until the owning phase and PILOT are accepted."
+    },
+    {
+      "id": "R07",
+      "owner": "PILOT",
+      "source": {
+        "path": "mcp_server/health/repository_readiness.py",
+        "line": 162
+      },
+      "probe": {
+        "kind": "static_risk",
+        "path": "mcp_server/health/repository_readiness.py",
+        "line": 162
+      },
+      "command": "sed -n '157,197p' mcp_server/health/repository_readiness.py",
+      "tracking": "roadmap_only",
+      "disposition": "required",
+      "acceptance": "Bound quick-check/query cost under actual indexing contention without dropping corruption checks.",
+      "evidence_status": "source_review_requires_downstream_boundary_test",
+      "rollout_consequence": "No fleet expansion until the owning phase and PILOT are accepted."
+    },
+    {
+      "id": "R08",
+      "owner": "DIST",
+      "source": {
+        "path": "mcp_server/storage/repository_registry.py",
+        "line": 14
+      },
+      "probe": {
+        "kind": "static_risk",
+        "path": "mcp_server/storage/repository_registry.py",
+        "line": 14
+      },
+      "command": "sed -n '9,49p' mcp_server/storage/repository_registry.py",
+      "tracking": "roadmap_only",
+      "disposition": "required",
+      "acceptance": "Preserve declared tiers; qualify platform evidence rather than claim untested Windows equivalence.",
+      "evidence_status": "source_review_requires_downstream_boundary_test",
+      "rollout_consequence": "No fleet expansion until the owning phase and PILOT are accepted."
+    },
+    {
+      "id": "R09",
+      "owner": "DIST",
+      "source": {
+        "path": "baml_src/generators.baml",
+        "line": 4
+      },
+      "probe": {
+        "kind": "static_risk",
+        "path": "baml_src/generators.baml",
+        "line": 4
+      },
+      "command": "sed -n '1,39p' baml_src/generators.baml",
+      "tracking": "roadmap_only",
+      "disposition": "required",
+      "acceptance": "Align locked BAML generator/runtime and check regenerated drift offline.",
+      "evidence_status": "source_review_requires_downstream_boundary_test",
+      "rollout_consequence": "No fleet expansion until the owning phase and PILOT are accepted."
+    },
+    {
+      "id": "R10",
+      "owner": "STATE",
+      "source": {
+        "path": "mcp_server/dispatcher/dispatcher_enhanced.py",
+        "line": 1
+      },
+      "probe": {
+        "kind": "static_risk",
+        "path": "mcp_server/dispatcher/dispatcher_enhanced.py",
+        "line": 1
+      },
+      "command": "sed -n '1,36p' mcp_server/dispatcher/dispatcher_enhanced.py",
+      "tracking": "roadmap_only",
+      "disposition": "required",
+      "acceptance": "Consolidate state ownership within repaired paths; cosmetic extraction is not release work.",
+      "evidence_status": "source_review_requires_downstream_boundary_test",
+      "rollout_consequence": "No fleet expansion until the owning phase and PILOT are accepted."
+    },
+    {
+      "id": "R11",
+      "owner": "DIST",
+      "source": {
+        "path": "AGENTS.md",
+        "line": 1
+      },
+      "probe": {
+        "kind": "static_risk",
+        "path": "AGENTS.md",
+        "line": 1
+      },
+      "command": "sed -n '1,36p' AGENTS.md",
+      "tracking": "roadmap_only",
+      "disposition": "required",
+      "acceptance": "Support matrix and actual 35-percent coverage/default suite exclusions override contradictory historical prose.",
+      "evidence_status": "source_review_requires_downstream_boundary_test",
+      "rollout_consequence": "No fleet expansion until the owning phase and PILOT are accepted."
+    },
+    {
+      "id": "R12",
+      "owner": "DIST",
+      "source": {
+        "path": "uv.lock",
+        "line": 1
+      },
+      "probe": {
+        "kind": "static_risk",
+        "path": "uv.lock",
+        "line": 1
+      },
+      "command": "sed -n '1,36p' uv.lock",
+      "tracking": "roadmap_only",
+      "disposition": "required",
+      "acceptance": "Isolated locked Python 3.12 environment and explicit PMCP version/interpreter pin.",
+      "evidence_status": "source_review_requires_downstream_boundary_test",
+      "rollout_consequence": "No fleet expansion until the owning phase and PILOT are accepted."
+    }
+  ],
+  "data_ownership": [
+    {
+      "table": "schema_version",
+      "kind": "schema",
+      "owner": "DIST",
+      "retention": "Retain migration history only after committed schema changes; fresh and upgraded inventories agree."
+    },
+    {
+      "table": "repositories",
+      "kind": "retained",
+      "owner": "STATE",
+      "retention": "Preserve repository identity, tracked branch and metadata; update via admitted transaction."
+    },
+    {
+      "table": "files",
+      "kind": "mixed",
+      "owner": "DATA",
+      "retention": "Regenerate tracked code rows; retain synthetic/imported-document rows and remap dependent foreign keys coherently."
+    },
+    {
+      "table": "symbols",
+      "kind": "derived",
+      "owner": "DATA",
+      "retention": "Regenerate code-derived definitions in stage; retained document-linked rows must remain referentially valid."
+    },
+    {
+      "table": "code_chunks",
+      "kind": "mixed",
+      "owner": "DATA",
+      "retention": "Retain document/history chunks and stable IDs; regenerate only chunker-owned code rows."
+    },
+    {
+      "table": "semantic_points",
+      "kind": "mixed",
+      "owner": "DATA",
+      "retention": "Retain admitted imported-document mappings; stage new mappings with exact profile and collection generation."
+    },
+    {
+      "table": "pending_vector_deletions",
+      "kind": "ledger",
+      "owner": "DATA",
+      "retention": "Retain outstanding deletion debt across rebuild/crash; clear only acknowledged remote deletes."
+    },
+    {
+      "table": "chunk_summaries",
+      "kind": "mixed",
+      "owner": "DATA",
+      "retention": "Retain imported summaries and valid unchanged-content/profile summaries; invalidate derived summaries on content/profile drift."
+    },
+    {
+      "table": "imports",
+      "kind": "derived",
+      "owner": "DATA",
+      "retention": "Rebuild imports for admitted code files; preserve links for retained rows where present."
+    },
+    {
+      "table": "symbol_references",
+      "kind": "derived",
+      "owner": "DATA",
+      "retention": "Rebuild references with valid file/symbol foreign keys; never publish dangling references."
+    },
+    {
+      "table": "fts_symbols",
+      "kind": "derived",
+      "owner": "DATA",
+      "retention": "Reconstruct FTS from the staged authoritative symbols; do not copy SQLite-managed FTS shadow internals."
+    },
+    {
+      "table": "fts_code",
+      "kind": "derived",
+      "owner": "DATA",
+      "retention": "Rebuild from all retained and newly derived chunks so imported content remains searchable."
+    },
+    {
+      "table": "symbol_trigrams",
+      "kind": "derived",
+      "owner": "DATA",
+      "retention": "Rebuild from final staged symbol IDs."
+    },
+    {
+      "table": "embeddings",
+      "kind": "mixed",
+      "owner": "DATA",
+      "retention": "Retain compatible imported embeddings; derive code embeddings under frozen per-batch provenance."
+    },
+    {
+      "table": "query_cache",
+      "kind": "cache",
+      "owner": "STATE",
+      "retention": "Discard at generation/profile change; never expose a prior generation's query result."
+    },
+    {
+      "table": "parse_cache",
+      "kind": "cache",
+      "owner": "STATE",
+      "retention": "Reuse only exact content/parser identity, otherwise discard."
+    },
+    {
+      "table": "migrations",
+      "kind": "schema",
+      "owner": "DIST",
+      "retention": "Retain truthful successful/failed upgrade records; no skipped-tail success acknowledgement."
+    },
+    {
+      "table": "index_config",
+      "kind": "retained",
+      "owner": "STATE",
+      "retention": "Preserve operator settings and publish generation/profile identity atomically with provenance."
+    },
+    {
+      "table": "file_moves",
+      "kind": "retained",
+      "owner": "DATA",
+      "retention": "Retain move lineage and repository relationships across replacement."
+    }
+  ],
+  "invariants": {
+    "generation_binding": "One durable repository identity plus an opaque generation identifier binds SQLite file identity, indexed commit/branch, chunk scheme, vector collection and embedding profile. No new public readiness vocabulary.",
+    "registry_mutation": "Under a process-shared lock reload disk, apply explicit field update or tombstone deletion, write/fsync/replace and fsync parent, then update local view. Failed persistence raises; stale full snapshots never merge away newer fields.",
+    "registry_visibility": "Every read checks durable revision/file identity. Query-triggered writes use the same mutation protocol. Successful registration/removal is visible to another process and watcher.",
+    "writer_admission": "One cross-process writer per repository. Hold admission across stage verification and durable generation publication; do not use thread-only exclusion.",
+    "reader_admission": "Resolve live Git identity and durable generation before borrowing a handle. Recheck generation before emitting results. On changes re-resolve or return index_unavailable/native_search; caches and watchers use the same binding.",
+    "retained_data": "Copy retained rows and relationships into the stage before rebuilding derived rows. Keep synthetic document/history identity and cleanup debt. FTS shadow tables are SQLite-managed, not separately copied.",
+    "publication": "Fence readiness before mutation; stage SQLite and semantic effects separately; only admit a complete verified generation. Success metadata follows durable publication, never the reverse.",
+    "rollback": "Before admission, preserve old coherent generation or explicit unavailable state. After admission, retain old physical resources until all old borrowers release them. Never unlink active SQLite sidecars or break Qdrant locks.",
+    "cleanup_debt": "Persist remote deletion intents before forgetting mappings; successful acknowledged remote cleanup retires only its own intents. Retry is idempotent.",
+    "metadata_failures": "Disk write/replace/fsync failures must propagate and leave a restart-visible pending/unavailable fence; no success acknowledgement on merely in-memory provenance.",
+    "pool_lifetime": "Closing prevents admission, wakes queued borrowers, drains outstanding borrowers, and rejects/disposes late-created connections.",
+    "shared_file_schedule": "Sequential manual phases. STATE owns registry/pools/generation changes first; SAFETY owns logging/metrics/lifecycle next; DATA owns query/semantic changes last. multi_repo_manager.py, gateway.py, stdio_runner.py, watcher_multi_repo.py, dispatcher_enhanced.py and sqlite_store.py are never concurrent writer paths."
+  },
+  "policies": {
+    "support": "Preserve existing SUPPORT_MATRIX tiers. Initial acceptance Linux/Python 3.12 does not prove all >=3.12/platform claims; DIST records explicit evidence and requests owner amendment before narrowing published support.",
+    "ignore_and_edits": "Automatic indexing uses tracked/default-branch committed content only. Respect Git nested excludes/negations before traversal/embedding. Dirty working-tree edits are not silently admitted; refuse stale generations. Lost-event recovery reconciles committed create/modify/delete/rename.",
+    "pmcp": {
+      "command": "uvx",
+      "args": [
+        "--python",
+        "3.12",
+        "--from",
+        "index-it-mcp==<accepted-version>",
+        "index-it-mcp",
+        "stdio"
+      ],
+      "configuration_channel": ".mcp.json mcpServers entry env, not manifest overlay env",
+      "required_env": [
+        "MCP_INDEX_STORAGE_PATH",
+        "MCP_REPO_REGISTRY",
+        "MCP_ALLOWED_ROOTS"
+      ],
+      "optional_secret_names": [
+        "MCP_CLIENT_SECRET",
+        "OPENAI_API_KEY"
+      ],
+      "semantic_env": [
+        "SEMANTIC_SEARCH_ENABLED",
+        "SEMANTIC_DEFAULT_PROFILE",
+        "SEMANTIC_EMBEDDING_BASE_URL",
+        "QDRANT_URL"
+      ],
+      "same_registry_for_cli_and_child": true,
+      "acceptance": "Two unrelated synthetic repos and one sibling worktree; connect, query, refuse, reindex, restart, signal/EOF/inflight cleanup, reconnect and reprovision."
+    },
+    "qdrant": {
+      "required_modes": [
+        "file_backed",
+        "client_server"
+      ],
+      "point_boundaries": [
+        1000,
+        1001
+      ],
+      "no_live_lock_removal": true,
+      "no_backend_fallback": true,
+      "server_identity": "Resolve/pin the local disposable server image/digest in DATA; never use the fleet index."
+    },
+    "signer": {
+      "proposal": "Operator-dispatched GitHub OIDC attestation workflow; pinned actions/attest plus gh attestation verify, exact expected producer repository/workflow/subject digest. Local build provenance is stated honestly; a signing job must not claim it performed a local build.",
+      "scope": "Synthetic public fixture and approved digest/predicate only. No private source, index archive or secret uploads. Future private-repo sharing requires its own approved trust/privacy contract.",
+      "enforce_required": true,
+      "no_token_display": true,
+      "docs": "https://docs.github.com/en/actions/how-tos/secure-your-work/use-artifact-attestations/use-artifact-attestations"
+    },
+    "pilot": {
+      "corpus": "Synthetic temporary Git repos only; no fleet index",
+      "embedding_endpoint_hint": "http://ai:8001/v1",
+      "endpoint_identity": "Revalidate endpoint/model/revision before PILOT; do not infer identity from model name or assume old reachability reports remain current.",
+      "input_token_limit": 100000,
+      "local_inference_seconds_limit": 900,
+      "commercial_egress": false,
+      "requests_concurrency": 1,
+      "retries_consume_budget": true,
+      "budget_admission": "Use endpoint-compatible tokenizer, or a conservative UTF-8-byte upper bound before every request including retries. Dry-run estimates and remaining quota precede admission.",
+      "thresholds": {
+        "symbol_p95_ms": 100,
+        "search_p95_ms": 500,
+        "shutdown_seconds": 5,
+        "process_rss_mib": 2048
+      },
+      "evidence": "Measure repeated warm queries under indexing contention with an explicit sample count and resource/time receipts; numbers are targets, not results."
+    },
+    "metrics": "Loopback/disabled by default; remote exposure requires durable auth. Concurrent processes must not silently bind the same exporter port.",
+    "http": "Secondary local ephemeral admin only; no multi-tenant/shared HTTP support claim; rate limiting trusts only configured proxy peers.",
+    "sandbox": "Defense-in-depth for supported plugin APIs; do not claim hostile-plugin OS containment.",
+    "ci": "Local agent-fast/agent-gate/agent-full and explicit fail-closed offload; no new routine hosted CI or automatic inference.",
+    "recovery": "PREP must hand SHIP an owner-approved recovery policy before dispatch. Published-but-unaccepted remains blocked; preserve artifacts and evidence, no blind retry/yank/delete.",
+    "proof_nodes": [
+      {
+        "name": "installed-wheel",
+        "timeout_seconds": 300
+      },
+      {
+        "name": "container-build",
+        "timeout_seconds": 900
+      },
+      {
+        "name": "container-workflow",
+        "timeout_seconds": 300
+      },
+      {
+        "name": "qdrant-file",
+        "timeout_seconds": 300
+      },
+      {
+        "name": "qdrant-server",
+        "timeout_seconds": 300
+      },
+      {
+        "name": "pmcp-provisioning",
+        "timeout_seconds": 300
+      },
+      {
+        "name": "browser-admin",
+        "timeout_seconds": 300
+      },
+      {
+        "name": "query-index-contention",
+        "timeout_seconds": 300
+      }
+    ],
+    "evidence_schema": {
+      "required": [
+        "candidate_digest",
+        "artifact_digests",
+        "command",
+        "exit_code",
+        "started_at",
+        "finished_at",
+        "environment_identity",
+        "per_goal_results",
+        "exclusions",
+        "operational_receipts"
+      ],
+      "sensitive_fields": "Metadata/digests only: never prompt/query/source/secret payloads.",
+      "long_proofs": "Separate named nodes and individual timeout/partial result receipts; no opaque aggregate success."
+    }
+  },
+  "review_panel": [
+    {
+      "name": "Fable",
+      "model": "claude-fable-5",
+      "effort": "max"
+    },
+    {
+      "name": "Sol",
+      "model": "gpt-5.6-sol",
+      "effort": "max"
+    },
+    {
+      "name": "Grok",
+      "model": "grok-4.5",
+      "effort": "max"
+    },
+    {
+      "name": "Gemini",
+      "model": "Gemini 3.1 Pro",
+      "effort": "high"
+    }
+  ],
+  "decisions": [
+    {
+      "id": "local_inference_budget",
+      "status": "approved",
+      "owner": "repository_owner",
+      "approval_ref": "User reply 'Approved' on 2026-09-11, directly accepting both proposed limits and the signing approach in this conversation.",
+      "proposal": "Synthetic-only 100000 input tokens including retries, at most 900 seconds local inference, no commercial egress."
+    },
+    {
+      "id": "signing_mechanism",
+      "status": "approved",
+      "owner": "repository_owner",
+      "approval_ref": "User reply 'Approved' on 2026-09-11, directly accepting both proposed limits and the signing approach in this conversation.",
+      "proposal": "Manual signing-only GitHub OIDC job, at most 5 minutes, no routine hosted CI or private source/index uploads; enforce verification unchanged."
+    }
+  ],
+  "issue_inventory": [],
+  "issue_dispositions": []
+}

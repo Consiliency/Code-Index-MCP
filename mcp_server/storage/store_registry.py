@@ -39,6 +39,7 @@ class StoreRegistry:
         self._cache: Dict[str, SQLiteStore] = {}
         self._lock = threading.Lock()
         self._build_locks: Dict[str, threading.Lock] = {}
+        self._epoch = 0
 
     @classmethod
     def for_registry(cls, registry: RepositoryRegistry) -> "StoreRegistry":
@@ -51,52 +52,112 @@ class StoreRegistry:
                 self._build_locks[repo_id] = threading.Lock()
             return self._build_locks[repo_id]
 
+    @staticmethod
+    def binding(info) -> tuple:
+        """Logical generation plus physical identity; content writes do not change it."""
+        path = Path(info.index_path).resolve()
+        try:
+            stat = path.stat()
+            identity = (stat.st_dev, stat.st_ino)
+        except FileNotFoundError:
+            identity = None
+        return (
+            getattr(info, "registration_id", None),
+            getattr(info, "index_generation", None),
+            getattr(info, "index_profile", None),
+            str(Path(info.path).resolve()),
+            str(path),
+            identity,
+        )
+
+    def is_current(self, repo_id: str, store: SQLiteStore) -> bool:
+        """Recheck a borrowed generation before returning authoritative results."""
+        info = self._registry.get(repo_id)
+        return (
+            info is not None
+            and not info.staleness_reason
+            and store.registry_binding == self.binding(info)
+        )
+
     def get(self, repo_id: str) -> SQLiteStore:
-        """Return cached SQLiteStore (same instance on repeated calls).
-        Raises KeyError if repo_id is not registered."""
-        with self._lock:
-            cached = self._cache.get(repo_id)
-            if cached is not None:
-                return cached
+        """Return a store bound to the current registration and physical generation."""
+        with self._get_build_lock(repo_id):
             info = self._registry.get(repo_id)
+            expected = self.binding(info) if info is not None else None
+            with self._lock:
+                epoch = self._epoch
+                cached = self._cache.get(repo_id)
+                if cached is not None and cached.registry_binding == expected:
+                    return cached
+                retired = self._cache.pop(repo_id, None)
+            if retired is not None:
+                binding = retired.registry_binding
+                replaced = (
+                    expected is not None
+                    and binding[:-1] == expected[:-1]
+                    and (binding[-1] != expected[-1])
+                )
+                try:
+                    if replaced:
+                        self._registry.update_staleness_reason(
+                            repo_id, "partial_index_failure", expected_owner=info
+                        )
+                finally:
+                    retired.close()
+                if replaced:
+                    raise RuntimeError(
+                        "Index file replaced outside generation publication; rebuild required"
+                    )
             if info is None:
                 raise KeyError(f"repo_id {repo_id!r} is not registered")
             index_path = str(info.index_path)
-
-        # Serialize construction for the same repo_id to prevent concurrent
-        # SQLite migration races; different repo_ids still build in parallel.
-        build_lock = self._get_build_lock(repo_id)
-        with build_lock:
-            # Double-check: another thread may have won while we waited.
-            with self._lock:
-                existing = self._cache.get(repo_id)
-                if existing is not None:
-                    return existing
-            index_path_obj = Path(info.index_path)
-            index_path_obj.parent.mkdir(parents=True, exist_ok=True)
+            Path(index_path).parent.mkdir(parents=True, exist_ok=True)
             pool = ConnectionPool(
                 factory=lambda p=index_path: sqlite3.connect(p, check_same_thread=False),
                 size=4,
             )
-            store = SQLiteStore(index_path, path_resolver=PathResolver(info.path), pool=pool)
+            try:
+                store = SQLiteStore(index_path, path_resolver=PathResolver(info.path), pool=pool)
+                current = self._registry.get(repo_id)
+                actual = self.binding(current) if current is not None else None
+                if (
+                    actual is None
+                    or actual[:-1] != expected[:-1]
+                    or (expected[-1] is not None and expected[-1] != actual[-1])
+                ):
+                    raise RuntimeError("Repository generation changed while opening its index")
+                store.registry_binding = actual
+            except BaseException:
+                pool.close_all()
+                raise
             with self._lock:
-                self._cache[repo_id] = store
+                if self._epoch == epoch:
+                    self._cache[repo_id] = store
+                else:
+                    store.close()
+                    raise RuntimeError("StoreRegistry shut down while opening an index")
             return store
 
-    def close(self, repo_id: str) -> None:
+    def close(self, repo_id: str, *, expected_owner=None) -> None:
         """Close and evict the cached store for repo_id. No-op if absent."""
-        with self._lock:
-            store = self._cache.pop(repo_id, None)
-            self._build_locks.pop(repo_id, None)
-        if store is not None:
-            try:
+        # Keep the per-key lock identity stable for concurrent constructors.
+        with self._get_build_lock(repo_id):
+            with self._lock:
+                cached = self._cache.get(repo_id)
+                if (
+                    expected_owner is not None
+                    and cached is not None
+                    and (cached.registry_binding[:5] != self.binding(expected_owner)[:5])
+                ):
+                    return
+                store = self._cache.pop(repo_id, None)
+            if store is not None:
                 store.close()
-            except Exception as exc:
-                logger.warning("SQLiteStore.close failed for %s: %s", repo_id, exc)
 
     def shutdown(self) -> None:
         """Close all cached stores and clear the cache."""
         with self._lock:
+            self._epoch += 1
             items = list(self._cache.items())
             self._cache.clear()
         for repo_id, store in items:

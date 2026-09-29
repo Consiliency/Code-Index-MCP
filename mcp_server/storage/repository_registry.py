@@ -11,7 +11,11 @@ import logging
 import os
 import sqlite3
 import subprocess
+import tempfile
 import threading
+import uuid
+from contextlib import contextmanager
+from copy import deepcopy
 from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
@@ -76,6 +80,7 @@ class RepositoryRegistry:
         self.registry_path = registry_path or self._get_default_registry_path()
         self._lock = threading.RLock()
         self._registry: Dict[str, Dict[str, Any]] = {}
+        self._baseline: Dict[str, Dict[str, Any]] = {}
 
         # Ensure parent directory exists
         self.registry_path.parent.mkdir(parents=True, exist_ok=True)
@@ -96,35 +101,67 @@ class RepositoryRegistry:
 
     def _load(self):
         """Load registry from disk, migrating legacy entries to new id scheme."""
-        if not self.registry_path.exists():
-            logger.info("No existing registry found, starting fresh")
-            return
+        with self._transaction(write=True):
+            self._migrate_registry(self._registry)
 
+    def _read_registry(self) -> Dict[str, Dict[str, Any]]:
+        """Read one complete on-disk revision; malformed state is not an empty registry."""
         try:
-            with open(self.registry_path, "r") as f:
-                data = json.load(f)
+            with self.registry_path.open() as source:
+                data = json.load(source)
+        except FileNotFoundError:
+            return {}
+        for repo_data in data.values():
+            repo_data["path"] = Path(repo_data["path"])
+            repo_data["index_path"] = Path(repo_data["index_path"])
+            for field in ("indexed_at", "last_indexed"):
+                if repo_data.get(field):
+                    repo_data[field] = datetime.fromisoformat(repo_data[field])
+        return data
 
-            raw: Dict[str, Any] = {}
-            for repo_id, repo_data in data.items():
-                repo_data["path"] = Path(repo_data["path"])
-                repo_data["index_path"] = Path(repo_data["index_path"])
-                if "indexed_at" in repo_data:
-                    repo_data["indexed_at"] = datetime.fromisoformat(repo_data["indexed_at"])
-                if "last_indexed" in repo_data and repo_data["last_indexed"]:
-                    repo_data["last_indexed"] = datetime.fromisoformat(repo_data["last_indexed"])
-                raw[repo_id] = repo_data
+    @contextmanager
+    def _transaction(self, *, write: bool = False):
+        """Hold thread and process locks from reload through durable publication."""
+        with self._lock:
+            fd = os.open(self.registry_path.with_suffix(".lock"), os.O_CREAT | os.O_RDWR, 0o600)
+            try:
+                os.fchmod(fd, 0o600)
+                fcntl.flock(fd, fcntl.LOCK_EX if write else fcntl.LOCK_SH)
+                fresh = self._read_registry()
+                self._registry = deepcopy(fresh)
+                self._baseline = deepcopy(fresh)
+                try:
+                    yield
+                    if write and self._registry != fresh:
+                        self._persist()
+                    self._baseline = deepcopy(self._registry)
+                except BaseException:
+                    self._registry = fresh
+                    self._baseline = deepcopy(fresh)
+                    raise
+            finally:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+                os.close(fd)
 
-            needs_save = self._migrate_registry(raw)
-
-            self._registry = raw
-            logger.info(f"Loaded {len(self._registry)} repositories from registry")
-
-            if needs_save:
-                self.save()
-
-        except Exception as e:
-            logger.error(f"Failed to load registry: {e}")
-            self._registry = {}
+    def _persist(self) -> None:
+        """Publish while holding the registry lock; never acknowledge a failed fsync."""
+        fd, name = tempfile.mkstemp(
+            prefix=self.registry_path.name + ".", dir=self.registry_path.parent
+        )
+        temporary = Path(name)
+        try:
+            with os.fdopen(fd, "w") as target:
+                json.dump(self._serialize_registry(), target, indent=2)
+                target.flush()
+                os.fsync(target.fileno())
+            temporary.replace(self.registry_path)
+            parent_fd = os.open(self.registry_path.parent, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(parent_fd)
+            finally:
+                os.close(parent_fd)
+        finally:
+            temporary.unlink(missing_ok=True)
 
     def _migrate_registry(self, raw: Dict[str, Any]) -> bool:
         """Re-key any legacy entries and back-fill new fields. Returns True if changes made."""
@@ -132,6 +169,9 @@ class RepositoryRegistry:
         renames: Dict[str, str] = {}
 
         for old_id, repo_dict in list(raw.items()):
+            if not repo_dict.get("registration_id"):
+                repo_dict["registration_id"] = uuid.uuid4().hex
+                changed = True
             repo_path = Path(repo_dict.get("path", ""))
             if not repo_path.exists():
                 continue
@@ -215,37 +255,29 @@ class RepositoryRegistry:
         return data
 
     def save(self):
-        """Save registry to disk with cross-process flock + read-merge-write."""
-        lock_path = self.registry_path.with_suffix(".lock")
-        fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o600)
-        os.chmod(lock_path, 0o600)
-        try:
-            fcntl.flock(fd, fcntl.LOCK_EX)
-            with self._lock:
-                try:
-                    # Merge on-disk entries so concurrent writers don't lose each other's data.
-                    on_disk: Dict[str, Any] = {}
-                    if self.registry_path.exists():
-                        try:
-                            with open(self.registry_path, "r") as f:
-                                on_disk = json.load(f)
-                        except Exception:
-                            on_disk = {}
-
-                    merged = {**on_disk, **self._serialize_registry()}
-
-                    temp_path = self.registry_path.with_suffix(".tmp")
-                    with open(temp_path, "w") as f:
-                        json.dump(merged, f, indent=2)
-
-                    temp_path.replace(self.registry_path)
-                    logger.debug(f"Saved {len(merged)} repositories to registry")
-
-                except Exception as e:
-                    logger.error(f"Failed to save registry: {e}")
-        finally:
-            fcntl.flock(fd, fcntl.LOCK_UN)
-            os.close(fd)
+        """Apply legacy in-memory edits as field deltas, not stale whole-row snapshots."""
+        with self._lock:
+            local, baseline = deepcopy(self._registry), self._baseline
+            with self._transaction(write=True):
+                for repo_id in baseline.keys() - local.keys():
+                    current = self._registry.get(repo_id)
+                    if current and current.get("registration_id") == baseline[repo_id].get(
+                        "registration_id"
+                    ):
+                        self._registry.pop(repo_id, None)
+                for repo_id, entry in local.items():
+                    previous = baseline.get(repo_id)
+                    if previous is None:
+                        self._registry.setdefault(repo_id, entry)
+                    elif repo_id in self._registry:
+                        current = self._registry[repo_id]
+                        if current.get("registration_id") != previous.get("registration_id"):
+                            continue
+                        for key in previous.keys() - entry.keys():
+                            current.pop(key, None)
+                        for key, value in entry.items():
+                            if key not in previous or previous[key] != value:
+                                current[key] = value
 
     def register(self, repo_info):
         """
@@ -254,33 +286,52 @@ class RepositoryRegistry:
         Args:
             repo_info: RepositoryInfo dataclass instance
         """
-        with self._lock:
+        with self._transaction(write=True):
             # Convert dataclass to dict
             repo_data = asdict(repo_info)
-
-            # Store in registry
+            repo_data["registration_id"] = uuid.uuid4().hex
+            for existing in self._registry.values():
+                same_id = existing["repository_id"] == repo_info.repository_id
+                common = repo_data.get("git_common_dir")
+                same_common = (
+                    common
+                    and existing.get("git_common_dir")
+                    and (Path(common).resolve() == Path(existing["git_common_dir"]).resolve())
+                )
+                if same_id or same_common:
+                    if Path(existing["path"]).resolve() != Path(repo_info.path).resolve():
+                        raise MultipleWorktreesUnsupportedError(
+                            registered_path=existing["path"],
+                            requested_path=repo_info.path,
+                            git_common_dir=Path(common or repo_info.path),
+                        )
+                    return
             self._registry[repo_info.repository_id] = repo_data
-
-            # Save to disk
-            self.save()
 
             logger.info(f"Registered repository: {repo_info.name} ({repo_info.repository_id})")
 
-    def unregister(self, repository_id: str):
+    def unregister(self, repository_id: str, *, expected_owner=None):
         """
         Unregister a repository.
 
         Args:
             repository_id: ID of repository to unregister
         """
-        with self._lock:
+        with self._transaction(write=True):
             if repository_id in self._registry:
+                if (
+                    expected_owner is not None
+                    and self._registry[repository_id].get("registration_id")
+                    != expected_owner.registration_id
+                ):
+                    return False
                 repo_name = self._registry[repository_id].get("name", "Unknown")
                 del self._registry[repository_id]
-                self.save()
                 logger.info(f"Unregistered repository: {repo_name} ({repository_id})")
+                return True
             else:
                 logger.warning(f"Repository {repository_id} not found in registry")
+                return False
 
     def register_repository(
         self,
@@ -347,20 +398,15 @@ class RepositoryRegistry:
         self.register(repo_info)
         return repo_id
 
-    def unregister_repository(self, repository_id: str) -> bool:
+    def unregister_repository(self, repository_id: str, *, expected_owner=None) -> bool:
         """Unregister a repository and return whether it existed."""
-        with self._lock:
-            exists = repository_id in self._registry
-        if not exists:
-            return False
-        self.unregister(repository_id)
-        return True
+        return self.unregister(repository_id, expected_owner=expected_owner)
 
     def get_all_repositories(self) -> Dict[str, Any]:
         """Return all repositories keyed by repository ID."""
-        with self._lock:
+        with self._transaction():
             return {
-                repo_id: self._dict_to_repo_info(repo_data.copy())
+                repo_id: self._dict_to_repo_info(deepcopy(repo_data))
                 for repo_id, repo_data in self._registry.items()
             }
 
@@ -380,50 +426,84 @@ class RepositoryRegistry:
 
     def set_artifact_enabled(self, repository_id: str, enabled: bool) -> bool:
         """Enable or disable artifact support for a repository."""
-        with self._lock:
+        with self._transaction(write=True):
             repo = self._registry.get(repository_id)
             if not repo:
                 return False
             repo["artifact_enabled"] = enabled
-            self.save()
             return True
 
-    def update_artifact_state(self, repository_id: str, **artifact_state: Any) -> bool:
+    def update_artifact_state(
+        self, repository_id: str, *, expected_owner: Any = None, **artifact_state: Any
+    ) -> bool:
         """Update artifact lifecycle metadata for a repository."""
-        with self._lock:
+        with self._transaction(write=True):
             repo = self._registry.get(repository_id)
             if not repo:
                 logger.warning(f"Repository {repository_id} not found in registry")
+                return False
+
+            if expected_owner is not None and any(
+                repo.get(key) != getattr(expected_owner, key, None)
+                for key in ("registration_id", "index_generation", "last_indexed_commit")
+            ):
                 return False
 
             for key, value in artifact_state.items():
                 repo[key] = value
-
-            self.save()
             return True
 
-    def update_staleness_reason(self, repository_id: str, reason: Optional[str]) -> bool:
+    def mark_artifact_published(
+        self,
+        repository_id: str,
+        *,
+        expected_registration_id: Optional[str],
+        expected_generation: Optional[str],
+        expected_commit: Optional[str],
+    ) -> bool:
+        """Record upload completion only for the generation that was uploaded."""
+        with self._transaction(write=True):
+            repo = self._registry.get(repository_id)
+            if repo is None or (
+                repo.get("registration_id") != expected_registration_id
+                or repo.get("index_generation") != expected_generation
+                or repo.get("last_indexed_commit") != expected_commit
+            ):
+                return False
+            repo.update(
+                last_published_commit=expected_commit,
+                artifact_backend="github_release",
+                artifact_health="published",
+            )
+            return True
+
+    def update_staleness_reason(
+        self, repository_id: str, reason: Optional[str], *, expected_owner: Any = None
+    ) -> bool:
         """Persist a repo-local staleness marker for status/reporting surfaces."""
-        with self._lock:
+        with self._transaction(write=True):
             repo = self._registry.get(repository_id)
             if not repo:
                 logger.warning(f"Repository {repository_id} not found in registry")
                 return False
 
+            if expected_owner is not None and any(
+                repo.get(key) != getattr(expected_owner, key, None)
+                for key in ("registration_id", "index_generation", "last_indexed_commit")
+            ):
+                return False
             repo["staleness_reason"] = reason
-            self.save()
             return True
 
     def update_last_sync_error(self, repository_id: str, error: Optional[str]) -> bool:
         """Persist the latest exact sync blocker for status/reporting surfaces."""
-        with self._lock:
+        with self._transaction(write=True):
             repo = self._registry.get(repository_id)
             if not repo:
                 logger.warning(f"Repository {repository_id} not found in registry")
                 return False
 
             repo["last_sync_error"] = error
-            self.save()
             return True
 
     def get(self, repository_id: str) -> Optional[Any]:
@@ -436,11 +516,11 @@ class RepositoryRegistry:
         Returns:
             RepositoryInfo-like dict or None if not found
         """
-        with self._lock:
+        with self._transaction():
             repo_data = self._registry.get(repository_id)
             if repo_data:
                 # Return a copy to prevent external modifications
-                return self._dict_to_repo_info(repo_data.copy())
+                return self._dict_to_repo_info(deepcopy(repo_data))
             return None
 
     def get_repository(self, repository_id: str) -> Optional[Any]:
@@ -462,10 +542,10 @@ class RepositoryRegistry:
         Returns:
             List of RepositoryInfo-like objects
         """
-        with self._lock:
+        with self._transaction():
             repos = []
             for repo_data in self._registry.values():
-                repos.append(self._dict_to_repo_info(repo_data.copy()))
+                repos.append(self._dict_to_repo_info(deepcopy(repo_data)))
             return repos
 
     def _dict_to_repo_info(self, repo_dict: Dict[str, Any]) -> Any:
@@ -495,10 +575,9 @@ class RepositoryRegistry:
             repository_id: ID of repository
             active: New active status
         """
-        with self._lock:
+        with self._transaction(write=True):
             if repository_id in self._registry:
                 self._registry[repository_id]["active"] = active
-                self.save()
                 status = "activated" if active else "deactivated"
                 logger.info(f"Repository {repository_id} {status}")
             else:
@@ -512,10 +591,9 @@ class RepositoryRegistry:
             repository_id: ID of repository
             priority: New priority (higher = searched first)
         """
-        with self._lock:
+        with self._transaction(write=True):
             if repository_id in self._registry:
                 self._registry[repository_id]["priority"] = priority
-                self.save()
                 logger.info(f"Repository {repository_id} priority set to {priority}")
             else:
                 logger.warning(f"Repository {repository_id} not found in registry")
@@ -528,7 +606,7 @@ class RepositoryRegistry:
             repository_id: ID of repository
             stats: New statistics (language_stats, total_files, total_symbols)
         """
-        with self._lock:
+        with self._transaction(write=True):
             if repository_id in self._registry:
                 repo = self._registry[repository_id]
 
@@ -542,8 +620,6 @@ class RepositoryRegistry:
 
                 # Update indexed timestamp
                 repo["indexed_at"] = datetime.now()
-
-                self.save()
                 logger.info(f"Updated statistics for repository {repository_id}")
             else:
                 logger.warning(f"Repository {repository_id} not found in registry")
@@ -558,28 +634,17 @@ class RepositoryRegistry:
         Returns:
             The commit SHA if updated, otherwise None.
         """
-        with self._lock:
-            repo = self._registry.get(repository_id)
-            if not repo:
-                logger.warning(f"Repository {repository_id} not found in registry")
-                return None
-
-            repo_path = Path(repo["path"])
-
-        commit = self._get_git_commit(repo_path)
-        if commit:
-            with self._lock:
-                self._registry[repository_id]["current_commit"] = commit
-                branch = self._get_git_branch(repo_path)
-                if branch:
-                    self._registry[repository_id]["current_branch"] = branch
-                self.save()
-            return commit
-
-        return None
+        state = self.update_git_state(repository_id)
+        return state.get("commit") or None if state else None
 
     def update_indexed_commit(
-        self, repository_id: str, commit: str, branch: Optional[str] = None
+        self,
+        repository_id: str,
+        commit: str,
+        branch: Optional[str] = None,
+        *,
+        expected_registration_id: Optional[str] = None,
+        expected_generation: Optional[str] = None,
     ) -> Optional[str]:
         """
         Persist the last indexed commit for a repository.
@@ -591,13 +656,20 @@ class RepositoryRegistry:
         Returns:
             The stored commit SHA, or None if the repository was not found.
         """
-        with self._lock:
+        with self._transaction(write=True):
             repo = self._registry.get(repository_id)
             if not repo:
                 logger.warning(f"Repository {repository_id} not found in registry")
                 return None
 
+            if expected_registration_id is not None and (
+                repo.get("registration_id") != expected_registration_id
+                or repo.get("index_generation") != expected_generation
+            ):
+                raise ValueError("Repository registration or generation changed during mutation")
+
             repo["last_indexed_commit"] = commit
+            repo["index_generation"] = uuid.uuid4().hex
             if branch is None:
                 branch = repo.get("current_branch")
             if branch:
@@ -605,8 +677,79 @@ class RepositoryRegistry:
             repo["last_indexed"] = datetime.now()
             repo["staleness_reason"] = None
             repo["last_sync_error"] = None
-            self.save()
             return commit
+
+    def begin_generation_mutation(
+        self,
+        repository_id: str,
+        *,
+        expected_registration_id: Optional[str],
+        expected_generation: Optional[str],
+        require_auto_sync: bool = False,
+    ) -> None:
+        """Fence reads only if the writer still owns its admitted registration."""
+        with self._transaction(write=True):
+            repo = self._registry.get(repository_id)
+            if repo is None or (
+                repo.get("registration_id") != expected_registration_id
+                or repo.get("index_generation") != expected_generation
+            ):
+                raise ValueError("Repository registration or generation changed before mutation")
+            if require_auto_sync and (
+                not repo.get("auto_sync", True) or not repo.get("active", True)
+            ):
+                raise ValueError("Automatic sync disabled before mutation")
+            repo["staleness_reason"] = "index_publication_pending"
+
+    def fail_generation_mutation(
+        self,
+        repository_id: str,
+        *,
+        error: str,
+        expected_registration_id: Optional[str],
+        expected_generation: Optional[str],
+    ) -> bool:
+        """Record a failed generation only while its admitted owner is current."""
+        with self._transaction(write=True):
+            repo = self._registry.get(repository_id)
+            if repo is None or (
+                repo.get("registration_id") != expected_registration_id
+                or repo.get("index_generation") != expected_generation
+            ):
+                return False
+            repo.update(staleness_reason="partial_index_failure", last_sync_error=error)
+            return True
+
+    def publish_generation(
+        self,
+        repository_id: str,
+        *,
+        generation: str,
+        index_path: Path,
+        commit: str,
+        branch: str,
+        profile: Optional[str],
+        expected_registration_id: Optional[str],
+        expected_generation: Optional[str],
+    ) -> None:
+        """Atomically bind a validated physical index and its provenance."""
+        with self._transaction(write=True):
+            repo = self._registry.get(repository_id)
+            if repo is None or (
+                repo.get("registration_id") != expected_registration_id
+                or repo.get("index_generation") != expected_generation
+            ):
+                raise ValueError("Repository registration or generation changed during publication")
+            repo.update(
+                index_generation=generation,
+                index_path=Path(index_path),
+                index_profile=profile,
+                last_indexed_commit=commit,
+                last_indexed_branch=branch,
+                last_indexed=datetime.now(),
+                staleness_reason=None,
+                last_sync_error=None,
+            )
 
     def get_repositories_needing_update(self) -> List[Tuple[str, Any]]:
         """
@@ -616,9 +759,9 @@ class RepositoryRegistry:
             List of tuples containing repository ID and RepositoryInfo.
         """
         stale: List[Tuple[str, Any]] = []
-        with self._lock:
+        with self._transaction():
             for repo_id, repo_data in self._registry.items():
-                repo_info = self._dict_to_repo_info(repo_data.copy())
+                repo_info = self._dict_to_repo_info(deepcopy(repo_data))
                 if repo_info.needs_update():
                     stale.append((repo_id, repo_info))
         return stale
@@ -650,17 +793,11 @@ class RepositoryRegistry:
                 text=True,
                 check=True,
             )
-            return self._normalize_branch_name(result.stdout.strip())
+            return result.stdout.strip()
         except subprocess.CalledProcessError:
             return None
         except FileNotFoundError:
             return None
-
-    def _normalize_branch_name(self, branch: str) -> str:
-        """Normalize branch naming for compatibility with main-first workflows."""
-        if branch == "master":
-            return "main"
-        return branch
 
     def _get_git_remote(self, repo_path: Path) -> Optional[str]:
         """Return origin remote URL for a repository path."""
@@ -715,11 +852,13 @@ class RepositoryRegistry:
 
     def update_git_state(self, repository_id: str) -> Optional[Dict[str, str]]:
         """Refresh both current commit and branch for a repository."""
-        with self._lock:
+        with self._transaction():
             repo = self._registry.get(repository_id)
             if not repo:
                 return None
             repo_path = Path(repo["path"])
+
+            registration_id = repo.get("registration_id")
 
         commit = self._get_git_commit(repo_path)
         branch = self._get_git_branch(repo_path)
@@ -727,12 +866,18 @@ class RepositoryRegistry:
         if not commit and not branch:
             return None
 
-        with self._lock:
+        with self._transaction(write=True):
+            repo = self._registry.get(repository_id)
+            if (
+                not repo
+                or Path(repo["path"]) != repo_path
+                or repo.get("registration_id") != registration_id
+            ):
+                return None
             if commit:
-                self._registry[repository_id]["current_commit"] = commit
+                repo["current_commit"] = commit
             if branch:
-                self._registry[repository_id]["current_branch"] = branch
-            self.save()
+                repo["current_branch"] = branch
 
         return {
             "commit": commit or "",
@@ -749,7 +894,7 @@ class RepositoryRegistry:
         Returns:
             Repository ID or None if not found
         """
-        with self._lock:
+        with self._transaction():
             path_str = str(path.resolve())
 
             for repo_id, repo_data in self._registry.items():
@@ -767,7 +912,7 @@ class RepositoryRegistry:
     def find_by_git_common_dir(self, git_common_dir: Path) -> Optional[str]:
         """Find a repository ID by normalized git common directory."""
         target = Path(git_common_dir).resolve(strict=False)
-        with self._lock:
+        with self._transaction():
             for repo_id, repo_data in self._registry.items():
                 stored = repo_data.get("git_common_dir")
                 if not stored:
@@ -797,7 +942,7 @@ class RepositoryRegistry:
 
     def get_statistics(self) -> Dict[str, Any]:
         """Get registry statistics."""
-        with self._lock:
+        with self._transaction():
             total = len(self._registry)
             active = sum(1 for r in self._registry.values() if r.get("active", True))
 
@@ -828,7 +973,7 @@ class RepositoryRegistry:
 
     def cleanup(self):
         """Clean up invalid or missing repositories."""
-        with self._lock:
+        with self._transaction(write=True):
             to_remove = []
 
             for repo_id, repo_data in self._registry.items():
@@ -846,7 +991,6 @@ class RepositoryRegistry:
                 del self._registry[repo_id]
 
             if to_remove:
-                self.save()
                 logger.info(f"Cleaned up {len(to_remove)} invalid repository entries")
 
             return len(to_remove)

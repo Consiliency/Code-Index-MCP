@@ -27,6 +27,7 @@ from mcp.types import (
 )
 
 from tests.fixtures.multi_repo import boot_test_server, build_production_matrix
+from tests.test_release_metadata import EXPECTED_VERSION
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 RUNNER_PYTHON = REPO_ROOT / ".venv" / "bin" / "python"
@@ -136,7 +137,7 @@ async def test_official_sdk_proves_mcpeval_metadata_structured_fail_closed_and_t
             status = await session.call_tool("get_status", {})
             assert status.isError is False
             assert status.structuredContent is not None
-            assert status.structuredContent["version"] == "1.4.0"
+            assert status.structuredContent["version"] == EXPECTED_VERSION
             assert _json_text_payload(status) == status.structuredContent
 
             lookup = await session.call_tool(

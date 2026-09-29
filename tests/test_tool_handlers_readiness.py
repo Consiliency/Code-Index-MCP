@@ -9,6 +9,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import pytest
+
 from mcp_server.health.repository_readiness import (
     RepositoryReadiness,
     RepositoryReadinessState,
@@ -175,6 +177,7 @@ def test_get_status_repository_rows_include_readiness(tmp_path):
 
 def test_summarize_sample_consumes_named_result_fields(tmp_path, monkeypatch):
     from mcp_server.cli.tool_handlers import handle_summarize_sample
+    from mcp_server.config.settings import Settings
     from mcp_server.indexing.summarization import (
         FileBatchSummarizer,
         GeneratedSummary,
@@ -223,7 +226,10 @@ def test_summarize_sample_consumes_named_result_fields(tmp_path, monkeypatch):
     lazy_summarizer.can_summarize.return_value = True
     lazy_summarizer._get_model_name.return_value = "fake-model"
 
-    async def fake_summarize(*_args, **_kwargs):
+    seen_config = {}
+
+    async def fake_summarize(self, *_args, **_kwargs):
+        seen_config.update(self.summarization_config)
         return SummaryGenerationResult(
             chunks_attempted=2,
             summaries_written=1,
@@ -235,6 +241,17 @@ def test_summarize_sample_consumes_named_result_fields(tmp_path, monkeypatch):
         )
 
     monkeypatch.setattr(FileBatchSummarizer, "summarize_file_chunks", fake_summarize)
+    monkeypatch.setattr(
+        Settings,
+        "from_environment",
+        staticmethod(
+            lambda: SimpleNamespace(
+                semantic_default_profile="legacy-default",
+                get_semantic_default_profile=lambda: "oss_high",
+                get_profile_summarization_config=lambda _profile: {},
+            )
+        ),
+    )
 
     result = _run(
         handle_summarize_sample(
@@ -250,6 +267,7 @@ def test_summarize_sample_consumes_named_result_fields(tmp_path, monkeypatch):
     assert payload["files"][0]["summaries_written"] == 1
     assert payload["files"][0]["missing_chunk_ids"] == ["chunk-2"]
     assert payload["files"][0]["scope_drained"] is False
+    assert seen_config["profile_id"] == "oss_high"
 
 
 def test_search_code_semantic_not_ready_returns_semantic_metadata(tmp_path, monkeypatch):
@@ -650,6 +668,11 @@ def test_reindex_reports_additive_semantic_stage_metadata(tmp_path, monkeypatch)
     ctx.sqlite_store = MagicMock()
     ctx.sqlite_store.db_path = str(tmp_path / "index.db")
     ctx.sqlite_store.rebuild_fts_code.return_value = 1
+    ctx.staging = False
+    ctx.sqlite_store.path_resolver.normalize_path.return_value = "."
+    ctx.sqlite_store._get_connection.return_value.__enter__.return_value.execute.return_value.fetchone.return_value = (
+        1,
+    )
     resolver = FakeResolver(
         RepositoryReadiness(
             state=RepositoryReadinessState.READY,
@@ -669,7 +692,7 @@ def test_reindex_reports_additive_semantic_stage_metadata(tmp_path, monkeypatch)
     )
 
     data = _parsed(result)
-    assert data["summaries_written"] == 1
+    assert data.get("summaries_written") == 1, data
     assert data["summary_chunks_attempted"] == 2
     assert data["summary_missing_chunks"] == 1
     assert data["semantic_blocked"] == 1
@@ -678,6 +701,7 @@ def test_reindex_reports_additive_semantic_stage_metadata(tmp_path, monkeypatch)
 
 def test_reindex_single_file_success_returns_object_payload(tmp_path, monkeypatch):
     from mcp_server.cli.tool_handlers import handle_reindex
+    from mcp_server.dispatcher.dispatcher_enhanced import IndexResult, IndexResultStatus
 
     monkeypatch.setenv("MCP_ALLOWED_ROOTS", str(tmp_path))
     worktree = tmp_path / "repo"
@@ -686,9 +710,17 @@ def test_reindex_single_file_success_returns_object_payload(tmp_path, monkeypatc
     source_file.write_text("def demo():\n    return 1\n", encoding="utf-8")
 
     dispatcher = MagicMock()
+    dispatcher.index_file.return_value = IndexResult(
+        IndexResultStatus.INDEXED, source_file, None, None
+    )
     ctx = MagicMock()
     ctx.workspace_root = worktree
     ctx.sqlite_store = MagicMock()
+    ctx.staging = False
+    ctx.sqlite_store.path_resolver.normalize_path.return_value = "demo.py"
+    ctx.sqlite_store._get_connection.return_value.__enter__.return_value.execute.return_value.fetchone.return_value = (
+        1,
+    )
     resolver = FakeResolver(
         RepositoryReadiness(
             state=RepositoryReadinessState.READY,
@@ -708,15 +740,47 @@ def test_reindex_single_file_success_returns_object_payload(tmp_path, monkeypatc
     )
 
     data = _parsed(result)
-    assert data["path"] == str(source_file)
+    assert data.get("path") == str(source_file), data
     assert data["mode"] == "file"
     assert data["indexed_files"] == 1
     assert data["mutation_performed"] is True
     assert "Reindexed file:" in data["message"]
 
 
-def test_reindex_single_file_failure_returns_structured_error(tmp_path, monkeypatch):
+def test_reindex_unchanged_file_reports_generation_refresh(tmp_path):
+    import jsonschema
+
+    from mcp_server.cli.stdio_runner import _build_tool_list
+    from mcp_server.dispatcher.dispatcher_enhanced import IndexResult, IndexResultStatus
+    from tests.fixtures.multi_repo import boot_test_server, build_temp_repo
+
+    repo, repo_id = build_temp_repo(
+        tmp_path, "unchanged_reindex", seed_files={"seed.py": "def seed():\n    return 1\n"}
+    )
+    source = repo / "seed.py"
+    with boot_test_server(tmp_path, [repo]) as server:
+        first = server.call_tool("reindex", {"path": str(source)})
+        prior_generation = server.registry.get_repository(repo_id).index_generation
+        server.dispatcher.index_file = MagicMock(
+            return_value=IndexResult(IndexResultStatus.SKIPPED_UNCHANGED, source, None, None)
+        )
+        second = server.call_tool("reindex", {"path": str(source)})
+        generation = server.registry.get_repository(repo_id).index_generation
+
+    assert first["mutation_performed"] is True
+    assert second["mode"] == "file"
+    assert second["indexed_files"] == 0
+    assert second["mutation_performed"] is True
+    assert second["message"] == "File unchanged; index generation refreshed"
+    assert generation and generation != prior_generation
+    schema = next(tool.outputSchema for tool in _build_tool_list() if tool.name == "reindex")
+    jsonschema.validate(second, schema)
+
+
+@pytest.mark.parametrize("failure", ["raise", "error", "semantic_failed", "semantic_blocked"])
+def test_reindex_single_file_failure_returns_structured_error(tmp_path, monkeypatch, failure):
     from mcp_server.cli.tool_handlers import handle_reindex
+    from mcp_server.dispatcher.dispatcher_enhanced import IndexResult, IndexResultStatus
 
     monkeypatch.setenv("MCP_ALLOWED_ROOTS", str(tmp_path))
     worktree = tmp_path / "repo"
@@ -725,7 +789,16 @@ def test_reindex_single_file_failure_returns_structured_error(tmp_path, monkeypa
     source_file.write_text("def broken():\n    return 1\n", encoding="utf-8")
 
     dispatcher = MagicMock()
-    dispatcher.index_file.side_effect = RuntimeError("boom")
+    if failure == "raise":
+        dispatcher.index_file.side_effect = RuntimeError("boom")
+    else:
+        dispatcher.index_file.return_value = IndexResult(
+            IndexResultStatus.ERROR if failure == "error" else IndexResultStatus.INDEXED,
+            source_file,
+            None,
+            None,
+            semantic={failure: 1} if failure.startswith("semantic_") else None,
+        )
     ctx = MagicMock()
     ctx.workspace_root = worktree
     ctx.sqlite_store = MagicMock()
@@ -752,11 +825,21 @@ def test_reindex_single_file_failure_returns_structured_error(tmp_path, monkeypa
     assert data["code"] == "reindex_failed"
     assert data["path"] == str(source_file)
     assert data["mutation_performed"] is False
-    assert data["details"] == "boom"
+    assert data["details"] == (
+        "boom"
+        if failure == "raise"
+        else (
+            "File indexing did not complete"
+            if failure == "error"
+            else "Required semantic mutation did not complete"
+        )
+    )
+    ctx.sqlite_store._get_connection.assert_not_called()
 
 
 def test_write_summaries_remains_summary_only(tmp_path, monkeypatch):
     from mcp_server.cli.tool_handlers import handle_write_summaries
+    from mcp_server.config.settings import Settings
 
     monkeypatch.setenv("MCP_ALLOWED_ROOTS", str(tmp_path))
     worktree = tmp_path / "repo"
@@ -773,9 +856,11 @@ def test_write_summaries_remains_summary_only(tmp_path, monkeypatch):
     )
     resolver.resolve = lambda _path: ctx
 
+    seen_config = {}
+
     class FakeWriter:
         def __init__(self, *args, **kwargs):
-            pass
+            seen_config.update(kwargs["summarization_config"])
 
         async def process_scope(self, limit=500):
             del limit
@@ -784,6 +869,17 @@ def test_write_summaries_remains_summary_only(tmp_path, monkeypatch):
             )
 
     monkeypatch.setattr("mcp_server.indexing.summarization.ComprehensiveChunkWriter", FakeWriter)
+    monkeypatch.setattr(
+        Settings,
+        "from_environment",
+        staticmethod(
+            lambda: SimpleNamespace(
+                semantic_default_profile="legacy-default",
+                get_semantic_default_profile=lambda: "oss_high",
+                get_profile_summarization_config=lambda _profile: {},
+            )
+        ),
+    )
     lazy_summarizer = MagicMock()
     lazy_summarizer.can_summarize.return_value = True
     lazy_summarizer._get_model_name.return_value = "chat"
@@ -802,6 +898,7 @@ def test_write_summaries_remains_summary_only(tmp_path, monkeypatch):
     assert data["chunks_summarized"] == 3
     assert data["semantic_vectors_written"] is False
     assert data["summary_missing_chunks"] == 1
+    assert seen_config["profile_id"] == "oss_high"
 
 
 def _run_summarization_gate(monkeypatch, scheme_status: str) -> bool:

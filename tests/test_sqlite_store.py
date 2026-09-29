@@ -14,6 +14,7 @@ Tests cover:
 - Performance benchmarks
 """
 
+import hashlib
 import json
 import sqlite3
 import time
@@ -21,8 +22,49 @@ from datetime import datetime, timedelta
 
 import pytest
 
+from mcp_server.core.path_resolver import PathResolver
 from mcp_server.storage.sqlite_store import SQLiteStore
 from tests.conftest import measure_time
+
+
+@pytest.mark.parametrize(
+    "source_bytes,normalized",
+    [(b"print('ok')\r\n", "print('ok')\n"), (b"# caf\xe9\n", "# café\n")],
+)
+@pytest.mark.parametrize("hash_style", ["indexed", "raw"])
+def test_import_artifact_rows_accepts_indexed_text_hash(
+    tmp_path, source_bytes, normalized, hash_style
+):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    source_file = repo / "sample.py"
+    source_file.write_bytes(source_bytes)
+    resolver = PathResolver(repo)
+    source = SQLiteStore(str(tmp_path / "source.db"), path_resolver=resolver)
+    target = SQLiteStore(str(tmp_path / "target.db"), path_resolver=resolver)
+    try:
+        repo_id = source.ensure_repository_row(repo)
+        source.store_file(
+            repo_id,
+            source_file,
+            "sample.py",
+            content_hash=hashlib.sha256(
+                normalized.encode("utf-8") if hash_style == "indexed" else source_bytes
+            ).hexdigest(),
+        )
+        assert target.import_artifact_rows(tmp_path / "source.db", repo) == []
+        with target._get_connection() as conn:
+            assert conn.execute("SELECT content FROM fts_code").fetchone()[0] == normalized
+            assert (
+                conn.execute("SELECT content_hash FROM files").fetchone()[0]
+                == hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+            )
+        source_file.write_bytes(source_bytes + b"# changed\n")
+        with pytest.raises(ValueError, match="Artifact source differs"):
+            target.import_artifact_rows(tmp_path / "source.db", repo)
+    finally:
+        source.close()
+        target.close()
 
 
 class TestDatabaseInitialization:

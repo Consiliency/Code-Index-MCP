@@ -106,10 +106,23 @@ class ArtifactManifestV2:
 
     def validate(self) -> None:
         """Validate manifest invariants required for reliable consumption."""
+        if self.manifest_version != "2":
+            raise ValueError(f"Unsupported manifest version: {self.manifest_version}")
+        from mcp_server.storage.sqlite_store import LEGACY_CHUNK_ID_SCHEME, current_chunk_id_scheme
+
+        if self.chunk_identity_algorithm not in {
+            LEGACY_CHUNK_ID_SCHEME,
+            current_chunk_id_scheme(),
+        }:
+            raise ValueError(
+                f"Unsupported chunk identity algorithm: {self.chunk_identity_algorithm}"
+            )
         if not self.repo_id:
             raise ValueError("Manifest v2 requires repo_id")
         if not self.canonical_tracked_branch:
             raise ValueError("Manifest v2 requires tracked_branch")
+        if self.tracked_branch and self.branch and self.tracked_branch != self.branch:
+            raise ValueError("Manifest branch aliases disagree")
         if not self.commit:
             raise ValueError("Manifest v2 requires commit")
         if not self.schema_version:
@@ -126,6 +139,8 @@ class ArtifactManifestV2:
         lexical_units = [u for u in self.units if u.unit_type == "lexical"]
         if len(lexical_units) != 1:
             raise ValueError("Manifest v2 requires exactly one lexical unit")
+        if lexical_units[0].checksum != self.resolved_checksum:
+            raise ValueError("Manifest lexical checksum disagrees with archive checksum")
 
         seen_ids = set()
         for unit in self.units:
@@ -181,6 +196,12 @@ class ArtifactManifestV2:
     @classmethod
     def from_dict(cls, payload: Dict[str, Any]) -> "ArtifactManifestV2":
         """Create and validate manifest from JSON payload."""
+        if (
+            "tracked_branch" in payload
+            and "branch" in payload
+            and (payload["tracked_branch"] != payload["branch"])
+        ):
+            raise ValueError("Manifest branch aliases disagree")
         units = [ManifestUnit(**unit) for unit in payload.get("units", [])]
         manifest = cls(
             manifest_version=str(payload.get("manifest_version", "2")),

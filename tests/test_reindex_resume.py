@@ -301,9 +301,9 @@ def test_resume_wraps_lock_registry(repo_env) -> None:
     acquired_ids: list[str] = []
     original_acquire = lock_registry.acquire
 
-    def spy_acquire(repo_id: str):
+    def spy_acquire(repo_id: str, **kwargs):
         acquired_ids.append(repo_id)
-        return original_acquire(repo_id)
+        return original_acquire(repo_id, **kwargs)
 
     with patch.object(lock_registry, "acquire", side_effect=spy_acquire):
         indexer.update_from_changes(changes)

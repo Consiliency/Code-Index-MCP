@@ -59,9 +59,10 @@ def test_field_names():
         "tracked_branch",
         "registry_entry",
         "requested_path",
+        "staging",
     }
     assert {f.name for f in fields(RepoContext)} == expected
-    assert len(fields(RepoContext)) == 6
+    assert len(fields(RepoContext)) == 7
 
 
 # ---------------------------------------------------------------------------

@@ -42,14 +42,15 @@ async def run_write_summaries_task(
     )
 
     settings = Settings.from_environment()
+    profile_id = settings.get_semantic_default_profile()
     writer = ComprehensiveChunkWriter(
         db_path=active_store.db_path,
         qdrant_client=None,
         session=current_session,
         client_name=client_name,
         summarization_config={
-            **settings.get_profile_summarization_config(settings.semantic_default_profile),
-            "profile_id": settings.semantic_default_profile,
+            **settings.get_profile_summarization_config(profile_id),
+            "profile_id": profile_id,
         },
     )
 

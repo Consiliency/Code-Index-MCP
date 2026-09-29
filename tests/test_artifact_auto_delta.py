@@ -1,4 +1,4 @@
-"""Tests for DeltaPolicy integration in ArtifactPublisher and IndexArtifactUploader."""
+"""Full snapshots must not be mislabeled as delta archives by size policy."""
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ def _make_publisher(uploader: MagicMock, *, gh_cmd: str = "gh") -> ArtifactPubli
 
 
 class TestPublisherDeltaIntegration:
-    """Publisher calls DeltaPolicy and wires result into create_metadata."""
+    """Publication stays full until authenticated delta-chain restore is supported."""
 
     def _mock_gh(self, publisher: ArtifactPublisher, *, prev_commit: str | None = None) -> None:
         """Patch publisher._run and subprocess.run to avoid real gh calls."""
@@ -54,22 +54,15 @@ class TestPublisherDeltaIntegration:
         publisher._patcher = patcher  # type: ignore[attr-defined]
         publisher._run = MagicMock(return_value=MagicMock(returncode=0, stdout="", stderr=""))
 
-        from mcp_server.artifacts.attestation import Attestation
-
         attest_patcher = patch(
-            "mcp_server.artifacts.publisher.attest",
-            return_value=Attestation(
-                bundle_url="",
-                bundle_path=Path(""),
-                subject_digest="",
-                signed_at=__import__("datetime").datetime.now(__import__("datetime").timezone.utc),
-            ),
+            "mcp_server.artifacts.publisher._attestation_mode",
+            return_value="skip",
         )
         attest_patcher.start()
         publisher._attest_patcher = attest_patcher  # type: ignore[attr-defined]
 
-    def test_publisher_switches_to_delta_when_env_low(self, monkeypatch):
-        """When MCP_ARTIFACT_FULL_SIZE_LIMIT=1 and prev artifact exists, metadata must be delta."""
+    def test_publisher_keeps_full_snapshot_when_env_low(self, monkeypatch):
+        """Archive size and a prior artifact cannot change the payload's format."""
         monkeypatch.setenv("MCP_ARTIFACT_FULL_SIZE_LIMIT", "1")
 
         prev_artifact_id = "deadbeef"
@@ -81,11 +74,10 @@ class TestPublisherDeltaIntegration:
 
         ref = publisher.publish_on_reindex(repo_id="owner/repo", commit="abc1234567890")
 
-        # create_metadata must have been called with delta strategy
         uploader.create_metadata.assert_called_once()
         call_kwargs = uploader.create_metadata.call_args
-        assert call_kwargs.kwargs.get("artifact_type") == "delta"
-        assert call_kwargs.kwargs.get("delta_from") == prev_artifact_id
+        assert call_kwargs.kwargs.get("artifact_type") == "full"
+        assert call_kwargs.kwargs.get("delta_from") is None
 
         if hasattr(publisher, "_patcher"):
             publisher._patcher.stop()

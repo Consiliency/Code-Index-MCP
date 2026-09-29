@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sqlite3
+import subprocess
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -23,6 +24,8 @@ def test_ready_registered_repository_reindexes_searches_and_persists_rows(tmp_pa
     )
     new_file = repo_path / "fresh.py"
     new_file.write_text(f"def {symbol}():\n    return '{token}'\n", encoding="utf-8")
+    subprocess.run(["git", "add", "fresh.py"], cwd=repo_path, check=True)
+    subprocess.run(["git", "commit", "-qm", "Committed smoke input"], cwd=repo_path, check=True)
 
     with boot_test_server(tmp_path, [repo_path]) as server:
         reindex = server.call_tool("reindex", {"repository": str(repo_path)})

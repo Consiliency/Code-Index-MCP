@@ -6,6 +6,9 @@ import hashlib
 import json
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import Mock
+
+import pytest
 
 from mcp_server.artifacts.semantic_profiles import SemanticProfileRegistry
 from mcp_server.utils import semantic_indexer as semantic_indexer_module
@@ -31,8 +34,15 @@ class _FakeQdrantClient:
         self.upserts = []
         self.collections = {}
 
-    def upsert(self, *, collection_name, points):
+    def upsert(self, *, collection_name, points, wait=False):
         self.upserts.append((collection_name, list(points)))
+        return SimpleNamespace(status="completed")
+
+    def scroll(self, *, collection_name, **kwargs):
+        return [], None
+
+    def delete(self, *, collection_name, points_selector, wait=False):
+        return SimpleNamespace(status="completed")
 
     def get_collections(self):
         return SimpleNamespace(
@@ -122,17 +132,49 @@ def _patch_indexer_runtime(monkeypatch, tmp_path) -> None:
 
 
 class _FakeSQLiteStore:
-    def __init__(self, summary_text: str | None) -> None:
+    def __init__(self, summary_text: str | None, summary_metadata=None) -> None:
         self.summary_text = summary_text
+        self.summary_metadata = summary_metadata or {}
         self.semantic_points = []
 
     def get_chunk_summary(self, _chunk_id: str):
         if self.summary_text is None:
             return None
-        return {"summary_text": self.summary_text}
+        return {"summary_text": self.summary_text, **self.summary_metadata}
 
     def upsert_semantic_point(self, **kwargs):
         self.semantic_points.append(kwargs)
+
+    def get_semantic_point_ids(self, profile_id, chunk_ids):
+        return [
+            point["point_id"]
+            for point in self.semantic_points
+            if point["profile_id"] == profile_id and point["chunk_id"] in chunk_ids
+        ]
+
+    def admit_semantic_point_links(self, links, expected_summaries):
+        for chunk_id, expected in expected_summaries.items():
+            summary = self.get_chunk_summary(chunk_id)
+            actual = (
+                (
+                    summary["summary_text"],
+                    bool(summary.get("is_authoritative")),
+                    summary.get("profile_id"),
+                    summary.get("prompt_fingerprint"),
+                )
+                if summary is not None
+                else None
+            )
+            if actual != expected:
+                return False
+        for profile_id, chunk_id, point_id, collection in links:
+            self.upsert_semantic_point(
+                profile_id=profile_id,
+                chunk_id=chunk_id,
+                point_id=point_id,
+                collection=collection,
+            )
+        return True
 
 
 def _patch_chunk_file(monkeypatch, chunk_id: str = "chunk-1") -> None:
@@ -286,6 +328,101 @@ def test_strict_batch_indexing_refuses_writes_without_authoritative_summary(monk
     assert indexer.qdrant.upserts == []
 
 
+def test_strict_batch_indexing_refuses_stale_summary_contract(monkeypatch, tmp_path):
+    _patch_indexer_runtime(monkeypatch, tmp_path)
+    _patch_chunk_file(monkeypatch)
+    registry = SemanticProfileRegistry.from_raw(_sample_profiles(), "oss-high")
+    sqlite_store = _FakeSQLiteStore(
+        summary_text="stale summary",
+        summary_metadata={
+            "is_authoritative": True,
+            "profile_id": "oss-high",
+            "prompt_fingerprint": "old-prompt",
+        },
+    )
+    source = tmp_path / "sample.py"
+    source.write_text("def alpha(x):\n    return x + 1\n")
+    indexer = SemanticIndexer(
+        collection="code-index",
+        qdrant_path=":memory:",
+        profile_registry=registry,
+        semantic_profile="oss-high",
+        sqlite_store=sqlite_store,
+    )
+
+    result = indexer.index_files_batch(
+        [source],
+        require_summaries=True,
+        expected_summary_contract={"profile_id": "oss-high", "prompt_fingerprint": "new-prompt"},
+    )
+
+    assert result["files_blocked"] == 1
+    assert result["missing_summary_chunk_ids"] == ["chunk-1"]
+    assert indexer.qdrant.upserts == []
+
+
+@pytest.mark.parametrize("include_success", [False, True])
+def test_batch_preparation_errors_are_failures_not_skips(monkeypatch, tmp_path, include_success):
+    _patch_indexer_runtime(monkeypatch, tmp_path)
+    _patch_chunk_file(monkeypatch)
+    registry = SemanticProfileRegistry.from_raw(_sample_profiles(), "oss-high")
+    source = tmp_path / "sample.py"
+    source.write_text("def alpha(x):\n    return x + 1\n")
+    indexer = SemanticIndexer(
+        qdrant_path=":memory:",
+        profile_registry=registry,
+        semantic_profile="oss-high",
+        sqlite_store=_FakeSQLiteStore(summary_text="Synthetic summary"),
+    )
+    prepare = indexer._prepare_file_for_indexing
+    failed = tmp_path / "bad.py"
+
+    def prepare_with_failure(path):
+        if path == failed:
+            raise OSError("private input")
+        return prepare(path)
+
+    monkeypatch.setattr(indexer, "_prepare_file_for_indexing", prepare_with_failure)
+    provenance = Mock()
+    monkeypatch.setattr(indexer, "_write_collection_provenance_best_effort", provenance)
+    result = indexer.index_files_batch([failed, source] if include_success else [failed])
+    assert result["files_failed"] == 1
+    assert result["files_skipped"] == 0
+    assert result["files_indexed"] == int(include_success)
+    provenance.assert_not_called()
+
+
+@pytest.mark.parametrize("boundary", ["embedding", "qdrant", "upsert"])
+def test_semantic_provider_errors_do_not_leak_payloads(monkeypatch, tmp_path, caplog, boundary):
+    _patch_indexer_runtime(monkeypatch, tmp_path)
+    _patch_chunk_file(monkeypatch)
+    registry = SemanticProfileRegistry.from_raw(_sample_profiles(), "oss-high")
+    source = tmp_path / "sample.py"
+    source.write_text("def alpha(x):\n    return x + 1\n")
+    indexer = SemanticIndexer(
+        qdrant_path=":memory:",
+        profile_registry=registry,
+        semantic_profile="oss-high",
+        sqlite_store=_FakeSQLiteStore(summary_text="Synthetic summary"),
+    )
+    private = "synthetic-private-provider-payload"
+    failure = Mock(side_effect=RuntimeError(private))
+    if boundary == "upsert":
+        monkeypatch.setattr(indexer.qdrant, "upsert", failure)
+        operation = lambda: indexer.index_file(source)
+    else:
+        monkeypatch.setattr(indexer, "_provider_supports_provenance", lambda: False)
+        if boundary == "embedding":
+            monkeypatch.setattr(indexer, "_embed_texts", failure)
+        else:
+            indexer.qdrant.search = failure
+        operation = lambda: list(indexer.query("synthetic query"))
+    with pytest.raises(RuntimeError) as error:
+        operation()
+    assert private not in str(error.value)
+    assert private not in caplog.text
+
+
 def test_strict_preparation_includes_summary_text_in_embedding_input(monkeypatch, tmp_path):
     _patch_indexer_runtime(monkeypatch, tmp_path)
     _patch_chunk_file(monkeypatch)
@@ -334,6 +471,100 @@ def test_successful_strict_batch_indexing_persists_chunk_point_links(monkeypatch
         "chunk-link",
     }
     assert all(point["profile_id"] == "oss-high" for point in sqlite_store.semantic_points)
+
+
+def test_summary_change_during_vector_write_refuses_stale_links(monkeypatch, tmp_path):
+    _patch_indexer_runtime(monkeypatch, tmp_path)
+    _patch_chunk_file(monkeypatch)
+    registry = SemanticProfileRegistry.from_raw(_sample_profiles(), "oss-high")
+    sqlite_store = _FakeSQLiteStore(summary_text="original summary")
+    source = tmp_path / "sample.py"
+    source.write_text("def alpha(x):\n    return x + 1\n", encoding="utf-8")
+    indexer = SemanticIndexer(
+        qdrant_path=":memory:",
+        profile_registry=registry,
+        semantic_profile="oss-high",
+        sqlite_store=sqlite_store,
+    )
+
+    def replace_summary(_path, _points):
+        sqlite_store.summary_text = "new summary"
+
+    monkeypatch.setattr(indexer, "_upsert_points_batched", replace_summary)
+    with pytest.raises(RuntimeError, match="summaries changed during embedding"):
+        indexer.index_file(source)
+    assert sqlite_store.semantic_points == []
+
+
+def test_overlapping_summary_builds_use_distinct_vector_ids(monkeypatch, tmp_path):
+    _patch_indexer_runtime(monkeypatch, tmp_path)
+    _patch_chunk_file(monkeypatch)
+    registry = SemanticProfileRegistry.from_raw(_sample_profiles(), "oss-high")
+    sqlite_store = _FakeSQLiteStore(summary_text="old summary")
+    source = tmp_path / "sample.py"
+    source.write_text("def alpha(x):\n    return x + 1\n", encoding="utf-8")
+    indexer = SemanticIndexer(
+        qdrant_path=":memory:",
+        profile_registry=registry,
+        semantic_profile="oss-high",
+        sqlite_store=sqlite_store,
+    )
+    old_prep = indexer._prepare_file_for_indexing(source)
+    sqlite_store.summary_text = "new summary"
+    new_prep = indexer._prepare_file_for_indexing(source)
+    written = []
+    remote_points = {}
+
+    def upsert(_path, points):
+        written.append({int(point.id) for point in points})
+        remote_points.update({int(point.id): point for point in points})
+
+    monkeypatch.setattr(indexer, "_upsert_points_batched", upsert)
+
+    def embeddings(prep):
+        return [[0.1, 0.2, 0.3] for _ in prep["embedding_inputs"]]
+
+    indexer._store_file_embeddings(source, new_prep, embeddings(new_prep))
+    current_links = list(sqlite_store.semantic_points)
+    with pytest.raises(RuntimeError, match="summaries changed during embedding"):
+        indexer._store_file_embeddings(source, old_prep, embeddings(old_prep))
+
+    assert written[0].isdisjoint(written[1])
+    assert sqlite_store.semantic_points == current_links
+
+    monkeypatch.setattr(indexer, "_provider_supports_provenance", lambda: False)
+    monkeypatch.setattr(indexer, "_embed_texts", lambda *_args, **_kwargs: [[0.1, 0.2, 0.3]])
+    monkeypatch.setattr(indexer, "_semantic_result_metadata", lambda: {})
+    monkeypatch.setattr(indexer, "_rerank_query_results", lambda _text, rows, _limit: rows)
+    stale = next(
+        remote_points[point_id]
+        for point_id in written[1]
+        if "embedding_text" in remote_points[point_id].payload
+    )
+    current = next(
+        remote_points[point_id]
+        for point_id in written[0]
+        if "embedding_text" in remote_points[point_id].payload
+    )
+    ranked = [
+        SimpleNamespace(id=point.id, payload=point.payload, score=1.0 - index * 0.1)
+        for index, point in enumerate((stale, current))
+    ]
+    indexer.qdrant.search = lambda **kwargs: ranked[
+        kwargs["offset"] : kwargs["offset"] + kwargs["limit"]
+    ]
+
+    visible = list(indexer.query("alpha", limit=1))
+    assert len(visible) == 1
+    assert visible[0]["embedding_text"] == current.payload["embedding_text"]
+
+    del indexer.qdrant.search
+    indexer.qdrant.query_points = lambda **kwargs: SimpleNamespace(
+        points=ranked[kwargs["offset"] : kwargs["offset"] + kwargs["limit"]]
+    )
+    visible = list(indexer.query("alpha", limit=1))
+    assert len(visible) == 1
+    assert visible[0]["embedding_text"] == current.payload["embedding_text"]
 
 
 def test_preflight_blocker_prevents_any_qdrant_upsert(monkeypatch, tmp_path):

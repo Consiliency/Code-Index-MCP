@@ -10,6 +10,7 @@ from unittest.mock import patch
 from mcp_server.plugins.memory_aware_manager import MemoryAwarePluginManager
 from mcp_server.plugins.repository_plugin_loader import RepositoryPluginLoader
 from mcp_server.storage.multi_repo_manager import MultiRepositoryManager, RepositoryInfo
+from mcp_server.storage.sqlite_store import SQLiteStore
 
 
 def _repo_info(repo_id: str, path: Path) -> RepositoryInfo:
@@ -39,7 +40,15 @@ def test_multi_repo_manager_ready_and_stale_sets(tmp_path: Path):
     ready_repo = _repo_info("ready", ready_repo_path)
     ready_repo.artifact_health = "ready"
     ready_repo.last_recovered_commit = ready_repo.current_commit
-    (ready_repo_path / "code_index.db").write_text("db", encoding="utf-8")
+    source = ready_repo_path / "ready.py"
+    source.write_text("ready = 1\n")
+    store = SQLiteStore(str(ready_repo.index_path))
+    try:
+        row = store.ensure_repository_row(ready_repo_path)
+        store.store_file(row, source, "ready.py")
+    finally:
+        store.close()
+    ready_repo.last_indexed_commit = ready_repo.current_commit
 
     stale_repo_path = tmp_path / "stale_repo"
     stale_repo_path.mkdir()

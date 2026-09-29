@@ -1,0 +1,217 @@
+#!/usr/bin/env python3
+"""Isolated file/server Qdrant acceptance using deterministic synthetic vectors."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import socket
+import subprocess
+import sys
+import tempfile
+import time
+import uuid
+import xml.etree.ElementTree as ET
+from datetime import datetime, timezone
+from importlib.metadata import version
+from pathlib import Path
+from urllib.error import URLError
+from urllib.request import urlopen
+
+IMAGE = "qdrant/qdrant@sha256:f1c7272cdac52b38c1a0e89313922d940ba50afd90d593a1605dbbc214e66ffb"
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--mode", choices=("file", "server"), required=True)
+    parser.add_argument("--network", choices=("bridge", "host"), default="bridge")
+    args = parser.parse_args()
+    started = datetime.now(timezone.utc).isoformat()
+    env = os.environ.copy()
+    env.update(SEMANTIC_SEARCH_ENABLED="false", MCP_TEST_MODE="1", QDRANT_USE_SERVER="false")
+    env.pop("V13_TEST_QDRANT_URL", None)
+    env.pop("V13_TEST_QDRANT_CONTAINER", None)
+    container = None
+    name = None
+    run_token = None
+    server_version = None
+    try:
+        if args.mode == "server":
+            run_token = uuid.uuid4().hex
+            name = "v13-qdrant-" + run_token[:12]
+            if args.network == "host":
+                with socket.socket() as probe:
+                    if probe.connect_ex(("127.0.0.1", 6335)) == 0:
+                        raise RuntimeError("Qdrant host proof port is already occupied")
+            network_args = (
+                ["--network", "host"]
+                if args.network == "host"
+                else ["--publish", "127.0.0.1::6333"]
+            )
+            container = subprocess.check_output(
+                [
+                    "docker",
+                    "run",
+                    "--pull",
+                    "never",
+                    "--detach",
+                    "--rm",
+                    "--name",
+                    name,
+                    "--label",
+                    f"v13.smoke.token={run_token}",
+                    *network_args,
+                    "--env",
+                    "QDRANT__TELEMETRY_DISABLED=true",
+                    *(
+                        ["--env", "QDRANT__SERVICE__HTTP_PORT=6335"]
+                        if args.network == "host"
+                        else []
+                    ),
+                    IMAGE,
+                ],
+                text=True,
+                timeout=30,
+            ).strip()
+            if args.network == "host":
+                endpoint = "http://127.0.0.1:6335"
+            else:
+                ports = json.loads(
+                    subprocess.check_output(
+                        [
+                            "docker",
+                            "inspect",
+                            "--format",
+                            "{{json .NetworkSettings.Ports}}",
+                            container,
+                        ],
+                        text=True,
+                        timeout=10,
+                    )
+                )
+                endpoint = "http://127.0.0.1:" + ports["6333/tcp"][0]["HostPort"]
+            deadline = time.monotonic() + 30
+            while time.monotonic() < deadline:
+                try:
+                    with urlopen(endpoint, timeout=2) as response:
+                        server_version = json.load(response)["version"]
+                    break
+                except (OSError, URLError, KeyError, json.JSONDecodeError):
+                    time.sleep(0.2)
+            if not server_version:
+                raise RuntimeError("Disposable Qdrant did not become ready")
+            details = json.loads(
+                subprocess.check_output(["docker", "inspect", container], text=True, timeout=10)
+            )[0]
+            if (
+                details["Name"] != "/" + name
+                or not details["State"]["Running"]
+                or details["Config"]["Labels"].get("v13.smoke.token") != run_token
+                or (
+                    args.network == "host"
+                    and "QDRANT__SERVICE__HTTP_PORT=6335" not in details["Config"]["Env"]
+                )
+            ):
+                raise RuntimeError("Disposable Qdrant does not own the proof endpoint")
+            env["V13_TEST_QDRANT_URL"] = endpoint
+            env["V13_TEST_QDRANT_CONTAINER"] = container
+            env["V13_TEST_QDRANT_NETWORK"] = args.network
+
+        with tempfile.TemporaryDirectory(prefix="v13-qdrant-proof-") as tmp:
+            report = Path(tmp) / "junit.xml"
+            command = [
+                sys.executable,
+                "-m",
+                "pytest",
+                "tests/test_v13_data_vectors.py",
+                "-k",
+                "maintenance or generated_point_ids",
+                "-q",
+                "--no-cov",
+                "-o",
+                "log_cli=false",
+                "--junitxml",
+                str(report),
+            ]
+            result = subprocess.run(
+                command,
+                cwd=ROOT,
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                timeout=300,
+                check=False,
+            )
+            evidence = ROOT / ".phase-loop" / "runs" / ("v13-DATA-qdrant-" + uuid.uuid4().hex)
+            evidence.mkdir(parents=True)
+            (evidence / "pytest.log").write_bytes(result.stdout)
+            if report.exists():
+                (evidence / "junit.xml").write_bytes(report.read_bytes())
+            cases = list(ET.parse(report).iter("testcase")) if report.exists() else []
+            outcomes = [
+                {
+                    "name": case.attrib["name"],
+                    "seconds": float(case.attrib.get("time", 0)),
+                    "passed": not any(
+                        child.tag in {"failure", "error", "skipped"} for child in case
+                    ),
+                }
+                for case in cases
+            ]
+            passed = (
+                result.returncode == 0
+                and len(outcomes) == 19
+                and all(item["passed"] for item in outcomes)
+            )
+            print(
+                json.dumps(
+                    {
+                        "proof": "qdrant-" + args.mode,
+                        "network": args.network if args.mode == "server" else None,
+                        "status": "passed" if passed else "failed",
+                        "started_at": started,
+                        "finished_at": datetime.now(timezone.utc).isoformat(),
+                        "client_version": version("qdrant-client"),
+                        "server_version": server_version,
+                        "image": IMAGE if container else None,
+                        "exit_code": result.returncode,
+                        "cases": outcomes,
+                        "output_sha256": hashlib.sha256(result.stdout).hexdigest(),
+                        "output_path": str((evidence / "pytest.log").relative_to(ROOT)),
+                        "inference_requests": 0,
+                        "inputs": "synthetic deterministic vectors only",
+                    }
+                ),
+                flush=True,
+            )
+            if not passed:
+                raise SystemExit(1)
+    finally:
+        if name and run_token:
+            identity = subprocess.run(
+                [
+                    "docker",
+                    "inspect",
+                    "--format",
+                    '{{ index .Config.Labels "v13.smoke.token" }}',
+                    name,
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=10,
+            )
+            if identity.returncode == 0 and identity.stdout.strip() == run_token:
+                subprocess.run(
+                    ["docker", "stop", "--time", "2", name],
+                    stdout=subprocess.DEVNULL,
+                    check=True,
+                    timeout=15,
+                )
+
+
+if __name__ == "__main__":
+    main()

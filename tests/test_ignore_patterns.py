@@ -55,7 +55,20 @@ class TestDefaultPatterns:
 
 
 class TestCustomIgnoreFile:
-    """When .mcp-index-ignore exists its patterns replace defaults."""
+    """Custom patterns extend defaults; negations are explicit policy overrides."""
+
+    @pytest.mark.parametrize("content", ["", "# comment only\n", "*.custom\n"])
+    def test_custom_file_preserves_sensitive_defaults(self, tmp_path, content):
+        (tmp_path / ".mcp-index-ignore").write_text(content)
+        manager = IgnorePatternManager(root_path=tmp_path)
+        for name in (".env", ".env.local", "deploy.key", "deploy.pem", ".ssh/id_rsa"):
+            assert manager.should_ignore(Path(name)), name
+
+    def test_explicit_negation_can_admit_safe_fixture(self, tmp_path):
+        (tmp_path / ".mcp-index-ignore").write_text("!.env.example\n")
+        manager = IgnorePatternManager(root_path=tmp_path)
+        assert not manager.should_ignore(Path(".env.example"))
+        assert manager.should_ignore(Path(".env"))
 
     def test_patterns_from_file_are_loaded(self, tmp_path):
         (tmp_path / ".mcp-index-ignore").write_text("*.foo\n*.bar\n# comment\n\n")
@@ -268,3 +281,49 @@ class TestWalkerIntegration:
         is_excluded = build_walker_filter(tmp_path)
         assert is_excluded(tmp_path / "app.log") is True
         assert is_excluded(tmp_path / "src" / "main.py") is False
+
+
+def test_snapshot_ancestors_do_not_exclude_admitted_root(tmp_path):
+    root = tmp_path / ".mcp-index" / "staging" / "source"
+    root.mkdir(parents=True)
+    assert build_walker_filter(root)(root / "hello.py") is False
+
+
+def test_nested_gitignore_negation_and_rooted_patterns(tmp_path):
+    (tmp_path / ".mcp-index-ignore").write_text("!*.tmp\n")
+    (tmp_path / ".gitignore").write_text("/root-only.txt\n*.tmp\nblocked/\n")
+    nested = tmp_path / "nested"
+    nested.mkdir()
+    (nested / ".gitignore").write_text("!keep.tmp\n/local.txt\n")
+    manager = IgnorePatternManager(tmp_path)
+    assert manager.should_ignore(tmp_path / "root-only.txt")
+    assert not manager.should_ignore(nested / "root-only.txt")
+    assert not manager.should_ignore(nested / "keep.tmp")
+    assert manager.should_ignore(nested / "other.tmp")
+    assert manager.should_ignore(nested / "local.txt")
+    assert not manager.should_ignore(nested / "deeper" / "local.txt")
+    (tmp_path / "blocked").mkdir()
+    (tmp_path / "blocked" / ".gitignore").write_text("!keep.py\n")
+    assert manager.should_ignore(tmp_path / "blocked" / "keep.py")
+
+
+def test_ignore_context_never_bleeds_between_roots(tmp_path):
+    from mcp_server.core.ignore_patterns import get_ignore_manager
+
+    first, second = tmp_path / "first", tmp_path / "second"
+    first.mkdir()
+    second.mkdir()
+    (first / ".gitignore").write_text("only-first.py\n")
+    assert get_ignore_manager(first).should_ignore(first / "only-first.py")
+    assert not get_ignore_manager(second).should_ignore(second / "only-first.py")
+
+
+def test_walker_refuses_outside_and_symlink_paths(tmp_path):
+    root = tmp_path / "repo"
+    root.mkdir()
+    outside = tmp_path / "outside.py"
+    outside.write_text("private = True")
+    (root / "link.py").symlink_to(outside)
+    skipped = build_walker_filter(root)
+    assert skipped(outside)
+    assert skipped(root / "link.py")

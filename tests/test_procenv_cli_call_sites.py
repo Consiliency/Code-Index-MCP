@@ -71,7 +71,8 @@ def test_agent_validation_git_and_execution_use_helper_env(monkeypatch) -> None:
     def fake_run(cmd, cwd=None, check=False, capture_output=False, text=False, env=None):
         calls.append({"cmd": list(cmd), "env": env, "capture_output": capture_output, "text": text})
         if capture_output:
-            return Mock(returncode=0, stdout="README.md\n")
+            assert "-z" in cmd
+            return Mock(returncode=0, stdout="README.md\0")
         return Mock(returncode=0)
 
     monkeypatch.setattr(agent_validation, "get_full_env", lambda: sentinel_env)

@@ -19,6 +19,13 @@ from mcp_server.core.errors import (
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def restore_metrics_owner(monkeypatch):
+    import mcp_server.metrics.prometheus_exporter as prom_mod
+
+    monkeypatch.setattr(prom_mod, "_exporter", prom_mod._exporter)
+
+
 def test_indexing_error_subclasses_mcp_error():
     exc = IndexingError("indexing failed")
     assert isinstance(exc, MCPError)

@@ -30,6 +30,7 @@ def _ctx(sqlite_store, tmp_path):
         repo_id="repo-id",
         registry_entry=SimpleNamespace(path=tmp_path, name="repo"),
         workspace_root=tmp_path,
+        staging=False,
     )
 
 
@@ -41,7 +42,7 @@ def test_history_filtered_search_returns_only_matching_history_chunks(sqlite_sto
     results = list(
         dispatcher.search(
             _ctx(sqlite_store, tmp_path),
-            "ignored",
+            "Reflection",
             source_type="history",
             history_labels=["reflection"],
             history_repos=["owner/repo"],

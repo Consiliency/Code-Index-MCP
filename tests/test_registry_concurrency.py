@@ -49,75 +49,45 @@ def test_save_is_flocked(tmp_path: Path):
     assert len(final._registry) == 100, f"Expected 100 entries, got {len(final._registry)}"
 
 
-def _worker_slow_replace(registry_path: Path, start_idx: int, count: int, delay_s: float) -> None:
-    """Worker that monkey-patches Path.replace to sleep before renaming."""
-    import mcp_server.storage.repository_registry as _mod
+def _worker_slow_replace(registry_path, entered, release):
+    original_replace = Path.replace
 
-    original_save = _mod.RepositoryRegistry.save
+    def paused_replace(self, target):
+        entered.set()
+        assert release.wait(10)
+        return original_replace(self, target)
 
-    def slow_save(self):
-        import fcntl
-        import json as _json
-
-        lock_path = self.registry_path.with_suffix(".lock")
-        fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o600)
-        try:
-            fcntl.flock(fd, fcntl.LOCK_EX)
-            data = {}
-            if self.registry_path.exists():
-                with open(self.registry_path) as f:
-                    data = _json.load(f)
-            for repo_id, repo_data in self._registry.items():
-                entry = repo_data.copy()
-                entry["path"] = str(entry["path"])
-                entry["index_path"] = str(entry["index_path"])
-                if hasattr(entry.get("indexed_at"), "isoformat"):
-                    entry["indexed_at"] = entry["indexed_at"].isoformat()
-                data[repo_id] = entry
-            temp_path = self.registry_path.with_suffix(".tmp")
-            with open(temp_path, "w") as f:
-                _json.dump(data, f, indent=2)
-            time.sleep(delay_s)
-            temp_path.replace(self.registry_path)
-        finally:
-            fcntl.flock(fd, fcntl.LOCK_UN)
-            os.close(fd)
-
-    _mod.RepositoryRegistry.save = slow_save
-
-    reg = RepositoryRegistry(registry_path=registry_path)
-    for i in range(start_idx, start_idx + count):
-        repo_info = RepositoryInfo(
-            repository_id=f"slow_{i:04d}",
-            name=f"slow_{i:04d}",
-            path=registry_path.parent / f"slow_{i:04d}",
-            index_path=registry_path.parent / f"slow_{i:04d}" / "index.db",
-            language_stats={},
-            total_files=0,
-            total_symbols=0,
-            indexed_at=datetime.now(),
-        )
-        reg.register(repo_info)
+    Path.replace = paused_replace
+    try:
+        _worker_save_many(registry_path, 0, 1)
+    finally:
+        Path.replace = original_replace
 
 
 def test_save_holds_lock_during_rename(tmp_path: Path):
-    """Flock exclusivity: second process must wait for slow first process."""
+    """The actual persistence path retains its process lock through rename."""
+    import fcntl
+
     registry_path = tmp_path / "registry.json"
-    delay = 0.1
-
-    t0 = time.monotonic()
-    p1 = multiprocessing.Process(target=_worker_slow_replace, args=(registry_path, 0, 1, delay))
-    p2 = multiprocessing.Process(target=_worker_slow_replace, args=(registry_path, 1, 1, delay))
-    p1.start()
-    p2.start()
-    p1.join(timeout=10)
-    p2.join(timeout=10)
-    elapsed = time.monotonic() - t0
-
-    assert p1.exitcode == 0
-    assert p2.exitcode == 0
-    assert elapsed >= delay, f"Total elapsed {elapsed:.3f}s < {delay}s — locking not working"
-    assert elapsed < 5.0, f"Total elapsed {elapsed:.3f}s — too slow"
+    context = multiprocessing.get_context("spawn")
+    entered, release = context.Event(), context.Event()
+    worker = context.Process(target=_worker_slow_replace, args=(registry_path, entered, release))
+    worker.start()
+    try:
+        assert entered.wait(10)
+        with registry_path.with_suffix(".lock").open() as lock:
+            with pytest.raises(BlockingIOError):
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        release.set()
+        worker.join(10)
+        assert worker.exitcode == 0
+        assert len(RepositoryRegistry(registry_path).list_all()) == 1
+    finally:
+        release.set()
+        if worker.is_alive():
+            worker.terminate()
+        worker.join(10)
+        worker.close()
 
 
 def test_save_releases_lock_on_exception(tmp_path: Path):

@@ -30,8 +30,8 @@ def test_reset_nulls_extended_singletons(module_name: str, attr_name: str):
     ), f"{module_name}.{attr_name} was not set to None by reset_process_singletons()"
 
 
-def test_initialize_stateless_services_calls_reset(tmp_path: Path):
-    """initialize_stateless_services() must null all 9 singletons before returning."""
+def test_initialize_stateless_services_calls_reset(tmp_path: Path, monkeypatch):
+    """Reset configuration singletons without abandoning the process metrics owner."""
     import importlib
 
     import mcp_server.dispatcher.cross_repo_coordinator as crc
@@ -44,12 +44,11 @@ def test_initialize_stateless_services_calls_reset(tmp_path: Path):
     import mcp_server.plugins.repository_plugin_loader as rpl
     import mcp_server.storage.multi_repo_manager as mrm
 
-    # All 9 attrs: 6 P16 + 3 new P17
+    metrics_owner = pe.get_prometheus_exporter()
     sentinels = [
         (mrm, "_manager_instance"),
         (crc, "_coordinator_instance"),
         (rpl, "_loader_instance"),
-        (pe, "_exporter"),
         (gw, "_repo_registry"),
         (psl, "_loader"),
         (psd, "_discovery"),
@@ -57,7 +56,7 @@ def test_initialize_stateless_services_calls_reset(tmp_path: Path):
         (mam, "_manager_instance"),
     ]
     for mod, attr in sentinels:
-        setattr(mod, attr, sentinel.live)
+        monkeypatch.setattr(mod, attr, sentinel.live)
 
     from mcp_server.cli.bootstrap import initialize_stateless_services
 
@@ -65,6 +64,7 @@ def test_initialize_stateless_services_calls_reset(tmp_path: Path):
 
     assert result is not None
     assert len(result) == 5
+    assert pe.get_prometheus_exporter() is metrics_owner
 
     for mod, attr in sentinels:
         val = getattr(mod, attr)

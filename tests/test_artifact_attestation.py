@@ -20,8 +20,61 @@ FAKE_ARCHIVE = Path("/tmp/fake_archive.tar.gz")
 REPO = "owner/repo"
 
 
+def test_attest_never_signs_locally_or_displays_credentials(tmp_path, monkeypatch):
+    monkeypatch.setenv("MCP_ATTESTATION_MODE", "enforce")
+    archive = tmp_path / "prepared.tar.gz"
+    archive.write_bytes(b"unchanged prepared bytes")
+    with patch("subprocess.run") as run, pytest.raises(AttestationError):
+        attest(archive, repo=REPO)
+    run.assert_not_called()
+    assert archive.read_bytes() == b"unchanged prepared bytes"
+
+
+def test_verify_binds_trusted_workflow_ref_and_predicate(tmp_path, monkeypatch):
+    monkeypatch.setenv("MCP_ATTESTATION_MODE", "enforce")
+    monkeypatch.delenv("MCP_ATTESTATION_SOURCE_REF", raising=False)
+    monkeypatch.setenv("MCP_ATTESTATION_SIGNER_DIGEST", "a" * 40)
+    bundle = tmp_path / "bundle.jsonl"
+    bundle.write_text("{}")
+    att = Attestation("", bundle, "", datetime.now(timezone.utc))
+    with patch("subprocess.run", return_value=MagicMock(returncode=0)) as run:
+        verify_attestation(FAKE_ARCHIVE, att, expected_repo=REPO)
+    args = run.call_args.args[0]
+    assert "--signer-workflow" not in args
+    assert args[args.index("--cert-identity") + 1] == (
+        "https://github.com/owner/repo/.github/workflows/sign-published-image.yml@refs/heads/main"
+    )
+    assert args[args.index("--source-ref") + 1] == "refs/heads/main"
+    assert args[args.index("--signer-digest") + 1] == "a" * 40
+    assert args[args.index("--predicate-type") + 1].endswith("local-index-digest/v1")
+    assert run.call_args.kwargs["timeout"] <= 30
+
+
+def test_unknown_attestation_mode_fails_closed(monkeypatch):
+    monkeypatch.setenv("MCP_ATTESTATION_MODE", "typo")
+    with patch("subprocess.run") as run, pytest.raises(AttestationError):
+        verify_attestation(FAKE_ARCHIVE, None, expected_repo=REPO)
+    run.assert_not_called()
+
+
+def test_verifier_failure_diagnostics_do_not_echo_cli_payload(tmp_path, monkeypatch, caplog):
+    monkeypatch.setenv("MCP_ATTESTATION_MODE", "enforce")
+    bundle = tmp_path / "bundle.jsonl"
+    bundle.write_text("{}")
+    sentinel = "private-provider-payload-sentinel"
+    att = Attestation("", bundle, "", datetime.now(timezone.utc))
+    with patch("subprocess.run", return_value=MagicMock(returncode=1, stderr=sentinel)):
+        with pytest.raises(AttestationError) as error:
+            verify_attestation(FAKE_ARCHIVE, att, expected_repo=REPO)
+    assert sentinel not in str(error.value)
+    assert sentinel not in caplog.text
+
+
 @pytest.fixture(autouse=True)
-def _stub_sha256(monkeypatch):
+def _stub_sha256(monkeypatch, tmp_path):
+    archive = tmp_path / "archive.tar.gz"
+    archive.write_bytes(b"synthetic archive")
+    monkeypatch.setattr(__name__ + ".FAKE_ARCHIVE", archive)
     monkeypatch.setattr("mcp_server.artifacts.attestation._sha256_of", lambda p: "sha256stub")
 
 
@@ -40,13 +93,13 @@ class TestAttestSkipMode:
 
 
 class TestAttestEnforceMode:
-    def test_enforce_mode_raises_on_sign_failure(self, monkeypatch):
+    def test_enforce_mode_raises_on_bundle_verification_failure(self, monkeypatch):
         monkeypatch.setenv("MCP_ATTESTATION_MODE", "enforce")
+        FAKE_ARCHIVE.with_suffix(".gz.attestation.jsonl").write_text("{}")
 
         def fake_run(args, **kwargs):
-            if "auth" in args and "status" in args:
-                return MagicMock(returncode=0, stdout="attestations:write", stderr="")
-            return MagicMock(returncode=1, stdout="", stderr="signing failed")
+            assert args[:3] == ["gh", "attestation", "verify"]
+            return MagicMock(returncode=1, stdout="", stderr="verification failed")
 
         with patch("subprocess.run", side_effect=fake_run):
             with pytest.raises(AttestationError):
@@ -54,10 +107,10 @@ class TestAttestEnforceMode:
 
     def test_enforce_mode_returns_attestation_on_success(self, monkeypatch):
         monkeypatch.setenv("MCP_ATTESTATION_MODE", "enforce")
+        FAKE_ARCHIVE.with_suffix(".gz.attestation.jsonl").write_text("{}")
 
         def fake_run(args, **kwargs):
-            if "auth" in args and "status" in args:
-                return MagicMock(returncode=0, stdout="attestations:write", stderr="")
+            assert args[:3] == ["gh", "attestation", "verify"]
             return MagicMock(
                 returncode=0,
                 stdout="https://github.com/owner/repo/attestations/abc123",
@@ -72,21 +125,18 @@ class TestAttestEnforceMode:
 
 
 class TestAttestWarnMode:
-    def test_warn_mode_logs_on_sign_failure(self, monkeypatch, caplog):
+    def test_warn_mode_reports_missing_bundle(self, monkeypatch, caplog):
         monkeypatch.setenv("MCP_ATTESTATION_MODE", "warn")
         import logging
 
-        def fake_run(args, **kwargs):
-            if "auth" in args and "status" in args:
-                return MagicMock(returncode=0, stdout="attestations:write", stderr="")
-            return MagicMock(returncode=1, stdout="", stderr="not supported")
-
-        with patch("subprocess.run", side_effect=fake_run):
+        with patch("subprocess.run") as run:
             with caplog.at_level(logging.WARNING, logger="mcp_server.artifacts.attestation"):
                 result = attest(FAKE_ARCHIVE, repo=REPO)
 
-        assert result is not None
-        assert any("failed" in r.message.lower() for r in caplog.records)
+        run.assert_not_called()
+        assert result.bundle_path is None
+        assert result.bundle_url == ""
+        assert "ATTESTATION_PREREQ" in caplog.text
 
 
 class TestVerifyAttestation:

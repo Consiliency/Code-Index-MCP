@@ -17,3 +17,9 @@ CREATE TABLE IF NOT EXISTS chunk_summaries (
 );
 
 CREATE INDEX IF NOT EXISTS idx_chunk_summaries_file_bounds ON chunk_summaries(file_id, chunk_start, chunk_end);
+
+INSERT OR REPLACE INTO schema_version (version, description)
+VALUES (5, 'Chunk summaries');
+INSERT INTO migrations (version_from, version_to, status)
+SELECT 4, 5, 'completed'
+WHERE NOT EXISTS (SELECT 1 FROM migrations WHERE version_to = 5 AND status = 'completed');

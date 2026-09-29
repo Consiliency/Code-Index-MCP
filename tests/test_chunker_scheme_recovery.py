@@ -39,9 +39,9 @@ from mcp_server.health.repository_readiness import (
     RepositoryReadinessState,
 )
 from mcp_server.storage.git_index_manager import (
-    GitAwareIndexManager,
     _QUARANTINE_REBUILD_STATES,
     _RECOVERABLE_REBUILD_STATES,
+    GitAwareIndexManager,
 )
 from mcp_server.storage.multi_repo_manager import RepositoryInfo
 from mcp_server.storage.sqlite_store import (
@@ -310,6 +310,8 @@ def test_scheme_mismatch_is_refused_then_recovered_by_staged_rebuild(tmp_path):
     ReadinessClassifier.clear_index_inspection_cache()
     assert ReadinessClassifier.classify_registered(repo_info).ready is True
 
+    assert repo_info.index_path != index_path
+    index_path = repo_info.index_path
     recovered = SQLiteStore(str(index_path))
     assert recovered.get_chunk_scheme_marker() == current_chunk_id_scheme()
     status, marker, target = recovered.get_chunk_scheme_status()
@@ -337,9 +339,9 @@ def test_scheme_mismatch_is_refused_then_recovered_by_staged_rebuild(tmp_path):
         assert_chunk_scheme_readable(raw)  # does not raise
 
     # Provenance was recorded for the rebuilt commit.
-    registry.update_indexed_commit.assert_called_once_with(
-        repo_info.repository_id, commit, branch="main"
-    )
+    registry.publish_generation.assert_called_once()
+    assert registry.publish_generation.call_args.kwargs["commit"] == commit
+    assert registry.publish_generation.call_args.kwargs["index_path"] == index_path
 
 
 # --------------------------------------------------------------------------- #
@@ -528,6 +530,8 @@ def test_dispatcher_drain_wiring_noops_without_semantic(tmp_path):
     """The reindex hook (EnhancedDispatcher._drain_pending_vector_deletions) drains
     when a semantic client is present and no-ops cleanly when it is not - without
     constructing a full dispatcher."""
+    from contextlib import nullcontext
+
     from mcp_server.dispatcher.dispatcher_enhanced import EnhancedDispatcher
 
     store = SQLiteStore(str(tmp_path / "code_index.db"))
@@ -538,11 +542,15 @@ def test_dispatcher_drain_wiring_noops_without_semantic(tmp_path):
 
     class _Ctx:
         sqlite_store = store
+        staging = False
 
     ctx = _Ctx()
 
     # Semantic disabled -> no client -> clean no-op, ledger untouched.
     class _NoSem:
+        def _semantic_lease(self, ctx):
+            return nullcontext()
+
         def _get_semantic_indexer(self, ctx):
             return None
 
@@ -552,13 +560,124 @@ def test_dispatcher_drain_wiring_noops_without_semantic(tmp_path):
     # Semantic present -> drains through delete_remote_points, clears the ledger.
     client = _FakeVectorClient()
 
-    class _WithSem:
+    class _WithSem(_NoSem):
         def _get_semantic_indexer(self, ctx):
             return client
 
     EnhancedDispatcher._drain_pending_vector_deletions(_WithSem(), ctx)
     assert client.calls == [("col-a", [101])]
     assert store.get_pending_vector_deletions() == []
+    store.close()
+
+
+@pytest.mark.parametrize("remote_fails", [False, True])
+def test_direct_remove_fences_on_remote_vector_deletion(tmp_path, monkeypatch, remote_fails):
+    import threading
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    from mcp_server.dispatcher.dispatcher_enhanced import EnhancedDispatcher, IndexResultStatus
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    path = repo / "source.py"
+    path.write_text("value = 1\n")
+    store = SQLiteStore(str(tmp_path / "code_index.db"))
+    repo_id = store.ensure_repository_row(repo, name="test-repo")
+    file_id = store.store_file(repo_id, path=path, relative_path="source.py", language="python")
+    _store_code_chunk(store, file_id, "code-chunk-1")
+    store.upsert_semantic_point("profile-a", "code-chunk-1", 101, "col-a")
+    client = _FakeVectorClient({"col-a"} if remote_fails else set())
+    sem = SimpleNamespace(
+        semantic_profile=SimpleNamespace(profile_id="profile-a"),
+        cleanup_stale_semantic_artifacts=lambda **kwargs: {},
+        delete_remote_points=client.delete_remote_points,
+    )
+    dispatcher = EnhancedDispatcher.__new__(EnhancedDispatcher)
+    dispatcher._file_cache = {}
+    dispatcher._file_cache_lock = threading.Lock()
+    dispatcher._operation_stats = {}
+    monkeypatch.setattr(dispatcher, "_semantic_lease", lambda ctx: nullcontext())
+    monkeypatch.setattr(dispatcher, "_get_semantic_indexer", lambda ctx: sem)
+    monkeypatch.setattr(dispatcher, "_sqlite_repository_id", lambda ctx: repo_id)
+    monkeypatch.setattr(dispatcher, "_match_plugin", lambda ctx, path: None)
+    ctx = SimpleNamespace(staging=False, sqlite_store=store, workspace_root=repo)
+
+    result = dispatcher.remove_file(ctx, path)
+    assert result.status == (IndexResultStatus.ERROR if remote_fails else IndexResultStatus.DELETED)
+    assert client.calls == [("col-a", [101])]
+    assert len(store.get_pending_vector_deletions()) == (1 if remote_fails else 0)
+    store.close()
+
+
+def test_direct_replacement_requires_vector_debt_to_drain(tmp_path):
+    from types import SimpleNamespace
+
+    from mcp_server.dispatcher.dispatcher_enhanced import EnhancedDispatcher
+
+    store = SQLiteStore(str(tmp_path / "code_index.db"))
+    _seed_ledger(
+        store,
+        [{"profile_id": "profile-a", "chunk_id": "old", "point_id": 101, "collection": "col-a"}],
+    )
+    client = _FakeVectorClient({"col-a"})
+    ctx = SimpleNamespace(staging=False, sqlite_store=store)
+    with pytest.raises(RuntimeError, match="Required semantic deletion"):
+        EnhancedDispatcher._require_pending_vector_deletions_drained(None, ctx, client)
+    assert len(store.get_pending_vector_deletions()) == 1
+    client._fail.clear()
+    EnhancedDispatcher._require_pending_vector_deletions_drained(None, ctx, client)
+    assert client.calls == [("col-a", [101]), ("col-a", [101])]
+    assert store.get_pending_vector_deletions() == []
+    store.close()
+
+
+@pytest.mark.parametrize("remote_fails", [False, True])
+def test_guarded_replacement_fences_orphaned_vectors(tmp_path, monkeypatch, remote_fails):
+    import hashlib
+    import threading
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    from mcp_server.core.repo_context import RepoContext
+    from mcp_server.dispatcher.dispatcher_enhanced import EnhancedDispatcher, IndexResultStatus
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    path = repo / "source.py"
+    path.write_text("value = 1\n")
+    store = SQLiteStore(str(tmp_path / "code_index.db"))
+    repo_id = store.ensure_repository_row(repo, name="test-repo")
+    file_id = store.store_file(repo_id, path=path, relative_path="source.py", language="python")
+    _store_code_chunk(store, file_id, "code-chunk-1")
+    store.upsert_semantic_point("profile-a", "code-chunk-1", 101, "col-a")
+    path.write_text("value = 2\n")
+    info = SimpleNamespace(path=repo, name="test-repo", tracked_branch="main")
+    ctx = RepoContext("test-repo", store, repo, "main", info)
+    client = _FakeVectorClient({"col-a"} if remote_fails else set())
+    dispatcher = EnhancedDispatcher.__new__(EnhancedDispatcher)
+    dispatcher._file_cache = {}
+    dispatcher._file_cache_lock = threading.RLock()
+    dispatcher._operation_stats = {"indexings": 0, "total_time": 0}
+    dispatcher._enable_advanced = False
+    dispatcher._router = None
+    plugin = SimpleNamespace(
+        lang="python", language="python", indexFile=lambda *args: {"symbols": []}
+    )
+    monkeypatch.setattr(dispatcher, "_semantic_lease", lambda current: nullcontext())
+    monkeypatch.setattr(dispatcher, "_get_semantic_indexer", lambda current: client)
+    monkeypatch.setattr(dispatcher, "_match_plugin", lambda current, target: plugin)
+    monkeypatch.setattr(
+        dispatcher,
+        "rebuild_semantic_for_paths",
+        lambda current, paths: {"semantic_failed": 0, "semantic_blocked": 0},
+    )
+    expected_hash = hashlib.sha256(path.read_bytes()).hexdigest()
+
+    result = dispatcher.index_file_guarded(ctx, path, expected_hash)
+    assert result.status == (IndexResultStatus.ERROR if remote_fails else IndexResultStatus.INDEXED)
+    assert client.calls == [("col-a", [101])]
+    assert len(store.get_pending_vector_deletions()) == (1 if remote_fails else 0)
     store.close()
 
 
@@ -604,6 +723,7 @@ def test_delete_remote_points_error_does_not_trip_upsert_circuit_breaker(tmp_pat
     shared cached indexer, a transient delete blip must not degrade indexing for
     the rest of the run."""
     from types import SimpleNamespace  # noqa: F401
+
     from mcp_server.core.path_resolver import PathResolver
     from mcp_server.utils.semantic_indexer import SemanticIndexer
 

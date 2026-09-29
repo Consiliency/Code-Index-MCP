@@ -63,7 +63,7 @@ def build_temp_repo(
         capture_output=True,
     )
 
-    files = seed_files or {"placeholder.py": "# placeholder\n"}
+    files = {".gitignore": ".mcp-index/\n", **(seed_files or {"placeholder.py": "# placeholder\n"})}
     for filename, content in files.items():
         (repo_path / filename).write_text(content)
         subprocess.run(
@@ -449,6 +449,7 @@ class ProductionRepoFixture:
         target = self.path / new_relative_path
         target.parent.mkdir(parents=True, exist_ok=True)
         git(self.path, "mv", old_relative_path, new_relative_path)
+        git(self.path, "add", new_relative_path)
         git(self.path, "commit", "-m", message)
         return git_head(self.path)
 

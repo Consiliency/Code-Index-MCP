@@ -45,20 +45,24 @@ class RefPoller:
     def stop(self) -> None:
         self._stop_event.set()
         if self._thread is not None:
-            self._thread.join(timeout=5)
+            self._thread.join()
 
     def _run(self) -> None:
         while not self._stop_event.is_set():
             for repo in self._registry.list_all():
                 try:
                     self._poll_one(repo)
-                except Exception:
-                    logger.exception(
-                        "Unhandled error polling repo %s", getattr(repo, "repository_id", repo)
+                except Exception as exc:
+                    logger.error(
+                        "Unhandled error polling repo %s (%s)",
+                        getattr(repo, "repository_id", "unknown"),
+                        type(exc).__name__,
                     )
             self._stop_event.wait(self._interval)
 
     def _poll_one(self, repo_info: Any) -> None:
+        if not getattr(repo_info, "auto_sync", True) or not getattr(repo_info, "active", True):
+            return
         tracked_branch = getattr(repo_info, "tracked_branch", None)
         if not tracked_branch:
             return

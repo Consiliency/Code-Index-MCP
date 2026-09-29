@@ -1,65 +1,24 @@
 """Periodic full-tree sweeper that recovers inotify/FSEvents drop events (IF-0-P14-5)."""
 
 import hashlib
+import io
 import logging
 import os
+import subprocess
+import tempfile
 import threading
 import time
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
-from ..core.ignore_patterns import build_walker_filter
+from ..core.ignore_patterns import build_walker_filter, index_exclusion_reason
 from ..metrics.prometheus_exporter import mcp_watcher_sweep_errors_total
+from ..plugins.language_registry import get_all_extensions
 from ..storage.sqlite_store import SQLiteStore
 
 logger = logging.getLogger(__name__)
 
-# Supported code-file extensions (mirrors _Handler.code_extensions)
-_CODE_EXTENSIONS = {
-    ".py",
-    ".js",
-    ".ts",
-    ".jsx",
-    ".tsx",
-    ".java",
-    ".c",
-    ".cpp",
-    ".cc",
-    ".cxx",
-    ".h",
-    ".hpp",
-    ".cs",
-    ".go",
-    ".rb",
-    ".rs",
-    ".swift",
-    ".kt",
-    ".scala",
-    ".php",
-    ".r",
-    ".m",
-    ".mm",
-    ".dart",
-    ".lua",
-    ".pl",
-    ".sh",
-    ".sql",
-    ".html",
-    ".css",
-    ".scss",
-    ".vue",
-    ".elm",
-    ".ex",
-    ".exs",
-    ".erl",
-    ".clj",
-    ".cljs",
-    ".hs",
-    ".ml",
-    ".mli",
-    ".f90",
-    ".f95",
-}
+_CODE_EXTENSIONS = get_all_extensions()
 
 ENV_SWEEP_MINUTES: str = "MCP_WATCHER_SWEEP_MINUTES"
 DEFAULT_SWEEP_MINUTES: int = 60
@@ -85,6 +44,7 @@ class WatcherSweeper:
         store_provider: Optional[Callable[[str], SQLiteStore]] = None,
         interval_minutes: int = DEFAULT_SWEEP_MINUTES,
         clock: Callable[[], float] = time.monotonic,
+        on_repository_drift: Optional[Callable[[str], None]] = None,
     ) -> None:
         self._on_missed_create = on_missed_create or on_missed_path or (lambda _r, _p: None)
         self._on_missed_delete = on_missed_delete or (lambda _r, _p: None)
@@ -93,6 +53,7 @@ class WatcherSweeper:
         self._store = store
         self._store_provider = store_provider
         self._clock = clock
+        self._on_repository_drift = on_repository_drift
 
         # Env var overrides constructor arg when set
         env_val = os.environ.get(ENV_SWEEP_MINUTES)
@@ -113,8 +74,10 @@ class WatcherSweeper:
         self._thread.start()
 
     def stop(self) -> None:
-        """Signal the sweep thread to stop; returns immediately."""
+        """Stop and drain the sweep owner before its storage can be released."""
         self._stop_event.set()
+        if self._thread is not None and self._thread is not threading.current_thread():
+            self._thread.join()
 
     def _loop(self) -> None:
         """Daemon loop: wait for interval or stop, then sweep."""
@@ -125,7 +88,7 @@ class WatcherSweeper:
             try:
                 self.sweep_once()
             except Exception as e:
-                logger.warning("watcher sweep error: %s", e)
+                logger.warning("watcher sweep error: %s", type(e).__name__)
                 mcp_watcher_sweep_errors_total.inc()
 
     def sweep_once(self) -> List[str]:
@@ -155,25 +118,96 @@ class WatcherSweeper:
 
             gitignore_filter = build_walker_filter(repo_root)
             repo_has_drift = False
+            tracked_blobs = None
+            transformed_paths: set[str] = set()
+            if (repo_root / ".git").exists():
+                clean = subprocess.run(
+                    ["git", "diff", "--quiet", "HEAD", "--"],
+                    cwd=repo_root,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=30,
+                )
+                if clean.returncode != 0:
+                    continue
+                tracked_blobs = {}
+                listing = subprocess.run(
+                    ["git", "ls-tree", "-r", "-l", "-z", "HEAD"],
+                    cwd=repo_root,
+                    capture_output=True,
+                    check=True,
+                    timeout=30,
+                ).stdout
+                for record in listing.split(b"\0"):
+                    if not record:
+                        continue
+                    metadata, path = record.split(b"\t", 1)
+                    mode, kind, oid, size = metadata.split()
+                    if kind == b"blob" and mode in {b"100644", b"100755"}:
+                        tracked_blobs[os.fsdecode(path)] = (oid.decode("ascii"), int(size))
+                if tracked_blobs:
+                    attributes = subprocess.run(
+                        [
+                            "git",
+                            "check-attr",
+                            "-z",
+                            "--cached",
+                            "--stdin",
+                            "filter",
+                            "ident",
+                            "working-tree-encoding",
+                        ],
+                        cwd=repo_root,
+                        input=b"\0".join(os.fsencode(path) for path in tracked_blobs) + b"\0",
+                        capture_output=True,
+                        check=True,
+                        timeout=30,
+                    ).stdout.split(b"\0")
+                    for index in range(0, len(attributes) - 1, 3):
+                        if attributes[index + 2] not in {b"unspecified", b"unset"}:
+                            transformed_paths.add(os.fsdecode(attributes[index]))
 
             fs_by_path: Dict[str, str] = {}
-            for fs_path in repo_root.rglob("*"):
-                if not fs_path.is_file():
-                    continue
-                if fs_path.suffix not in _CODE_EXTENSIONS:
-                    continue
-                if gitignore_filter(fs_path):
-                    continue
+            for directory, children, filenames in os.walk(repo_root, followlinks=False):
+                root = Path(directory)
+                children[:] = [name for name in children if not gitignore_filter(root / name)]
+                for name in filenames:
+                    fs_path = root / name
+                    relative = fs_path.relative_to(repo_root).as_posix()
+                    blob = tracked_blobs.get(relative) if tracked_blobs is not None else None
+                    if tracked_blobs is not None and blob is None:
+                        continue
+                    if fs_path.suffix not in _CODE_EXTENSIONS or index_exclusion_reason(
+                        fs_path, repo_root, gitignore_filter, blob[1] if blob else None
+                    ):
+                        continue
+                    if fs_path.is_file():
+                        if blob is not None and relative in transformed_paths:
+                            with tempfile.TemporaryFile() as committed:
+                                subprocess.run(
+                                    ["git", "cat-file", "blob", blob[0]],
+                                    cwd=repo_root,
+                                    stdout=committed,
+                                    stderr=subprocess.PIPE,
+                                    check=True,
+                                    timeout=30,
+                                )
 
-                try:
-                    rel = fs_path.relative_to(repo_root)
-                except ValueError:
-                    continue
+                                def open_committed():
+                                    committed.seek(0)
+                                    return os.fdopen(os.dup(committed.fileno()), "rb")
 
-                rel_str = str(rel).replace("\\", "/")
-                fs_by_path[rel_str] = self._hash_file(fs_path)
+                                fs_by_path[relative] = self._hash_stream(open_committed)
+                        else:
+                            fs_by_path[relative] = self._hash_file(fs_path)
 
             created = set(fs_by_path) - set(known_by_path)
+            modified = {
+                path
+                for path in set(fs_by_path) & set(known_by_path)
+                if fs_by_path[path]
+                != (known_by_path[path].get("content_hash") or known_by_path[path].get("hash"))
+            }
             deleted = {
                 rel
                 for rel in set(known_by_path) - set(fs_by_path)
@@ -183,11 +217,17 @@ class WatcherSweeper:
             renamed_created = {new for _old, new in renamed}
             renamed_deleted = {old for old, _new in renamed}
 
+            if self._on_repository_drift is not None:
+                if created or modified or deleted:
+                    self._on_repository_drift(repo_id)
+                    drifted.append(repo_id)
+                continue
+
             for old_rel, new_rel in sorted(renamed):
                 self._on_missed_rename(repo_id, old_rel, new_rel)
                 repo_has_drift = True
 
-            for rel_str in sorted(created - renamed_created):
+            for rel_str in sorted((created - renamed_created) | modified):
                 self._on_missed_create(repo_id, rel_str)
                 repo_has_drift = True
 
@@ -201,11 +241,25 @@ class WatcherSweeper:
         return drifted
 
     def _hash_file(self, path: Path) -> str:
-        digest = hashlib.sha256()
-        with path.open("rb") as handle:
-            for chunk in iter(lambda: handle.read(65536), b""):
-                digest.update(chunk)
-        return digest.hexdigest()
+        return self._hash_stream(lambda: path.open("rb"))
+
+    @staticmethod
+    def _hash_content(data: bytes) -> str:
+        return WatcherSweeper._hash_stream(lambda: io.BytesIO(data))
+
+    @staticmethod
+    def _hash_stream(open_source) -> str:
+        def normalized_hash(encoding):
+            digest = hashlib.sha256()
+            with io.TextIOWrapper(open_source(), encoding=encoding, newline=None) as source:
+                for chunk in iter(lambda: source.read(8192), ""):
+                    digest.update(chunk.encode("utf-8"))
+            return digest.hexdigest()
+
+        try:
+            return normalized_hash("utf-8")
+        except UnicodeDecodeError:
+            return normalized_hash("latin-1")
 
     def _indexed_path_should_report_delete(
         self, repo_root: Path, rel: str, gitignore_filter
