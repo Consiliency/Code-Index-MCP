@@ -489,6 +489,41 @@ def test_summary_change_during_vector_write_refuses_stale_links(monkeypatch, tmp
     assert sqlite_store.semantic_points == []
 
 
+def test_overlapping_summary_builds_use_distinct_vector_ids(monkeypatch, tmp_path):
+    _patch_indexer_runtime(monkeypatch, tmp_path)
+    _patch_chunk_file(monkeypatch)
+    registry = SemanticProfileRegistry.from_raw(_sample_profiles(), "oss-high")
+    sqlite_store = _FakeSQLiteStore(summary_text="old summary")
+    source = tmp_path / "sample.py"
+    source.write_text("def alpha(x):\n    return x + 1\n", encoding="utf-8")
+    indexer = SemanticIndexer(
+        qdrant_path=":memory:",
+        profile_registry=registry,
+        semantic_profile="oss-high",
+        sqlite_store=sqlite_store,
+    )
+    old_prep = indexer._prepare_file_for_indexing(source)
+    sqlite_store.summary_text = "new summary"
+    new_prep = indexer._prepare_file_for_indexing(source)
+    written = []
+    monkeypatch.setattr(
+        indexer,
+        "_upsert_points_batched",
+        lambda _path, points: written.append({int(point.id) for point in points}),
+    )
+
+    def embeddings(prep):
+        return [[0.1, 0.2, 0.3] for _ in prep["embedding_inputs"]]
+
+    indexer._store_file_embeddings(source, new_prep, embeddings(new_prep))
+    current_links = list(sqlite_store.semantic_points)
+    with pytest.raises(RuntimeError, match="summaries changed during embedding"):
+        indexer._store_file_embeddings(source, old_prep, embeddings(old_prep))
+
+    assert written[0].isdisjoint(written[1])
+    assert sqlite_store.semantic_points == current_links
+
+
 def test_preflight_blocker_prevents_any_qdrant_upsert(monkeypatch, tmp_path):
     _patch_indexer_runtime(monkeypatch, tmp_path)
     _patch_chunk_file(monkeypatch)

@@ -413,6 +413,28 @@ def test_index_file_splits_oversize_embedding_units(monkeypatch, tmp_path):
     assert payloads[-1]["kind"] == "file_summary"
 
 
+@pytest.mark.parametrize("signature", ["alpha()", "x" * 1500])
+def test_split_embedding_units_include_authoritative_summary(monkeypatch, signature):
+    monkeypatch.setenv("SEMANTIC_MAX_EMBED_CHARS", "1200")
+    indexer = object.__new__(SemanticIndexer)
+    units = indexer._expand_chunk_embedding_units(
+        relative_path="sample.py",
+        symbol_name="alpha",
+        kind="function",
+        signature=signature,
+        parent_symbol=None,
+        metadata={},
+        chunk_content="\n".join("x" * 320 for _ in range(8)),
+        start_line=1,
+        end_line=8,
+        summary_text="AUTH_SUMMARY_SENTINEL",
+    )
+
+    assert len(units) > 1
+    assert all("AUTH_SUMMARY_SENTINEL" in unit.embedding_text for unit in units)
+    assert all(len(unit.embedding_text) <= 1200 for unit in units)
+
+
 def test_build_chunk_embedding_text_adds_symbol_extraction_summary(monkeypatch):
     monkeypatch.setenv("SEMANTIC_MAX_EMBED_CHARS", "8000")
     indexer = object.__new__(SemanticIndexer)

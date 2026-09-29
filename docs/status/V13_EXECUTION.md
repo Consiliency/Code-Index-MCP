@@ -846,3 +846,20 @@ close fails. New focused regressions cover those paths. This source still
 needs exact-head full, installed, Qdrant, browser and independent review gates.
 PREP remains unaccepted, both one-shot allowances are unused, and
 Code-Index-MCP#97 remains draft.
+
+The exact `61e89a7` serial suite passed 4,055 tests (135 skipped, 40
+deselected, 55.32% coverage); protected Agent Gate and Docker, both Qdrant
+modes, and installed wheel/nonroot container smoke passed. Opus gave a
+whole-candidate `AGREE` code verdict. Sol 6 and Sol 5.6 each found an
+overlapping-build race: an older vector write could overwrite a newer
+admitted Qdrant point because the point ID excluded summary content. Sol 6
+also found that split embedding units omitted the authoritative summary.
+The local follow-up derives point IDs from embedding input and the file
+summary snapshot, records replaced point IDs for durable cleanup, carries
+summary text into every split unit, and begins summary writes with an
+immediate SQLite transaction. Focused controls pass; this source needs a new
+exact-head suite and independent review. A first PMCP prepare attempt for
+61e89a7 timed out installing its isolated wheel after 300 seconds while
+container smoke was running; its failed scratch is retained for diagnosis.
+No live pilot or signing allowance was consumed. PREP stays unaccepted and
+Code-Index-MCP#97 stays draft.

@@ -2494,6 +2494,23 @@ class SQLiteStore:
                         ],
                     )
                     return False
+            replaced = []
+            for profile_id, chunk_id, point_id, collection in links:
+                prior = conn.execute(
+                    """SELECT point_id, collection FROM semantic_points
+                       WHERE profile_id = ? AND chunk_id = ?""",
+                    (profile_id, chunk_id),
+                ).fetchone()
+                if prior is not None and (prior[0] != point_id or prior[1] != collection):
+                    replaced.append(
+                        {
+                            "profile_id": profile_id,
+                            "chunk_id": chunk_id,
+                            "point_id": prior[0],
+                            "collection": prior[1],
+                        }
+                    )
+            self._record_pending_vector_deletions(conn, replaced)
             conn.executemany(
                 """INSERT INTO semantic_points (profile_id, chunk_id, point_id, collection)
                    VALUES (?, ?, ?, ?)
@@ -3859,6 +3876,8 @@ class SQLiteStore:
     ) -> bool:
         """Store or update a semantic chunk summary."""
         with self._get_connection() as conn:
+            if not conn.in_transaction:
+                conn.execute("BEGIN IMMEDIATE")
             # Check if authoritative summary exists
             cursor = conn.execute(
                 """SELECT is_authoritative, summary_text, profile_id,

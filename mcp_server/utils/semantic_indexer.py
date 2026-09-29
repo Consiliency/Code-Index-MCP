@@ -971,7 +971,12 @@ class SemanticIndexer:
             parent_symbol=parent_symbol,
         )
         prefix_chars = len("\n".join(parts))
-        content_budget = max(200, self._max_embedding_chars() - prefix_chars - 64)
+        summary_budget = max(80, self._max_embedding_chars() - prefix_chars - 300)
+        split_summary = summary_text[:summary_budget] if summary_text else None
+        split_parts = ["Summary:", split_summary, *parts] if split_summary else parts
+        content_budget = max(
+            200, self._max_embedding_chars() - prefix_chars - len(split_summary or "") - 80
+        )
         local_chunks = self._split_symbol_chunks(
             local_symbol, local_lines, max_chars=content_budget
         )
@@ -1000,7 +1005,7 @@ class SemanticIndexer:
                     subchunk_index=local_chunk.chunk_index,
                     subchunk_total=total,
                     embedding_text=self._compose_embedding_text(
-                        parts,
+                        split_parts,
                         local_chunk.content,
                         subchunk_index=local_chunk.chunk_index,
                         subchunk_total=total,
@@ -2484,7 +2489,7 @@ class SemanticIndexer:
                         canonical_path,
                         f"{normalized['symbol']}#{normalized['derived_chunk_id']}",
                         normalized["start_line"],
-                        content_hash,
+                        hashlib.sha256(normalized["embedding_text"].encode()).hexdigest(),
                     ),
                     vector=vec,
                     payload=payload,
@@ -2514,7 +2519,18 @@ class SemanticIndexer:
             }
             points.append(
                 models.PointStruct(
-                    id=self._symbol_id(canonical_path, "file_summary", 1),
+                    id=self._symbol_id(
+                        canonical_path,
+                        "file_summary",
+                        1,
+                        hashlib.sha256(
+                            (
+                                file_embedding_text
+                                + "\0"
+                                + json.dumps(prep.get("summary_snapshot", {}), sort_keys=True)
+                            ).encode()
+                        ).hexdigest(),
+                    ),
                     vector=file_embed,
                     payload=file_summary_payload,
                 )

@@ -1012,6 +1012,15 @@ def test_summary_refresh_invalidates_vector_links_and_records_cleanup(runtime):
         links, {"summary-refresh": ("new", True, "fixture", "fingerprint-a")}
     )
     assert store.get_semantic_point_ids("fixture", ["summary-refresh"]) == [406]
+    replacement_links = [
+        ("fixture", "summary-refresh", 408, "fixture-collection"),
+        ("fixture", "summary-refresh:part:0:2", 409, "fixture-collection"),
+    ]
+    assert store.admit_semantic_point_links(
+        replacement_links, {"summary-refresh": ("new", True, "fixture", "fingerprint-a")}
+    )
+    assert store.get_semantic_point_ids("fixture", ["summary-refresh"]) == [408]
+    assert {row["point_id"] for row in store.get_pending_vector_deletions()} >= {406, 407}
 
 
 def test_hard_delete_records_vector_debt_and_clears_inbound_references(runtime):
