@@ -558,6 +558,14 @@ def test_overlapping_summary_builds_use_distinct_vector_ids(monkeypatch, tmp_pat
     assert len(visible) == 1
     assert visible[0]["embedding_text"] == current.payload["embedding_text"]
 
+    del indexer.qdrant.search
+    indexer.qdrant.query_points = lambda **kwargs: SimpleNamespace(
+        points=ranked[kwargs["offset"] : kwargs["offset"] + kwargs["limit"]]
+    )
+    visible = list(indexer.query("alpha", limit=1))
+    assert len(visible) == 1
+    assert visible[0]["embedding_text"] == current.payload["embedding_text"]
+
 
 def test_preflight_blocker_prevents_any_qdrant_upsert(monkeypatch, tmp_path):
     _patch_indexer_runtime(monkeypatch, tmp_path)

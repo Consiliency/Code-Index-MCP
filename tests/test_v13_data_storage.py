@@ -17,7 +17,11 @@ from mcp_server.core.repo_context import RepoContext
 from mcp_server.dispatcher.dispatcher_enhanced import EnhancedDispatcher
 from mcp_server.storage.git_index_manager import GitAwareIndexManager
 from mcp_server.storage.repository_registry import RepositoryRegistry
-from mcp_server.storage.sqlite_store import SQLiteStore
+from mcp_server.storage.sqlite_store import (
+    LEGACY_CHUNK_ID_SCHEME,
+    SQLiteStore,
+    current_chunk_id_scheme,
+)
 from tests.test_git_index_manager import _get_head_commit, _make_git_repo
 from tests.test_history_issue_storage import _history_record
 
@@ -216,11 +220,23 @@ def test_repository_status_reports_published_generation_path(runtime):
     assert status["index_size_mb"] == published.stat().st_size / (1024 * 1024)
 
 
-def test_registered_restore_upgrades_isolated_legacy_artifact(runtime, tmp_path):
+@pytest.mark.parametrize(
+    "legacy_version,legacy_target", [(1, False), (3, False), (4, False), (3, True), (4, True)]
+)
+def test_registered_restore_upgrades_isolated_legacy_artifact(
+    runtime, tmp_path, monkeypatch, legacy_version, legacy_target
+):
     from importlib import resources
 
     repo, registry, repo_id, _store, manager = runtime
+    if legacy_target:
+        monkeypatch.setattr(
+            "mcp_server.storage.sqlite_store.current_chunk_id_scheme",
+            lambda: LEGACY_CHUNK_ID_SCHEME,
+        )
     assert manager.rebuild_repository_index(repo_id).action == "full_index"
+    published = registry.get(repo_id).index_path
+    published_bytes = published.read_bytes()
     extracted = tmp_path / "legacy-artifact"
     extracted.mkdir()
     database = extracted / "current.db"
@@ -233,7 +249,7 @@ def test_registered_restore_upgrades_isolated_legacy_artifact(runtime, tmp_path)
         connection.execute(
             "INSERT INTO repositories(id, path, name) VALUES(1, ?, 'fixture')", (str(repo),)
         )
-        connection.execute(
+        file_id = connection.execute(
             "INSERT INTO files(repository_id, path, relative_path, language, "
             "size, hash, content_hash) VALUES(1, ?, 'hello.py', 'python', ?, ?, ?)",
             (
@@ -242,16 +258,66 @@ def test_registered_restore_upgrades_isolated_legacy_artifact(runtime, tmp_path)
                 hashlib.sha256((repo / "hello.py").read_bytes()).hexdigest(),
                 hashlib.sha256((repo / "hello.py").read_bytes()).hexdigest(),
             ),
-        )
+        ).lastrowid
+        if legacy_version >= 3:
+            for version in range(2, legacy_version + 1):
+                migration = resources.files("mcp_server.storage").joinpath(
+                    f"migrations/{version:03d}_"
+                    + {2: "relative_paths", 3: "stable_ids", 4: "semantic_points"}[version]
+                    + ".sql"
+                )
+                statement = ""
+                for line in migration.read_text(encoding="utf-8").splitlines(True):
+                    statement += line
+                    if sqlite3.complete_statement(statement):
+                        try:
+                            connection.execute(statement)
+                        except sqlite3.OperationalError as exc:
+                            if not str(exc).startswith("duplicate column name:"):
+                                raise
+                        statement = ""
+            connection.execute(
+                """INSERT INTO code_chunks
+                   (file_id, content, content_start, content_end, line_start,
+                    line_end, chunk_id, node_id, treesitter_file_id)
+                   VALUES (?, ?, 0, ?, 1, 1, 'legacy-chunk', 'legacy-node', 'hello.py')""",
+                (file_id, (repo / "hello.py").read_text(), (repo / "hello.py").stat().st_size),
+            )
+            if legacy_version == 4 and not legacy_target:
+                connection.execute("""INSERT INTO semantic_points
+                       (profile_id, chunk_id, point_id, collection)
+                       VALUES ('legacy', 'legacy-chunk', 101, 'legacy-vectors')""")
+        connection.commit()
     original = database.read_bytes()
     result = manager.restore_verified_artifact(
         repo_id, extracted, expected_commit=_get_head_commit(repo)
     )
+    if (
+        legacy_version >= 3
+        and not legacy_target
+        and current_chunk_id_scheme() != LEGACY_CHUNK_ID_SCHEME
+    ):
+        assert result.action == "failed"
+        assert "ChunkSchemeMismatchError" in result.error
+        assert database.read_bytes() == original
+        assert registry.get(repo_id).index_path == published
+        assert published.read_bytes() == published_bytes
+        return
     assert result.action == "full_index", result.error
     assert database.read_bytes() == original
     with closing(sqlite3.connect(database)) as connection:
-        assert connection.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 1
+        assert (
+            connection.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
+            == legacy_version
+        )
     assert registry.get(repo_id).staleness_reason is None
+    with manager._resolve_ctx(repo_id).sqlite_store._get_connection() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM files").fetchone()[0] == 1
+        if legacy_version >= 3:
+            assert (
+                connection.execute("SELECT content FROM code_chunks").fetchone()[0]
+                == (repo / "hello.py").read_text()
+            )
 
 
 @pytest.mark.parametrize(

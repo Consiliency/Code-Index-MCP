@@ -900,3 +900,16 @@ Qdrant proof hit its 300-second test subprocess timeout and needs a quiet
 rerun. Sol 6 withheld code approval for the stub failure; Opus approved the
 production fix. All exact-head gates and four reviews must be repeated for
 the next commit before either one-shot allowance is used.
+
+At `cddde94`, Sol 6 found no code blocker but withheld full approval for two
+untested paths. The overlapping-build regression now checks both Qdrant
+`search` and current-client `query_points` pagination with a stale hit ranked
+above a live hit. A registered-restore fixture now commits populated legacy
+files and schema-3/4 code chunks before attempting restore. With the installed
+v4 chunk-identity scheme, schema-3/4 artifacts refuse restoration without
+changing the published generation. Under a simulated compatible legacy
+scheme, populated schema-3/4 artifacts restore; the schema-1 artifact also
+upgrades. Focused
+tests pass. The current exact-head suite and all independent reviews must be
+rerun after this test-only commit; PREP remains unaccepted and both one-shot
+allowances remain unused.
