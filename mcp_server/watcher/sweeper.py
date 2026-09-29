@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
-from ..core.ignore_patterns import build_walker_filter
+from ..core.ignore_patterns import build_walker_filter, index_exclusion_reason
 from ..metrics.prometheus_exporter import mcp_watcher_sweep_errors_total
 from ..plugins.language_registry import get_all_extensions
 from ..storage.sqlite_store import SQLiteStore
@@ -136,7 +136,9 @@ class WatcherSweeper:
                 children[:] = [name for name in children if not gitignore_filter(root / name)]
                 for name in filenames:
                     fs_path = root / name
-                    if fs_path.suffix not in _CODE_EXTENSIONS or gitignore_filter(fs_path):
+                    if fs_path.suffix not in _CODE_EXTENSIONS or index_exclusion_reason(
+                        fs_path, repo_root, gitignore_filter
+                    ):
                         continue
                     if (
                         tracked_paths is not None

@@ -20,12 +20,12 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, Union
 
 from ..artifacts.semantic_profiles import SemanticProfileRegistry
-from ..config.env_vars import get_max_file_size_bytes
 from ..config.settings import reload_settings
 from ..core.errors import IndexingError, TransientArtifactError, record_handled_error
 from ..core.ignore_patterns import EXCLUDED_DIR_PARTS as _INDEX_EXCLUDED_DIRS
 from ..core.ignore_patterns import (
     build_walker_filter,
+    index_exclusion_reason,
 )
 from ..core.repo_context import RepoContext, index_generation_key
 from ..graph import (
@@ -138,17 +138,6 @@ class _GraphState:
             self.edges = []
 
 
-_INDEX_EXCLUDED_FILENAMES = {
-    "full_indexing_log.txt",
-    "mcp_validation_results.json",
-    "mcp_indexing_status.json",
-    "semantic_indexing_progress.json",
-    "mcp_indexing_summary.json",
-    "complete_indexing_results.json",
-    "mcp_direct_test_results.json",
-    "test_queries.json",
-}
-
 _EXACT_BOUNDED_PYTHON_PATHS = {
     "tests/root_tests/run_reranking_tests.py": "exact_run_reranking_tests_rebound",
     "tests/root_tests/test_swift_plugin.py": "exact_test_swift_plugin_rebound",
@@ -222,11 +211,6 @@ def _get_profile_collection_name(profile: Any, fallback: str) -> str:
     if isinstance(collection_name, str) and collection_name.strip():
         return collection_name.strip()
     return fallback
-
-
-_INDEX_EXCLUDED_SUFFIXES = {
-    ".xml",
-}
 
 
 def _get_lexical_timeout_seconds() -> float:
@@ -3816,43 +3800,18 @@ class EnhancedDispatcher:
 
             stats["total_files"] += 1
 
-            relative_parts = (
-                path.relative_to(directory).parts if path.is_relative_to(directory) else path.parts
-            )
-            if any(part.endswith(".egg-info") for part in relative_parts):
+            exclusion = index_exclusion_reason(path, directory, is_excluded)
+            if exclusion == "unreadable":
+                continue
+            if exclusion:
+                if exclusion == "oversized":
+                    logger.warning("skipping oversized file: %s", path)
                 stats["ignored_files"] += 1
                 continue
 
-            if path.name in _INDEX_EXCLUDED_FILENAMES:
-                stats["ignored_files"] += 1
-                continue
-
-            if path.suffix.lower() in _INDEX_EXCLUDED_SUFFIXES:
-                stats["ignored_files"] += 1
-                continue
-
-            if is_excluded(path):
-                stats["ignored_files"] += 1
-                continue
-
-            try:
-                size = path.stat().st_size
-            except OSError:
-                continue
-            exact_bounded_json = GenericTreeSitterPlugin.uses_exact_bounded_json_path(
-                path, directory
-            )
             exact_bounded_jsonl = GenericTreeSitterPlugin.uses_exact_bounded_jsonl_path(
                 path, directory
             )
-            if (
-                size > get_max_file_size_bytes()
-                and not exact_bounded_json
-                and not exact_bounded_jsonl
-            ):
-                logger.warning("skipping oversized file: %s (%d bytes)", path, size)
-                stats["ignored_files"] = stats.get("ignored_files", 0) + 1
-                continue
 
             # Try to find a plugin that supports this file
             # This allows us to index ALL files, including .env, .key, etc.

@@ -2,6 +2,7 @@
 
 import hashlib
 import os
+import subprocess
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -257,6 +258,63 @@ class TestSweeperNoopWhenNoDrift:
 
         assert missed_calls == []
         assert drifted == []
+
+    def test_tracked_indexer_exclusions_do_not_trigger_repeated_resync(self, tmp_path, monkeypatch):
+        repo_root = tmp_path / "repo"
+        repo_root.mkdir()
+        subprocess.run(["git", "init", "-q", str(repo_root)], check=True)
+        source = repo_root / "source.py"
+        source.write_text("value = 1\n")
+        (repo_root / "pom.xml").write_text("<project/>\n")
+        (repo_root / "large.json").write_text('{"value": "more than thirty two bytes"}\n')
+        (repo_root / "mcp_validation_results.json").write_text("{}\n")
+        subprocess.run(["git", "add", "."], cwd=repo_root, check=True)
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "commit",
+                "-qm",
+                "fixture",
+            ],
+            cwd=repo_root,
+            check=True,
+        )
+        monkeypatch.setenv("MCP_MAX_FILE_SIZE_BYTES", "32")
+
+        store = _make_sqlite_store(tmp_path)
+        repo_id = store.create_repository(str(repo_root), "repo")
+        store.store_file(
+            file_path=source,
+            language="python",
+            repository_id=repo_id,
+            relative_path="source.py",
+            content_hash=hashlib.sha256(source.read_bytes()).hexdigest(),
+        )
+        drift_calls = []
+        sweeper = WatcherSweeper(
+            on_missed_path=None,
+            repo_roots_provider=lambda: {"repo": repo_root},
+            store=store,
+            on_repository_drift=drift_calls.append,
+        )
+        try:
+            assert sweeper.sweep_once() == []
+            assert sweeper.sweep_once() == []
+            assert drift_calls == []
+            store.store_file(
+                file_path=repo_root / "pom.xml",
+                language="xml",
+                repository_id=repo_id,
+                relative_path="pom.xml",
+            )
+            assert sweeper.sweep_once() == ["repo"]
+            assert drift_calls == ["repo"]
+        finally:
+            store.close()
 
 
 # ---------------------------------------------------------------------------

@@ -8,6 +8,8 @@ from typing import Callable, List, Optional
 
 from pathspec import GitIgnoreSpec
 
+from ..config.env_vars import get_max_file_size_bytes
+
 logger = logging.getLogger(__name__)
 
 # Union of _EXCLUDED_DIR_PARTS from watcher.py and _INDEX_EXCLUDED_DIRS from dispatcher_enhanced.py.
@@ -43,6 +45,51 @@ EXCLUDED_DIR_PARTS: frozenset[str] = frozenset(
         "code_index_mcp.egg-info",
     }
 )
+
+INDEX_EXCLUDED_FILENAMES: frozenset[str] = frozenset(
+    {
+        "full_indexing_log.txt",
+        "mcp_validation_results.json",
+        "mcp_indexing_status.json",
+        "semantic_indexing_progress.json",
+        "mcp_indexing_summary.json",
+        "complete_indexing_results.json",
+        "mcp_direct_test_results.json",
+        "test_queries.json",
+    }
+)
+INDEX_EXCLUDED_SUFFIXES: frozenset[str] = frozenset({".xml"})
+
+
+def index_exclusion_reason(
+    path: Path,
+    root: Path,
+    is_excluded: Callable[[Path], bool],
+) -> Optional[str]:
+    """Return the shared file-admission exclusion used by indexing and sweeping."""
+    relative_parts = path.relative_to(root).parts if path.is_relative_to(root) else path.parts
+    if any(part.endswith(".egg-info") for part in relative_parts):
+        return "egg_info"
+    if path.name in INDEX_EXCLUDED_FILENAMES:
+        return "filename"
+    if path.suffix.lower() in INDEX_EXCLUDED_SUFFIXES:
+        return "suffix"
+    if is_excluded(path):
+        return "ignored"
+    try:
+        size = path.stat().st_size
+    except OSError:
+        return "unreadable"
+    if size <= get_max_file_size_bytes():
+        return None
+
+    from ..plugins.generic_treesitter_plugin import GenericTreeSitterPlugin
+
+    if GenericTreeSitterPlugin.uses_exact_bounded_json_path(
+        path, root
+    ) or GenericTreeSitterPlugin.uses_exact_bounded_jsonl_path(path, root):
+        return None
+    return "oversized"
 
 
 def build_walker_filter(root: Path) -> Callable[[Path], bool]:
