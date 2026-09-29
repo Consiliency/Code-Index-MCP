@@ -536,18 +536,27 @@ def test_overlapping_summary_builds_use_distinct_vector_ids(monkeypatch, tmp_pat
     monkeypatch.setattr(indexer, "_embed_texts", lambda *_args, **_kwargs: [[0.1, 0.2, 0.3]])
     monkeypatch.setattr(indexer, "_semantic_result_metadata", lambda: {})
     monkeypatch.setattr(indexer, "_rerank_query_results", lambda _text, rows, _limit: rows)
-    indexer.qdrant.search = lambda **_kwargs: [
-        SimpleNamespace(id=point.id, payload=point.payload, score=1.0)
-        for point in remote_points.values()
+    stale = next(
+        remote_points[point_id]
+        for point_id in written[1]
+        if "embedding_text" in remote_points[point_id].payload
+    )
+    current = next(
+        remote_points[point_id]
+        for point_id in written[0]
+        if "embedding_text" in remote_points[point_id].payload
+    )
+    ranked = [
+        SimpleNamespace(id=point.id, payload=point.payload, score=1.0 - index * 0.1)
+        for index, point in enumerate((stale, current))
+    ]
+    indexer.qdrant.search = lambda **kwargs: ranked[
+        kwargs["offset"] : kwargs["offset"] + kwargs["limit"]
     ]
 
-    visible = list(indexer.query("alpha"))
-    assert len(visible) == len(written[0])
-    assert {item["embedding_text"] for item in visible} == {
-        point.payload["embedding_text"]
-        for point_id, point in remote_points.items()
-        if point_id in written[0] and "embedding_text" in point.payload
-    }
+    visible = list(indexer.query("alpha", limit=1))
+    assert len(visible) == 1
+    assert visible[0]["embedding_text"] == current.payload["embedding_text"]
 
 
 def test_preflight_blocker_prevents_any_qdrant_upsert(monkeypatch, tmp_path):

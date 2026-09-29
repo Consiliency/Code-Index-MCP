@@ -417,6 +417,7 @@ def test_index_file_splits_oversize_embedding_units(monkeypatch, tmp_path):
 def test_split_embedding_units_include_authoritative_summary(monkeypatch, signature):
     monkeypatch.setenv("SEMANTIC_MAX_EMBED_CHARS", "1200")
     indexer = object.__new__(SemanticIndexer)
+    chunk_content = "\n".join(f"BODY_{index}_SENTINEL" + "x" * 320 for index in range(8))
     units = indexer._expand_chunk_embedding_units(
         relative_path="sample.py",
         symbol_name="alpha",
@@ -424,7 +425,7 @@ def test_split_embedding_units_include_authoritative_summary(monkeypatch, signat
         signature=signature,
         parent_symbol=None,
         metadata={},
-        chunk_content="\n".join(f"BODY_{index}_SENTINEL" + "x" * 320 for index in range(8)),
+        chunk_content=chunk_content,
         start_line=1,
         end_line=8,
         summary_text="AUTH_SUMMARY_SENTINEL",
@@ -434,11 +435,11 @@ def test_split_embedding_units_include_authoritative_summary(monkeypatch, signat
     assert all("AUTH_SUMMARY_SENTINEL" in unit.embedding_text for unit in units)
     assert all(
         f"chunk part {index} of {len(units)}" in unit.embedding_text
-        and all(
-            f"BODY_{line - 1}_SENTINEL" in unit.embedding_text
-            for line in range(unit.start_line, unit.end_line + 1)
-        )
+        and unit.content in unit.embedding_text
         for index, unit in enumerate(units, start=1)
+    )
+    assert "".join(unit.content.replace("\n", "") for unit in units) == chunk_content.replace(
+        "\n", ""
     )
     assert all(len(unit.embedding_text) <= 1200 for unit in units)
 

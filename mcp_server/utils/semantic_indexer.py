@@ -996,22 +996,31 @@ class SemanticIndexer:
                 )
             ]
 
-        units: List[EmbeddingUnit] = []
-        total = len(local_chunks)
+        split_chunks: List[tuple[str, int, int]] = []
         for local_chunk in local_chunks:
-            absolute_start = start_line + local_chunk.start_line - 1
-            absolute_end = start_line + local_chunk.end_line - 1
+            line = local_chunk.start_line
+            for offset in range(0, len(local_chunk.content), content_budget):
+                content = local_chunk.content[offset : offset + content_budget]
+                end = min(local_chunk.end_line, line + content.count("\n"))
+                split_chunks.append((content, line, end))
+                line = end
+
+        units: List[EmbeddingUnit] = []
+        total = len(split_chunks)
+        for index, (content, local_start, local_end) in enumerate(split_chunks, start=1):
+            absolute_start = start_line + local_start - 1
+            absolute_end = start_line + local_end - 1
             units.append(
                 EmbeddingUnit(
-                    content=local_chunk.content,
+                    content=content,
                     start_line=absolute_start,
                     end_line=absolute_end,
-                    subchunk_index=local_chunk.chunk_index,
+                    subchunk_index=index,
                     subchunk_total=total,
                     embedding_text=self._compose_embedding_text(
                         split_parts,
-                        local_chunk.content,
-                        subchunk_index=local_chunk.chunk_index,
+                        content,
+                        subchunk_index=index,
                         subchunk_total=total,
                         chunk_role="split",
                     ),
@@ -2874,57 +2883,64 @@ class SemanticIndexer:
             query_limit = min(max(limit * 4, limit), 50)
 
         try:
-            if hasattr(self.qdrant, "search"):
-                results = self.qdrant.search(
-                    collection_name=self.collection,
-                    query_vector=embedding,
-                    query_filter=query_filter,
-                    limit=query_limit,
-                )
-            else:
-                response = self.qdrant.query_points(
-                    collection_name=self.collection,
-                    query=embedding,
-                    query_filter=query_filter,
-                    limit=query_limit,
-                    with_payload=True,
-                )
-                results = list(getattr(response, "points", []) or [])
-
             sqlite_store = getattr(self, "sqlite_store", None)
-            live_point_ids = None
-            if sqlite_store is not None:
-                chunk_ids = {
-                    str(chunk_id)
-                    for res in results
-                    for chunk_id in (
-                        (res.payload or {}).get("chunk_id"),
-                        (res.payload or {}).get("source_chunk_id"),
-                    )
-                    if chunk_id
-                }
-                live_point_ids = {
-                    str(point_id)
-                    for point_id in sqlite_store.get_semantic_point_ids(
-                        self.semantic_profile.profile_id, sorted(chunk_ids)
-                    )
-                }
-
             rerank_input: List[dict[str, Any]] = []
-            for res in results:
-                payload = dict(res.payload or {})
-                # Never surface the reserved collection-provenance sentinel.
-                if payload.get(self.PROVENANCE_TAG) or payload.get("is_deleted"):
-                    continue
-                if (
-                    live_point_ids is not None
-                    and (payload.get("chunk_id") or payload.get("source_chunk_id"))
-                    and str(res.id) not in live_point_ids
-                ):
-                    continue
-                payload["score"] = res.score
-                payload.update(self._semantic_result_metadata())
-                rerank_input.append(payload)
+            offset = 0
+            while len(rerank_input) < query_limit:
+                if hasattr(self.qdrant, "search"):
+                    results = self.qdrant.search(
+                        collection_name=self.collection,
+                        query_vector=embedding,
+                        query_filter=query_filter,
+                        limit=query_limit,
+                        offset=offset,
+                    )
+                else:
+                    response = self.qdrant.query_points(
+                        collection_name=self.collection,
+                        query=embedding,
+                        query_filter=query_filter,
+                        limit=query_limit,
+                        offset=offset,
+                        with_payload=True,
+                    )
+                    results = list(getattr(response, "points", []) or [])
+
+                live_point_ids = None
+                if sqlite_store is not None:
+                    chunk_ids = {
+                        str(chunk_id)
+                        for res in results
+                        for chunk_id in (
+                            (res.payload or {}).get("chunk_id"),
+                            (res.payload or {}).get("source_chunk_id"),
+                        )
+                        if chunk_id
+                    }
+                    live_point_ids = {
+                        str(point_id)
+                        for point_id in sqlite_store.get_semantic_point_ids(
+                            self.semantic_profile.profile_id, sorted(chunk_ids)
+                        )
+                    }
+
+                for res in results:
+                    payload = dict(res.payload or {})
+                    if payload.get(self.PROVENANCE_TAG) or payload.get("is_deleted"):
+                        continue
+                    if (
+                        live_point_ids is not None
+                        and (payload.get("chunk_id") or payload.get("source_chunk_id"))
+                        and str(res.id) not in live_point_ids
+                    ):
+                        continue
+                    payload["score"] = res.score
+                    payload.update(self._semantic_result_metadata())
+                    rerank_input.append(payload)
+
+                offset += len(results)
+                if len(results) < query_limit:
+                    break
 
             yield from self._rerank_query_results(text, rerank_input, limit)
         except Exception as e:

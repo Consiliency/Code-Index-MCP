@@ -877,3 +877,16 @@ regression keeps both remote versions present and proves only admitted points
 are returned. A new exact-head suite, installed gates and independent
 reviews are required. PREP remains unaccepted; the live and signing allowances
 remain unused.
+
+At `85302bc`, Sol 6 found that an oversized individual source line still
+lost its tail during embedding and that stale results could consume Qdrant's
+top-k limit before live-link filtering. Sol 5.6 independently confirmed the
+ranking gap. The local follow-up slices every oversized code line into
+complete parts and pages Qdrant results until enough admitted hits are
+collected or candidates are exhausted. Focused regressions now verify full
+code coverage and a higher-ranked stale hit above a live hit. The exact
+`85302bc` suite and file-mode Qdrant proof passed, but a PMCP prepare retry
+timed out during isolated installation and a local Agent Gate setup hit a
+workspace cache extraction error; protected CI Agent Gate passed. The source
+fix needs new exact-head gates and all four complete reviews. PREP and both
+one-shot allowances remain untouched.
