@@ -359,6 +359,116 @@ class TestSweeperNoopWhenNoDrift:
             dispatcher.shutdown()
             store.close()
 
+    def test_tracked_crlf_checkout_uses_committed_size_limit(self, tmp_path, monkeypatch):
+        repo_root = tmp_path / "repo"
+        repo_root.mkdir()
+        subprocess.run(["git", "init", "-q", str(repo_root)], check=True)
+        subprocess.run(["git", "config", "core.autocrlf", "true"], cwd=repo_root, check=True)
+        source = repo_root / "source.txt"
+        source.write_bytes(b"a\nb\nc\n")
+        subprocess.run(["git", "add", "source.txt"], cwd=repo_root, check=True)
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "commit",
+                "-qm",
+                "fixture",
+            ],
+            cwd=repo_root,
+            check=True,
+        )
+        source.unlink()
+        subprocess.run(["git", "checkout-index", "--", "source.txt"], cwd=repo_root, check=True)
+        assert source.read_bytes() == b"a\r\nb\r\nc\r\n"
+        monkeypatch.setenv("MCP_MAX_FILE_SIZE_BYTES", "7")
+
+        store = _make_sqlite_store(tmp_path)
+        repo_id = store.create_repository(str(repo_root), "repo")
+        store.store_file(
+            file_path=source,
+            language="plaintext",
+            repository_id=repo_id,
+            relative_path="source.txt",
+            content_hash=hashlib.sha256(b"a\nb\nc\n").hexdigest(),
+        )
+        drift_calls = []
+        sweeper = WatcherSweeper(
+            None, lambda: {"repo": repo_root}, store, on_repository_drift=drift_calls.append
+        )
+        try:
+            assert sweeper.sweep_once() == []
+            assert sweeper.sweep_once() == []
+            assert drift_calls == []
+        finally:
+            store.close()
+
+    @pytest.mark.parametrize("limit", [8, 100])
+    def test_tracked_smudge_filter_uses_committed_content(self, tmp_path, monkeypatch, limit):
+        import shutil
+
+        if shutil.which("sed") is None:
+            pytest.skip("Git fixture requires sed")
+        repo_root = tmp_path / "repo"
+        repo_root.mkdir()
+        subprocess.run(["git", "init", "-q", str(repo_root)], check=True)
+        subprocess.run(
+            ["git", "config", "filter.demo.clean", "sed 's/SMUDGED-LARGE-CONTENT/RAW/g'"],
+            cwd=repo_root,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "config", "filter.demo.smudge", "sed 's/RAW/SMUDGED-LARGE-CONTENT/g'"],
+            cwd=repo_root,
+            check=True,
+        )
+        (repo_root / ".gitattributes").write_text("*.txt filter=demo\n")
+        source = repo_root / "source.txt"
+        source.write_bytes(b"RAW\n")
+        subprocess.run(["git", "add", "."], cwd=repo_root, check=True)
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "commit",
+                "-qm",
+                "fixture",
+            ],
+            cwd=repo_root,
+            check=True,
+        )
+        source.unlink()
+        subprocess.run(["git", "checkout-index", "--", "source.txt"], cwd=repo_root, check=True)
+        assert source.read_bytes() == b"SMUDGED-LARGE-CONTENT\n"
+        assert subprocess.run(["git", "diff", "--quiet", "HEAD"], cwd=repo_root).returncode == 0
+        monkeypatch.setenv("MCP_MAX_FILE_SIZE_BYTES", str(limit))
+
+        store = _make_sqlite_store(tmp_path)
+        repo_id = store.create_repository(str(repo_root), "repo")
+        store.store_file(
+            file_path=source,
+            language="plaintext",
+            repository_id=repo_id,
+            relative_path="source.txt",
+            content_hash=hashlib.sha256(b"RAW\n").hexdigest(),
+        )
+        drift_calls = []
+        sweeper = WatcherSweeper(
+            None, lambda: {"repo": repo_root}, store, on_repository_drift=drift_calls.append
+        )
+        try:
+            assert sweeper.sweep_once() == []
+            assert sweeper.sweep_once() == []
+            assert drift_calls == []
+        finally:
+            store.close()
+
 
 # ---------------------------------------------------------------------------
 # test_sweeper_start_stop

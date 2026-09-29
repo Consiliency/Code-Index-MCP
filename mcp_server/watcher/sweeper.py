@@ -116,19 +116,45 @@ class WatcherSweeper:
 
             gitignore_filter = build_walker_filter(repo_root)
             repo_has_drift = False
-            tracked_paths = None
+            tracked_blobs = None
+            transformed_paths: set[str] = set()
             if (repo_root / ".git").exists():
-                tracked_paths = {
-                    os.fsdecode(path)
-                    for path in subprocess.run(
-                        ["git", "ls-tree", "-r", "-z", "--name-only", "HEAD"],
+                tracked_blobs = {}
+                listing = subprocess.run(
+                    ["git", "ls-tree", "-r", "-l", "-z", "HEAD"],
+                    cwd=repo_root,
+                    capture_output=True,
+                    check=True,
+                    timeout=30,
+                ).stdout
+                for record in listing.split(b"\0"):
+                    if not record:
+                        continue
+                    metadata, path = record.split(b"\t", 1)
+                    mode, kind, oid, size = metadata.split()
+                    if kind == b"blob" and mode in {b"100644", b"100755"}:
+                        tracked_blobs[os.fsdecode(path)] = (oid.decode("ascii"), int(size))
+                if tracked_blobs:
+                    attributes = subprocess.run(
+                        [
+                            "git",
+                            "check-attr",
+                            "-z",
+                            "--cached",
+                            "--stdin",
+                            "filter",
+                            "ident",
+                            "working-tree-encoding",
+                        ],
                         cwd=repo_root,
+                        input=b"\0".join(os.fsencode(path) for path in tracked_blobs) + b"\0",
                         capture_output=True,
                         check=True,
                         timeout=30,
                     ).stdout.split(b"\0")
-                    if path
-                }
+                    for index in range(0, len(attributes) - 1, 3):
+                        if attributes[index + 2] not in {b"unspecified", b"unset"}:
+                            transformed_paths.add(os.fsdecode(attributes[index]))
 
             fs_by_path: Dict[str, str] = {}
             for directory, children, filenames in os.walk(repo_root, followlinks=False):
@@ -136,19 +162,26 @@ class WatcherSweeper:
                 children[:] = [name for name in children if not gitignore_filter(root / name)]
                 for name in filenames:
                     fs_path = root / name
-                    if fs_path.suffix not in _CODE_EXTENSIONS or index_exclusion_reason(
-                        fs_path, repo_root, gitignore_filter
-                    ):
+                    relative = fs_path.relative_to(repo_root).as_posix()
+                    blob = tracked_blobs.get(relative) if tracked_blobs is not None else None
+                    if tracked_blobs is not None and blob is None:
                         continue
-                    if (
-                        tracked_paths is not None
-                        and fs_path.relative_to(repo_root).as_posix() not in tracked_paths
+                    if fs_path.suffix not in _CODE_EXTENSIONS or index_exclusion_reason(
+                        fs_path, repo_root, gitignore_filter, blob[1] if blob else None
                     ):
                         continue
                     if fs_path.is_file():
-                        fs_by_path[fs_path.relative_to(repo_root).as_posix()] = self._hash_file(
-                            fs_path
-                        )
+                        if blob is not None and relative in transformed_paths:
+                            committed = subprocess.run(
+                                ["git", "cat-file", "blob", blob[0]],
+                                cwd=repo_root,
+                                capture_output=True,
+                                check=True,
+                                timeout=30,
+                            ).stdout
+                            fs_by_path[relative] = self._hash_content(committed)
+                        else:
+                            fs_by_path[relative] = self._hash_file(fs_path)
 
             created = set(fs_by_path) - set(known_by_path)
             modified = {
@@ -190,10 +223,15 @@ class WatcherSweeper:
         return drifted
 
     def _hash_file(self, path: Path) -> str:
+        return self._hash_content(path.read_bytes())
+
+    @staticmethod
+    def _hash_content(data: bytes) -> str:
         try:
-            content = path.read_text(encoding="utf-8")
+            content = data.decode("utf-8")
         except UnicodeDecodeError:
-            content = path.read_text(encoding="latin-1")
+            content = data.decode("latin-1")
+        content = content.replace("\r\n", "\n").replace("\r", "\n")
         return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
     def _indexed_path_should_report_delete(

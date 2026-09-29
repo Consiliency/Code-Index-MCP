@@ -77,6 +77,7 @@ def index_exclusion_reason(
     path: Path,
     root: Path,
     is_excluded: Callable[[Path], bool],
+    size_bytes: Optional[int] = None,
 ) -> Optional[str]:
     """Return the shared file-admission exclusion used by indexing and sweeping."""
     path_reason = index_path_exclusion_reason(path, root)
@@ -84,11 +85,12 @@ def index_exclusion_reason(
         return path_reason
     if is_excluded(path):
         return "ignored"
-    try:
-        size = path.stat().st_size
-    except OSError:
-        return "unreadable"
-    if size <= get_max_file_size_bytes():
+    if size_bytes is None:
+        try:
+            size_bytes = path.stat().st_size
+        except OSError:
+            return "unreadable"
+    if size_bytes <= get_max_file_size_bytes():
         return None
 
     from ..plugins.generic_treesitter_plugin import GenericTreeSitterPlugin
