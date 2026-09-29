@@ -1155,7 +1155,7 @@ def test_legacy_install_refuses_unimported_vectors(tmp_path, payload):
     assert not destination.exists()
 
 
-def test_discovery_uses_bounded_response_reader(monkeypatch):
+def test_discovery_uses_bounded_response_reader_with_independent_deadlines(monkeypatch):
     calls = []
 
     def bounded(command, output, limit, deadline):
@@ -1169,7 +1169,7 @@ def test_discovery_uses_bounded_response_reader(monkeypatch):
     assert IndexArtifactDownloader(repo="synthetic/example").list_artifacts() == []
     assert len(calls) == 2
     assert all(0 < limit <= 8 * 1024**2 for _, limit, _ in calls)
-    assert calls[0][2] == calls[1][2]
+    assert calls[0][2] <= calls[1][2]
 
 
 @pytest.mark.parametrize("change", ["registration", "generation", "commit"])
