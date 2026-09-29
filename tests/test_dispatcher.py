@@ -9825,6 +9825,7 @@ class TestEnhancedDispatcherProtocolConformance:
                     missing_chunk_ids=["chunk-1"],
                     files_attempted=1,
                     files_summarized=0,
+                    remaining_chunks=0,
                 )
 
         semantic_called = {"value": False}
@@ -10592,7 +10593,7 @@ class TestEnhancedDispatcherProtocolConformance:
         assert result["summary_continuation_required"] is True
         assert "8 bounded summary passes" in result["semantic_error"]
 
-    def test_index_directory_prefers_writer_reported_remaining_for_repo_scope_continuation(
+    def test_index_directory_uses_strict_remaining_for_repo_scope_continuation(
         self, tmp_path, monkeypatch
     ):
         ctx = _make_repo_ctx(sqlite_store=MagicMock(db_path=str(tmp_path / "index.db")))
@@ -10628,7 +10629,7 @@ class TestEnhancedDispatcherProtocolConformance:
                 semantic_called["value"] = True
                 return {"files_indexed": 2, "files_failed": 0, "files_skipped": 0}
 
-        fallback_counts = [99] * 8
+        strict_counts = list(range(9, 0, -1))
 
         monkeypatch.setattr(
             "mcp_server.indexing.summarization.ComprehensiveChunkWriter",
@@ -10648,7 +10649,7 @@ class TestEnhancedDispatcherProtocolConformance:
         monkeypatch.setattr(
             Dispatcher,
             "_count_missing_summaries_for_paths",
-            lambda self, _ctx, _paths: fallback_counts.pop(0),
+            lambda self, _ctx, _paths: strict_counts.pop(0),
         )
         monkeypatch.setattr(
             Dispatcher,

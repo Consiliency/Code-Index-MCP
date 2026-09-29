@@ -132,14 +132,15 @@ def _patch_indexer_runtime(monkeypatch, tmp_path) -> None:
 
 
 class _FakeSQLiteStore:
-    def __init__(self, summary_text: str | None) -> None:
+    def __init__(self, summary_text: str | None, summary_metadata=None) -> None:
         self.summary_text = summary_text
+        self.summary_metadata = summary_metadata or {}
         self.semantic_points = []
 
     def get_chunk_summary(self, _chunk_id: str):
         if self.summary_text is None:
             return None
-        return {"summary_text": self.summary_text}
+        return {"summary_text": self.summary_text, **self.summary_metadata}
 
     def upsert_semantic_point(self, **kwargs):
         self.semantic_points.append(kwargs)
@@ -291,6 +292,39 @@ def test_strict_batch_indexing_refuses_writes_without_authoritative_summary(monk
     result = indexer.index_files_batch([source], require_summaries=True)
 
     assert result["files_indexed"] == 0
+    assert result["files_blocked"] == 1
+    assert result["missing_summary_chunk_ids"] == ["chunk-1"]
+    assert indexer.qdrant.upserts == []
+
+
+def test_strict_batch_indexing_refuses_stale_summary_contract(monkeypatch, tmp_path):
+    _patch_indexer_runtime(monkeypatch, tmp_path)
+    _patch_chunk_file(monkeypatch)
+    registry = SemanticProfileRegistry.from_raw(_sample_profiles(), "oss-high")
+    sqlite_store = _FakeSQLiteStore(
+        summary_text="stale summary",
+        summary_metadata={
+            "is_authoritative": True,
+            "profile_id": "oss-high",
+            "prompt_fingerprint": "old-prompt",
+        },
+    )
+    source = tmp_path / "sample.py"
+    source.write_text("def alpha(x):\n    return x + 1\n")
+    indexer = SemanticIndexer(
+        collection="code-index",
+        qdrant_path=":memory:",
+        profile_registry=registry,
+        semantic_profile="oss-high",
+        sqlite_store=sqlite_store,
+    )
+
+    result = indexer.index_files_batch(
+        [source],
+        require_summaries=True,
+        expected_summary_contract={"profile_id": "oss-high", "prompt_fingerprint": "new-prompt"},
+    )
+
     assert result["files_blocked"] == 1
     assert result["missing_summary_chunk_ids"] == ["chunk-1"]
     assert indexer.qdrant.upserts == []

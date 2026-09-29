@@ -2232,7 +2232,9 @@ class SemanticIndexer:
         return self._truncate_embedding_text("\n".join(parts).strip())
 
     # ------------------------------------------------------------------
-    def _prepare_file_for_indexing(self, path: Path) -> Optional[Dict[str, Any]]:
+    def _prepare_file_for_indexing(
+        self, path: Path, expected_summary_contract: Optional[Mapping[str, Any]] = None
+    ) -> Optional[Dict[str, Any]]:
         """Parse and chunk a file, building embedding inputs without API calls.
 
         Returns a preparation dict consumed by ``_store_file_embeddings`` and
@@ -2304,7 +2306,16 @@ class SemanticIndexer:
                 _sqlite_store = getattr(self, "sqlite_store", None)
                 if _sqlite_store is not None:
                     summary = _sqlite_store.get_chunk_summary(source_chunk_id)
-                    if summary:
+                    if summary and (
+                        expected_summary_contract is None
+                        or (
+                            summary.get("is_authoritative") is True
+                            and summary.get("profile_id")
+                            == expected_summary_contract.get("profile_id")
+                            and summary.get("prompt_fingerprint")
+                            == expected_summary_contract.get("prompt_fingerprint")
+                        )
+                    ):
                         summary_text = summary["summary_text"]
                     else:
                         missing_summary_chunk_ids.append(source_chunk_id)
@@ -2605,6 +2616,7 @@ class SemanticIndexer:
         *,
         require_summaries: bool = False,
         semantic_preflight: Optional[Mapping[str, Any]] = None,
+        expected_summary_contract: Optional[Mapping[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Index multiple files with batched embedding API calls.
 
@@ -2636,7 +2648,11 @@ class SemanticIndexer:
         missing_summary_chunk_ids: List[str] = []
         for path in paths:
             try:
-                prep = self._prepare_file_for_indexing(path)
+                prep = (
+                    self._prepare_file_for_indexing(path, expected_summary_contract)
+                    if require_summaries and expected_summary_contract is not None
+                    else self._prepare_file_for_indexing(path)
+                )
                 if prep:
                     prep_missing = prep.get("missing_summary_chunk_ids", [])
                     if require_summaries and prep_missing:

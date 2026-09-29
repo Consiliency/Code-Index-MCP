@@ -3115,13 +3115,7 @@ class EnhancedDispatcher:
                 return stats
             if getattr(summary_result, "blocked_call_reason", None) == "timeout":
                 summary_missing_ids.extend(summary_result.missing_chunk_ids)
-                reported_remaining = getattr(summary_result, "remaining_chunks", None)
-                if isinstance(reported_remaining, int):
-                    remaining_missing = reported_remaining
-                else:
-                    remaining_missing = self._count_missing_summaries_for_paths(
-                        ctx, normalized_paths
-                    )
+                remaining_missing = self._count_missing_summaries_for_paths(ctx, normalized_paths)
                 stats["summary_missing_chunks"] = remaining_missing
                 stats["summary_remaining_chunks"] = remaining_missing
                 stats["summary_scope_drained"] = False
@@ -3171,11 +3165,7 @@ class EnhancedDispatcher:
             stats["summaries_written"] += summary_result.summaries_written
             stats["summary_chunks_attempted"] += summary_result.chunks_attempted
             summary_missing_ids.extend(summary_result.missing_chunk_ids)
-            reported_remaining = getattr(summary_result, "remaining_chunks", None)
-            if isinstance(reported_remaining, int):
-                remaining_missing = reported_remaining
-            else:
-                remaining_missing = self._count_missing_summaries_for_paths(ctx, normalized_paths)
+            remaining_missing = self._count_missing_summaries_for_paths(ctx, normalized_paths)
             stats["summary_remaining_chunks"] = remaining_missing
             stats["summary_scope_drained"] = remaining_missing == 0
             if summary_result.summaries_written > 0 and remaining_missing > 0:
@@ -3302,6 +3292,11 @@ class EnhancedDispatcher:
                     embed_batch_size=1000,
                     require_summaries=True,
                     semantic_preflight=semantic_preflight,
+                    expected_summary_contract=(
+                        self.get_semantic_summary_contract(ctx)
+                        if callable(getattr(writer, "_prompt_fingerprint", None))
+                        else None
+                    ),
                 ),
                 timeout_seconds=semantic_stage_timeout_seconds,
             )

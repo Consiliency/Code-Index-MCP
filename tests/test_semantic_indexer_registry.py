@@ -422,6 +422,63 @@ def test_construction_registration_race_closes_unadmitted_resource(tmp_path):
         registry.shutdown()
 
 
+def test_different_repositories_construct_without_global_serialization(tmp_path):
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    from mcp_server.utils.semantic_indexer_registry import SemanticIndexerRegistry
+
+    started = threading.Event()
+    release = threading.Event()
+
+    def construct(**kwargs):
+        if kwargs["repo_identifier"] == "repo-a":
+            started.set()
+            assert release.wait(5)
+        return MagicMock()
+
+    registry = SemanticIndexerRegistry(_make_registry_with_repos(tmp_path))
+    with patch("mcp_server.utils.semantic_indexer.SemanticIndexer", side_effect=construct):
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first = pool.submit(registry.get, "repo-a")
+            assert started.wait(5)
+            try:
+                assert pool.submit(registry.get, "repo-b").result(timeout=2)
+            finally:
+                release.set()
+            assert first.result(timeout=5)
+        registry.shutdown()
+
+
+def test_eviction_during_construction_refuses_late_owner(tmp_path):
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    from mcp_server.utils.semantic_indexer_registry import SemanticIndexerRegistry
+
+    started = threading.Event()
+    release = threading.Event()
+    created = MagicMock()
+
+    def construct(**kwargs):
+        started.set()
+        assert release.wait(5)
+        return created
+
+    registry = SemanticIndexerRegistry(_make_registry_with_repos(tmp_path))
+    with patch("mcp_server.utils.semantic_indexer.SemanticIndexer", side_effect=construct):
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(registry.get, "repo-a")
+            assert started.wait(5)
+            assert registry.evict("repo-a") is False
+            release.set()
+            with pytest.raises(RuntimeError, match="changed during construction"):
+                future.result(timeout=5)
+        created.qdrant.close.assert_called_once()
+        assert not registry._entries
+        registry.shutdown()
+
+
 def test_real_generation_clients_coexist_until_lease_drain(tmp_path, monkeypatch):
     from qdrant_client import models
 

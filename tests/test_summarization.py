@@ -1028,6 +1028,43 @@ def test_fetch_unsummarized_rows_filters_scope_before_limit(tmp_path):
     assert rows[0][9] == str(in_scope)
 
 
+@pytest.mark.parametrize("summary_state", ["valid", "prompt", "profile", "non_authoritative"])
+def test_scoped_writer_selects_summaries_outside_active_contract(tmp_path, summary_state):
+    db_path = tmp_path / "summaries.db"
+    store = SQLiteStore(str(db_path))
+    repo_id = store.ensure_repository_row(tmp_path)
+    source = tmp_path / "module.py"
+    source.write_text("def alpha(): pass\n")
+    file_id = store.store_file(repo_id, path=source, relative_path="module.py")
+    _store_chunk(
+        store,
+        file_id=file_id,
+        chunk_id="chunk-1",
+        content="def alpha(): pass",
+        line_start=1,
+        line_end=1,
+    )
+    writer = ComprehensiveChunkWriter(
+        db_path=str(db_path),
+        qdrant_client=None,
+        summarization_config={"profile_id": "profile-a", "model_name": "fixture"},
+    )
+    store.store_chunk_summary(
+        "chunk-1",
+        file_id,
+        1,
+        1,
+        "summary",
+        llm_model="fixture",
+        profile_id="profile-b" if summary_state == "profile" else "profile-a",
+        prompt_fingerprint=("stale" if summary_state == "prompt" else writer._prompt_fingerprint()),
+        is_authoritative=summary_state != "non_authoritative",
+    )
+    expected = summary_state != "valid"
+    assert bool(writer._fetch_unsummarized_rows(limit=1, target_paths=[source])) is expected
+    assert writer._count_unsummarized_rows(target_paths=[source]) == int(expected)
+
+
 @pytest.mark.asyncio
 async def test_process_scope_drains_multiple_batches_for_target_scope(tmp_path, monkeypatch):
     db_path = tmp_path / "summaries.db"

@@ -785,3 +785,17 @@ summarization and migration checks pass after synthetic fixture alignment.
 These repairs have not yet passed an exact-head full suite or four complete
 independent code reviews. PREP stays unaccepted; neither bounded live allowance
 has been used, and Code-Index-MCP#97 stays draft.
+
+The exact `38163b7` serial suite passed 4,033 tests (135 skipped, 40
+deselected, 55.28% coverage); protected Agent Gate, Docker, Qdrant server and
+installed wheel/nonroot container smoke passed. Opus's exact-candidate read
+found that scoped staged reindex could replace a strict missing-summary count
+with a looser count and then embed stale text. Gemini's partial storage read
+found semantic backend construction under a registry-wide lock. The next
+candidate aligns summary selection, completion and vector consumption with
+the active fingerprint, and constructs semantic backends under per-repository
+locks with an eviction fence. Focused checks pass; the new source still needs
+an exact-head full suite, installed/browser validation and complete independent
+reviews. The Gemini full-candidate pass reported partial coverage and is
+`UNVERIFIED`; it is not counted as approval. Both bounded live allowances
+remain unused and Code-Index-MCP#97 remains draft.

@@ -38,7 +38,13 @@ class SemanticIndexerRegistry:
         self._bindings: Dict[str, tuple] = {}
         self._entries: Dict[tuple, _Entry] = {}
         self._lock = threading.Condition(threading.RLock())
+        self._build_locks: Dict[str, threading.Lock] = {}
+        self._epochs: Dict[str, int] = {}
         self._closed = False
+
+    def _build_lock(self, repo_id: str) -> threading.Lock:
+        with self._lock:
+            return self._build_locks.setdefault(repo_id, threading.Lock())
 
     @staticmethod
     def _binding(info) -> tuple:
@@ -153,34 +159,8 @@ class SemanticIndexerRegistry:
             self._cache.pop(repo_id, None)
             self._bindings.pop(repo_id, None)
 
-    def get(self, repo_id: str) -> "SemanticIndexer":
-        """Legacy unscoped access; runtime queries and writes must use ``lease``."""
-        with self._lock:
-            info, binding, staged = self._resolve(repo_id, None)
-            key = (repo_id, binding, staged)
-            entry = self._entries.get(key)
-            if entry is not None and entry.retired:
-                raise RuntimeError("Semantic generation is draining")
-            if repo_id in self._cache:
-                if self._bindings[repo_id] != binding:
-                    raise RuntimeError(
-                        "Semantic generation changed; retire the owning runtime before reopening"
-                    )
-                return self._cache[repo_id]
-
-            if entry is None:
-                entry = _Entry(self._construct(repo_id, info, binding, None))
-                self._entries[key] = entry
-            entry.unscoped = True
-            self._cache[repo_id] = entry.indexer
-            self._bindings[repo_id] = binding
-            return entry.indexer
-
-    @contextmanager
-    def lease(
-        self, repo_id: str, *, ctx: "RepoContext | None" = None
-    ) -> Iterator["SemanticIndexer"]:
-        """Borrow exactly the supplied generation until the context exits."""
+    def _entry_for(self, repo_id: str, ctx: "RepoContext | None") -> tuple[tuple, _Entry]:
+        """Resolve one owner while the caller holds its repository build lock."""
         with self._lock:
             info, binding, staged = self._resolve(repo_id, ctx)
             key = (repo_id, binding, staged)
@@ -193,12 +173,52 @@ class SemanticIndexerRegistry:
             entry = self._entries.get(key)
             if entry is not None and entry.retired:
                 raise RuntimeError("Semantic generation is draining")
-            if entry is None:
-                entry = _Entry(self._construct(repo_id, info, binding, ctx))
+            if ctx is None and repo_id in self._cache and self._bindings[repo_id] != binding:
+                raise RuntimeError(
+                    "Semantic generation changed; retire the owning runtime before reopening"
+                )
+            if entry is not None:
+                if ctx is not None and entry.indexer.sqlite_store is not ctx.sqlite_store:
+                    raise RuntimeError("Semantic owner is bound to a different SQLite handle")
+                return key, entry
+            epoch = self._epochs.get(repo_id, 0)
+
+        indexer = self._construct(repo_id, info, binding, ctx)
+        with self._lock:
+            try:
+                _, current, _ = self._resolve(repo_id, ctx)
+                if current != binding or self._epochs.get(repo_id, 0) != epoch:
+                    raise RuntimeError("Semantic generation changed during construction")
+                entry = _Entry(indexer)
                 self._entries[key] = entry
-            elif ctx is not None and entry.indexer.sqlite_store is not ctx.sqlite_store:
-                raise RuntimeError("Semantic owner is bound to a different SQLite handle")
-            entry.borrowers += 1
+                return key, entry
+            except Exception:
+                self._close_indexer(indexer)
+                raise
+
+    def get(self, repo_id: str) -> "SemanticIndexer":
+        """Legacy unscoped access; runtime queries and writes must use ``lease``."""
+        with self._build_lock(repo_id):
+            key, entry = self._entry_for(repo_id, None)
+            with self._lock:
+                if entry.retired:
+                    raise RuntimeError("Semantic generation is draining")
+                entry.unscoped = True
+                self._cache[repo_id] = entry.indexer
+                self._bindings[repo_id] = key[1]
+                return entry.indexer
+
+    @contextmanager
+    def lease(
+        self, repo_id: str, *, ctx: "RepoContext | None" = None
+    ) -> Iterator["SemanticIndexer"]:
+        """Borrow exactly the supplied generation until the context exits."""
+        with self._build_lock(repo_id):
+            key, entry = self._entry_for(repo_id, ctx)
+            with self._lock:
+                if entry.retired:
+                    raise RuntimeError("Semantic generation is draining")
+                entry.borrowers += 1
         try:
             yield entry.indexer
         finally:
@@ -223,6 +243,7 @@ class SemanticIndexerRegistry:
 
         expected = StoreRegistry.binding(expected_owner)[:5] if expected_owner is not None else None
         with self._lock:
+            self._epochs[repo_id] = self._epochs.get(repo_id, 0) + 1
             entries = [
                 (key, entry)
                 for key, entry in self._entries.items()

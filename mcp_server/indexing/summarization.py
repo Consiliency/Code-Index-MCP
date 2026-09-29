@@ -1116,6 +1116,12 @@ class ComprehensiveChunkWriter(FileBatchSummarizer):
             assert_chunk_scheme_readable(conn)
             where_clauses = ["cs.chunk_hash IS NULL"]
             params: list[Any] = []
+            if profile_id := self.summarization_config.get("profile_id"):
+                where_clauses = [
+                    "(cs.chunk_hash IS NULL OR cs.is_authoritative != 1 "
+                    "OR cs.profile_id IS NOT ? OR cs.prompt_fingerprint IS NOT ?)"
+                ]
+                params.extend((profile_id, self._prompt_fingerprint()))
             if normalized_paths:
                 placeholders = ", ".join("?" for _ in normalized_paths)
                 where_clauses.append(f"f.path IN ({placeholders})")
@@ -1147,6 +1153,12 @@ class ComprehensiveChunkWriter(FileBatchSummarizer):
             assert_chunk_scheme_readable(conn)
             where_clauses = ["cs.chunk_hash IS NULL"]
             params: list[Any] = []
+            if profile_id := self.summarization_config.get("profile_id"):
+                where_clauses = [
+                    "(cs.chunk_hash IS NULL OR cs.is_authoritative != 1 "
+                    "OR cs.profile_id IS NOT ? OR cs.prompt_fingerprint IS NOT ?)"
+                ]
+                params.extend((profile_id, self._prompt_fingerprint()))
             if normalized_paths:
                 placeholders = ", ".join("?" for _ in normalized_paths)
                 where_clauses.append(f"f.path IN ({placeholders})")
