@@ -29,6 +29,10 @@ class _Entry:
     unscoped: bool = False
 
 
+class _SemanticResourceCloseError(RuntimeError):
+    pass
+
+
 class SemanticIndexerRegistry:
     """Thread-safe registry that constructs and caches per-repo SemanticIndexer instances."""
 
@@ -195,9 +199,17 @@ class SemanticIndexerRegistry:
                 entry = _Entry(indexer)
                 self._entries[key] = entry
                 return key, entry
-        except Exception:
-            if "indexer" in locals():
-                self._close_indexer(indexer)
+        except Exception as error:
+            try:
+                if "indexer" in locals():
+                    self._close_indexer(indexer)
+            except _SemanticResourceCloseError:
+                with self._lock:
+                    self._construction_close_failed = True
+                raise
+            if isinstance(error, _SemanticResourceCloseError):
+                with self._lock:
+                    self._construction_close_failed = True
             raise
         finally:
             with self._lock:
@@ -267,10 +279,7 @@ class SemanticIndexerRegistry:
         try:
             indexer.qdrant.close()
         except Exception:
-            with self._lock:
-                if self._closed:
-                    self._construction_close_failed = True
-            raise RuntimeError("Semantic resource close failed") from None
+            raise _SemanticResourceCloseError("Semantic resource close failed") from None
 
     def shutdown(self) -> None:
         """Stop admission, drain borrowers and close all owned resources."""
@@ -280,7 +289,11 @@ class SemanticIndexerRegistry:
                 entry.retired = True
             while self._builders or any(entry.borrowers for entry in self._entries.values()):
                 self._lock.wait()
+            close_failed = self._construction_close_failed
             for key, entry in list(self._entries.items()):
-                self._finish_retirement(key, entry)
-            if self._construction_close_failed:
+                try:
+                    self._finish_retirement(key, entry)
+                except RuntimeError:
+                    close_failed = True
+            if close_failed:
                 raise RuntimeError("Semantic resource close failed")

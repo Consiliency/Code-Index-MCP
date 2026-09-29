@@ -314,6 +314,19 @@ profiles:
         assert "SEMANTIC_DEFAULT_PROFILE" in str(exc)
 
 
+def test_installed_default_profile_falls_back_without_profile_yaml(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("MCP_PROFILES_PATH", raising=False)
+    monkeypatch.setattr("mcp_server.config.settings._find_profiles_yaml", lambda: None)
+    settings = Settings(semantic_default_profile="oss_high")
+
+    assert settings.get_semantic_default_profile() == "legacy-default"
+
+    settings.semantic_default_profile = "unknown"
+    with pytest.raises(ValueError, match="SEMANTIC_DEFAULT_PROFILE"):
+        settings.get_semantic_default_profile()
+
+
 # ---------------------------------------------------------------------------
 # _find_profiles_yaml() — cascade: env var → CWD → package dir
 # ---------------------------------------------------------------------------

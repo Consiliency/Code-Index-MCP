@@ -153,10 +153,9 @@ class IncrementalIndexer:
             from ..indexing.summarization import ComprehensiveChunkWriter
 
             settings = reload_settings()
-            summarization_config = settings.get_profile_summarization_config(
-                settings.semantic_default_profile
-            )
-            summarization_config.setdefault("profile_id", settings.semantic_default_profile)
+            profile_id = settings.get_semantic_default_profile()
+            summarization_config = settings.get_profile_summarization_config(profile_id)
+            summarization_config["profile_id"] = profile_id
             writer = ComprehensiveChunkWriter(
                 db_path=self.store.db_path,
                 qdrant_client=None,

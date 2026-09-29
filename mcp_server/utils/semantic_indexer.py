@@ -2286,6 +2286,7 @@ class SemanticIndexer:
         embedding_inputs: List[str] = []
         file_embedding_text: Optional[str] = None
         missing_summary_chunk_ids: List[str] = []
+        summary_snapshot: Dict[str, Optional[tuple]] = {}
 
         if chunks:
             for chunk in chunks:
@@ -2306,6 +2307,16 @@ class SemanticIndexer:
                 _sqlite_store = getattr(self, "sqlite_store", None)
                 if _sqlite_store is not None:
                     summary = _sqlite_store.get_chunk_summary(source_chunk_id)
+                    summary_snapshot[source_chunk_id] = (
+                        (
+                            summary["summary_text"],
+                            bool(summary.get("is_authoritative")),
+                            summary.get("profile_id"),
+                            summary.get("prompt_fingerprint"),
+                        )
+                        if summary is not None
+                        else None
+                    )
                     if summary and (
                         expected_summary_contract is None
                         or (
@@ -2390,6 +2401,7 @@ class SemanticIndexer:
             "chunk_count": len(chunks),
             "used_fallback_chunks": used_fallback_chunks,
             "missing_summary_chunk_ids": sorted(set(missing_summary_chunk_ids)),
+            "summary_snapshot": summary_snapshot,
         }
 
     def _preflight_blocker_details(
@@ -2512,37 +2524,29 @@ class SemanticIndexer:
         source_chunk_links: Dict[str, int] = {}
         try:
             self._upsert_points_batched(path, points)
-            sqlite_store = getattr(self, "sqlite_store", None)
-            if sqlite_store is not None:
-                effective_profile_id = self.semantic_profile.profile_id
-                for point in points:
-                    payload = point.payload or {}
-                    chunk_id = payload.get("chunk_id")
-                    if chunk_id:
-                        point_links.append((str(chunk_id), int(point.id)))
-                    source_chunk_id = payload.get("source_chunk_id")
-                    if source_chunk_id:
-                        source_chunk_links[str(source_chunk_id)] = int(point.id)
-                for chunk_id, point_id in point_links:
-                    sqlite_store.upsert_semantic_point(
-                        profile_id=effective_profile_id,
-                        chunk_id=chunk_id,
-                        point_id=point_id,
-                        collection=self.collection,
-                    )
-                for source_chunk_id, point_id in source_chunk_links.items():
-                    sqlite_store.upsert_semantic_point(
-                        profile_id=effective_profile_id,
-                        chunk_id=source_chunk_id,
-                        point_id=point_id,
-                        collection=self.collection,
-                    )
         except Exception as e:
             logger.error(
                 f"Failed to upsert {len(points)} points for file {path}: " f"{type(e).__name__}"
             )
             self._qdrant_available = False
             raise RuntimeError("Failed to store embeddings in Qdrant") from None
+        sqlite_store = getattr(self, "sqlite_store", None)
+        if sqlite_store is not None:
+            effective_profile_id = self.semantic_profile.profile_id
+            for point in points:
+                payload = point.payload or {}
+                chunk_id = payload.get("chunk_id")
+                if chunk_id:
+                    point_links.append((str(chunk_id), int(point.id)))
+                source_chunk_id = payload.get("source_chunk_id")
+                if source_chunk_id:
+                    source_chunk_links[str(source_chunk_id)] = int(point.id)
+            links = [
+                (effective_profile_id, chunk_id, point_id, self.collection)
+                for chunk_id, point_id in [*point_links, *source_chunk_links.items()]
+            ]
+            if not sqlite_store.admit_semantic_point_links(links, prep.get("summary_snapshot", {})):
+                raise RuntimeError("Semantic summaries changed during embedding")
 
         return {
             "file": str(path),

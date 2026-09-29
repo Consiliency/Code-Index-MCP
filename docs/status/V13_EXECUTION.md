@@ -829,3 +829,20 @@ shutdown, and resolves the default profile consistently. Focused and nearby
 regressions pass, but the repaired source still needs an exact-head full suite
 and four complete independent code approvals. PREP remains unaccepted, both
 one-shot allowances are unused, and Code-Index-MCP#97 remains draft.
+
+The first installed-wheel smoke on `30c613b` failed in the clean installed
+environment because the checkout's default profile YAML is absent there; the
+new profile resolver rejected the built-in `oss_high` default before a lexical
+rebuild. The 30c613b full suite was stopped after this exact-source blocker
+was found. A corrected wheel/STDIO smoke then passed in local scratch. Sol 6,
+Sol 5.6 and Opus independently found that synchronous summary writes still
+used the raw profile alias, and the two Sol reads found a summary/vector race;
+Sol 6 also found derived `:part:` vectors left linked after summary refresh.
+The next local candidate resolves the alias in all discovered writer and
+entrypoint paths, invalidates source and derived links, and admits new vector
+links only when the source summaries still match the embedding input in one
+SQLite transaction. Constructor shutdown now drains other owners even if one
+close fails. New focused regressions cover those paths. This source still
+needs exact-head full, installed, Qdrant, browser and independent review gates.
+PREP remains unaccepted, both one-shot allowances are unused, and
+Code-Index-MCP#97 remains draft.

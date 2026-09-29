@@ -145,6 +145,30 @@ class _FakeSQLiteStore:
     def upsert_semantic_point(self, **kwargs):
         self.semantic_points.append(kwargs)
 
+    def admit_semantic_point_links(self, links, expected_summaries):
+        for chunk_id, expected in expected_summaries.items():
+            summary = self.get_chunk_summary(chunk_id)
+            actual = (
+                (
+                    summary["summary_text"],
+                    bool(summary.get("is_authoritative")),
+                    summary.get("profile_id"),
+                    summary.get("prompt_fingerprint"),
+                )
+                if summary is not None
+                else None
+            )
+            if actual != expected:
+                return False
+        for profile_id, chunk_id, point_id, collection in links:
+            self.upsert_semantic_point(
+                profile_id=profile_id,
+                chunk_id=chunk_id,
+                point_id=point_id,
+                collection=collection,
+            )
+        return True
+
 
 def _patch_chunk_file(monkeypatch, chunk_id: str = "chunk-1") -> None:
     def _fake_chunk_file(*_args, **_kwargs):
@@ -440,6 +464,29 @@ def test_successful_strict_batch_indexing_persists_chunk_point_links(monkeypatch
         "chunk-link",
     }
     assert all(point["profile_id"] == "oss-high" for point in sqlite_store.semantic_points)
+
+
+def test_summary_change_during_vector_write_refuses_stale_links(monkeypatch, tmp_path):
+    _patch_indexer_runtime(monkeypatch, tmp_path)
+    _patch_chunk_file(monkeypatch)
+    registry = SemanticProfileRegistry.from_raw(_sample_profiles(), "oss-high")
+    sqlite_store = _FakeSQLiteStore(summary_text="original summary")
+    source = tmp_path / "sample.py"
+    source.write_text("def alpha(x):\n    return x + 1\n", encoding="utf-8")
+    indexer = SemanticIndexer(
+        qdrant_path=":memory:",
+        profile_registry=registry,
+        semantic_profile="oss-high",
+        sqlite_store=sqlite_store,
+    )
+
+    def replace_summary(_path, _points):
+        sqlite_store.summary_text = "new summary"
+
+    monkeypatch.setattr(indexer, "_upsert_points_batched", replace_summary)
+    with pytest.raises(RuntimeError, match="summaries changed during embedding"):
+        indexer.index_file(source)
+    assert sqlite_store.semantic_points == []
 
 
 def test_preflight_blocker_prevents_any_qdrant_upsert(monkeypatch, tmp_path):

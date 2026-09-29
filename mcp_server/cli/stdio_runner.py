@@ -1427,14 +1427,16 @@ async def call_tool(
         from mcp_server.indexing.summarization import LazyChunkWriter
 
         _settings = Settings.from_environment()
+        profile_id = _settings.get_semantic_default_profile()
         _lazy_summarizer = LazyChunkWriter(
             db_path=sqlite_store.db_path,
             qdrant_client=None,
             session=_current_session,
             client_name=_client_name,
-            summarization_config=_settings.get_profile_summarization_config(
-                _settings.semantic_default_profile
-            ),
+            summarization_config={
+                **_settings.get_profile_summarization_config(profile_id),
+                "profile_id": profile_id,
+            },
         )
         _lazy_summarizer.start()
     elif _lazy_summarizer is not None and _current_session is not None:

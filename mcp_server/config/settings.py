@@ -752,6 +752,12 @@ class Settings(BaseModel):
         profiles = self.get_semantic_profiles_config()
         if configured and configured in profiles:
             return configured
+        if (
+            configured == "oss_high"
+            and not self.semantic_profiles_json
+            and set(profiles) == {"legacy-default"}
+        ):
+            return "legacy-default"
         if configured and configured != "legacy-default" and configured not in profiles:
             raise ValueError(
                 f"Configured SEMANTIC_DEFAULT_PROFILE '{configured}' not found in profile set"

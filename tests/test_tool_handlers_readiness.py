@@ -177,6 +177,7 @@ def test_get_status_repository_rows_include_readiness(tmp_path):
 
 def test_summarize_sample_consumes_named_result_fields(tmp_path, monkeypatch):
     from mcp_server.cli.tool_handlers import handle_summarize_sample
+    from mcp_server.config.settings import Settings
     from mcp_server.indexing.summarization import (
         FileBatchSummarizer,
         GeneratedSummary,
@@ -225,7 +226,10 @@ def test_summarize_sample_consumes_named_result_fields(tmp_path, monkeypatch):
     lazy_summarizer.can_summarize.return_value = True
     lazy_summarizer._get_model_name.return_value = "fake-model"
 
-    async def fake_summarize(*_args, **_kwargs):
+    seen_config = {}
+
+    async def fake_summarize(self, *_args, **_kwargs):
+        seen_config.update(self.summarization_config)
         return SummaryGenerationResult(
             chunks_attempted=2,
             summaries_written=1,
@@ -237,6 +241,17 @@ def test_summarize_sample_consumes_named_result_fields(tmp_path, monkeypatch):
         )
 
     monkeypatch.setattr(FileBatchSummarizer, "summarize_file_chunks", fake_summarize)
+    monkeypatch.setattr(
+        Settings,
+        "from_environment",
+        staticmethod(
+            lambda: SimpleNamespace(
+                semantic_default_profile="legacy-default",
+                get_semantic_default_profile=lambda: "oss_high",
+                get_profile_summarization_config=lambda _profile: {},
+            )
+        ),
+    )
 
     result = _run(
         handle_summarize_sample(
@@ -252,6 +267,7 @@ def test_summarize_sample_consumes_named_result_fields(tmp_path, monkeypatch):
     assert payload["files"][0]["summaries_written"] == 1
     assert payload["files"][0]["missing_chunk_ids"] == ["chunk-2"]
     assert payload["files"][0]["scope_drained"] is False
+    assert seen_config["profile_id"] == "oss_high"
 
 
 def test_search_code_semantic_not_ready_returns_semantic_metadata(tmp_path, monkeypatch):
@@ -823,6 +839,7 @@ def test_reindex_single_file_failure_returns_structured_error(tmp_path, monkeypa
 
 def test_write_summaries_remains_summary_only(tmp_path, monkeypatch):
     from mcp_server.cli.tool_handlers import handle_write_summaries
+    from mcp_server.config.settings import Settings
 
     monkeypatch.setenv("MCP_ALLOWED_ROOTS", str(tmp_path))
     worktree = tmp_path / "repo"
@@ -839,9 +856,11 @@ def test_write_summaries_remains_summary_only(tmp_path, monkeypatch):
     )
     resolver.resolve = lambda _path: ctx
 
+    seen_config = {}
+
     class FakeWriter:
         def __init__(self, *args, **kwargs):
-            pass
+            seen_config.update(kwargs["summarization_config"])
 
         async def process_scope(self, limit=500):
             del limit
@@ -850,6 +869,17 @@ def test_write_summaries_remains_summary_only(tmp_path, monkeypatch):
             )
 
     monkeypatch.setattr("mcp_server.indexing.summarization.ComprehensiveChunkWriter", FakeWriter)
+    monkeypatch.setattr(
+        Settings,
+        "from_environment",
+        staticmethod(
+            lambda: SimpleNamespace(
+                semantic_default_profile="legacy-default",
+                get_semantic_default_profile=lambda: "oss_high",
+                get_profile_summarization_config=lambda _profile: {},
+            )
+        ),
+    )
     lazy_summarizer = MagicMock()
     lazy_summarizer.can_summarize.return_value = True
     lazy_summarizer._get_model_name.return_value = "chat"
@@ -868,6 +898,7 @@ def test_write_summaries_remains_summary_only(tmp_path, monkeypatch):
     assert data["chunks_summarized"] == 3
     assert data["semantic_vectors_written"] is False
     assert data["summary_missing_chunks"] == 1
+    assert seen_config["profile_id"] == "oss_high"
 
 
 def _run_summarization_gate(monkeypatch, scheme_status: str) -> bool:

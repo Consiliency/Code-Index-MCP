@@ -1423,14 +1423,15 @@ async def handle_write_summaries(
         )
 
     _settings = Settings.from_environment()
+    profile_id = _settings.get_semantic_default_profile()
     writer = ComprehensiveChunkWriter(
         db_path=db_path,
         qdrant_client=None,
         session=current_session,
         client_name=client_name,
         summarization_config={
-            **_settings.get_profile_summarization_config(_settings.semantic_default_profile),
-            "profile_id": _settings.semantic_default_profile,
+            **_settings.get_profile_summarization_config(profile_id),
+            "profile_id": profile_id,
         },
     )
     summary_result = await writer.process_scope(limit=limit_arg)
@@ -1465,6 +1466,7 @@ async def handle_summarize_sample(
 ) -> Sequence[types.TextContent]:
     import sqlite3 as _sqlite3
 
+    from mcp_server.config.settings import Settings
     from mcp_server.indexing.summarization import FileBatchSummarizer
     from mcp_server.storage.sqlite_store import assert_chunk_scheme_readable
 
@@ -1644,11 +1646,17 @@ async def handle_summarize_sample(
         ]
         symbol_map = {r[7]: r[8] for r in chunk_rows if r[7] and r[8]}
 
+        settings = Settings.from_environment()
+        profile_id = settings.get_semantic_default_profile()
         summarizer = FileBatchSummarizer(
             db_path=db_path,
             qdrant_client=None,
             session=current_session,
             client_name=client_name,
+            summarization_config={
+                **settings.get_profile_summarization_config(profile_id),
+                "profile_id": profile_id,
+            },
         )
 
         try:

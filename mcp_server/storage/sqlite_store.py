@@ -2464,6 +2464,47 @@ class SQLiteStore:
                 (profile_id, chunk_id, point_id, collection),
             )
 
+    def admit_semantic_point_links(
+        self,
+        links: List[Tuple[str, str, int, str]],
+        expected_summaries: Dict[str, Optional[Tuple[str, bool, Optional[str], Optional[str]]]],
+    ) -> bool:
+        """Link written vectors only while their source summaries still match."""
+        with self._get_connection() as conn:
+            if not conn.in_transaction:
+                conn.execute("BEGIN IMMEDIATE")
+            for chunk_id, expected in expected_summaries.items():
+                row = conn.execute(
+                    """SELECT summary_text, is_authoritative, profile_id, prompt_fingerprint
+                       FROM chunk_summaries WHERE chunk_hash = ?""",
+                    (chunk_id,),
+                ).fetchone()
+                actual = (row[0], bool(row[1]), row[2], row[3]) if row is not None else None
+                if actual != expected:
+                    self._record_pending_vector_deletions(
+                        conn,
+                        [
+                            {
+                                "profile_id": profile_id,
+                                "chunk_id": linked_chunk_id,
+                                "point_id": point_id,
+                                "collection": collection,
+                            }
+                            for profile_id, linked_chunk_id, point_id, collection in links
+                        ],
+                    )
+                    return False
+            conn.executemany(
+                """INSERT INTO semantic_points (profile_id, chunk_id, point_id, collection)
+                   VALUES (?, ?, ?, ?)
+                   ON CONFLICT(profile_id, chunk_id) DO UPDATE SET
+                       point_id = excluded.point_id,
+                       collection = excluded.collection,
+                       updated_at = CURRENT_TIMESTAMP""",
+                links,
+            )
+            return True
+
     def get_semantic_point_ids(
         self, profile_id: str, chunk_ids: List[str]
     ) -> List[Union[int, str]]:
@@ -3834,16 +3875,18 @@ class SQLiteStore:
                 or row[3] != prompt_fingerprint
                 or bool(row[0]) != bool(is_authoritative)
             ):
+                point_clause = "chunk_id = ? OR chunk_id LIKE ? ESCAPE '\\'"
+                point_params = (chunk_hash, f"{_escape_like(chunk_hash)}:part:%")
                 points = [
                     dict(point)
                     for point in conn.execute(
-                        """SELECT profile_id, chunk_id, point_id, collection
-                           FROM semantic_points WHERE chunk_id = ?""",
-                        (chunk_hash,),
+                        "SELECT profile_id, chunk_id, point_id, collection "
+                        f"FROM semantic_points WHERE {point_clause}",
+                        point_params,
                     ).fetchall()
                 ]
                 self._record_pending_vector_deletions(conn, points)
-                conn.execute("DELETE FROM semantic_points WHERE chunk_id = ?", (chunk_hash,))
+                conn.execute(f"DELETE FROM semantic_points WHERE {point_clause}", point_params)
 
             conn.execute(
                 """INSERT INTO chunk_summaries 

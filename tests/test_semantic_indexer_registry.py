@@ -402,6 +402,25 @@ def test_failed_close_retains_owner_and_refuses_reopen(tmp_path):
         registry.shutdown()
 
 
+def test_shutdown_drains_other_owners_after_one_close_fails(tmp_path):
+    from mcp_server.utils.semantic_indexer_registry import SemanticIndexerRegistry
+
+    first, second = MagicMock(), MagicMock()
+    with patch("mcp_server.utils.semantic_indexer.SemanticIndexer", side_effect=[first, second]):
+        registry = SemanticIndexerRegistry(_make_registry_with_repos(tmp_path))
+        registry.get("repo-a")
+        registry.get("repo-b")
+        first.qdrant.close.side_effect = OSError("private close payload")
+
+        with pytest.raises(RuntimeError, match="resource close failed"):
+            registry.shutdown()
+        second.qdrant.close.assert_called_once()
+        assert len(registry._entries) == 1
+        first.qdrant.close.side_effect = None
+        registry.shutdown()
+        first.qdrant.close.assert_called()
+
+
 def test_construction_registration_race_closes_unadmitted_resource(tmp_path):
     from mcp_server.utils.semantic_indexer_registry import SemanticIndexerRegistry
 

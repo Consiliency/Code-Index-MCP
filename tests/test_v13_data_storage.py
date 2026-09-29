@@ -965,15 +965,17 @@ def test_summary_refresh_invalidates_vector_links_and_records_cleanup(runtime):
     }
     assert store.store_chunk_summary("summary-refresh", file_id, 0, 5, "old", **kwargs)
     store.upsert_semantic_point("fixture", "summary-refresh", 404, "fixture-collection")
+    store.upsert_semantic_point("fixture", "summary-refresh:part:0:2", 405, "fixture-collection")
     assert store.store_chunk_summary("summary-refresh", file_id, 0, 5, "old", **kwargs)
     assert store.get_semantic_point_ids("fixture", ["summary-refresh"]) == [404]
     assert store.get_pending_vector_deletions() == []
 
     assert store.store_chunk_summary("summary-refresh", file_id, 0, 5, "new", **kwargs)
     assert store.get_semantic_point_ids("fixture", ["summary-refresh"]) == []
+    assert store.get_semantic_point_ids("fixture", ["summary-refresh:part:0:2"]) == []
     assert [
         (row["point_id"], row["collection"]) for row in store.get_pending_vector_deletions()
-    ] == [(404, "fixture-collection")]
+    ] == [(404, "fixture-collection"), (405, "fixture-collection")]
     evidence = store.get_semantic_readiness_evidence(
         "fixture", collection="fixture-collection", expected_prompt_fingerprint="fingerprint-a"
     )
@@ -989,6 +991,27 @@ def test_summary_refresh_invalidates_vector_links_and_records_cleanup(runtime):
         "fixture", collection="fixture-collection", expected_prompt_fingerprint="fingerprint-a"
     )
     assert evidence["missing_summaries"] == 1
+
+    links = [
+        ("fixture", "summary-refresh", 406, "fixture-collection"),
+        ("fixture", "summary-refresh:part:0:2", 407, "fixture-collection"),
+    ]
+    assert not store.admit_semantic_point_links(
+        links, {"summary-refresh": ("old", True, "fixture", "fingerprint-a")}
+    )
+    assert store.get_semantic_point_ids("fixture", ["summary-refresh"]) == []
+    assert {row["point_id"] for row in store.get_pending_vector_deletions()} == {
+        404,
+        405,
+        406,
+        407,
+    }
+
+    assert store.store_chunk_summary("summary-refresh", file_id, 0, 5, "new", **kwargs)
+    assert store.admit_semantic_point_links(
+        links, {"summary-refresh": ("new", True, "fixture", "fingerprint-a")}
+    )
+    assert store.get_semantic_point_ids("fixture", ["summary-refresh"]) == [406]
 
 
 def test_hard_delete_records_vector_debt_and_clears_inbound_references(runtime):
