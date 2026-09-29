@@ -154,7 +154,6 @@ class IndexArtifactDownloader:
 
     def list_artifacts(self, name_filter: Optional[str] = None) -> List[Dict[str, Any]]:
         print("🔍 Fetching available artifacts...")
-        deadline = time.monotonic() + 60
         actions = io.BytesIO()
         available = 0
         try:
@@ -169,7 +168,7 @@ class IndexArtifactDownloader:
                 ],
                 actions,
                 8 * 1024**2,
-                deadline,
+                time.monotonic() + 60,
             )
             available += 1
         except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
@@ -195,7 +194,7 @@ class IndexArtifactDownloader:
                 ["gh", "api", f"/repos/{self.repo}/releases", "--paginate", "--jq", ".[]"],
                 releases,
                 8 * 1024**2,
-                deadline,
+                time.monotonic() + 60,
             )
             available += 1
         except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
@@ -694,7 +693,7 @@ class IndexArtifactDownloader:
             }:
                 reasons.append(f"unknown schema_version: {actual_schema}")
 
-        manifest = metadata.get("manifest_v2")
+        manifest = metadata.get("manifest_v2") or metadata.get("artifact_manifest_v2")
         if isinstance(manifest, dict):
             manifest_branch = manifest.get("tracked_branch") or manifest.get("branch")
             checks = [

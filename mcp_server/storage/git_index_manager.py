@@ -1062,13 +1062,18 @@ class GitAwareIndexManager:
                     check=True,
                     timeout=30,
                 )
-            content = target.read_bytes()
+
+            def normalized_hash(encoding):
+                digest = hashlib.sha256()
+                with target.open("r", encoding=encoding, newline=None) as source:
+                    for chunk in iter(lambda: source.read(8192), ""):
+                        digest.update(chunk.encode("utf-8"))
+                return digest.hexdigest()
+
             try:
-                normalized = content.decode("utf-8")
+                hashes[relative.as_posix()] = normalized_hash("utf-8")
             except UnicodeDecodeError:
-                normalized = content.decode("latin-1")
-            normalized = normalized.replace("\r\n", "\n").replace("\r", "\n")
-            hashes[relative.as_posix()] = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+                hashes[relative.as_posix()] = normalized_hash("latin-1")
 
         # Load committed policies from parents first, before reading ordinary blobs.
         policies = sorted(

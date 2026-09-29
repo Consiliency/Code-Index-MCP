@@ -614,6 +614,14 @@ class IndexArtifactUploader:
             raise ValueError("Prepared artifact identity mismatch: " + "; ".join(reasons))
         if index_generation is not None and metadata.get("index_generation") != index_generation:
             raise ValueError("Prepared artifact identity mismatch: index generation differs")
+        if "manifest_v2" in metadata or "artifact_manifest_v2" in metadata:
+            from .integrity_gate import validate_artifact_integrity
+
+            integrity = validate_artifact_integrity(metadata, archive_path)
+            if not integrity.passed:
+                raise ValueError(
+                    "Prepared artifact integrity validation failed: " + "; ".join(integrity.reasons)
+                )
         attestation = attest(metadata_path, repo=self.repo)
         return self.upload_direct(archive_path, metadata, attestation=attestation)
 

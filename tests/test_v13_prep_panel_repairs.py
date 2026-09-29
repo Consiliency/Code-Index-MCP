@@ -687,6 +687,14 @@ def test_installed_cli_prepares_once_and_uploads_only_matching_signed_identity(
     assert "identity mismatch" in refused.output
     upload.assert_called_once()
     signature.assert_called_once()
+    metadata = json.loads(before)
+    metadata["artifact_manifest_v2"] = {**metadata["manifest_v2"], "repo_id": "other"}
+    metadata_path.write_bytes(_metadata_bytes(metadata))
+    refused_aliases = runner.invoke(artifact, command)
+    assert refused_aliases.exit_code != 0
+    assert "manifest_v2 aliases disagree" in refused_aliases.output
+    upload.assert_called_once()
+    signature.assert_called_once()
     metadata_path.write_bytes(before)
     registry.update_indexed_commit(
         repo_id, registry.get(repo_id).last_indexed_commit, branch="main"

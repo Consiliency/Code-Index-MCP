@@ -58,6 +58,26 @@ def test_artifact_discovery_reports_when_both_backends_fail(monkeypatch):
         downloader.list_artifacts()
 
 
+def test_artifact_discovery_releases_get_fresh_deadline_after_actions_timeout(monkeypatch):
+    downloader = IndexArtifactDownloader(repo="owner/repo")
+    clock = [100.0]
+    monkeypatch.setattr("mcp_server.artifacts.artifact_download.time.monotonic", lambda: clock[0])
+
+    def fetch(command, output, limit, deadline):
+        if "actions/artifacts" in command[2]:
+            clock[0] = deadline + 1
+            raise subprocess.TimeoutExpired(command, 60)
+        assert deadline > clock[0]
+        output.write(
+            b'{"tag_name":"index-main","draft":false,"created_at":"2026-01-01",'
+            b'"assets":[{"name":"artifact-metadata.json","size":1},'
+            b'{"name":"index.tar.gz","size":1}]}\n'
+        )
+
+    monkeypatch.setattr("mcp_server.artifacts.artifact_download._download_bounded", fetch)
+    assert downloader.list_artifacts()[0]["artifact_backend"] == "github_release"
+
+
 def test_latest_tries_authenticated_identity_after_stale_promoted_artifact(tmp_path, monkeypatch):
     downloader = IndexArtifactDownloader(repo="owner/repo", registry=MagicMock())
     artifacts = [
@@ -237,6 +257,13 @@ def test_validate_artifact_identity_rejects_wrong_repo_branch_commit_and_profile
     assert any("tracked_branch mismatch" in reason for reason in reasons)
     assert any("commit mismatch" in reason for reason in reasons)
     assert any("semantic_profile_hash mismatch" in reason for reason in reasons)
+
+
+def test_validate_artifact_identity_checks_manifest_alias():
+    downloader = IndexArtifactDownloader(repo="owner/repo")
+    metadata = _metadata(artifact_manifest_v2={"repo_id": "other"})
+    reasons = downloader.validate_artifact_identity(metadata, repo_id="repo-id")
+    assert any("manifest repo_id mismatch" in reason for reason in reasons)
 
 
 def test_install_indexes_hydrates_repo_scoped_current_db(tmp_path: Path):

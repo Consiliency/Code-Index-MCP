@@ -2,6 +2,7 @@
 
 import hashlib
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -11,8 +12,8 @@ from mcp_server.watcher_multi_repo import MultiRepositoryWatcher
 from tests.test_v13_data_storage import runtime
 
 
-@pytest.mark.parametrize("source_bytes", [b"name = 1\r\n", b"# caf\xe9\n"])
-def test_committed_snapshot_hash_matches_indexed_text(runtime, tmp_path, source_bytes):
+@pytest.mark.parametrize("source_bytes", [b"name = 1\r\n", b"# caf\xe9\n", b"a" * 8191 + b"\r\n"])
+def test_committed_snapshot_hash_matches_indexed_text(runtime, tmp_path, monkeypatch, source_bytes):
     repo, _registry, _repo_id, _store, manager = runtime
     (repo / "hello.py").write_bytes(source_bytes)
     subprocess.run(["git", "add", "hello.py"], cwd=repo, check=True)
@@ -22,6 +23,14 @@ def test_committed_snapshot_hash_matches_indexed_text(runtime, tmp_path, source_
     ).stdout.strip()
     destination = tmp_path / "snapshot"
     destination.mkdir()
+    original_read_bytes = Path.read_bytes
+
+    def refuse_full_snapshot_read(path):
+        if path == destination / "hello.py":
+            raise AssertionError("Snapshot hashing must stream admitted content")
+        return original_read_bytes(path)
+
+    monkeypatch.setattr(Path, "read_bytes", refuse_full_snapshot_read)
     hashes = manager._snapshot_committed_inputs(repo, head, destination)
     normalized = source_bytes.decode("utf-8" if b"\xe9" not in source_bytes else "latin-1")
     normalized = normalized.replace("\r\n", "\n")
