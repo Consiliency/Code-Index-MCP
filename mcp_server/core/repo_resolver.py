@@ -145,7 +145,7 @@ class RepoResolver:
                 return UpdateResult(indexed=indexed, failed=int(bool(failed)))
 
             sync = self._index_manager._rebuild_repository_index_locked(
-                ctx.repo_id, stage_operation=staged_operation
+                ctx.repo_id, stage_operation=staged_operation, expected_owner=ctx.registry_entry
             )
             if sync.action != "full_index":
                 if outcome and isinstance(outcome[0], dict) and outcome[0].get("cancelled"):

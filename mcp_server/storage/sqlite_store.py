@@ -419,7 +419,12 @@ class SQLiteStore:
             with closing(sqlite3.connect(destination)) as writer:
                 reader.backup(writer, pages=256, progress=progress)
 
-    def prepare_generation(self, committed_hashes: Dict[str, str], profile_id: str) -> None:
+    def prepare_generation(
+        self,
+        committed_hashes: Dict[str, str],
+        profile_id: str,
+        prompt_fingerprint: Optional[str] = None,
+    ) -> None:
         """Regenerate code-owned rows in an unpublished copy, retaining owned data."""
         self._require_writable()
         with self._get_connection() as conn:
@@ -443,7 +448,10 @@ class SQLiteStore:
                 if row["file_id"] in retained_files
                 or (
                     readable_scheme
+                    and prompt_fingerprint is not None
+                    and bool(row["is_authoritative"])
                     and row["profile_id"] == profile_id
+                    and row["prompt_fingerprint"] == prompt_fingerprint
                     and (file := files_by_id.get(row["file_id"])) is not None
                     and file["content_hash"] is not None
                     and committed_hashes.get(file["relative_path"]) == file["content_hash"]

@@ -10,6 +10,27 @@ import pytest
 
 from mcp_server.watcher.sweeper import DEFAULT_SWEEP_MINUTES, ENV_SWEEP_MINUTES, WatcherSweeper
 
+
+@pytest.mark.parametrize(
+    ("content", "normalized"),
+    [(b"a\r\nb\rc\n", "a\nb\nc\n"), (b"caf\xe9\r\n", "caf\u00e9\n")],
+)
+def test_sweep_hash_streams_normalized_source(tmp_path, monkeypatch, content, normalized):
+    source = tmp_path / "source.py"
+    source.write_bytes(content)
+    sweeper = WatcherSweeper(
+        on_missed_path=None,
+        repo_roots_provider=lambda: {},
+        store=None,
+    )
+
+    def refuse_read_bytes(_path):
+        raise AssertionError("Sweeper materialized the source file")
+
+    monkeypatch.setattr(Path, "read_bytes", refuse_read_bytes)
+    assert sweeper._hash_file(source) == hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

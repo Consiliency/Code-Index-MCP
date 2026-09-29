@@ -929,6 +929,30 @@ def test_sync_rebuild_cannot_adopt_replacement_registration(runtime, monkeypatch
     assert registry.get(repo_id).staleness_reason == replacements[0].staleness_reason
 
 
+def test_scoped_mutation_cannot_adopt_replacement_registration(runtime, monkeypatch):
+    repo, registry, repo_id, _store, manager = runtime
+    assert manager.rebuild_repository_index(repo_id).action == "full_index"
+    manager.store_registry = StoreRegistry.for_registry(registry)
+    resolver = RepoResolver(registry, manager.store_registry)
+    resolver._index_manager = manager
+    ctx = resolver.resolve_ready(repo)
+    assert ctx is not None
+    rebuild = manager._rebuild_repository_index_locked
+    replacements = []
+
+    def replace_before_rebuild(*args, **kwargs):
+        registry.unregister_repository(repo_id)
+        registry.register_repository(str(repo))
+        replacements.append(registry.get(repo_id))
+        return rebuild(*args, **kwargs)
+
+    monkeypatch.setattr(manager, "_rebuild_repository_index_locked", replace_before_rebuild)
+    with pytest.raises(RuntimeError, match="Staged mutation did not publish"):
+        resolver.mutate(ctx, lambda _stage: None)
+    assert registry.get(repo_id).index_generation == replacements[0].index_generation
+    assert registry.get(repo_id).staleness_reason == replacements[0].staleness_reason
+
+
 @pytest.mark.parametrize("change", ["registration", "auto_sync", "active"])
 def test_retired_handler_and_sweep_do_not_adopt_replacement(runtime, change):
     from mcp_server.watcher_multi_repo import MultiRepositoryWatcher

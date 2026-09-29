@@ -616,6 +616,41 @@ class TestReindexIntegration:
         subprocess.run(["git", "commit", "-qm", "Synthetic watcher fixture"], cwd=repo, check=True)
 
     @pytest.mark.integration
+    def test_retired_file_watcher_cannot_adopt_replacement(self, runtime, monkeypatch):
+        repo, registry, repo_id, _original, manager = runtime
+        assert manager.rebuild_repository_index(repo_id).action == "full_index"
+        ctx = manager._resolve_ctx(repo_id)
+        handler = _Handler(manager.dispatcher, ctx=ctx, index_manager=manager)
+        try:
+            registry.unregister_repository(repo_id)
+            registry.register_repository(str(repo))
+            sync = Mock()
+            monkeypatch.setattr(manager, "sync_repository_index", sync)
+
+            assert handler._reconcile_if_managed(repo / "hello.py")
+            sync.assert_not_called()
+            assert handler.ctx is ctx
+        finally:
+            handler.stop()
+
+    @pytest.mark.integration
+    def test_file_watcher_respects_disabled_auto_sync(self, runtime):
+        repo, registry, repo_id, _original, manager = runtime
+        assert manager.rebuild_repository_index(repo_id).action == "full_index"
+        ctx = manager._resolve_ctx(repo_id)
+        handler = _Handler(manager.dispatcher, ctx=ctx, index_manager=manager)
+        before = registry.get(repo_id)
+        try:
+            with registry._transaction(write=True):
+                registry._registry[repo_id]["auto_sync"] = False
+            assert handler._reconcile_if_managed(repo / "hello.py")
+            after = registry.get(repo_id)
+            assert after.index_generation == before.index_generation
+            assert after.staleness_reason == before.staleness_reason
+        finally:
+            handler.stop()
+
+    @pytest.mark.integration
     def test_file_modification_updates_line_numbers(self, runtime):
         repo, _registry, repo_id, _original, manager = runtime
         path = repo / "mod_test.py"

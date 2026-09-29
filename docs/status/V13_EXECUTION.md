@@ -769,3 +769,19 @@ passing tests and two failures caused by synthetic tests discovering an index
 created in the checkout by another test. Those fixtures now use their own
 index path and pass focused checks. Full exact-source acceptance, complete
 reviews, and both bounded effects remain pending.
+
+The exact `2d7d6c4` serial suite subsequently passed 4,028 tests (135 skipped,
+38 deselected, 55.23% coverage), with protected Agent Gate, Docker, and
+Qdrant file checks green. Independent runtime review then found three more
+owner and memory risks: scoped mutation lacked an owner fence, a stale file
+watcher could adopt a replacement registration, and a sweeper read admitted
+large source files in one allocation. The local candidate now fences both
+owner paths and hashes sweep inputs in bounded chunks; focused race and
+watcher checks pass. An independent storage review also found full generation
+summary retention accepted stale prompt fingerprints and non-authoritative
+rows. Retention and strict summary completion now require an authoritative
+summary matching the active profile and prompt fingerprint. Focused storage,
+summarization and migration checks pass after synthetic fixture alignment.
+These repairs have not yet passed an exact-head full suite or four complete
+independent code reviews. PREP stays unaccepted; neither bounded live allowance
+has been used, and Code-Index-MCP#97 stays draft.

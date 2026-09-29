@@ -1,9 +1,11 @@
 """Periodic full-tree sweeper that recovers inotify/FSEvents drop events (IF-0-P14-5)."""
 
 import hashlib
+import io
 import logging
 import os
 import subprocess
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -172,14 +174,21 @@ class WatcherSweeper:
                         continue
                     if fs_path.is_file():
                         if blob is not None and relative in transformed_paths:
-                            committed = subprocess.run(
-                                ["git", "cat-file", "blob", blob[0]],
-                                cwd=repo_root,
-                                capture_output=True,
-                                check=True,
-                                timeout=30,
-                            ).stdout
-                            fs_by_path[relative] = self._hash_content(committed)
+                            with tempfile.TemporaryFile() as committed:
+                                subprocess.run(
+                                    ["git", "cat-file", "blob", blob[0]],
+                                    cwd=repo_root,
+                                    stdout=committed,
+                                    stderr=subprocess.PIPE,
+                                    check=True,
+                                    timeout=30,
+                                )
+
+                                def open_committed():
+                                    committed.seek(0)
+                                    return os.fdopen(os.dup(committed.fileno()), "rb")
+
+                                fs_by_path[relative] = self._hash_stream(open_committed)
                         else:
                             fs_by_path[relative] = self._hash_file(fs_path)
 
@@ -223,16 +232,25 @@ class WatcherSweeper:
         return drifted
 
     def _hash_file(self, path: Path) -> str:
-        return self._hash_content(path.read_bytes())
+        return self._hash_stream(lambda: path.open("rb"))
 
     @staticmethod
     def _hash_content(data: bytes) -> str:
+        return WatcherSweeper._hash_stream(lambda: io.BytesIO(data))
+
+    @staticmethod
+    def _hash_stream(open_source) -> str:
+        def normalized_hash(encoding):
+            digest = hashlib.sha256()
+            with io.TextIOWrapper(open_source(), encoding=encoding, newline=None) as source:
+                for chunk in iter(lambda: source.read(8192), ""):
+                    digest.update(chunk.encode("utf-8"))
+            return digest.hexdigest()
+
         try:
-            content = data.decode("utf-8")
+            return normalized_hash("utf-8")
         except UnicodeDecodeError:
-            content = data.decode("latin-1")
-        content = content.replace("\r\n", "\n").replace("\r", "\n")
-        return hashlib.sha256(content.encode("utf-8")).hexdigest()
+            return normalized_hash("latin-1")
 
     def _indexed_path_should_report_delete(
         self, repo_root: Path, rel: str, gitignore_filter

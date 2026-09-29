@@ -656,12 +656,6 @@ class GitAwareIndexManager:
                 if getattr(self.dispatcher, "_semantic_enabled", False) is True
                 else settings.semantic_default_profile
             )
-            if replace_derived or (changes is None and stage_operation is None):
-                stage_store.prepare_generation(hashes, profile)
-            else:
-                with stage_store._get_connection() as connection:
-                    connection.execute("DELETE FROM query_cache")
-                    connection.execute("DELETE FROM parse_cache")
             stage_info = replace(
                 repo_info,
                 index_path=generation_path,
@@ -681,6 +675,22 @@ class GitAwareIndexManager:
                 registry_entry=stage_info,
                 staging=True,
             )
+            if replace_derived or (changes is None and stage_operation is None):
+                contract_getter = getattr(self.dispatcher, "get_semantic_summary_contract", None)
+                contract = contract_getter(stage_ctx) if callable(contract_getter) else None
+                stage_store.prepare_generation(
+                    hashes,
+                    profile,
+                    (
+                        contract.get("prompt_fingerprint")
+                        if contract and contract.get("profile_id") == profile
+                        else None
+                    ),
+                )
+            else:
+                with stage_store._get_connection() as connection:
+                    connection.execute("DELETE FROM query_cache")
+                    connection.execute("DELETE FROM parse_cache")
             self._rebuild_checkpoint("stage_created")
             if getattr(self.dispatcher, "_semantic_enabled", False) is True:
                 if not callable(getattr(self.dispatcher, "_semantic_lease", None)):

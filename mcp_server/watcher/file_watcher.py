@@ -226,8 +226,20 @@ class _Handler(FileSystemEventHandler):
         if ctx is None:
             logger.warning("Watcher reconciliation requires a registered repository context")
             return True
+        owner = self.ctx.registry_entry
+        if (
+            getattr(owner, "registration_id", None) is None
+            or ctx.registry_entry.registration_id != owner.registration_id
+            or ctx.workspace_root.resolve() != self.ctx.workspace_root.resolve()
+        ):
+            logger.warning("Watcher reconciliation owner changed")
+            return True
         self.ctx = ctx
-        result = self.index_manager.sync_repository_index(ctx.repo_id)
+        result = self.index_manager.sync_repository_index(
+            ctx.repo_id,
+            expected_registration_id=owner.registration_id,
+            require_auto_sync=True,
+        )
         if result.action in {"full_index", "incremental_update"}:
             self._kick_cache_invalidation(path)
         return True

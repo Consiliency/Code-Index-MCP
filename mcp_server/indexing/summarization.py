@@ -501,11 +501,17 @@ class ChunkWriter:
         # Skip if an authoritative summary already exists.
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.execute(
-                "SELECT is_authoritative, summary_text FROM chunk_summaries WHERE chunk_hash = ?",
+                "SELECT is_authoritative, summary_text, profile_id, prompt_fingerprint "
+                "FROM chunk_summaries WHERE chunk_hash = ?",
                 (chunk_hash,),
             )
             row = cursor.fetchone()
-            if row and row[0]:
+            if (
+                row
+                and row[0]
+                and row[2] == self.summarization_config.get("profile_id")
+                and row[3] == self._prompt_fingerprint()
+            ):
                 return str(row[1])
 
         # Prompt without file context — used by MCP sampling (tight token budget).
@@ -951,7 +957,9 @@ class FileBatchSummarizer(ChunkWriter):
             auth_hashes = {
                 row[0]
                 for row in conn.execute(
-                    "SELECT chunk_hash FROM chunk_summaries WHERE is_authoritative=1"
+                    "SELECT chunk_hash FROM chunk_summaries WHERE is_authoritative=1 "
+                    "AND profile_id=? AND prompt_fingerprint=?",
+                    (self.summarization_config.get("profile_id"), self._prompt_fingerprint()),
                 ).fetchall()
             }
 
@@ -1036,7 +1044,9 @@ class FileBatchSummarizer(ChunkWriter):
                 persisted_hashes = {
                     row[0]
                     for row in conn.execute(
-                        "SELECT chunk_hash FROM chunk_summaries WHERE is_authoritative=1"
+                        "SELECT chunk_hash FROM chunk_summaries WHERE is_authoritative=1 "
+                        "AND profile_id=? AND prompt_fingerprint=?",
+                        (self.summarization_config.get("profile_id"), self._prompt_fingerprint()),
                     ).fetchall()
                 }
             summaries_to_persist = [

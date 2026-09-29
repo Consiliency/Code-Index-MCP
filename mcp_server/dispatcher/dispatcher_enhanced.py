@@ -3348,6 +3348,9 @@ class EnhancedDispatcher:
 
         normalized_paths = sorted(Path(path).resolve(strict=False).as_posix() for path in paths)
         placeholders = ", ".join("?" for _ in normalized_paths)
+        contract = self.get_semantic_summary_contract(ctx) or {}
+        profile_id = contract.get("profile_id")
+        prompt_fingerprint = contract.get("prompt_fingerprint")
         with sqlite3.connect(active_store.db_path) as conn:
             # CHUNKERSAFE Lane A: fail closed before a scheme-dependent code_chunks
             # read over an incompatible/rebuilding index.
@@ -3357,9 +3360,11 @@ class EnhancedDispatcher:
                     FROM code_chunks c
                     JOIN files f ON c.file_id = f.id
                     LEFT JOIN chunk_summaries cs ON c.chunk_id = cs.chunk_hash
-                    WHERE cs.chunk_hash IS NULL
+                    WHERE (? IS NULL OR ? IS NULL OR cs.chunk_hash IS NULL
+                           OR cs.is_authoritative != 1
+                           OR cs.profile_id IS NOT ? OR cs.prompt_fingerprint IS NOT ?)
                       AND f.path IN ({placeholders})""",
-                tuple(normalized_paths),
+                (profile_id, prompt_fingerprint, profile_id, prompt_fingerprint, *normalized_paths),
             ).fetchone()
         return int(row[0]) if row else 0
 

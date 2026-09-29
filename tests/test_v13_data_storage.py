@@ -310,6 +310,33 @@ def test_staged_summary_scope_matches_snapshot_input(runtime, tmp_path):
             },
         )
         assert manager.dispatcher._count_missing_summaries_for_paths(ctx, [source]) == 1
+        file_id = store.get_file_by_path(source)["id"]
+        chunk_id = store.get_chunks_for_file(file_id)[0]["chunk_id"]
+        contract = manager.dispatcher.get_semantic_summary_contract(ctx)
+        store.store_chunk_summary(
+            chunk_id,
+            file_id,
+            1,
+            1,
+            "stale",
+            llm_model="fixture",
+            profile_id=contract["profile_id"],
+            prompt_fingerprint="stale",
+            is_authoritative=True,
+        )
+        assert manager.dispatcher._count_missing_summaries_for_paths(ctx, [source]) == 1
+        store.store_chunk_summary(
+            chunk_id,
+            file_id,
+            1,
+            1,
+            "current",
+            llm_model="fixture",
+            profile_id=contract["profile_id"],
+            prompt_fingerprint=contract["prompt_fingerprint"],
+            is_authoritative=True,
+        )
+        assert manager.dispatcher._count_missing_summaries_for_paths(ctx, [source]) == 0
         with store._get_connection() as connection:
             assert connection.execute("SELECT path FROM files").fetchone()[0] == str(source)
     finally:
@@ -404,6 +431,9 @@ def test_real_semantic_generation_uses_its_own_backend_and_matching_summary_ids(
         def __init__(self, db_path, **kwargs):
             self.db_path = db_path
 
+        def _prompt_fingerprint(self):
+            return "fixture-prompt"
+
         async def process_scope(self, **kwargs):
             store = SQLiteStore(self.db_path)
             try:
@@ -417,6 +447,7 @@ def test_real_semantic_generation_uses_its_own_backend_and_matching_summary_ids(
                         "Synthetic summary",
                         "fixture",
                         profile_id="fixture",
+                        prompt_fingerprint=self._prompt_fingerprint(),
                         is_authoritative=True,
                     )
                 return SimpleNamespace(
@@ -865,7 +896,7 @@ def test_hard_delete_records_vector_debt_and_clears_inbound_references(runtime):
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
 
 
-@pytest.mark.parametrize("drift", ["none", "content", "profile"])
+@pytest.mark.parametrize("drift", ["none", "content", "profile", "prompt", "non_authoritative"])
 def test_snapshot_retains_documents_and_only_valid_code_summaries(runtime, tmp_path, drift):
     repo, registry, repo_id, original, _manager = runtime
     document_id, _ = _seed_retained(original, repo)
@@ -890,7 +921,8 @@ def test_snapshot_retains_documents_and_only_valid_code_summaries(runtime, tmp_p
         "unchanged summary",
         llm_model="fixture",
         profile_id="fixture",
-        is_authoritative=True,
+        is_authoritative=drift != "non_authoritative",
+        prompt_fingerprint="fingerprint-a",
     )
     original.upsert_semantic_point("fixture", "code:fixture", 303, "old-collection")
     before = Path(original.db_path).read_bytes()
@@ -907,6 +939,7 @@ def test_snapshot_retains_documents_and_only_valid_code_summaries(runtime, tmp_p
                 )
             },
             "other" if drift == "profile" else "fixture",
+            "fingerprint-b" if drift == "prompt" else "fingerprint-a",
         )
         assert Path(original.db_path).read_bytes() == before
         assert bool(stage.get_chunk_summary("code:fixture")) is (drift == "none")
