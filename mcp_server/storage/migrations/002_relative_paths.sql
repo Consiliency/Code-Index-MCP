@@ -52,4 +52,5 @@ VALUES (2, 'Relative paths and content tracking');
 
 -- Phase 7: Add migration record
 INSERT INTO migrations (version_from, version_to, status) 
-VALUES (1, 2, 'completed');
+SELECT 1, 2, 'completed'
+WHERE NOT EXISTS (SELECT 1 FROM migrations WHERE version_to = 2 AND status = 'completed');

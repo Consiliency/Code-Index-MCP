@@ -6,8 +6,9 @@ The factory callable must return connections opened with
 ``sqlite3.ProgrammingError`` when connections are used across threads.
 """
 
-import queue
 import sqlite3
+import threading
+from collections import deque
 from contextlib import contextmanager
 from typing import Callable, Iterator
 
@@ -24,38 +25,47 @@ class ConnectionPool:
     """
 
     def __init__(self, factory: Callable[[], sqlite3.Connection], size: int = 4):
+        if size < 1:
+            raise ValueError("ConnectionPool size must be positive")
         self._factory = factory
         self._size = size
-        self._pool: "queue.Queue[sqlite3.Connection]" = queue.Queue(maxsize=size)
+        self._pool = deque()
+        self._condition = threading.Condition()
         self._closed = False
-        for _ in range(size):
-            self._pool.put(factory())
+        try:
+            for _ in range(size):
+                self._pool.append(factory())
+        except BaseException:
+            self.close_all()
+            raise
 
     @contextmanager
     def acquire(self) -> Iterator[sqlite3.Connection]:
-        if self._closed:
-            raise RuntimeError("ConnectionPool is closed; cannot acquire connection")
-        conn = self._pool.get()
+        with self._condition:
+            while not self._pool and not self._closed:
+                self._condition.wait()
+            if self._closed:
+                raise RuntimeError("ConnectionPool is closed; cannot acquire connection")
+            conn = self._pool.popleft()
         try:
             yield conn
         finally:
-            if not self._closed:
-                self._pool.put(conn)
-            else:
-                try:
+            with self._condition:
+                if not self._closed:
+                    self._pool.append(conn)
+                    self._condition.notify()
+                else:
                     conn.close()
-                except Exception:
-                    pass
 
     def close_all(self) -> None:
         """Drain the pool and close every connection.  Idempotent."""
-        self._closed = True
-        while True:
+        with self._condition:
+            self._closed = True
+            idle = list(self._pool)
+            self._pool.clear()
+            self._condition.notify_all()
+        for conn in idle:
             try:
-                conn = self._pool.get_nowait()
-                try:
-                    conn.close()
-                except Exception:
-                    pass
-            except queue.Empty:
-                break
+                conn.close()
+            except sqlite3.Error:
+                pass

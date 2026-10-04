@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import importlib
 import os
+import subprocess
+import sys
 
 import pytest
 
@@ -78,9 +80,25 @@ def test_plugin_factory_sandbox_default_on(monkeypatch):
             f"Expected SandboxedPlugin, got {type(p).__name__}. "
             "Sandbox should be on by default after SL-5 flip."
         )
+        assert p._capabilities.env_allow == frozenset()
     finally:
         if hasattr(p, "close"):
             p.close()
+
+
+def test_sandbox_uses_scratch_home_when_host_home_is_private(tmp_path):
+    script = """
+from pathlib import Path
+from mcp_server.sandbox.capabilities import CapabilitySet
+from mcp_server.sandbox.caps_apply import apply
+apply(CapabilitySet(fs_read=(), fs_write=(), env_allow=frozenset()))
+home = Path.home()
+assert home != Path('/private-host-home')
+assert home.is_dir()
+"""
+    env = {**os.environ, "HOME": "/private-host-home", "TMPDIR": str(tmp_path)}
+    result = subprocess.run([sys.executable, "-c", script], env=env, capture_output=True)
+    assert result.returncode == 0, result.stderr
 
 
 def test_plugin_factory_sandbox_off_when_disabled(monkeypatch):

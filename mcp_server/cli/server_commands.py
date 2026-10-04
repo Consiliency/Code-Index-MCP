@@ -48,7 +48,8 @@ def serve(host: str, port: int, reload: bool, rebuild_on_schema_mismatch: bool) 
         f"Starting FastAPI admin/debug gateway on http://{host}:{port} "
         "(not the MCP Streamable HTTP transport)"
     )
-    uvicorn.run("mcp_server.gateway:app", host=host, port=port, reload=reload)
+    # Middleware evaluates explicit proxy trust against the actual socket peer.
+    uvicorn.run("mcp_server.gateway:app", host=host, port=port, reload=reload, proxy_headers=False)
 
 
 @click.command("stdio")

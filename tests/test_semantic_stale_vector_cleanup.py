@@ -6,6 +6,8 @@ import hashlib
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from mcp_server.core.path_resolver import PathResolver
 from mcp_server.storage.sqlite_store import SQLiteStore
 from mcp_server.utils.semantic_indexer import SemanticIndexer
@@ -27,21 +29,25 @@ class _FakeQdrantClient:
         self.deleted = []
         self.upserted = []
 
-    def delete(self, collection_name: str, points_selector) -> None:
+    def delete(self, collection_name: str, points_selector, *, wait=False):
         self.deleted.append(
             {
                 "collection": collection_name,
                 "points": list(points_selector.points),
+                "wait": wait,
             }
         )
+        return SimpleNamespace(status="completed")
 
-    def upsert(self, collection_name: str, points) -> None:
+    def upsert(self, collection_name: str, points, *, wait=False):
         self.upserted.append(
             {
                 "collection": collection_name,
                 "points": points,
+                "wait": wait,
             }
         )
+        return SimpleNamespace(status="completed")
 
 
 def _build_indexer(repo_path: Path, qdrant: _FakeQdrantClient) -> SemanticIndexer:
@@ -75,7 +81,7 @@ def test_delete_stale_vectors_deletes_qdrant_points_and_mappings(tmp_path):
     )
 
     assert deleted == 2
-    assert qdrant.deleted[0]["points"] == [101, 202]
+    assert qdrant.deleted[-1]["points"] == [101, 202]
     assert store.get_semantic_point_ids("test-profile", ["chunk-1", "chunk-2"]) == []
 
 
@@ -166,7 +172,7 @@ def test_cleanup_stale_semantic_artifacts_deletes_mappings_and_invalidated_summa
     assert cleanup["vectors_deleted"] == 3
     assert cleanup["mappings_deleted"] == 3
     assert cleanup["summaries_deleted"] == 1
-    assert qdrant.deleted[0]["points"] == [101, 102, 103]
+    assert qdrant.deleted[-1]["points"] == [101, 102, 103]
     assert (
         store.get_semantic_point_ids(
             "test-profile",
@@ -175,3 +181,69 @@ def test_cleanup_stale_semantic_artifacts_deletes_mappings_and_invalidated_summa
         == []
     )
     assert store.get_chunk_summary("chunk-1") is None
+
+
+def test_cleanup_targets_recorded_collection_with_acknowledged_delete(tmp_path):
+    store = SQLiteStore(str(tmp_path / "index.db"))
+    client = _FakeQdrantClient()
+    indexer = _build_indexer(tmp_path, client)
+    try:
+        store.upsert_semantic_point("test-profile", "chunk", 101, "original-collection")
+        assert indexer.delete_stale_vectors("test-profile", ["chunk"], store) == 1
+        assert client.deleted[-1] == {
+            "collection": "original-collection",
+            "points": [101],
+            "wait": True,
+        }
+    finally:
+        store.close()
+
+
+def test_unacknowledged_remote_delete_preserves_mapping(tmp_path, monkeypatch):
+    store = SQLiteStore(str(tmp_path / "index.db"))
+    client = _FakeQdrantClient()
+    indexer = _build_indexer(tmp_path, client)
+    monkeypatch.setattr(client, "delete", lambda **kwargs: SimpleNamespace(status="acknowledged"))
+    try:
+        store.upsert_semantic_point("test-profile", "chunk", 101, "code-index")
+        with pytest.raises(RuntimeError, match="Failed to delete remote points"):
+            indexer.delete_stale_vectors("test-profile", ["chunk"], store)
+        assert store.get_semantic_point_ids("test-profile", ["chunk"]) == [101]
+    finally:
+        store.close()
+
+
+def test_staged_cleanup_cannot_mutate_old_collection_or_clear_mapping(tmp_path):
+    store = SQLiteStore(str(tmp_path / "index.db"))
+    client = _FakeQdrantClient()
+    indexer = _build_indexer(tmp_path, client)
+    indexer.staging = True
+    try:
+        store.upsert_semantic_point("test-profile", "chunk", 101, "old-generation")
+        with pytest.raises(RuntimeError):
+            indexer.delete_stale_vectors("test-profile", ["chunk"], store)
+        with pytest.raises(RuntimeError):
+            indexer.delete_remote_points([101], collection="old-generation")
+        assert store.get_semantic_point_ids("test-profile", ["chunk"]) == [101]
+        assert not client.deleted
+    finally:
+        store.close()
+
+
+def test_failed_remote_delete_preserves_mapping_and_redacts_error(tmp_path, monkeypatch):
+    store = SQLiteStore(str(tmp_path / "index.db"))
+    client = _FakeQdrantClient()
+    indexer = _build_indexer(tmp_path, client)
+
+    def fail(**kwargs):
+        raise OSError("private response body")
+
+    monkeypatch.setattr(client, "delete", fail)
+    try:
+        store.upsert_semantic_point("test-profile", "chunk", 101, "code-index")
+        with pytest.raises(RuntimeError) as error:
+            indexer.delete_stale_vectors("test-profile", ["chunk"], store)
+        assert "private" not in str(error.value)
+        assert store.get_semantic_point_ids("test-profile", ["chunk"]) == [101]
+    finally:
+        store.close()

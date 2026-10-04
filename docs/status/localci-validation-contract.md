@@ -35,6 +35,7 @@ Phase plan: `plans/phase-plan-v9-LOCALCI.md`
 | `maintenance.yml` | offloaded | External worker notification only. |
 | `mcp-index.yml` | manual-only | Pull-request hosted rebuild removed. |
 | `release-automation.yml` | manual-only | Manual release workflow still runs `make agent-gate` before mutation. |
+| `sign-published-image.yml` | manual-only | Existing one-job manual signer; no routine trigger added by v13. |
 
 ## hosted-work reduction summary
 
@@ -62,3 +63,22 @@ No self-hosted runner registration was performed.
 No GitHub secret mutation was performed.
 No coverage threshold change was performed.
 No hosted coverage upload was performed.
+
+## V13 Verification Fidelity
+
+The gate additionally selects SQLite migration/upgrade, BAML parity,
+MCP response-schema parity, historical inventory and immutable workflow-census
+regressions. `agent-affected` includes tracked deletions and untracked files,
+handles names with spaces, and fails closed when Git inspection fails.
+Wheel smoke installs locked dependencies outside the checkout and uses the
+actual MCP SDK; container smoke uses the configured non-root startup and a
+disposable mounted Git repository. Neither permits fake dispatchers.
+
+Coverage policy is unchanged: the normal `pytest.ini` discovery gate has a
+35 percent floor, not 80 percent. `make coverage` and `make coverage-baseline`
+are bounded reporting selections, not full-suite or 80-percent certifications;
+they override default addopts and do not impose that normal-discovery floor.
+`--no-cov` runs prove tests only. Broad offline audit commands explicitly include
+integration/slow tests and exclude network, benchmark and separately run Git
+integration nodes; authenticated/provider/platform omissions must be recorded.
+The larger aspirational coverage goal must not be reported as achieved.

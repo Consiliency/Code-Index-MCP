@@ -1,0 +1,192 @@
+{
+  "board": {
+    "name": "index-it-v13-roadmap",
+    "purpose": "plan-review",
+    "seats": [
+      {
+        "model": "claude-fable-5",
+        "effort": "max",
+        "harness": "claude",
+        "lens": "correctness-and-data-durability",
+        "auth": "subscription",
+        "backing": "homebrew",
+        "host_leg": false
+      },
+      {
+        "model": "gpt-5.6-sol",
+        "effort": "max",
+        "harness": "codex",
+        "lens": "architecture-and-dependency-red-team",
+        "auth": "subscription",
+        "backing": "homebrew",
+        "host_leg": false
+      },
+      {
+        "model": "grok-4.5",
+        "effort": "max",
+        "harness": "grok",
+        "lens": "adversarial-security-and-failure-modes",
+        "auth": "subscription",
+        "backing": "homebrew",
+        "host_leg": false
+      },
+      {
+        "model": "Gemini 3.1 Pro",
+        "effort": "high",
+        "harness": "gemini",
+        "lens": "coverage-alternatives-and-proof-cost",
+        "auth": "subscription",
+        "backing": "homebrew",
+        "host_leg": false
+      }
+    ],
+    "allow_api_key_fallback": false,
+    "research_policy": {
+      "enabled": false,
+      "pmcp_command": [
+        "uvx",
+        "--from",
+        "pmcp==1.20.0",
+        "pmcp"
+      ],
+      "required_version": "1.20.0",
+      "required_capability": "scoped_advisor_audit.v1",
+      "servers": [
+        "firecrawl",
+        "brightdata"
+      ],
+      "gateway_tools": [
+        "gateway.health",
+        "gateway.catalog_search",
+        "gateway.describe",
+        "gateway.invoke"
+      ],
+      "tool_patterns": [
+        "firecrawl::*search*",
+        "firecrawl::*scrape*",
+        "firecrawl::*crawl*",
+        "firecrawl::*map*",
+        "firecrawl::*extract*",
+        "brightdata::*search*",
+        "brightdata::*scrape*",
+        "brightdata::*crawl*",
+        "brightdata::*query*",
+        "brightdata::*fetch*",
+        "brightdata::*unlocker*"
+      ],
+      "audit_required": true,
+      "all_seats_capable": true
+    }
+  },
+  "round": "round-2",
+  "inputs": [
+    {
+      "path": "/home/viperjuice/code/Code-Index-MCP/specs/phase-plans-v13.md",
+      "sha256": "178b8328d8e7dc76ddc0804d7b72d3ccddb55e23577a3d52cb7cbd70d5fd5308"
+    },
+    {
+      "path": "/home/viperjuice/code/Code-Index-MCP/docs/status/COMPREHENSIVE_CODE_REVIEW_2026-09-09.md",
+      "sha256": "de864227b7fa444e4407ec7b9428409e7abb3903a911f9a1bb3a640f5e7d4a47"
+    },
+    {
+      "path": "/home/viperjuice/code/Code-Index-MCP/docs/status/review-evidence-2026-09-09/test_counterexamples.py",
+      "sha256": "72aa3d3f63d828305123dd4f5dba9117206337a4113dda7e0e59e66881efe335"
+    },
+    {
+      "path": "/home/viperjuice/code/Code-Index-MCP/docs/status/localci-validation-contract.md",
+      "sha256": "62ec732d58f46c43fdf883b2ac112bdd34adb0238b2ccfcb985295639d207cbc"
+    },
+    {
+      "path": "/home/viperjuice/code/Code-Index-MCP/scripts/release_smoke.py",
+      "sha256": "65d103310afeaa14b5e8191b4be0db3303665b26198b3e00a7515bb88990a414"
+    },
+    {
+      "path": "/home/viperjuice/code/Code-Index-MCP/specs/phase-plans-v13_reviews.md",
+      "sha256": "d6181b81da55126904f13506c2e3e5402f5075575762abfe79bdafe5342d5c44"
+    },
+    {
+      "path": "/home/viperjuice/code/Code-Index-MCP/docs/validation/v13/roadmap-review-round1.json",
+      "sha256": "401243656bfd576875a6e29a8416bcc8ab0d7674369d4bbcaa7fb384d0ecf8c2"
+    }
+  ],
+  "provenance": [
+    {
+      "seat": "claude:claude-fable-5:max:correctness-and-data-durability",
+      "fallback_used": false,
+      "provider_harness": "claude",
+      "provider_model": "claude-fable-5",
+      "provider_argv_sha256": "ee8ab267ceaee611753afb1c157c0f6218f415676ecd710746dda3582b1ea43a",
+      "provider_prompt_sha256": "7671d7245c0487a2466abb2ed7644c33875c4e7102aaf96cb630be2d5678b04a",
+      "provider_prompt_transport": "pty_input",
+      "provider_env_api_keys_scrubbed": true,
+      "provider_env_direct_routes_scrubbed": true
+    },
+    {
+      "seat": "codex:gpt-5.6-sol:max:architecture-and-dependency-red-team",
+      "fallback_used": false,
+      "provider_harness": "codex",
+      "provider_model": "gpt-5.6-sol",
+      "provider_argv_sha256": "1f34aaff037f77eb3661328c74fb49c76e831f31dd9b311222b2290c6f101574",
+      "provider_prompt_sha256": "7671d7245c0487a2466abb2ed7644c33875c4e7102aaf96cb630be2d5678b04a",
+      "provider_prompt_transport": "stdin_sealed",
+      "provider_env_api_keys_scrubbed": true,
+      "provider_env_direct_routes_scrubbed": true
+    },
+    {
+      "seat": "grok:grok-4.5:max:adversarial-security-and-failure-modes",
+      "fallback_used": false,
+      "provider_harness": "grok",
+      "provider_model": "grok-4.5",
+      "provider_argv_sha256": "eac2b26863f9cae016bb36f3ec699ea122b6ee6432c0f8debf9a5100319bda0f",
+      "provider_prompt_sha256": "7671d7245c0487a2466abb2ed7644c33875c4e7102aaf96cb630be2d5678b04a",
+      "provider_prompt_transport": "stdin_sealed",
+      "provider_env_api_keys_scrubbed": true,
+      "provider_env_direct_routes_scrubbed": true
+    },
+    {
+      "seat": "gemini:Gemini 3.1 Pro:high:coverage-alternatives-and-proof-cost",
+      "fallback_used": false,
+      "provider_harness": "gemini",
+      "provider_model": "Gemini 3.1 Pro (High)",
+      "provider_argv_sha256": "49acca8c29d5d601b7c6a31981e7e134534b4f5b7faabab0edc7b5da281ea7b8",
+      "provider_prompt_sha256": "7671d7245c0487a2466abb2ed7644c33875c4e7102aaf96cb630be2d5678b04a",
+      "provider_prompt_transport": "stream_json_same_session_ingestion",
+      "provider_env_api_keys_scrubbed": true,
+      "provider_env_direct_routes_scrubbed": true
+    }
+  ],
+  "result": {
+    "legs": [
+      {
+        "leg": "claude",
+        "status": "OK",
+        "text": "**Reviewer identity:** Claude Fable 5 (`claude-fable-5`), Anthropic. Reconciliation-round review of the revised `specs/phase-plans-v13.md`, evaluated together with the disposition log and all four raw first-round responses. My first-round PARTIALLY AGREE does not transfer to the changed artifact; this verdict comes from re-verifying the revised bytes directly.\n\n**Outcome:** Every accepted first-round recommendation is verifiably present in the revised text, my round-one blocker (ANT-V13-B1) is closed, and I found no remaining blocking defect. Non-blocking refinements and pending evidence items follow.\n\n## Blocking findings\n\nNone. I checked each disposition against the revised text rather than trusting the log:\n\n- **ANTIGRAVITY-BLK-1/2, GROK-B2:** EC-DIST-1 now bans checkout/PYTHONPATH imports and fake resolver/dispatcher, requires the wheel and final non-root image under its configured startup to pass fresh/upgrade schema plus mounted-Git register/index/query/restart, and states health/help alone cannot pass. Present and sufficient.\n- **ANT-V13-B1, GROK-B1:** EC-PILOT-4 enumerates SIGTERM/SIGINT/EOF/repeated signals, in-flight requests, metrics-port contention, reconnect, and repeat provisioning on the PMCP-installed runtime; SAFETY now depends on STATE (hence DIST), and SAFETY's scope notes make installed lifecycle acceptance wait on artifact/pool/generation correctness. Resolved.\n- **ANTIGRAVITY-BLK-3:** The STATE\u2192SAFETY edge exists in the DAG; SAFETY/DATA serialize by default on overlapping ownership, and concurrency requires a machine-verified read/write conflict graph (\"the dependency DAG alone grants none\"). Gemini's requested edge landed verbatim.\n- **OPENAI-B01:** EC-FREEZE-3 freezes Qdrant modes; the Assumptions and EC-DATA-2 require both file-backed and client/server acceptance at 1,000/1,001 chunks with interruption/retry, prohibit live-lock breakage and silent backend switching, and exclude in-memory substitutes.\n- **OPENAI-B02:** SHIP is split into EC-SHIP-1/4/5/2/6/3: merge, post-merge identity gate, separate authorization/dispatch, delivered-artifact re-acceptance, published=true/accepted=false handling, and gated issue closure. One deliberate divergence from Sol's literal correction: yank is prohibited rather than offered as recovery. I explicitly endorse that divergence \u2014 silent yank destroys forensic evidence and can strand installed cohorts; owner-approved corrective release/rollback is the safer contract.\n- **GROK-B3:** EC-FREEZE-3 makes an unresolved signer block sharing acceptance; deferral requires an owner-approved amendment, never relaxed enforce mode.\n- All accepted refinements (frozen seats, query-triggered registry writes, the 1,001 pagination boundary, qualified-issue-or-roadmap tracking, named proof nodes with individual timeouts and partial results, owner-gated support narrowing, DATA-owned dry-run estimates with PILOT-owned budget, counterexample promotion rules) are present. AUTHOR-01's corrected pytest command uses exclusion markers consistent with the file's actual markers.\n\nGemini's round-one DISAGREE rested on the plan \"assuming\" the current `release_smoke.py` is a reliable gate. The revised plan assumes the opposite: rewriting that script is DIST's own exit criterion, and SHIP independently re-runs installed acceptance. I assess that basis as resolved; a maintained DISAGREE would need a new defect in the revised bytes. I have no disagreement with any recorded disposition.\n\n## Non-blocking refinements\n\n- **ANT-V13-R5 (SHIP closeout evidence):** Structural inspection covered the original 27 goal IDs; the validator evidence predates the added SHIP goals. Re-run `phase-loop validate-roadmap` on the final bytes and record EC-SHIP-4/5/6 registration before closeout. Mechanical, and the FREEZE kickoff path catches it regardless, so not blocking.\n- **ANT-V13-R6 (panel provenance):** Round-one launch evidence was not serialized; Grok self-labels 4.6 and Sol \"GPT-5\". Self-description is not attestation in either direction. Never cite round one as confirmed Grok 4.5 or as complete cross-vendor ablation evidence; attach broker invocation receipts for this reconciliation round as the reviews document commits.\n- **ANT-V13-R7 (SAFETY/DATA collision):** C19's second location, `multi_repo_manager.py:587`, is a DATA key file that a SAFETY finding must edit, and that module is not in the serialize-by-default enumeration (gateway/watcher/STDIO/dispatcher/registry/documentation). The conflict-graph rule covers it structurally; still, FREEZE should name its serial owner explicitly.\n- **ANT-V13-R8 (EC-SHIP-6 stall risk):** Recovery defers to an \"owner-approved corrective-release/rollback policy\" that no earlier phase must produce. The failure mode is safe (blocked, not fail-open), but PREP should hand SHIP a pre-approved recovery policy so a failed publication does not stall on an undefined process.\n- **ANT-V13-R9 (identity precision):** External Inputs names the seat \"Fable\" without a model ID; EC-FREEZE-3 should pin exact model IDs when freezing the four reviewer identities.\n- Verify the reported `fab_gate` circular-import warning is resolved before any governed phase execution; a silently unregistered gate would undermine closeout enforcement. This is runtime tooling outside the roadmap bytes, so it is a precondition, not a roadmap blocker.\n\n## Coverage and ordering assessment\n\nThe 21+12 mapping remains complete and arithmetically consistent (STATE 5, DATA 7, SAFETY 6, DIST 3; R01\u2013R12 all assigned). Sub-finding details survive the revision: cleanup-debt retention and per-boundary failure injection (C05/C06), per-batch provenance before upsert (C08), filter-before-limit with no-match distinct from unavailable (C18), SHA-256 Git and sibling worktrees (C17), waiter drain/wake and sidecar-unlink protection (C16/C04), query-triggered registry writes (C02), and metrics bind across concurrent instances (C20). The now near-linear DAG \u2014 SAFETY and DATA as STATE siblings joining before PILOT \u2014 matches real dependencies rather than ceremony. Remaining file collisions (`sqlite_store.py` and `git_index_manager.py` across DIST/STATE/DATA; `release_smoke.py` and the support matrix across DIST/PILOT) all sit on serialized edges except the R7 case above. Issue disposition, exact-candidate review, merge, publication dispatch, delivered-artifact verification, and cohort promotion are now separated more strictly than the audit's own recommended sequence. Deployment honesty holds: Linux/Python 3.12 with owner-gated narrowing, local/ephemeral HTTP, hostile-plugin claims rejected absent OS-enforced evidence, no commercial inference egress, budgeted local inference, and no new routine hosted work. The falsifiability rules (no checkout imports, no fake dispatchers, runner-stamped receipts, missing access treated as blocked rather than waived, five-minute proof partitioning) directly target the falsely-passing patterns visible in the current `release_smoke.py`.\n\n## Unsupported assumptions and unavailable evidence\n\nThis is a bundle-only review: I could not execute the validator, confirm key-file paths or cited line numbers at the implementation-time head, or verify that each round-one seat reviewed the recorded input SHA (Grok's leg reports in-chat truncation with offload). Round-one seat identities remain unattested pending receipts (R6). Availability of `codex-plan-phase`, `.phase-loop` state selection, and the worktree-host convention is assumed. None of these change the soundness of the roadmap's content.\n\nThis verdict authorizes phase planning only \u2014 not implementation, code acceptance, merge, publication, or fleet readiness; all implementation gates remain unchecked.\n\nAGREE",
+        "detail": null,
+        "seat_key": "claude:claude-fable-5:max:correctness-and-data-durability"
+      },
+      {
+        "leg": "codex",
+        "status": "OK",
+        "text": "Reviewer/model identity: OpenAI Codex (GPT-5).\n\n## Blocking findings\n\nNone. I found no remaining roadmap-level blocker.\n\n## Non-blocking refinements\n\n**OPENAI-R2-N01 \u2014 DATA / EC-DATA-2.** Explicitly enumerate C08\u2019s partial embedding responses and concurrent writes alongside model drift, restart, and retry. \u201cEvery batch validates provenance before upsert\u201d covers the invariant, but naming these cases would prevent an underspecified phase test.\n\n**OPENAI-R2-N02 \u2014 SAFETY / EC-SAFETY-2\u20133.** Require sentinel query content to be absent from error diagnostics as well as normal logs, and enumerate supported path-like, SQLite URI, inherited-descriptor, and subprocess cases in the sandbox evidence matrix. The current criteria remain adequate because hostile-plugin containment is expressly unsupported.\n\n**OPENAI-R2-N03 \u2014 Roadmap closeout.** The reconciliation record says the added SHIP goals still require final structural revalidation. Run the roadmap validator and goal-ID inspection against the revised bytes before invoking FREEZE planning. This is a procedural preflight, not a substantive roadmap defect.\n\n## Reconciliation assessment\n\nThe revised roadmap adequately incorporates the first-round recommendations:\n\n- The installed-smoke objections (`ANTIGRAVITY-BLK-1/2`, `GROK-B2`) are resolved by EC-DIST-1\u2019s actual-entrypoint, no-checkout-import, no-fake-dispatcher, mounted-Git, non-root container requirements.\n- The lifecycle and dependency objections (`ANT-V13-B1`, `GROK-B1`, `ANTIGRAVITY-BLK-3`) are resolved by `STATE -> SAFETY`, explicit PMCP-installed signal/EOF/port-contention acceptance, and serialize-by-default collision handling.\n- `OPENAI-B01` is resolved by mandatory file-backed and disposable client/server Qdrant evidence, including 1,000/1,001 boundaries and interruption/retry.\n- `OPENAI-B02` is resolved by independently recorded merge, post-merge identity, publication authorization, delivered-artifact verification, and published-but-unaccepted handling.\n- The signer, reviewer-seat, issue-disposition, support-owner, dry-run-budget, counterexample, and long-running-proof recommendations are all represented concretely.\n\nI therefore disagree with carrying Gemini\u2019s first-round `DISAGREE` or any earlier conditional verdict onto the revised artifact: its cited false-ready paths have been closed in the actual revised criteria.\n\n## Coverage and ordering\n\nAll C01\u2013C21 and R01\u2013R12 have a primary owner and a concrete implementation, restriction, or disposition requirement. FREEZE additionally requires per-finding source, reproducer/static-risk probe, command, tracking decision, and rollout consequence, preventing broad phase wording from silently dropping a finding.\n\nThe ordering reflects real dependencies: installed schema truth precedes multi-process state; state and generation ownership precede coherent data publication; STATE also precedes installed lifecycle work; DATA and SAFETY converge before PMCP acceptance. Known shared files are either separated by dependencies or explicitly serialized pending a machine-verified conflict graph.\n\nAcceptance criteria cover real processes, installed wheel/container behavior, fresh and upgraded schemas, real Qdrant modes, provenance, PMCP provisioning, browser workflows, process signals, contention, and registry-delivered artifacts. They prohibit the checkout imports, manufactured mocks, skip masking, and self-reported receipts that previously allowed false passes.\n\nDeployment claims are appropriately bounded: controlled beta, STDIO primary, local/ephemeral HTTP, no hostile-plugin containment claim, Linux/Python 3.12 as the initial evidence host, owner-controlled support restrictions, and budgeted local inference without commercial egress.\n\nUnavailable evidence remains correctly described as future acceptance work: live signing, remote publication failures, container execution, PMCP/browser workflows, broader platforms, and inference have not been proved. The roadmap does not treat them as completed.\n\nAGREE",
+        "detail": null,
+        "seat_key": "codex:gpt-5.6-sol:max:architecture-and-dependency-red-team"
+      },
+      {
+        "leg": "grok",
+        "status": "OK",
+        "text": "The review bundle was truncated in the chat payload. I\u2019ll recover the full framed contents from the offloaded prompt so the assessment stays within the supplied digests only.Continuing through the offloaded review bundle so the remaining phases, audit findings, and peer material are in scope.**Reviewer identity:** Grok 4.6 (xAI). Requested panel seat was `grok-4.5`; this response uses the invocation-provided identity and does not attest that routing was Grok 4.5.\n\nIndependent second-look at the revised `specs/phase-plans-v13.md` against the staged audit, counterexamples, LOCALCI contract, `scripts/release_smoke.py`, disposition log, and first-round peer texts. Planning review only.\n\n## Blocking findings\n\nNone. First-round blockers that mattered for false-ready planning are present in the revised bytes:\n\n- **DIST false-ready smoke** (Antigravity-BLK-1/2, prior GROK-B2): EC-DIST-1 now bans checkout/`PYTHONPATH` imports and fake dispatcher/resolver, requires wheel + final non-root configured startup with mounted-Git register/index/query/restart, and rejects health/help-only passes. Current `release_smoke.py` still exhibits those defects; that is DIST work, not a reason to withhold phase planning.\n- **Installed lifecycle ordering** (ANT-V13-B1, prior GROK-B1): SAFETY depends on STATE (hence DIST); EC-PILOT-4 requires PMCP-installed SIGTERM/SIGINT/EOF/repeated-signal, in-flight, metrics-port, reconnect, and reprovision proofs.\n- **SAFETY\u2225STATE collision** (Antigravity-BLK-3): DAG now has `STATE -> SAFETY`.\n- **Qdrant topology** (OPENAI-B01): Assumptions + EC-FREEZE-3 + EC-DATA-2 require file-backed and disposable real-server acceptance, 1,000/1,001 boundaries, interruption/retry, and forbid live-lock break / silent backend switch; in-memory cannot substitute.\n- **SHIP merge/publish ambiguity** (OPENAI-B02): EC-SHIP-1 \u2192 EC-SHIP-4 \u2192 EC-SHIP-5 \u2192 EC-SHIP-2 \u2192 EC-SHIP-6 \u2192 EC-SHIP-3 separates merge, post-merge identity, authorize/dispatch, delivered-artifact acceptance, failed-acceptance disposition, and issue closure.\n- **Signer decision** (prior GROK-B3): EC-FREEZE-3 blocks sharing acceptance on unresolved signer; deferral needs owner amendment without weakening enforce mode.\n\n## Non-blocking refinements\n\n- **GROK-R1 \u2014 PREP/SHIP rollback playbook:** EC-SHIP-6 correctly forbids blind retry/yank/delete and requires owner-approved corrective-release/rollback, but EC-PREP-3 does not explicitly hand that policy text to SHIP. Add it to the PREP handoff so SHIP does not invent recovery under pressure.\n- **GROK-R2 \u2014 FREEZE edit/recovery policy:** EC-DATA-4 depends on a \u201cfrozen edit policy\u201d for missed create/modify/delete/rename; EC-FREEZE-3 names support/ignore policies. Name working-tree vs committed/default-branch recovery explicitly so R02 cannot be silently widened.\n- **GROK-R3 \u2014 DATA\u2225SAFETY:** Parallelism remains policy-gated (\u201cserialize by default,\u201d conflict graph required). FREEZE should emit the machine-checked shared-file owners before any concurrent lane schedule; do not treat the high-level DAG as write authorization.\n- **GROK-R4 \u2014 Process hygiene:** Disposition notes pending structural recheck of new SHIP goals and a `fab_gate` registration warning. Re-run `phase-loop validate-roadmap` on the exact revised artifact and confirm governed gates before automated execution; neither blocks authorizing FREEZE planning.\n\n## Coverage and ordering assessment\n\n**Coverage:** C01\u2013C21 and R01\u2013R12 each have a primary owner and disposition class. EC-FREEZE-1 requires source/reproducer-or-static-risk, owner, command, and qualified issue or roadmap-only tracking with rollout consequences for deferrals. Subtle audit details survive (per-batch provenance, filter-before-limit, cleanup-debt retention, pool waiter wake, metrics bind ownership, migration packaging, container Git, baseline without policy relaxation).\n\n**Ordering:** `FREEZE \u2192 DIST \u2192 STATE \u2192 {DATA, SAFETY} \u2192 PILOT \u2192 PREP \u2192 SHIP` is dependency-driven: schema truth before multi-process state; generation/handles before rebuild/semantic coherence and installed lifecycle; DATA+SAFETY before PMCP pilot; version/review before merge/publish/verify. Interface freezes precede dependents. PREP publishes nothing; SHIP is single-lane and routes edits back to PREP.\n\n**Falsifiability:** Verification forbids checkout imports and behavior-manufacturing mocks for installed/multi-process proofs; requires runner-stamped receipts; treats missing access as blocked evidence; partitions long proofs. Staged `release_smoke.py` confirms the audit\u2019s false-ready patterns (`sys.path` + fixture import; stub Dispatcher/Resolver; help/health-heavy paths)\u2014exactly what EC-DIST-1 must rewrite.\n\n**Deployment honesty:** STDIO-primary, one worktree/default branch, Linux/Python 3.12 initial host, local/ephemeral HTTP, no commercial egress, budgeted local inference, no hostile-plugin or multi-tenant claims, no routine hosted expansion. Compatible with the LOCALCI contract.\n\n**Unsupported / unavailable:** Bundle-only review; no live checkout execution. Audit source-confirmed items (C06 partial semantic publication, C11 container run, C13 live signing, C19/C20 exposure probes, PMCP/browser) remain future gates, correctly not treated as already proved. Peer self-labels are not routing attestations.\n\n**Peer dispositions:** Accepted first-round corrections appear in the revised text. I do not carry Antigravity\u2019s DISAGREE forward: encoding smoke rewrite as DIST exit criteria is the right planning move. I do not treat Sol as authoritative; Qdrant and SHIP gaps look adequately closed for planning.\n\nReady for `codex-plan-phase` on FREEZE after panel reconciliation. Not implementation, code, merge, or fleet-ready approval.\n\nAGREE\n",
+        "detail": null,
+        "seat_key": "grok:grok-4.5:max:adversarial-security-and-failure-modes"
+      },
+      {
+        "leg": "gemini",
+        "status": "OK",
+        "text": "**Reviewer identity:** Gemini 3.1 Pro (High)\n\n### Blocking Findings\n\nNone. The revised roadmap successfully addresses the first-round blockers, including my previous concerns regarding checkout imports in installed-artifact tests, fake dispatcher substitutions, and unsafe DAG parallelism. \n\n### Non-blocking Refinements\n\n*   **Metrics Exposure Hardening (C20):** While EC-SAFETY-3 correctly requires that \"metrics bind/ownership is explicit across concurrent instances,\" it does not explicitly mandate closing the unauthenticated network exposure. To fully resolve C20, ensure the downstream SAFETY implementation plan explicitly defaults the Prometheus exporter to loopback (`127.0.0.1`) or disabled, unless durable authentication is provided.\n*   **SHIP Execution Sequence:** The SHIP exit criteria are logically sequenced in the text (EC-SHIP-1, 4, 5, 2, 6, 3) to strictly separate merge, dispatch, and verification. While retaining stable IDs is correct, downstream phase planners must enforce this exact chronological execution order rather than sorting by ID, to prevent premature publication dispatch.\n\n### Coverage and Ordering Assessment\n\nThe revised v13 roadmap is a mature, tightly scoped remediation plan that safely sequences the comprehensive audit findings without succumbing to feature creep or overengineering.\n\n*   **Falsifiability and Boundary Testing:** My first-round blockers (ANTIGRAVITY-BLK-1 and ANTIGRAVITY-BLK-2) are fully resolved. EC-DIST-1 now strictly prohibits `PYTHONPATH` manipulation, checkout imports, and fake dispatchers for installed-artifact tests. The requirement for runner-stamped operational receipts and explicit timeouts ensures long-running proof nodes will not silently hang or falsely pass.\n*   **Architectural Sequencing:** My concern regarding unsafe parallel writes (ANTIGRAVITY-BLK-3) is resolved. The updated DAG correctly enforces `DIST -> STATE -> SAFETY` and `STATE -> DATA`. By resolving shared generation identities (STATE) before lifecycle (SAFETY) and semantic queries (DATA), the plan prevents race conditions. The explicit fallback to serialize-by-default for overlapping file ownership (`gateway.py`, `watcher_multi_repo.py`) provides a robust machine-verifiable safety net.\n*   **Cross-Model Reconciliation:** The incorporation of peer recommendations is accurate and structurally sound. Sol's blockers regarding real-server Qdrant topologies (OPENAI-B01) and explicit merge/publish separation (OPENAI-B02) have been successfully mapped to EC-DATA-2 and the expanded EC-SHIP criteria. Grok's requirement for a frozen artifact signer decision (GROK-B3) is now a firm gate in EC-FREEZE-3. Fable's requirement for PMCP-installed lifecycle checks is accurately covered in EC-PILOT-4.\n*   **Honest Deployment Scope:** The plan strictly limits support claims (Linux/Python 3.12, local ephemeral HTTP) unless owner approval dictates otherwise. It explicitly bans commercial inference egress and requires budgeted, dry-run estimates for local inference, preventing runaway costs.\n*   **Unsupported Assumptions:** None remain. The plan correctly limits its scope, acknowledging that current test infrastructure like `scripts/release_smoke.py` is flawed and explicitly scheduling its rewrite before relying on it for acceptance.\n\nAGREE\n",
+        "detail": null,
+        "seat_key": "gemini:Gemini 3.1 Pro:high:coverage-alternatives-and-proof-cost"
+      }
+    ],
+    "president": null,
+    "president_findings": []
+  }
+}

@@ -2,11 +2,12 @@
 # PowerShell script to install and configure MCP Index with Docker
 
 param(
-    [string]$Variant = "v1.4.0",
-    [string]$Version = "v1.4.0"
+    [string]$Variant = "v1.4.1",
+    [string]$Version = "v1.4.1"
 )
 
 # Configuration
+# Canonical release image: ghcr.io/consiliency/code-index-mcp, pinned by digest.
 $MCPRegistry = "ghcr.io"
 $MCPImage = "$MCPRegistry/consiliency/code-index-mcp"
 $ErrorActionPreference = "Stop"
@@ -80,9 +81,9 @@ function Install-Docker {
 function Select-Variant {
     Write-Host ""
     Write-Host "Choose MCP Index variant:"
-    Write-Host "1) v1.4.0      - Published release image (default)"
+    Write-Host "1) v1.4.1      - Versioned release image (requires publication)"
     Write-Host "2) local-smoke - Locally built via make release-smoke-container"
-    Write-Host "3) latest      - Stable channel (published)"
+    Write-Host "3) latest      - Latest GitHub release, pinned by digest"
     Write-Host ""
 
     $choice = Read-Host "Select variant [1-3] (default: 1)"
@@ -97,8 +98,8 @@ function Select-Variant {
             Write-Host "[INFO] Selected: latest" -ForegroundColor Green
         }
         default {
-            $script:Variant = "v1.4.0"
-            Write-Host "[INFO] Selected: v1.4.0" -ForegroundColor Green
+            $script:Variant = "v1.4.1"
+            Write-Host "[INFO] Selected: v1.4.1" -ForegroundColor Green
         }
     }
 }
@@ -106,6 +107,7 @@ function Select-Variant {
 function Pull-Image {
     $imageTag = "${MCPImage}:${Variant}"
     if ($Variant -eq "local-smoke") {
+        $script:MCPImageRef = $imageTag
         Write-Host "[INFO] Using the locally built smoke image (dev option)." -ForegroundColor Green
         docker image inspect $imageTag *> $null
         if ($LASTEXITCODE -ne 0) {
@@ -113,41 +115,99 @@ function Pull-Image {
         }
         return
     }
-    Write-Host "[INFO] Pulling MCP Index image: $imageTag" -ForegroundColor Green
-    docker pull $imageTag
+    if ($Variant -eq "latest") {
+        $releasePath = "latest/download"
+    } elseif ($Variant -match '^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?$') {
+        $releasePath = "download/$Variant"
+    } else {
+        throw "Select a release version, latest release, or local-smoke."
+    }
+    $response = Invoke-WebRequest -UseBasicParsing -TimeoutSec 30 -Uri "https://github.com/Consiliency/Code-Index-MCP/releases/$releasePath/image-reference.txt"
+    $script:MCPImageRef = $response.Content.Trim()
+    if ($MCPImageRef -cnotmatch '^ghcr\.io/consiliency/code-index-mcp@sha256:[0-9a-f]{64}$') {
+        throw "Release image reference is missing or invalid; no tag fallback is permitted."
+    }
+    Write-Host "[INFO] Pulling MCP Index image: $MCPImageRef" -ForegroundColor Green
+    docker pull $MCPImageRef
+    if ($LASTEXITCODE -ne 0) { throw "Cannot pull the pinned release image." }
 }
 
 function Create-Launcher {
     $launcherContent = @'
 @echo off
 REM MCP Index Docker Launcher for Windows
+SETLOCAL
 
-SET MCP_VARIANT=%MCP_VARIANT%
-IF "%MCP_VARIANT%"=="" SET MCP_VARIANT=v1.4.0
-
-SET MCP_IMAGE=ghcr.io/consiliency/code-index-mcp
+SET MCP_IMAGE_REF=@MCP_IMAGE_REF@
 SET WORKSPACE=%CD%
+SET MCP_REGISTRY_DIR=%WORKSPACE%\.mcp-index\docker-registry
+IF NOT EXIST "%MCP_REGISTRY_DIR%" MKDIR "%MCP_REGISTRY_DIR%"
+IF NOT DEFINED MCP_ARTIFACT_SYNC SET MCP_ARTIFACT_SYNC=true
+SET GIT_MOUNTS=
+IF EXIST "%WORKSPACE%\.git" (CALL :worktree_mounts || EXIT /B 1)
 
 IF "%1"=="setup" (
-    echo Running MCP Index setup wizard...
-    docker run -it --rm -v "%WORKSPACE%:/workspace" %MCP_IMAGE%:%MCP_VARIANT% --setup
+    echo Registering workspace with MCP Index...
+    docker run -i --rm --workdir /workspace ^
+        -v "%WORKSPACE%:/workspace" -v "%MCP_REGISTRY_DIR%:/app/.mcp" %GIT_MOUNTS% ^
+        -e HOME=/app/.mcp -e MCP_REPO_REGISTRY=/app/.mcp/repository_registry.json ^
+        -e MCP_ENVIRONMENT=development ^
+        -e MCP_WORKSPACE_ROOT=/workspace -e MCP_ALLOWED_ROOTS=/workspace ^
+        %MCP_IMAGE_REF% index-it-mcp repository register /workspace
     EXIT /B
 )
 
 IF "%1"=="upgrade" (
-    echo Upgrading MCP Index...
-    docker pull %MCP_IMAGE%:%MCP_VARIANT%
+    echo Refreshing pinned image. Rerun the installer to select another release.
+    docker pull %MCP_IMAGE_REF%
     EXIT /B
 )
 
 REM Run MCP server with all arguments
+IF "%1"=="" (
+    docker run -i --rm --workdir /workspace ^
+        -v "%WORKSPACE%:/workspace" -v "%MCP_REGISTRY_DIR%:/app/.mcp" %GIT_MOUNTS% ^
+        -e HOME=/app/.mcp -e MCP_REPO_REGISTRY=/app/.mcp/repository_registry.json ^
+        -e MCP_ENVIRONMENT=development ^
+        -e MCP_WORKSPACE_ROOT=/workspace -e MCP_ALLOWED_ROOTS=/workspace ^
+        -e VOYAGE_API_KEY -e MCP_ARTIFACT_SYNC ^
+        %MCP_IMAGE_REF% index-it-mcp stdio
+    EXIT /B
+)
 docker run -i --rm ^
+    --workdir /workspace ^
     -v "%WORKSPACE%:/workspace" ^
-    -v "%USERPROFILE%\.mcp-index:/app/.mcp-index" ^
-    -e VOYAGE_AI_API_KEY=%VOYAGE_AI_API_KEY% ^
-    -e MCP_ARTIFACT_SYNC=%MCP_ARTIFACT_SYNC% ^
-    %MCP_IMAGE%:%MCP_VARIANT% %*
+    -v "%MCP_REGISTRY_DIR%:/app/.mcp" %GIT_MOUNTS% ^
+    -e HOME=/app/.mcp ^
+    -e MCP_REPO_REGISTRY=/app/.mcp/repository_registry.json ^
+    -e MCP_ENVIRONMENT=development ^
+    -e MCP_WORKSPACE_ROOT=/workspace ^
+    -e MCP_ALLOWED_ROOTS=/workspace ^
+    -e VOYAGE_API_KEY ^
+    -e MCP_ARTIFACT_SYNC ^
+    %MCP_IMAGE_REF% index-it-mcp %*
+EXIT /B
+
+:worktree_mounts
+FOR /F "delims=" %%G IN ('git rev-parse --local-env-vars') DO SET "%%G="
+SET "WORKTREE_GIT_COMMON="
+SET "WORKTREE_GIT_DIR="
+SET "WORKTREE_NAME="
+FOR /F "delims=" %%G IN ('git -C "%WORKSPACE%" rev-parse --path-format=absolute --git-common-dir 2^>NUL') DO SET "WORKTREE_GIT_COMMON=%%G"
+FOR /F "delims=" %%G IN ('git -C "%WORKSPACE%" rev-parse --path-format=absolute --git-dir 2^>NUL') DO SET "WORKTREE_GIT_DIR=%%G"
+IF NOT DEFINED WORKTREE_GIT_COMMON EXIT /B 1
+IF NOT DEFINED WORKTREE_GIT_DIR EXIT /B 1
+FOR %%G IN ("%WORKTREE_GIT_DIR%") DO SET "WORKTREE_NAME=%%~nxG"
+IF "%WORKTREE_GIT_DIR%"=="%WORKTREE_GIT_COMMON%" (
+    SET GIT_MOUNTS=-v "%WORKTREE_GIT_COMMON%:/mcp-git:ro" -e MCP_GIT_COMMON_DIR=/mcp-git
+) ELSE (
+    IF NOT EXIST "%WORKTREE_GIT_COMMON%/worktrees/%WORKTREE_NAME%/HEAD" EXIT /B 1
+    >"%MCP_REGISTRY_DIR%\worktree-pointer.git" ECHO gitdir: /mcp-git/worktrees/%WORKTREE_NAME%
+    SET GIT_MOUNTS=-v "%WORKTREE_GIT_COMMON%:/mcp-git:ro" -v "%MCP_REGISTRY_DIR%\worktree-pointer.git:/workspace/.git:ro" -e MCP_GIT_COMMON_DIR=/mcp-git
+)
+EXIT /B 0
 '@
+    $launcherContent = $launcherContent.Replace('@MCP_IMAGE_REF@', $MCPImageRef)
 
     $launcherPath = "$env:USERPROFILE\AppData\Local\Microsoft\WindowsApps\mcp-index.bat"
     
@@ -174,16 +234,9 @@ function Create-MCPJson {
     $mcpConfig = @{
         mcpServers = @{
             "code-index" = @{
-                command = "docker"
+                command = "cmd.exe"
                 args = @(
-                    "run", 
-                    "-i", 
-                    "--rm",
-                    "-v", "`${workspace}:/workspace",
-                    "-v", "`${USERPROFILE}\.mcp-index:/app/.mcp-index",
-                    "-e", "VOYAGE_AI_API_KEY=`${VOYAGE_AI_API_KEY:-}",
-                    "-e", "MCP_ARTIFACT_SYNC=`${MCP_ARTIFACT_SYNC:-true}",
-                    "${MCPImage}:${Variant}"
+                    "/c", "mcp-index", "stdio"
                 )
             }
         }
@@ -202,12 +255,13 @@ function Show-NextSteps {
     Write-Host "2. Test the installation:"
     Write-Host "   mcp-index --version"
     Write-Host ""
-    Write-Host "3. Index your current directory:"
-    Write-Host "   mcp-index"
+    Write-Host "3. Register and index your current directory:"
+    Write-Host "   mcp-index setup"
+    Write-Host "   mcp-index repository sync"
     Write-Host ""
     
     Write-Host "4. Optional: configure semantic search:"
-    Write-Host "   `$env:VOYAGE_AI_API_KEY = 'your-key-here'"
+    Write-Host "   `$env:VOYAGE_API_KEY = 'your-key-here'"
     Write-Host "   Get your key at: https://www.voyageai.com/"
     Write-Host ""
 

@@ -59,7 +59,7 @@ async def test_handshake_tool_logs_redacted_secret(caplog, restore_stdio_globals
 
 
 @pytest.mark.asyncio
-async def test_non_handshake_tool_keeps_regular_argument_logging(
+async def test_non_handshake_tool_logs_metadata_without_arguments(
     monkeypatch, caplog, restore_stdio_globals
 ):
     stdio_runner._gate = HandshakeGate(secret="gate-secret")
@@ -83,10 +83,11 @@ async def test_non_handshake_tool_keeps_regular_argument_logging(
 
     assert _payload(result) == {"results": []}
     tool_logs = [
-        record.getMessage() for record in caplog.records if "MCP Tool Call" in record.getMessage()
+        record.getMessage() for record in caplog.records if "MCP tool call" in record.getMessage()
     ]
     assert tool_logs
-    assert any("demo" in message for message in tool_logs)
+    assert any("search_code" in message for message in tool_logs)
+    assert "demo" not in caplog.text
 
 
 @pytest.mark.asyncio

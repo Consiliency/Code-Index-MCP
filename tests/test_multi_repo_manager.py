@@ -116,6 +116,11 @@ class TestMultiRepositoryManager:
             indexed_at=datetime.now(),
             active=True,
             priority=priority,
+            current_commit="fixture",
+            last_indexed_commit="fixture",
+            current_branch="main",
+            tracked_branch="main",
+            last_indexed_branch="main",
         )
 
     def test_initialization(self, manager, temp_registry):
@@ -132,13 +137,14 @@ class TestMultiRepositoryManager:
         expected = Path.home() / ".mcp" / "repository_registry.json"
         assert manager.central_index_path == expected
 
-    def test_repository_registration(self, manager):
+    def test_repository_registration(self, manager, monkeypatch):
         """Test registering a repository."""
         # Create mock repository with index
         with tempfile.TemporaryDirectory() as temp_dir:
             repo_path = Path(temp_dir)
             index_dir = repo_path / ".mcp-index"
             index_dir.mkdir()
+            monkeypatch.setenv("MCP_INDEX_PATHS", str(index_dir))
             index_path = index_dir / "code_index.db"
 
             # Create minimal SQLite index
@@ -229,7 +235,10 @@ class TestMultiRepositoryManager:
             }
         ]
 
-        with patch.object(manager, "_get_connection") as mock_get_conn:
+        with (
+            patch.object(manager, "_get_connection") as mock_get_conn,
+            patch.object(manager, "_query_ready", return_value=True),
+        ):
             mock_store = Mock()
             mock_store.search_symbols.return_value = mock_results
             mock_get_conn.return_value = mock_store
@@ -481,7 +490,10 @@ class TestMultiRepositoryManager:
         manager.registry.register(mock_repo_info)
 
         # Mock connection failure
-        with patch.object(manager, "_get_connection", side_effect=Exception("Connection failed")):
+        with (
+            patch.object(manager, "_get_connection", side_effect=Exception("Connection failed")),
+            patch.object(manager, "_query_ready", return_value=True),
+        ):
             # Use synchronous version for testing
             result = manager._search_repository("test_repo_123", "test", None, 10)
 

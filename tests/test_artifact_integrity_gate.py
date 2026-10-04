@@ -99,7 +99,7 @@ def test_integrity_gate_fails_on_missing_required_metadata_key(tmp_path: Path):
     assert "missing key: commit" in result.reasons
 
 
-def test_integrity_gate_prefers_checksum_sidecar_when_present(tmp_path: Path):
+def test_integrity_gate_rejects_sidecar_disagreeing_with_metadata(tmp_path: Path):
     archive_path = _write_archive(tmp_path)
     checksum = hashlib.sha256(archive_path.read_bytes()).hexdigest()
     metadata = _base_metadata("wrong-checksum")
@@ -112,8 +112,9 @@ def test_integrity_gate_prefers_checksum_sidecar_when_present(tmp_path: Path):
         checksum_path=checksum_path,
     )
 
-    assert result.passed is True
-    assert result.expected_checksum == checksum
+    assert result.passed is False
+    assert result.expected_checksum == "wrong-checksum"
+    assert "checksum sidecar disagrees with signed metadata" in result.reasons
 
 
 def test_integrity_gate_validates_optional_manifest_v2_payload(tmp_path: Path):
@@ -124,10 +125,10 @@ def test_integrity_gate_validates_optional_manifest_v2_payload(tmp_path: Path):
         repo_id="owner/repo",
         branch="main",
         tracked_branch="main",
-        commit="abc123",
+        commit="0123456789abcdef",
         schema_version="2",
         semantic_profile_hash="lexical-only",
-        checksum="deadbeef",
+        checksum=checksum,
         artifact_type="full",
         chunk_schema_version="2.0",
         chunk_identity_algorithm="treesitter_chunk_id_v1",
@@ -135,18 +136,86 @@ def test_integrity_gate_validates_optional_manifest_v2_payload(tmp_path: Path):
             ManifestUnit(
                 unit_type="lexical",
                 unit_id="lexical-main-abc123",
-                checksum="deadbeef",
-                size_bytes=1024,
+                checksum=checksum,
+                size_bytes=archive_path.stat().st_size,
             )
         ],
     )
     metadata = _base_metadata(checksum)
+    metadata["compatibility"]["chunk_schema_version"] = "2.0"
     metadata["manifest_v2"] = manifest.to_dict()
 
     result = validate_artifact_integrity(metadata=metadata, archive_path=archive_path)
 
     assert result.passed is True
     assert result.manifest_v2_validated is True
+
+    metadata["branch"] = "other"
+    assert (
+        "metadata branch aliases disagree"
+        in validate_artifact_integrity(metadata, archive_path).reasons
+    )
+    metadata["branch"] = "main"
+    metadata["compatibility"].pop("chunk_schema_version")
+    assert (
+        "manifest_v2 chunk schema is unbound"
+        in validate_artifact_integrity(metadata, archive_path).reasons
+    )
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("schema_version", "999"),
+        ("semantic_profile_hash", "a" * 64),
+        ("checksum", "0" * 64),
+        ("chunk_identity_algorithm", "unsupported"),
+        ("manifest_version", "99"),
+        ("branch", "other"),
+    ],
+)
+def test_integrity_gate_rejects_conflicting_manifest_metadata(tmp_path, field, value):
+    archive_path = _write_archive(tmp_path)
+    checksum = hashlib.sha256(archive_path.read_bytes()).hexdigest()
+    metadata = _base_metadata(checksum)
+    metadata["compatibility"]["chunk_schema_version"] = "2.0"
+    metadata["manifest_v2"] = ArtifactManifestV2(
+        logical_artifact_id="repo-main-abc123",
+        repo_id=metadata["repo_id"],
+        branch=metadata["tracked_branch"],
+        commit=metadata["commit"],
+        schema_version=metadata["schema_version"],
+        checksum=checksum,
+        chunk_schema_version="2.0",
+        chunk_identity_algorithm="treesitter_chunk_id_v1",
+        units=[
+            ManifestUnit(
+                unit_type="lexical",
+                unit_id="lexical-main-abc123",
+                checksum=checksum,
+                size_bytes=archive_path.stat().st_size,
+            )
+        ],
+    ).to_dict()
+    metadata["manifest_v2"][field] = value
+    result = validate_artifact_integrity(metadata, archive_path)
+    assert not result.passed
+    assert not result.manifest_v2_validated
+
+
+def test_upload_refuses_conflicting_manifest_before_external_calls(tmp_path, monkeypatch):
+    from mcp_server.artifacts.artifact_upload import IndexArtifactUploader
+
+    archive_path = _write_archive(tmp_path)
+    checksum = hashlib.sha256(archive_path.read_bytes()).hexdigest()
+    metadata = _base_metadata(checksum)
+    metadata["manifest_v2"] = {"checksum": "0" * 64}
+    uploader = IndexArtifactUploader(repo="owner/repo")
+    monkeypatch.setattr(
+        uploader, "_ensure_gh_cli", lambda: pytest.fail("External GitHub call was attempted")
+    )
+    with pytest.raises(ValueError, match="Prepared artifact integrity validation failed"):
+        uploader.upload_direct(archive_path, metadata)
 
 
 def test_integrity_gate_fails_for_invalid_manifest_v2_payload(tmp_path: Path):
@@ -159,6 +228,18 @@ def test_integrity_gate_fails_for_invalid_manifest_v2_payload(tmp_path: Path):
 
     assert result.passed is False
     assert any(reason.startswith("invalid manifest_v2:") for reason in result.reasons)
+
+
+def test_integrity_gate_rejects_null_or_conflicting_manifest_aliases(tmp_path: Path):
+    archive_path = _write_archive(tmp_path)
+    checksum = hashlib.sha256(archive_path.read_bytes()).hexdigest()
+    metadata = _base_metadata(checksum)
+    metadata["manifest_v2"] = None
+    assert not validate_artifact_integrity(metadata, archive_path).passed
+
+    metadata["artifact_manifest_v2"] = {"checksum": checksum}
+    result = validate_artifact_integrity(metadata, archive_path)
+    assert "manifest_v2 aliases disagree" in result.reasons
 
 
 def test_downloader_run_integrity_gate_reuses_shared_gate(tmp_path: Path):

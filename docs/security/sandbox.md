@@ -1,131 +1,60 @@
-# Plugin Sandbox Architecture
+# Plugin Worker Capability Guards
 
-> **Beta status**: This page targets `1.2.0-rc8`. Default sandbox behavior is
-> documented alongside language support in [../SUPPORT_MATRIX.md](../SUPPORT_MATRIX.md).
+Plugin workers run in separate processes over versioned JSON-line IPC.
+Capability guards are **cooperative defense in depth, not an OS-enforced
+hostile-plugin sandbox**. Only trusted, reviewed plugin code is supported.
 
-## Overview
+## Capability Model
 
-The plugin sandbox (SL-1) isolates plugin execution from the host process via a dedicated worker process communicating over JSON-line IPC. This document describes the sandbox boundary, capability model, and threat profile.
+`CapabilitySet` defines `fs_read` and `fs_write` path roots, `env_allow`
+names, a boolean `network` flag, `sqlite` (`none` or `readonly`), CPU seconds
+and memory MiB. SQLite defaults to none; memory defaults to 2048 MiB.
+Worker startup imports and constructs the trusted plugin before enabling the
+filesystem wrappers.
 
-## IPC Protocol
+Supported Python filesystem forms include builtins/io/pathlib opens, string,
+Path and byte paths, and resolvable descriptors, including `os.open(dir_fd=...)`.
+Canonical paths must remain within their declared read/write roots. Only that
+worker's own scratch directory is implicitly writable/readable; other files
+under the system temporary directory are not exempt. Standard streams remain
+available for IPC. Descriptor guards require resolvable OS descriptor paths
+and deny unsupported descriptors.
 
-The sandbox uses a **JSON-line message envelope** over stdin/stdout:
+Readonly SQLite connections handle string, Path, byte and file-URI inputs,
+enforce declared read roots and override writable URI modes. Both
+`sqlite3.connect` and `sqlite3.dbapi2.connect` are guarded. ATTACH is denied,
+so a readonly connection cannot attach a writable database. Unknown SQLite
+capabilities and non-boolean network values in capability JSON are rejected.
 
-```
-Worker ◄─── stdin (JSON lines, 30s timeout) ◄─── Host
-Worker ──► stdout (JSON lines, 16 MiB max per line) ──► Host
-```
+## Limits
 
-**Message Shape**:
-```json
-{
-  "request_id": "uuid-or-counter",
-  "method": "invoke_plugin_method",
-  "args": { "symbol": "MyClass", ... },
-  "capabilities": { "filesystem": false, "network": false, ... }
-}
-```
+These Python wrappers do not contain deliberately malicious plugins.
+Native extensions, existing/pre-imported handles, alternate filesystem APIs,
+subprocesses, monkey-patching and filesystem races can bypass cooperative
+wrappers. The network patch is also cooperative, not a network namespace or
+firewall. Environment filtering is not protection against a malicious child
+or native code. Do not rely on these guards to execute untrusted code or to
+protect secrets from an adversarial plugin. OS/container isolation is a
+separate operator responsibility.
 
-**Response Shape**:
-```json
-{
-  "request_id": "same-as-request",
-  "result": { "matches": [...] },
-  "error": null
-}
-```
+Resource limits are platform-dependent. Worker IPC enforces a 16 MiB envelope
+limit and request deadlines; lifecycle acceptance is recorded in the SAFETY
+receipt. A Python timeout alone does not prove a worker or indexing thread
+has stopped.
 
-## Capability Set
+## Default-On Operation
 
-The `CapabilitySet` dataclass defines which operations are allowed:
+Workers remain default-on. `MCP_PLUGIN_SANDBOX_DISABLE=1` opts into in-process
+execution and removes this defense in depth. No opt-out is needed for supported
+plugins. See [the support matrix](../SUPPORT_MATRIX.md) for actual language
+support; registry membership does not establish sandbox availability.
 
-- **filesystem**: read/write file system (default: false)
-- **network**: make HTTP/TCP calls (default: false)
-- **subprocess**: spawn child processes (default: false — even plugins needing subprocesses must declare explicitly)
-- **env_read**: read environment variables (default: false)
-- **sqlite**: access to the SQLite store (default: true — the plugin is responsible for safe queries)
+Availability states are `enabled`, `unsupported`, `missing_extra`,
+`disabled` and `load_error`. Registry-only languages without a supported
+worker module remain unsupported in default mode. Known dependency failures
+include language, required extras and remediation metadata. For example,
+Java analysis requires `uv sync --locked --extra java`; C# accepts
+`c_sharp` and `csharp`.
 
-The host constructs a `SandboxedPlugin` adapter wrapping each real plugin instance with per-plugin capability declarations.
-
-## Availability States (P24)
-
-Sandboxing remains default-on. `PluginFactory.get_plugin_availability()` and the
-MCP `list_plugins` tool expose the detailed capability state for every factory
-language:
-
-- `enabled`: the language has a hardened sandbox module and required extras are present.
-- `unsupported`: the language is registry-only or otherwise lacks a hardened sandbox module.
-- `missing_extra`: the plugin depends on an optional extra that is not installed.
-- `disabled`: reserved for administratively disabled capabilities.
-- `load_error`: an unexpected construction failure that should be investigated.
-
-Registry-only languages such as Ruby or JSON are skipped quietly in default
-sandbox mode and are visible as `unsupported`, not as startup/runtime failures.
-They can be loaded through generic parsing only when an operator explicitly opts
-out with `MCP_PLUGIN_SANDBOX_DISABLE=1`.
-
-Known optional dependency misses are normalized. For example, Java static
-analysis requires `javalang`; install it with:
-
-```bash
-uv sync --locked --extra java
-```
-
-Sandbox worker import and construction failures return structured details with
-`state`, `language`, `required_extras`, and `remediation` where known. C# is
-available through both `c_sharp` and `csharp` aliases.
-
-## Worker Lifecycle
-
-1. **Startup**: Host spawns worker as a subprocess, passing `--plugin-name <name>` and `--capabilities <json>`.
-2. **Steady state**: Host sends requests over stdin; worker reads and processes; worker writes responses to stdout.
-3. **Timeout**: If no response in 30 seconds, the worker is force-killed and the request returns an error.
-4. **Shutdown**: Host sends a `shutdown` signal (or closes stdin) and waits for graceful exit.
-
-## Threat Model
-
-**What the sandbox blocks**:
-- File system escape (plugins cannot access files outside their declared read-only roots)
-- Network access (no sockets, no HTTP clients unless explicitly enabled)
-- Arbitrary subprocess spawning (unless `subprocess` capability is granted — Go plugin may need this)
-- Environment variable leakage (unless `env_read` capability is granted)
-- Direct SQLite write access (plugins get a read-only connection or a transaction-wrapped write path)
-
-**What the sandbox does NOT block**:
-- CPU-based DoS (a runaway plugin loop will burn CPU until the 30s timeout)
-- Memory DoS (a plugin allocating unbounded memory is not constrained; RSS limits may be enforced at the OS level)
-- Plugin-to-plugin communication (if two plugins share a backend, one can interfere with the other)
-
-**Threat assumptions**:
-- Plugins are not intentionally adversarial (sandboxing is defense-in-depth, not a hard security boundary)
-- The host process is trusted
-- The Go plugin (which needs subprocess access for `go test` execution) is first-party or heavily audited
-
-## Memory limit default (P20)
-
-As of P20, the `CapabilitySet.mem_mb` default was raised from **512 MiB to 2048 MiB**
-(`mcp_server/sandbox/capabilities.py`). The previous 512 MiB limit caused spurious
-worker OOM kills when plugins loaded large embedding models (in particular, OpenBLAS
-triggered by `numpy` import during the semantic-indexing pipeline). The new default
-allows the Voyage AI embedding worker to initialise without requiring operators to set
-a per-plugin memory override.
-
-## Default-on migration (P18)
-
-> See [docs/operations/p18-upgrade.md](../operations/p18-upgrade.md) for the full operator migration procedure.
-
-As of P18, plugin sandboxing is **enabled by default**. Previously `MCP_PLUGIN_SANDBOX_ENABLED=1` was required to activate it; now sandboxing runs unless explicitly opted out.
-
-### Opting out
-
-Set `MCP_PLUGIN_SANDBOX_DISABLE=1` to run plugins unsandboxed. Only do this if every loaded plugin is fully trusted.
-
-```bash
-export MCP_PLUGIN_SANDBOX_DISABLE=1  # NOT recommended; removes defense-in-depth
-```
-
-### Migration checklist
-
-- **If you previously ran with `MCP_PLUGIN_SANDBOX_ENABLED=1`**: no action required — sandbox remains on.
-- **If you previously ran without that env var**: you were running unsandboxed. Expect subprocess and network calls from plugins to fail unless capabilities are declared. Audit plugin capability needs and either grant them or set `MCP_PLUGIN_SANDBOX_DISABLE=1` while you migrate.
-- **Go plugin users**: ensure `subprocess` capability is granted (it was already required for `go test`).
+See the [P18 upgrade notes](../operations/p18-upgrade.md) for historical
+default-on migration steps; the current capability limits above are authoritative.

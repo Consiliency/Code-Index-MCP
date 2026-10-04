@@ -88,6 +88,16 @@ class TestComputeRepoId:
         assert identity.source == "git_common_dir"
         assert identity.git_common_dir is not None
 
+    def test_docker_common_directory_override_requires_same_directory(self, tmp_path, monkeypatch):
+        from mcp_server.storage.repo_identity import compute_repo_id
+
+        _, clone = make_clone_with_origin(tmp_path)
+        original = compute_repo_id(clone)
+        monkeypatch.setenv("MCP_GIT_COMMON_DIR", str(tmp_path))
+        assert compute_repo_id(clone) == original
+        monkeypatch.setenv("MCP_GIT_COMMON_DIR", str(original.git_common_dir))
+        assert compute_repo_id(clone) == original
+
     def test_tier2_remote_url_fallback(self, tmp_path):
         """Directory with no .git but a parseable git config uses remote URL (tier-2).
 

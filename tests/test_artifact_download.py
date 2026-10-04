@@ -3,14 +3,165 @@
 from __future__ import annotations
 
 import json
+import sqlite3
+import subprocess
 import tarfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from mcp_server.artifacts.artifact_download import IndexArtifactDownloader
+from mcp_server.artifacts.artifact_download import ArtifactIdentityMismatch, IndexArtifactDownloader
+from mcp_server.artifacts.attestation import AttestationError
 from mcp_server.artifacts.freshness import FreshnessVerdict
+
+
+@pytest.mark.parametrize("failed_backend", ["actions", "releases"])
+def test_artifact_discovery_uses_available_backend(monkeypatch, failed_backend):
+    downloader = IndexArtifactDownloader(repo="owner/repo")
+
+    def fetch(command, output, limit, deadline):
+        backend = "actions" if "actions/artifacts" in command[2] else "releases"
+        if backend == failed_backend:
+            output.write(b'{"name":"index-partial"}\n')
+            raise subprocess.CalledProcessError(1, command)
+        if backend == "actions":
+            item = {"id": 1, "name": "index-main", "expired": False, "created_at": "2026-01-01"}
+        else:
+            item = {
+                "tag_name": "index-main",
+                "draft": False,
+                "created_at": "2026-01-01",
+                "assets": [
+                    {"name": "artifact-metadata.json", "size": 1},
+                    {"name": "index.tar.gz", "size": 1},
+                ],
+            }
+        output.write((json.dumps(item) + "\n").encode())
+
+    monkeypatch.setattr("mcp_server.artifacts.artifact_download._download_bounded", fetch)
+    artifacts = downloader.list_artifacts()
+    assert len(artifacts) == 1
+    assert artifacts[0]["artifact_backend"] == (
+        "github_release" if failed_backend == "actions" else "github_actions"
+    )
+
+
+def test_artifact_discovery_reports_when_both_backends_fail(monkeypatch):
+    downloader = IndexArtifactDownloader(repo="owner/repo")
+
+    def fail(command, output, limit, deadline):
+        raise subprocess.CalledProcessError(1, command)
+
+    monkeypatch.setattr("mcp_server.artifacts.artifact_download._download_bounded", fail)
+    with pytest.raises(RuntimeError, match="both GitHub backends"):
+        downloader.list_artifacts()
+
+
+def test_artifact_discovery_releases_get_fresh_deadline_after_actions_timeout(monkeypatch):
+    downloader = IndexArtifactDownloader(repo="owner/repo")
+    clock = [100.0]
+    monkeypatch.setattr("mcp_server.artifacts.artifact_download.time.monotonic", lambda: clock[0])
+
+    def fetch(command, output, limit, deadline):
+        if "actions/artifacts" in command[2]:
+            clock[0] = deadline + 1
+            raise subprocess.TimeoutExpired(command, 60)
+        assert deadline > clock[0]
+        output.write(
+            b'{"tag_name":"index-main","draft":false,"created_at":"2026-01-01",'
+            b'"assets":[{"name":"artifact-metadata.json","size":1},'
+            b'{"name":"index.tar.gz","size":1}]}\n'
+        )
+
+    monkeypatch.setattr("mcp_server.artifacts.artifact_download._download_bounded", fetch)
+    assert downloader.list_artifacts()[0]["artifact_backend"] == "github_release"
+
+
+def test_latest_tries_authenticated_identity_after_stale_promoted_artifact(tmp_path, monkeypatch):
+    downloader = IndexArtifactDownloader(repo="owner/repo", registry=MagicMock())
+    artifacts = [
+        {"id": 1, "name": "mcp-index-promoted"},
+        {"id": 2, "name": "mcp-index-requested"},
+    ]
+    monkeypatch.setattr(downloader, "list_artifacts", lambda: artifacts)
+    accepted = object()
+    attempts = []
+
+    def restore(artifact, **kwargs):
+        attempts.append(artifact["id"])
+        assert kwargs["repo_id"] == "requested"
+        assert kwargs["target_commit"] == "a" * 40
+        if artifact["id"] == 1:
+            raise ArtifactIdentityMismatch("authenticated commit mismatch")
+        return accepted
+
+    monkeypatch.setattr(downloader, "download_selected_artifact", restore)
+    assert (
+        downloader.download_latest(output_dir=tmp_path, repo_id="requested", target_commit="a" * 40)
+        is accepted
+    )
+    assert attempts == [1, 2]
+
+
+@pytest.mark.parametrize("failure", [AttestationError, ValueError, OSError])
+def test_latest_does_not_hide_authenticity_integrity_or_install_failure(
+    tmp_path, monkeypatch, failure
+):
+    downloader = IndexArtifactDownloader(repo="owner/repo", registry=MagicMock())
+    monkeypatch.setattr(downloader, "list_artifacts", lambda: [{"id": 1, "name": "mcp-index-a"}])
+    restore = MagicMock(side_effect=failure("refused"))
+    monkeypatch.setattr(downloader, "download_selected_artifact", restore)
+    with pytest.raises(failure, match="refused"):
+        downloader.download_latest(output_dir=tmp_path, repo_id="requested")
+    restore.assert_called_once()
+
+
+def test_latest_identity_candidates_are_bounded_and_target_hint_is_not_trusted(
+    tmp_path, monkeypatch
+):
+    from mcp_server.artifacts.artifact_download import MAX_IDENTITY_CANDIDATES
+
+    downloader = IndexArtifactDownloader(repo="owner/repo", registry=MagicMock())
+    commit = "a" * 40
+    artifacts = [{"id": i, "name": f"mcp-index-{i}"} for i in range(20)]
+    artifacts[-1]["workflow_run"] = {"head_sha": commit}
+    monkeypatch.setattr(downloader, "list_artifacts", lambda: artifacts)
+    restore = MagicMock(side_effect=ArtifactIdentityMismatch("authenticated repo mismatch"))
+    monkeypatch.setattr(downloader, "download_selected_artifact", restore)
+    with pytest.raises(ArtifactIdentityMismatch, match="candidate limit"):
+        downloader.download_latest(output_dir=tmp_path, repo_id="requested", target_commit=commit)
+    assert restore.call_count == MAX_IDENTITY_CANDIDATES
+    assert restore.call_args_list[0].args[0]["id"] == 19
+
+
+@pytest.mark.parametrize("mode", ["latest", "recover"])
+def test_registered_restore_captures_owner_before_discovery(tmp_path, monkeypatch, mode):
+    registry = MagicMock()
+    original, replacement = object(), object()
+    registry.get.return_value = original
+    downloader = IndexArtifactDownloader(repo="owner/repo", registry=registry)
+
+    def discover():
+        registry.get.return_value = replacement
+        return [
+            {
+                "id": 1,
+                "name": "mcp-index-main-abcdef",
+                "workflow_run": {"head_sha": "abcdef", "head_branch": "main"},
+            }
+        ]
+
+    monkeypatch.setattr(downloader, "list_artifacts", discover)
+    restore = MagicMock()
+    monkeypatch.setattr(downloader, "download_selected_artifact", restore)
+    if mode == "latest":
+        downloader.download_latest(output_dir=tmp_path, repo_id="registered")
+    else:
+        downloader.recover(
+            branch="main", commit="abcdef", output_dir=tmp_path, repo_id="registered"
+        )
+    assert restore.call_args.kwargs["expected_owner"] is original
 
 
 def _metadata(**overrides) -> dict:
@@ -31,6 +182,59 @@ def _metadata(**overrides) -> dict:
     }
     payload.update(overrides)
     return payload
+
+
+def test_extracted_manifest_matches_database_schema_and_chunk_scheme(tmp_path):
+    from mcp_server.storage.sqlite_store import SQLiteStore, current_chunk_id_scheme
+
+    database = tmp_path / "current.db"
+    SQLiteStore(str(database)).close()
+    scheme = current_chunk_id_scheme()
+    with sqlite3.connect(database) as conn:
+        conn.execute(
+            "INSERT INTO index_config(config_key, config_value) VALUES (?, ?)",
+            ("chunk_identity_scheme", scheme),
+        )
+    manifest = {"schema_version": "7", "chunk_identity_algorithm": scheme}
+    downloader = IndexArtifactDownloader(repo="owner/repo")
+    downloader._validate_extracted_index_identity(tmp_path, {"manifest_v2": manifest})
+    with pytest.raises(ValueError, match="schema version disagrees"):
+        downloader._validate_extracted_index_identity(
+            tmp_path, {"manifest_v2": {**manifest, "schema_version": "2"}}
+        )
+    with pytest.raises(ValueError, match="chunk identity disagrees"):
+        downloader._validate_extracted_index_identity(
+            tmp_path,
+            {"manifest_v2": {**manifest, "chunk_identity_algorithm": "treesitter_chunk_id_v1"}},
+        )
+    with pytest.raises(ValueError, match="schema version disagrees"):
+        downloader._validate_extracted_index_identity(
+            tmp_path, {"artifact_manifest_v2": {**manifest, "schema_version": "2"}}
+        )
+
+
+@pytest.mark.parametrize("advertised_url", [None, "", "https://example.invalid/bundle"])
+def test_enforce_requires_attestation_before_extraction(tmp_path, monkeypatch, advertised_url):
+    monkeypatch.setenv("MCP_ATTESTATION_MODE", "enforce")
+    payload = tmp_path / "payload"
+    payload.mkdir()
+    archive = payload / "index.tar.gz"
+    source = tmp_path / "current.db"
+    source.write_bytes(b"synthetic-index")
+    with tarfile.open(archive, "w:gz") as tar:
+        tar.add(source, arcname="current.db")
+    metadata = _metadata(attestation_url=advertised_url)
+    (payload / "artifact-metadata.json").write_text(json.dumps(metadata))
+    output = tmp_path / "output"
+    output.mkdir()
+    downloader = IndexArtifactDownloader(repo="owner/repo")
+    with (
+        patch.object(downloader, "_run_integrity_gate"),
+        patch.object(downloader, "check_compatibility", return_value=(True, [])),
+        pytest.raises(AttestationError),
+    ):
+        downloader._restore_downloaded_payload(payload, output, allow_unsafe=True)
+    assert list(output.iterdir()) == []
 
 
 def test_validate_artifact_identity_rejects_wrong_repo_branch_commit_and_profile():
@@ -55,10 +259,18 @@ def test_validate_artifact_identity_rejects_wrong_repo_branch_commit_and_profile
     assert any("semantic_profile_hash mismatch" in reason for reason in reasons)
 
 
+def test_validate_artifact_identity_checks_manifest_alias():
+    downloader = IndexArtifactDownloader(repo="owner/repo")
+    metadata = _metadata(artifact_manifest_v2={"repo_id": "other"})
+    reasons = downloader.validate_artifact_identity(metadata, repo_id="repo-id")
+    assert any("manifest repo_id mismatch" in reason for reason in reasons)
+
+
 def test_install_indexes_hydrates_repo_scoped_current_db(tmp_path: Path):
     source = tmp_path / "source"
     source.mkdir()
-    (source / "current.db").write_text("db", encoding="utf-8")
+    with sqlite3.connect(source / "current.db") as connection:
+        connection.execute("CREATE TABLE synthetic(value TEXT)")
     (source / ".index_metadata.json").write_text("{}", encoding="utf-8")
     (source / "artifact-metadata.json").write_text(json.dumps(_metadata()), encoding="utf-8")
 
@@ -74,7 +286,7 @@ def test_install_indexes_hydrates_repo_scoped_current_db(tmp_path: Path):
     )
 
     assert str(index_path) in installed
-    assert index_path.read_text(encoding="utf-8") == "db"
+    assert index_path.read_bytes() == (source / "current.db").read_bytes()
     assert (index_location / ".index_metadata.json").exists()
     assert (index_location / "artifact-metadata.json").exists()
     assert not (repo_root / "code_index.db").exists()
@@ -83,7 +295,8 @@ def test_install_indexes_hydrates_repo_scoped_current_db(tmp_path: Path):
 def test_install_indexes_accepts_legacy_code_index_after_validation(tmp_path: Path):
     source = tmp_path / "source"
     source.mkdir()
-    (source / "code_index.db").write_text("legacy-db", encoding="utf-8")
+    with sqlite3.connect(source / "code_index.db") as connection:
+        connection.execute("CREATE TABLE synthetic(value TEXT)")
     (source / "artifact-metadata.json").write_text(json.dumps(_metadata()), encoding="utf-8")
 
     index_location = tmp_path / "repo" / ".mcp-index"
@@ -96,7 +309,44 @@ def test_install_indexes_accepts_legacy_code_index_after_validation(tmp_path: Pa
         backup=False,
     )
 
-    assert index_path.read_text(encoding="utf-8") == "legacy-db"
+    assert index_path.read_bytes() == (source / "code_index.db").read_bytes()
+
+
+@pytest.mark.parametrize("collision", ["database", "sidecar", "metadata", "vectors"])
+def test_install_never_replaces_existing_generation_resources(tmp_path, collision):
+    source, destination = tmp_path / "source", tmp_path / "active"
+    source.mkdir()
+    destination.mkdir()
+    (source / "current.db").write_bytes(b"replacement")
+    (source / ".index_metadata.json").write_text("{}")
+    target = {
+        "database": destination / "current.db",
+        "sidecar": destination / "current.db-wal",
+        "metadata": destination / ".index_metadata.json",
+        "vectors": destination / "vector_index.qdrant",
+    }[collision]
+    if collision == "vectors":
+        target.mkdir()
+        target = target / "marker"
+    target.write_bytes(b"active")
+    downloader = IndexArtifactDownloader(repo="owner/repo")
+    with pytest.raises(FileExistsError, match="staging"):
+        downloader.install_indexes(source, index_location=destination, backup=False)
+    assert target.read_bytes() == b"active"
+    if collision != "database":
+        assert not (destination / "current.db").exists()
+
+
+def test_install_rejects_ambiguous_database_before_copying(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "current.db").write_bytes(b"current")
+    (source / "code_index.db").write_bytes(b"legacy")
+    with pytest.raises(ValueError, match="exactly one"):
+        IndexArtifactDownloader(repo="owner/repo").install_indexes(
+            source, index_location=tmp_path / "stage"
+        )
+    assert not (tmp_path / "stage" / "current.db").exists()
 
 
 @pytest.mark.parametrize(
@@ -154,32 +404,46 @@ def test_download_selected_artifact_unsafe_override_reports_reasons(tmp_path: Pa
     assert result.validation_reasons == ["freshness verdict: stale_commit"]
 
 
-def test_download_release_artifact_restores_direct_publish_payload(tmp_path: Path):
+def test_download_release_artifact_restores_direct_publish_payload(tmp_path: Path, monkeypatch):
+    from mcp_server.storage.sqlite_store import SQLiteStore, current_chunk_id_scheme
+
+    monkeypatch.setenv("MCP_ATTESTATION_MODE", "skip")
     payload_dir = tmp_path / "release-assets"
     payload_dir.mkdir()
     archive_path = payload_dir / "index-archive.tar.gz"
     with tarfile.open(archive_path, "w:gz") as tar:
         current_db = tmp_path / "current.db"
-        current_db.write_text("db", encoding="utf-8")
+        SQLiteStore(str(current_db)).close()
+        with sqlite3.connect(current_db) as conn:
+            conn.execute(
+                "INSERT INTO index_config(config_key, config_value) VALUES (?, ?)",
+                ("chunk_identity_scheme", current_chunk_id_scheme()),
+            )
         tar.add(current_db, arcname="current.db")
     checksum = IndexArtifactDownloader(repo="owner/repo")._calculate_checksum(archive_path)
     (payload_dir / "artifact-metadata.json").write_text(
         json.dumps(
             _metadata(
+                schema_version="7",
                 checksum=checksum,
                 semantic_profile_hash="a" * 64,
+                compatibility={
+                    "schema_version": "7",
+                    "embedding_model": "lexical-only",
+                    "chunk_schema_version": "7",
+                },
                 manifest_v2={
                     "logical_artifact_id": "logical-id",
                     "repo_id": "repo-id",
                     "tracked_branch": "main",
                     "branch": "main",
                     "commit": "abcdef123456",
-                    "schema_version": "2",
+                    "schema_version": "7",
                     "semantic_profile_hash": "a" * 64,
                     "checksum": checksum,
                     "artifact_type": "full",
-                    "chunk_schema_version": "2",
-                    "chunk_identity_algorithm": "treesitter_chunk_id_v1",
+                    "chunk_schema_version": "7",
+                    "chunk_identity_algorithm": current_chunk_id_scheme(),
                     "units": [
                         {
                             "unit_type": "lexical",
@@ -199,19 +463,27 @@ def test_download_release_artifact_restores_direct_publish_payload(tmp_path: Pat
 
     downloader = IndexArtifactDownloader(repo="owner/repo")
 
-    def side_effect(args, **kwargs):
-        if args[:4] == ["gh", "release", "download", "index-sha-tag"]:
-            dest = Path(args[args.index("--dir") + 1])
-            for file in payload_dir.iterdir():
-                if file.is_file():
-                    (dest / file.name).write_bytes(file.read_bytes())
-            return MagicMock(returncode=0, stdout="", stderr="")
-        return MagicMock(returncode=0, stdout="", stderr="")
+    def side_effect(args, target, limit, deadline):
+        if args[:4] == ["gh", "release", "view", "index-sha-tag"]:
+            data = json.dumps(
+                {
+                    "assets": [
+                        {"name": file.name, "size": file.stat().st_size}
+                        for file in payload_dir.iterdir()
+                    ]
+                }
+            ).encode()
+        else:
+            assert args[:4] == ["gh", "release", "download", "index-sha-tag"]
+            assert args[-2:] == ["--output", "-"]
+            data = (payload_dir / args[args.index("--pattern") + 1]).read_bytes()
+        assert len(data) <= limit
+        target.write(data)
 
     output_dir = tmp_path / "out"
     output_dir.mkdir()
     with (
-        patch("subprocess.run", side_effect=side_effect),
+        patch("mcp_server.artifacts.artifact_download._download_bounded", side_effect=side_effect),
         patch.object(downloader, "check_compatibility", return_value=(True, [])),
     ):
         restored = downloader.download_release_artifact(
@@ -222,6 +494,8 @@ def test_download_release_artifact_restores_direct_publish_payload(tmp_path: Pat
             target_commit="abcdef123456",
         )
 
-    assert restored == output_dir
-    assert (output_dir / "current.db").read_text(encoding="utf-8") == "db"
-    assert (output_dir / "artifact-metadata.json").exists()
+    assert restored.parent == output_dir
+    assert restored.name.startswith("verified-")
+    with sqlite3.connect(restored / "current.db") as conn:
+        assert conn.execute("SELECT MAX(version) FROM schema_version").fetchone() == (7,)
+    assert (restored / "artifact-metadata.json").exists()

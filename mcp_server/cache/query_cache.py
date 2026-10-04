@@ -10,7 +10,6 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Awaitable, Callable, Dict, Optional, Set
 
-from ..plugin_base import SearchResult, SymbolDef
 from .cache_manager import ICacheManager
 
 logger = logging.getLogger(__name__)
@@ -122,17 +121,15 @@ class QueryResultCache:
         files = set()
 
         try:
-            if query_type == QueryType.SYMBOL_LOOKUP and isinstance(result, SymbolDef):
-                if result.file_path:
-                    files.add(result.file_path)
-
-            elif query_type in [QueryType.SEARCH, QueryType.SEMANTIC_SEARCH]:
-                if isinstance(result, list):
-                    for item in result:
-                        if isinstance(item, SearchResult) and item.file_path:
-                            files.add(item.file_path)
-                        elif isinstance(item, dict) and "file_path" in item:
-                            files.add(item["file_path"])
+            if query_type in {QueryType.SYMBOL_LOOKUP, QueryType.SEARCH, QueryType.SEMANTIC_SEARCH}:
+                items = result if isinstance(result, list) else [result]
+                for item in items:
+                    if isinstance(item, dict):
+                        path = item.get("defined_in") or item.get("file") or item.get("file_path")
+                    else:
+                        path = getattr(item, "file_path", None) or getattr(item, "defined_in", None)
+                    if path:
+                        files.add(str(path))
 
             elif query_type == QueryType.FILE_SYMBOLS:
                 # File symbols query depends on the specific file

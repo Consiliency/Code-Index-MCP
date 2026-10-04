@@ -30,6 +30,18 @@ class TestFreshnessVerdictEnum:
         assert json.dumps(FreshnessVerdict.FRESH) == '"fresh"'
 
 
+def test_freshness_uses_selected_repository_without_changing_cwd(tmp_path, monkeypatch):
+    from tests.test_git_index_manager import _get_head_commit, _make_git_repo
+
+    repo = _make_git_repo(tmp_path)
+    head = _get_head_commit(repo)
+    monkeypatch.chdir(tmp_path)
+    assert (
+        verify_artifact_freshness(_meta(commit=head), head, 14, repo_path=repo)
+        is FreshnessVerdict.FRESH
+    )
+
+
 class TestFresh:
     def test_fresh_when_ancestor_and_within_age(self):
         meta = _meta(commit="abc123", days_ago=3)

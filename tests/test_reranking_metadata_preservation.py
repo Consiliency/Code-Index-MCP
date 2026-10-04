@@ -336,7 +336,8 @@ class TestCohereReranker:
             assert original.context == original_match.context
 
     @pytest.mark.asyncio
-    async def test_cohere_caching_preserves_metadata(self, cohere_reranker):
+    @pytest.mark.parametrize("generation_key", [None, "repo:generation:profile"])
+    async def test_cohere_caching_preserves_metadata(self, cohere_reranker, generation_key):
         """Test that cached results preserve metadata"""
         # Mock Cohere client
         mock_client = Mock()
@@ -354,16 +355,18 @@ class TestCohereReranker:
 
             query = "cached query"
             original_results = TestDataFactory.create_search_results(2)
+            for candidate in original_results:
+                candidate.generation_key = generation_key
 
-            # First call - should cache
+            # Only generation-bound candidates are eligible for reuse.
             result1 = await cohere_reranker.rerank(query, original_results, top_k=1)
             assert result1.is_success
             assert not result1.data.metadata["from_cache"]
 
-            # Second call - should use cache
             result2 = await cohere_reranker.rerank(query, original_results, top_k=1)
             assert result2.is_success
-            assert result2.data.metadata["from_cache"]
+            assert result2.data.metadata["from_cache"] is (generation_key is not None)
+            assert mock_client.rerank.call_count == (1 if generation_key else 2)
 
             # Verify cached results preserve metadata
             cached_item = result2.data.results[0]
@@ -379,6 +382,7 @@ class TestCohereReranker:
             assert cached_item.original_result.score == original_item.original_result.score
             assert cached_item.original_result.context == original_item.original_result.context
             assert cached_item.rerank_score == original_item.rerank_score
+            assert cached_item.original_result.generation_key == generation_key
 
 
 class TestCrossEncoderReranker:

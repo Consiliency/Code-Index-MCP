@@ -76,4 +76,5 @@ VALUES (3, 'Stable IDs and token counting for TreeSitter Chunker integration');
 
 -- Phase 7: Add migration record
 INSERT INTO migrations (version_from, version_to, status)
-VALUES (2, 3, 'completed');
+SELECT 2, 3, 'completed'
+WHERE NOT EXISTS (SELECT 1 FROM migrations WHERE version_to = 3 AND status = 'completed');

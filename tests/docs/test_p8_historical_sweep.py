@@ -1,7 +1,6 @@
 """Tests for P8 SL-3: historical docs sweep — banner, delete, triage log."""
 
 import re
-import subprocess
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent.parent
@@ -19,24 +18,17 @@ VALID_DISPOSITIONS = {"deleted", "bannered", "rewritten"}
 
 
 def _get_deleted_set() -> set[str]:
-    result = subprocess.run(
-        [
-            "git",
-            "diff",
-            "--diff-filter=D",
-            "--name-only",
-            "main..HEAD",
-            "--",
-            "docs/implementation/",
-            "docs/status/",
-            "docs/validation/",
-        ],
-        capture_output=True,
-        text=True,
-        cwd=REPO_ROOT,
-    )
-    lines = [l.strip() for l in result.stdout.splitlines() if l.strip()]
-    return set(lines)
+    # Frozen historical deletions survive merge, shallow clones, and source archives.
+    return {
+        "docs/status/PMCP_FLEET_PILOT.md",
+        "docs/status/pmcp-pilot/query-evidence.json",
+        "docs/status/pmcp-pilot/repository-readiness-evidence.json",
+        "docs/status/pmcp-pilot/startup-evidence.json",
+    }
+
+
+def test_historical_deleted_paths_remain_absent():
+    assert all(not (REPO_ROOT / path).exists() for path in _get_deleted_set())
 
 
 def _get_present_set() -> set[str]:

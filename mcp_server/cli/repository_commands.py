@@ -1063,8 +1063,12 @@ def sync(repo_id: Optional[str], force_full: bool, sync_all: bool):
             click.echo("Synchronizing all repositories...")
 
             # Create index manager
+            dispatcher = EnhancedDispatcher(
+                semantic_search_enabled=reload_settings().semantic_search_enabled
+            )
             index_manager = GitAwareIndexManager(
                 registry,
+                dispatcher,
                 repo_resolver=repo_resolver,
                 store_registry=store_registry,
             )
@@ -1124,7 +1128,9 @@ def sync(repo_id: Optional[str], force_full: bool, sync_all: bool):
                 sys.exit(1)
 
             # Create necessary components
-            dispatcher = EnhancedDispatcher()
+            dispatcher = EnhancedDispatcher(
+                semantic_search_enabled=reload_settings().semantic_search_enabled
+            )
             index_manager = GitAwareIndexManager(
                 registry,
                 dispatcher,
@@ -1460,7 +1466,9 @@ def watch(watch_all: bool, daemon: bool):
             sys.exit(1)
 
         # Create components
-        dispatcher = EnhancedDispatcher()
+        dispatcher = EnhancedDispatcher(
+            semantic_search_enabled=reload_settings().semantic_search_enabled
+        )
         index_manager = GitAwareIndexManager(
             registry,
             dispatcher,

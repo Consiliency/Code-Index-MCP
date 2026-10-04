@@ -2,12 +2,83 @@
 
 import hashlib
 import os
+import subprocess
 from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
 
 from mcp_server.watcher.sweeper import DEFAULT_SWEEP_MINUTES, ENV_SWEEP_MINUTES, WatcherSweeper
+
+
+@pytest.mark.parametrize(
+    ("content", "normalized"),
+    [(b"a\r\nb\rc\n", "a\nb\nc\n"), (b"caf\xe9\r\n", "caf\u00e9\n")],
+)
+def test_sweep_hash_streams_normalized_source(tmp_path, monkeypatch, content, normalized):
+    source = tmp_path / "source.py"
+    source.write_bytes(content)
+    sweeper = WatcherSweeper(
+        on_missed_path=None,
+        repo_roots_provider=lambda: {},
+        store=None,
+    )
+
+    def refuse_read_bytes(_path):
+        raise AssertionError("Sweeper materialized the source file")
+
+    monkeypatch.setattr(Path, "read_bytes", refuse_read_bytes)
+    assert sweeper._hash_file(source) == hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+@pytest.mark.parametrize("change", ["modify", "delete"])
+def test_sweep_skips_uncommitted_tracked_changes(tmp_path, change):
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo_root)], check=True)
+    source = repo_root / "source.py"
+    source.write_text("value = 1\n")
+    subprocess.run(["git", "add", "source.py"], cwd=repo_root, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "-qm",
+            "fixture",
+        ],
+        cwd=repo_root,
+        check=True,
+    )
+    store = _make_sqlite_store(tmp_path)
+    repo_id = store.create_repository(str(repo_root), "repo")
+    store.store_file(
+        file_path=source,
+        language="python",
+        repository_id=repo_id,
+        relative_path="source.py",
+        content_hash=hashlib.sha256(source.read_bytes()).hexdigest(),
+    )
+    if change == "modify":
+        source.write_text("value = 2\n")
+    else:
+        source.unlink()
+    drift_calls = []
+    sweeper = WatcherSweeper(
+        None,
+        lambda: {"repo": repo_root},
+        store,
+        on_repository_drift=drift_calls.append,
+    )
+    try:
+        assert sweeper.sweep_once() == []
+        assert drift_calls == []
+    finally:
+        store.close()
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -41,6 +112,42 @@ def _store_file(store, repo_id_int: int, relative_path: str, content_hash: str =
 
 class TestSweeperRecoversMissedEvent:
     """Sweeper detects a file present on disk but absent from SQLite."""
+
+    @pytest.mark.parametrize("extension", [".md", ".txt", ".pyw", ".mjs", ".yaml"])
+    def test_sweep_recovers_every_supported_file_family(self, tmp_path, extension):
+        root = tmp_path / "repo"
+        root.mkdir()
+        (root / f"missed{extension}").write_text("synthetic content\n")
+        store = _make_sqlite_store(tmp_path)
+        store.create_repository(str(root), "repo")
+        calls = []
+        sweeper = WatcherSweeper(
+            on_missed_path=lambda repo, path: calls.append((repo, path)),
+            repo_roots_provider=lambda: {"repo": root},
+            store=store,
+        )
+        try:
+            assert sweeper.sweep_once() == ["repo"]
+            assert calls == [("repo", f"missed{extension}")]
+        finally:
+            store.close()
+
+    def test_sweeper_detects_changed_content_at_an_existing_path(self, tmp_path):
+        root = tmp_path / "repo"
+        root.mkdir()
+        (root / "existing.py").write_text("new = 2\n")
+        store = _make_sqlite_store(tmp_path)
+        repo_row = store.create_repository(str(root), "repo")
+        _store_file(store, repo_row, "existing.py", hashlib.sha256(b"old = 1\n").hexdigest())
+        calls = []
+        sweeper = WatcherSweeper(
+            lambda repo, path: calls.append((repo, path)), lambda: {"repo": root}, store
+        )
+        try:
+            assert sweeper.sweep_once() == ["repo"]
+            assert calls == [("repo", "existing.py")]
+        finally:
+            store.close()
 
     def test_sweeper_recovers_missed_event(self, tmp_path):
         """Create a file without firing watchdog; sweep_once should call on_missed_path."""
@@ -221,6 +328,216 @@ class TestSweeperNoopWhenNoDrift:
 
         assert missed_calls == []
         assert drifted == []
+
+    def test_tracked_indexer_exclusions_do_not_trigger_repeated_resync(self, tmp_path, monkeypatch):
+        repo_root = tmp_path / "repo"
+        repo_root.mkdir()
+        subprocess.run(["git", "init", "-q", str(repo_root)], check=True)
+        source = repo_root / "source.py"
+        source.write_text("value = 1\n")
+        (repo_root / "pom.xml").write_text("<project/>\n")
+        (repo_root / "large.json").write_text('{"value": "more than thirty two bytes"}\n')
+        (repo_root / "mcp_validation_results.json").write_text("{}\n")
+        subprocess.run(["git", "add", "."], cwd=repo_root, check=True)
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "commit",
+                "-qm",
+                "fixture",
+            ],
+            cwd=repo_root,
+            check=True,
+        )
+        monkeypatch.setenv("MCP_MAX_FILE_SIZE_BYTES", "32")
+
+        store = _make_sqlite_store(tmp_path)
+        repo_id = store.create_repository(str(repo_root), "repo")
+        store.store_file(
+            file_path=source,
+            language="python",
+            repository_id=repo_id,
+            relative_path="source.py",
+            content_hash=hashlib.sha256(source.read_bytes()).hexdigest(),
+        )
+        drift_calls = []
+        sweeper = WatcherSweeper(
+            on_missed_path=None,
+            repo_roots_provider=lambda: {"repo": repo_root},
+            store=store,
+            on_repository_drift=drift_calls.append,
+        )
+        try:
+            assert sweeper.sweep_once() == []
+            assert sweeper.sweep_once() == []
+            assert drift_calls == []
+            store.store_file(
+                file_path=repo_root / "pom.xml",
+                language="xml",
+                repository_id=repo_id,
+                relative_path="pom.xml",
+            )
+            assert sweeper.sweep_once() == ["repo"]
+            assert drift_calls == ["repo"]
+        finally:
+            store.close()
+
+    @pytest.mark.parametrize("content", [b"value = 1\r\n", b"word = caf\xe9\n"])
+    def test_dispatcher_persisted_text_hash_converges(self, tmp_path, content):
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        from mcp_server.core.repo_context import RepoContext
+        from mcp_server.dispatcher.dispatcher_enhanced import EnhancedDispatcher, IndexResultStatus
+        from mcp_server.plugin_base import IPlugin
+
+        repo_root = tmp_path / "repo"
+        repo_root.mkdir()
+        source = repo_root / "source.py"
+        source.write_bytes(content)
+        store = _make_sqlite_store(tmp_path)
+        store.create_repository(str(repo_root), "repo")
+        plugin = MagicMock(spec=IPlugin, lang="python")
+        plugin.language = "python"
+        plugin.supports.return_value = True
+        plugin.indexFile.return_value = {"symbols": []}
+        dispatcher = EnhancedDispatcher([plugin], semantic_search_enabled=False)
+        ctx = RepoContext(
+            repo_id="repo",
+            sqlite_store=store,
+            workspace_root=repo_root,
+            tracked_branch="main",
+            registry_entry=SimpleNamespace(path=repo_root, name="repo"),
+        )
+        drift_calls = []
+        sweeper = WatcherSweeper(
+            on_missed_path=None,
+            repo_roots_provider=lambda: {"repo": repo_root},
+            store=store,
+            on_repository_drift=drift_calls.append,
+        )
+        try:
+            assert dispatcher.index_file(ctx, source).status == IndexResultStatus.INDEXED
+            assert sweeper.sweep_once() == []
+            assert sweeper.sweep_once() == []
+            assert drift_calls == []
+        finally:
+            dispatcher.shutdown()
+            store.close()
+
+    def test_tracked_crlf_checkout_uses_committed_size_limit(self, tmp_path, monkeypatch):
+        repo_root = tmp_path / "repo"
+        repo_root.mkdir()
+        subprocess.run(["git", "init", "-q", str(repo_root)], check=True)
+        subprocess.run(["git", "config", "core.autocrlf", "true"], cwd=repo_root, check=True)
+        source = repo_root / "source.txt"
+        source.write_bytes(b"a\nb\nc\n")
+        subprocess.run(["git", "add", "source.txt"], cwd=repo_root, check=True)
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "commit",
+                "-qm",
+                "fixture",
+            ],
+            cwd=repo_root,
+            check=True,
+        )
+        source.unlink()
+        subprocess.run(["git", "checkout-index", "--", "source.txt"], cwd=repo_root, check=True)
+        assert source.read_bytes() == b"a\r\nb\r\nc\r\n"
+        monkeypatch.setenv("MCP_MAX_FILE_SIZE_BYTES", "7")
+
+        store = _make_sqlite_store(tmp_path)
+        repo_id = store.create_repository(str(repo_root), "repo")
+        store.store_file(
+            file_path=source,
+            language="plaintext",
+            repository_id=repo_id,
+            relative_path="source.txt",
+            content_hash=hashlib.sha256(b"a\nb\nc\n").hexdigest(),
+        )
+        drift_calls = []
+        sweeper = WatcherSweeper(
+            None, lambda: {"repo": repo_root}, store, on_repository_drift=drift_calls.append
+        )
+        try:
+            assert sweeper.sweep_once() == []
+            assert sweeper.sweep_once() == []
+            assert drift_calls == []
+        finally:
+            store.close()
+
+    @pytest.mark.parametrize("limit", [8, 100])
+    def test_tracked_smudge_filter_uses_committed_content(self, tmp_path, monkeypatch, limit):
+        import shutil
+
+        if shutil.which("sed") is None:
+            pytest.skip("Git fixture requires sed")
+        repo_root = tmp_path / "repo"
+        repo_root.mkdir()
+        subprocess.run(["git", "init", "-q", str(repo_root)], check=True)
+        subprocess.run(
+            ["git", "config", "filter.demo.clean", "sed 's/SMUDGED-LARGE-CONTENT/RAW/g'"],
+            cwd=repo_root,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "config", "filter.demo.smudge", "sed 's/RAW/SMUDGED-LARGE-CONTENT/g'"],
+            cwd=repo_root,
+            check=True,
+        )
+        (repo_root / ".gitattributes").write_text("*.txt filter=demo\n")
+        source = repo_root / "source.txt"
+        source.write_bytes(b"RAW\n")
+        subprocess.run(["git", "add", "."], cwd=repo_root, check=True)
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "commit",
+                "-qm",
+                "fixture",
+            ],
+            cwd=repo_root,
+            check=True,
+        )
+        source.unlink()
+        subprocess.run(["git", "checkout-index", "--", "source.txt"], cwd=repo_root, check=True)
+        assert source.read_bytes() == b"SMUDGED-LARGE-CONTENT\n"
+        assert subprocess.run(["git", "diff", "--quiet", "HEAD"], cwd=repo_root).returncode == 0
+        monkeypatch.setenv("MCP_MAX_FILE_SIZE_BYTES", str(limit))
+
+        store = _make_sqlite_store(tmp_path)
+        repo_id = store.create_repository(str(repo_root), "repo")
+        store.store_file(
+            file_path=source,
+            language="plaintext",
+            repository_id=repo_id,
+            relative_path="source.txt",
+            content_hash=hashlib.sha256(b"RAW\n").hexdigest(),
+        )
+        drift_calls = []
+        sweeper = WatcherSweeper(
+            None, lambda: {"repo": repo_root}, store, on_repository_drift=drift_calls.append
+        )
+        try:
+            assert sweeper.sweep_once() == []
+            assert sweeper.sweep_once() == []
+            assert drift_calls == []
+        finally:
+            store.close()
 
 
 # ---------------------------------------------------------------------------

@@ -1,12 +1,17 @@
-"""Release metadata assertions for the published v1.4.0 contract.
+"""Release metadata assertions for the prepared v1.4.1 contract.
 
 Historical GARC soak target: v1.2.0-rc6.
 """
 
 from __future__ import annotations
 
+import json
+import os
+import shlex
 import subprocess
 from pathlib import Path
+
+import pytest
 
 try:
     import tomllib
@@ -15,13 +20,277 @@ except ImportError:  # Python <3.11
 
 
 REPO = Path(__file__).parent.parent
-EXPECTED_VERSION = "1.4.0"
-EXPECTED_TAG = "v1.4.0"
-GA_RC_EVIDENCE = REPO / "docs" / "validation" / "ga-rc-evidence.md"
+EXPECTED_VERSION = "1.4.1"
+EXPECTED_TAG = "v1.4.1"
 DOCKER_INSTALLERS = (
     "scripts/install-mcp-docker.sh",
     "scripts/install-mcp-docker.ps1",
 )
+
+
+@pytest.mark.parametrize(
+    "case",
+    ["version", "latest", "local", "missing", "malformed", "wrong_namespace", "invalid_selector"],
+)
+def test_docker_installer_pins_release_digest_without_tag_fallback(tmp_path, case):
+    image = "ghcr.io/consiliency/code-index-mcp@sha256:" + "a" * 64
+    response = image
+    if case == "malformed":
+        response = "ghcr.io/consiliency/code-index-mcp:latest"
+    elif case == "wrong_namespace":
+        response = "ghcr.io/another/image@sha256:" + "a" * 64
+    selector = {"latest": "latest", "local": "local-smoke", "invalid_selector": "../wrong"}.get(
+        case, "v1.4.1"
+    )
+    script = REPO / "scripts/install-mcp-docker.sh"
+    command = r"""
+set -e
+source "$INSTALLER"
+curl() { printf '%s\n' "$@" > curl-args; printf '%s\n' "$FIXTURE_REF"; return "$FETCH_EXIT"; }
+docker() { printf '%s\n' "$@" >> docker-args; }
+pull_image
+setup_mcp_json
+"""
+    result = subprocess.run(
+        ["bash", "-c", command],
+        cwd=tmp_path,
+        env={
+            **os.environ,
+            "INSTALLER": str(script),
+            "MCP_VARIANT": selector,
+            "FIXTURE_REF": response,
+            "FETCH_EXIT": "22" if case == "missing" else "0",
+        },
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+    if case in {"missing", "malformed", "wrong_namespace", "invalid_selector"}:
+        assert result.returncode != 0
+        assert not (tmp_path / "docker-args").exists()
+        assert not (tmp_path / ".mcp.json").exists()
+        return
+    assert result.returncode == 0, result.stderr
+    expected = "ghcr.io/consiliency/code-index-mcp:local-smoke" if case == "local" else image
+    calls = (tmp_path / "docker-args").read_text().splitlines()
+    assert calls == (["image", "inspect", expected] if case == "local" else ["pull", expected])
+    config = json.loads((tmp_path / ".mcp.json").read_text())
+    assert config["mcpServers"]["code-index"] == {"command": "mcp-index", "args": ["stdio"]}
+    if case != "local":
+        url = (tmp_path / "curl-args").read_text().splitlines()[-1]
+        selector_path = "latest/download" if case == "latest" else "download/v1.4.1"
+        assert url.endswith(f"/releases/{selector_path}/image-reference.txt")
+
+
+def test_docker_launcher_registers_and_reuses_mounted_workspace(tmp_path):
+    source = (REPO / "scripts/install-mcp-docker.sh").read_text()
+    launcher = source.split("cat > /tmp/mcp-index << 'EOF'\n", 1)[1].split("\nEOF", 1)[0]
+    launcher = launcher.replace("@MCP_IMAGE_REF@", "synthetic-image")
+    script = tmp_path / "mcp-index"
+    script.write_text(launcher)
+    script.chmod(0o700)
+    docker = tmp_path / "docker"
+    docker.write_text('#!/bin/sh\nprintf \'%s\\n\' "$@" > "$DOCKER_ARGS"\n')
+    docker.chmod(0o700)
+    workspace = tmp_path / "repo"
+    workspace.mkdir()
+    env = {
+        **os.environ,
+        "PATH": f"{tmp_path}:{os.environ['PATH']}",
+        "WORKSPACE": str(workspace),
+        "MCP_REGISTRY_DIR": str(tmp_path / "registry"),
+        "DOCKER_ARGS": str(tmp_path / "args"),
+    }
+    for command, suffix in (
+        ("setup", ["repository", "register", "/workspace"]),
+        ("stdio", ["index-it-mcp", "stdio"]),
+    ):
+        result = subprocess.run([str(script), command], env=env, capture_output=True, text=True)
+        assert result.returncode == 0, result.stderr
+        args = (tmp_path / "args").read_text().splitlines()
+        assert args[-len(suffix) :] == suffix
+        assert args[args.index("--workdir") + 1] == "/workspace"
+        assert f"{workspace}:/workspace" in args
+        assert f"{tmp_path / 'registry'}:/app/.mcp" in args
+        assert args[args.index("--user") + 1] == f"{os.getuid()}:{os.getgid()}"
+        assert "HOME=/app/.mcp" in args
+        assert "MCP_ENVIRONMENT=development" in args
+        assert "MCP_REPO_REGISTRY=/app/.mcp/repository_registry.json" in args
+        assert "MCP_WORKSPACE_ROOT=/workspace" in args
+        assert "MCP_ALLOWED_ROOTS=/workspace" in args
+    powershell = (REPO / "scripts/install-mcp-docker.ps1").read_text()
+    for value in (
+        "repository register /workspace",
+        "--workdir /workspace",
+        "MCP_REGISTRY_DIR=%WORKSPACE%\\.mcp-index\\docker-registry",
+        "%MCP_REGISTRY_DIR%:/app/.mcp",
+        "MCP_WORKSPACE_ROOT=/workspace",
+        "MCP_ALLOWED_ROOTS=/workspace",
+        "MCP_ENVIRONMENT=development",
+        "HOME=/app/.mcp",
+        "MCP_REPO_REGISTRY=/app/.mcp/repository_registry.json",
+        "VOYAGE_API_KEY",
+    ):
+        assert value in powershell
+    batch = powershell.split("$launcherContent = @'\n", 1)[1].split("\n'@", 1)[0]
+    runs = batch.split("docker run ")[1:]
+    assert len(runs) == 3
+    for run in runs:
+        invocation = run.split("%MCP_IMAGE_REF% index-it-mcp", 1)[0]
+        for value in (
+            "--workdir /workspace",
+            "%WORKSPACE%:/workspace",
+            "%MCP_REGISTRY_DIR%:/app/.mcp",
+            "HOME=/app/.mcp",
+            "MCP_REPO_REGISTRY=/app/.mcp/repository_registry.json",
+            "MCP_WORKSPACE_ROOT=/workspace",
+            "MCP_ALLOWED_ROOTS=/workspace",
+            "%GIT_MOUNTS%",
+        ):
+            assert value in invocation
+    assert 'git -C "%WORKSPACE%" rev-parse --path-format=absolute --git-common-dir' in batch
+    assert "git rev-parse --local-env-vars" in batch
+    assert 'DO SET "%%G="' in batch
+    assert 'SET "WORKTREE_GIT_COMMON="' in batch
+    assert 'SET "WORKTREE_GIT_DIR="' in batch
+    assert "gitdir: /mcp-git/worktrees/%WORKTREE_NAME%" in batch
+    assert "VOYAGE_AI_API_KEY" not in powershell
+
+
+def test_docker_launcher_mounts_linked_git_worktree(tmp_path):
+    source = _read_text("scripts/install-mcp-docker.sh")
+    template = source.split("cat > /tmp/mcp-index << 'EOF'\n", 1)[1].split("\nEOF", 1)[0]
+    launcher = tmp_path / "launcher"
+    launcher.write_text(template.replace("@MCP_IMAGE_REF@", "synthetic-image"))
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    subprocess.run(["git", "init", "-b", "main", str(repository)], check=True, capture_output=True)
+    (repository / "sample.py").write_text("def sample():\n    return 1\n")
+    subprocess.run(["git", "-C", str(repository), "add", "sample.py"], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repository),
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.com",
+            "commit",
+            "-m",
+            "sample",
+        ],
+        check=True,
+        capture_output=True,
+    )
+    linked = tmp_path / "linked"
+    subprocess.run(
+        ["git", "-C", str(repository), "worktree", "add", "-b", "linked", str(linked)],
+        check=True,
+        capture_output=True,
+    )
+    calls = tmp_path / "calls"
+    common = (repository / ".git").resolve()
+    pointer = tmp_path / "registry" / "worktree-pointer.git"
+    for git_env in (
+        {},
+        {"GIT_DIR": "/dev/null"},
+        {"GIT_COMMON_DIR": "/dev/null"},
+        {"GIT_OBJECT_DIRECTORY": "/dev/null"},
+        {"GIT_ALTERNATE_OBJECT_DIRECTORIES": "/dev/null"},
+    ):
+        result = subprocess.run(
+            [
+                "bash",
+                "-c",
+                'docker() { printf "%s\\n" "$@" > "$CALLS"; }; export -f docker; bash "$@"',
+                "test",
+                str(launcher),
+                "setup",
+            ],
+            env={
+                **os.environ,
+                **git_env,
+                "WORKSPACE": str(linked),
+                "MCP_REGISTRY_DIR": str(tmp_path / "registry"),
+                "CALLS": str(calls),
+            },
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, result.stderr
+        args = calls.read_text().splitlines()
+        assert f"{common}:/mcp-git:ro" in args
+        assert f"{pointer}:/workspace/.git:ro" in args
+        assert pointer.read_text() == "gitdir: /mcp-git/worktrees/linked\n"
+
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            'docker() { printf "%s\\n" "$@" > "$CALLS"; }; export -f docker; bash "$@"',
+            "test",
+            str(launcher),
+            "setup",
+        ],
+        env={
+            **os.environ,
+            "WORKSPACE": str(repository),
+            "MCP_REGISTRY_DIR": str(tmp_path / "registry"),
+            "CALLS": str(calls),
+        },
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert f"{common}:/mcp-git:ro" in calls.read_text().splitlines()
+    assert "MCP_GIT_COMMON_DIR=/mcp-git" in calls.read_text().splitlines()
+    assert pointer.read_text() == "gitdir: /mcp-git/worktrees/linked\n"
+
+
+@pytest.mark.parametrize(
+    "args", [[], ["--version"], ["setup"], ["upgrade"], ["search", "two words"]]
+)
+def test_generated_docker_launcher_keeps_selected_digest(tmp_path, args):
+    source = _read_text("scripts/install-mcp-docker.sh")
+    template = source.split("cat > /tmp/mcp-index << 'EOF'\n", 1)[1].split("\nEOF", 1)[0]
+    image = "ghcr.io/consiliency/code-index-mcp@sha256:" + "a" * 64
+    launcher = tmp_path / "launcher"
+    launcher.write_text(template.replace("@MCP_IMAGE_REF@", image))
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            'docker() { printf "%s\\n" "$@" > "$CALLS"; }; export -f docker; bash "$@"',
+            "test",
+            str(launcher),
+            *args,
+        ],
+        cwd=tmp_path,
+        env={
+            **os.environ,
+            "CALLS": str(tmp_path / "calls"),
+            "MCP_REGISTRY_DIR": str(tmp_path / "registry"),
+            "MCP_VARIANT": "untrusted-tag",
+        },
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+    assert result.returncode == 0, result.stderr
+    calls = (tmp_path / "calls").read_text().splitlines()
+    assert image in calls and "untrusted-tag" not in calls
+    if args == ["upgrade"]:
+        assert calls == ["pull", image]
+    elif args == ["setup"]:
+        assert calls[calls.index(image) + 1 :] == [
+            "index-it-mcp",
+            "repository",
+            "register",
+            "/workspace",
+        ]
+    else:
+        assert calls[calls.index(image) + 1 :] == ["index-it-mcp", *(args or ["stdio"])]
 
 
 def _read_text(relative_path: str) -> str:
@@ -53,6 +322,14 @@ def test_python_distribution_identity_is_frozen():
     assert "code-index-mcp" not in data["project"]["scripts"]
 
 
+def test_lock_root_version_matches_release():
+    lock = tomllib.loads(_read_text("uv.lock"))
+    roots = [p for p in lock["package"] if p["name"] == "index-it-mcp"]
+    assert len(roots) == 1
+    assert roots[0]["version"] == EXPECTED_VERSION
+    assert roots[0]["source"] == {"editable": "."}
+
+
 def test_readme_distribution_identity_remains_stable():
     readme = _read_text("README.md")
 
@@ -61,11 +338,38 @@ def test_readme_distribution_identity_remains_stable():
     assert "docs/status/public-package-identity.md" in readme
 
 
+def test_documented_publish_dispatch_binds_accepted_identity():
+    import yaml
+
+    readme = _read_text("README.md")
+    section = readme.split("### Creating Releases", 1)[1].split("### Automatic", 1)[0]
+    command = next(
+        line
+        for line in section.replace("\\\n", " ").splitlines()
+        if line.startswith("gh workflow run")
+    )
+    arguments = shlex.split(command)
+    fields = dict(
+        arguments[index + 1].split("=", 1) for index, value in enumerate(arguments) if value == "-f"
+    )
+    workflow = yaml.safe_load(_read_text(".github/workflows/release-automation.yml"))
+    inputs = (workflow.get("on") or workflow[True])["workflow_dispatch"]["inputs"]
+    assert set(fields) <= set(inputs)
+    assert fields["expected_commit"] == "$ACCEPTED_MERGE_COMMIT"
+    assert fields["expected_tree"] == "$ACCEPTED_MERGE_TREE"
+    assert fields["mode"] == "publish"
+    assert fields["version"] == EXPECTED_TAG
+    assert "GitHub SLSA attestations" not in readme
+    assert "Automatic redaction of detected secrets" not in readme
+
+
 def test_changelog_has_prepared_unpublished_contract_section():
     changelog = _read_text("CHANGELOG.md")
 
-    assert f"## [{EXPECTED_VERSION}] — 2026-07-19" in changelog
-    assert "Unpublished" in changelog
+    section = changelog.split(f"## [{EXPECTED_VERSION}] - 2026-09-12", 1)[1].split("\n## [", 1)[0]
+    assert "Prepared" in section
+    assert "Code-Index-MCP#97" in section
+    assert "does not imply publication" in section
 
 
 def test_release_workflow_separates_prepare_from_protected_main_publish():
@@ -81,11 +385,14 @@ def test_release_workflow_separates_prepare_from_protected_main_publish():
     assert "gh workflow run" not in workflow
     assert 'grep -Fxq "version = \\"$VERSION_NO_V\\"" pyproject.toml' in workflow
     assert 'grep -Fxq "__version__ = \\"$VERSION_NO_V\\"" mcp_server/__init__.py' in workflow
-    assert "prerelease: ${{ contains(inputs.version, '-') }}" in workflow
-    assert "${{ env.IMAGE_REF }}:${{ inputs.version }}" in workflow
+    assert 'if [[ "$RELEASE_VERSION" == *-* ]]; then flags+=(--prerelease); fi' in workflow
+    assert "verify-container:" in workflow
+    assert "image-reference.txt" in workflow
+    assert "imagetools create" not in workflow
     assert 'owner="${GITHUB_REPOSITORY_OWNER,,}"' in workflow
     assert "pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b" in workflow
-    assert "softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b" in workflow
+    assert 'gh release create "$RELEASE_VERSION"' in workflow
+    assert "--verify-tag" in workflow
 
 
 def test_release_tag_is_not_reused_locally():
@@ -110,12 +417,7 @@ def test_release_tag_is_not_reused_locally():
         text=True,
         check=True,
     ).stdout.strip()
-    if tag_commit == head:
-        return
-
-    evidence = GA_RC_EVIDENCE.read_text(encoding="utf-8")
-    assert EXPECTED_TAG in evidence or "v1.2.0-rc8" in evidence
-    assert tag_commit in evidence, f"{EXPECTED_TAG} exists but points at undocumented {tag_commit}"
+    assert tag_commit == head, f"{EXPECTED_TAG} already identifies a different source commit"
 
 
 def test_installers_and_download_helper_match_stable_identity_contract():
@@ -130,11 +432,10 @@ def test_installers_and_download_helper_match_stable_identity_contract():
     powershell = _read_text("scripts/install-mcp-docker.ps1")
     download_helper = _read_text("scripts/download-release.py")
 
-    # Installers now default to the published v1.4.0 image, not local-smoke.
-    assert 'MCP_VARIANT="${MCP_VARIANT:-v1.4.0}"' in shell
+    assert 'MCP_VARIANT="${MCP_VARIANT:-v1.4.1}"' in shell
     assert 'MCP_VARIANT="${MCP_VARIANT:-local-smoke}"' not in shell
-    assert 'param(\n    [string]$Variant = "v1.4.0"' in powershell
-    assert 'IF "%MCP_VARIANT%"=="" SET MCP_VARIANT=v1.4.0' in powershell
+    assert 'param(\n    [string]$Variant = "v1.4.1"' in powershell
+    assert "SET MCP_IMAGE_REF=@MCP_IMAGE_REF@" in powershell
     assert 'IF "%MCP_VARIANT%"=="" SET MCP_VARIANT=local-smoke' not in powershell
 
     # local-smoke stays available as a selectable dev option (just not the default).
@@ -143,16 +444,16 @@ def test_installers_and_download_helper_match_stable_identity_contract():
     assert "local-smoke" in powershell
     assert "make release-smoke-container" in powershell
 
-    # v1.4.0 is presented as a published release image, not prepared/unpublished.
-    assert "v1.4.0 is prepared but unpublished" not in shell
-    assert "v1.4.0 is prepared but unpublished" not in powershell
-    assert "Published release image (default)" in shell
-    assert "Published release image (default)" in powershell
+    assert "Versioned release image (requires publication)" in shell
+    assert "Versioned release image (requires publication)" in powershell
 
     readme = _read_text("README.md")
     quick_start = readme.split("## 🚀 Quick Start", 1)[1].split("## Using Against Many Repos", 1)[0]
-    assert "after protected-main publication" not in quick_start
-    assert "ghcr.io/consiliency/code-index-mcp:v1.4.0" in quick_start
+    assert "after protected-main publication" in quick_start
+    assert "image-reference.txt" in quick_start
+    for installer in (shell, powershell):
+        assert "image-reference.txt" in installer
+        assert "no tag fallback is permitted" in installer
 
     for expected in (
         "index_it_mcp-",
@@ -164,6 +465,15 @@ def test_installers_and_download_helper_match_stable_identity_contract():
         "ViperJuice/Code-Index-MCP",
     ):
         assert expected in download_helper
+
+
+def test_active_docs_separate_candidate_from_publication():
+    for path in ("README.md", "docs/GETTING_STARTED.md", "docs/MCP_CONFIGURATION.md"):
+        text = _read_text(path)
+        assert "1.4.1" in text
+        assert "prepared candidate" in text
+        assert "docs/operations/v13-release.md" in text or "operations/v13-release.md" in text
+        assert "July 10, 2026 collision check" not in text
 
 
 def test_index_management_workflow_uses_repo_scoped_indexes_for_ci_uploads():

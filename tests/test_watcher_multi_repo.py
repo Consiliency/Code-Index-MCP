@@ -13,6 +13,7 @@ from mcp_server.core.repo_context import RepoContext
 from mcp_server.dispatcher.dispatcher_enhanced import IndexResult, IndexResultStatus
 from mcp_server.watcher.sweeper import WatcherSweeper
 from mcp_server.watcher_multi_repo import MultiRepositoryHandler, MultiRepositoryWatcher
+from tests.fixtures.multi_repo import boot_test_server, build_temp_repo
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -23,6 +24,7 @@ def _make_repo_context(workspace_root: Path, tracked_branch: str = "main") -> Re
     store = Mock()
     info = Mock()
     info.tracked_branch = tracked_branch
+    info.registration_id = None
     return RepoContext(
         repo_id="deadbeef" * 4,
         sqlite_store=store,
@@ -48,7 +50,43 @@ def _make_repo_info(path: str, auto_sync: bool = True):
     info.path = path
     info.auto_sync = auto_sync
     info.tracked_branch = "main"
+    info.registration_id = None
+    info.active = True
     return info
+
+
+@pytest.mark.parametrize("disabled", ["auto_sync", "active"])
+def test_sweeper_and_git_monitor_respect_disabled_repository(tmp_path, disabled):
+    from mcp_server.watcher_multi_repo import GitMonitor
+
+    info = _make_repo_info(str(tmp_path))
+    setattr(info, disabled, False)
+    watcher = MultiRepositoryWatcher.__new__(MultiRepositoryWatcher)
+    watcher.registry = _make_registry({"repo-1": info})
+    watcher.index_manager = Mock()
+    watcher.mark_repository_changed = Mock()
+    sweeper = watcher._build_default_sweeper()
+    assert sweeper._repo_roots_provider() == {}
+    watcher._reconcile_repository_drift("repo-1")
+    watcher.index_manager.sync_repository_index.assert_not_called()
+    monitor = GitMonitor(watcher.registry, Mock())
+    monitor._get_current_commit = Mock(return_value="new")
+    monitor.last_commits["repo-1"] = "old"
+    monitor._check_repositories()
+    monitor.callback.assert_not_called()
+
+
+def test_empty_startup_constructs_sweeper_for_later_registration(tmp_path):
+    watcher = MultiRepositoryWatcher.__new__(MultiRepositoryWatcher)
+    watcher.registry = _make_registry()
+    watcher.index_manager = Mock()
+    sweeper = watcher._build_default_sweeper()
+    assert sweeper is not None
+    assert sweeper._repo_roots_provider() == {}
+    watcher.registry.get_all_repositories.return_value = {
+        "new-repo": _make_repo_info(str(tmp_path))
+    }
+    assert sweeper._repo_roots_provider() == {"new-repo": tmp_path}
 
 
 def _make_dispatcher():
@@ -84,6 +122,40 @@ def _make_dispatcher():
     return d
 
 
+def test_committed_event_failure_does_not_terminate_observation(tmp_path):
+    handler = MultiRepositoryHandler.__new__(MultiRepositoryHandler)
+    handler.repo_path = tmp_path
+    handler.repo_id = "repo-1"
+    handler.ctx = _make_repo_context(tmp_path)
+    handler._refresh_context = Mock(return_value=True)
+    handler.parent_watcher = Mock()
+    sync = handler.parent_watcher.index_manager.sync_repository_index
+    sync.side_effect = TimeoutError("writer is busy")
+    assert handler._reconcile_committed_event(tmp_path / "source.py") is False
+    sync.side_effect = None
+    sync.return_value.action = "incremental_update"
+    assert handler._reconcile_committed_event(tmp_path / "source.py") is True
+
+
+def test_watcher_status_uses_stable_membership_snapshot(tmp_path):
+    watcher = MultiRepositoryWatcher.__new__(MultiRepositoryWatcher)
+    watcher._watch_lock = threading.RLock()
+    watcher.watchers = {"repo-1": Mock()}
+    watcher.changed_repos = set()
+    watcher.registry = Mock()
+    watcher.index_manager = Mock()
+
+    def concurrent_removal(repo_id):
+        watcher.watchers.clear()
+        return _make_repo_info(str(tmp_path))
+
+    watcher.registry.get_repository.side_effect = concurrent_removal
+    watcher.index_manager.get_repository_status.return_value = {"ready": True}
+    status = watcher.get_status()
+    assert status["watching"] == 1
+    assert status["repositories"]["repo-1"]["ready"] is True
+
+
 def _make_repo_resolver(ctx_map=None):
     """Return a mock RepoResolver whose resolve() returns ctx based on path."""
     resolver = Mock()
@@ -97,6 +169,52 @@ def _make_repo_resolver(ctx_map=None):
 
     resolver.resolve.side_effect = _resolve
     return resolver
+
+
+def test_watcher_uses_current_generation_and_external_registry_membership(tmp_path, monkeypatch):
+    from mcp_server.storage.repository_registry import RepositoryRegistry
+
+    first, first_id = build_temp_repo(tmp_path, "first", seed_files={"seed.py": "first = 1\n"})
+    second, second_id = build_temp_repo(tmp_path, "second", seed_files={"seed.py": "second = 2\n"})
+    with boot_test_server(tmp_path, [first]) as server:
+        dispatcher = _make_dispatcher()
+        resolver = server.repo_resolver
+        watcher = MultiRepositoryWatcher(
+            server.registry,
+            dispatcher,
+            Mock(
+                store_registry=server.store_registry,
+                sync_repository_index=Mock(return_value=Mock(action="up_to_date")),
+            ),
+            repo_resolver=resolver,
+            store_registry=server.store_registry,
+            sweeper=Mock(),
+        )
+        monkeypatch.setattr("mcp_server.watcher_multi_repo.Observer", Mock())
+        watcher.running = True
+        try:
+            watcher._reconcile_registry(server.registry.get_all_repositories())
+            handler = watcher.watchers[first_id]
+            old_store = handler.ctx.sqlite_store
+            external = RepositoryRegistry(server.registry.registry_path)
+            info = external.get(first_id)
+            external.update_indexed_commit(first_id, info.last_indexed_commit, branch="main")
+            assert not handler._trigger_reindex_with_ctx(first / "seed.py")
+            assert handler.ctx.sqlite_store is not old_store
+            dispatcher.index_file_guarded.assert_not_called()
+            watcher.index_manager.sync_repository_index.assert_called_once_with(
+                first_id, expected_registration_id=info.registration_id, require_auto_sync=True
+            )
+            external.unregister(first_id)
+            assert not handler._trigger_reindex_with_ctx(first / "seed.py")
+            external.register_repository(str(second))
+            watcher.git_monitor._check_repositories()
+            assert set(watcher.watchers) == {second_id}
+            assert external.get(first_id) is None
+            assert external.get(second_id) is not None
+        finally:
+            watcher.stop_watching_all()
+            watcher.executor.shutdown(wait=True)
 
 
 # ---------------------------------------------------------------------------
@@ -179,7 +297,7 @@ class TestHandlerGitignoreFilter:
             ignored_file = tmp_path / "debug.log"
             ignored_file.write_text("log content")
             # Treat .log as code extension by patching code_extensions
-            handler._inner_handler.code_extensions = {".log", ".py"}
+            handler.code_extensions = {".log", ".py"}
             handler._trigger_reindex_with_ctx(ignored_file)
 
         dispatcher.index_file.assert_not_called()
@@ -275,6 +393,30 @@ class TestWatcherMutationTruth:
 
         dispatcher.move_file.assert_not_called()
         dispatcher.remove_file.assert_called_once_with(ctx, old_path)
+        parent.mark_repository_changed.assert_called_once_with("repo-1")
+
+    def test_failed_move_retries_new_path(self, tmp_path):
+        dispatcher = _make_dispatcher()
+        old_path = tmp_path / "old.py"
+        new_path = tmp_path / "new.py"
+        new_path.write_text("x = 1\n")
+        dispatcher.move_file.return_value = IndexResult(
+            status=IndexResultStatus.ERROR,
+            path=new_path,
+            observed_hash=None,
+            actual_hash=None,
+            error="Required semantic mutation did not complete",
+        )
+        parent = Mock(dispatcher=dispatcher, query_cache=None, path_resolver=None)
+        ctx = _make_repo_context(tmp_path)
+        with patch(
+            "mcp_server.watcher_multi_repo.subprocess.run",
+            return_value=Mock(stdout="main\n", returncode=0),
+        ):
+            handler = MultiRepositoryHandler("repo-1", tmp_path, parent, ctx=ctx)
+            handler._trigger_reindex_with_ctx = Mock(return_value=True)
+            handler.on_any_event(FileMovedEvent(str(old_path), str(new_path)))
+        handler._trigger_reindex_with_ctx.assert_called_once_with(new_path)
         parent.mark_repository_changed.assert_called_once_with("repo-1")
 
     def test_move_with_missing_destination_only_marks_changed_on_successful_delete(self, tmp_path):
@@ -433,6 +575,7 @@ class TestArtifactPublishTriggers:
             sweeper=Mock(),
         )
         watcher._artifact_publisher = Mock()
+        watcher.dispatcher._semantic_registry = None
         return watcher, registry, artifact_manager
 
     @pytest.mark.parametrize("action", ["full_index", "incremental_update"])
@@ -441,17 +584,61 @@ class TestArtifactPublishTriggers:
 
         watcher._sync_repository("repo-1", "callback123")
 
-        artifact_manager.create_commit_artifact.assert_called_once()
+        artifact_manager.create_commit_artifact.assert_not_called()
         watcher._artifact_publisher.publish_on_reindex.assert_called_once_with(
             "repo-1",
             "synced123",
             tracked_branch="main",
             index_location=str(tmp_path / "repo" / ".mcp-index"),
+            index_path=tmp_path / "repo" / ".mcp-index" / "current.db",
+            repo_path=str(tmp_path / "repo"),
+            semantic_indexer=None,
         )
         registry.update_artifact_state.assert_any_call(
             "repo-1",
+            expected_owner=registry.get_repository("repo-1"),
             last_published_commit="synced123",
             artifact_health="published",
+        )
+
+    def test_publish_leases_semantic_indexer_with_resolved_store(self, tmp_path):
+        from contextlib import contextmanager
+
+        watcher, registry, _ = self._watcher_for_sync(tmp_path, "full_index")
+        repo = registry.get_repository("repo-1")
+        ctx = _make_repo_context(Path(repo.path))
+        ctx.registry_entry.registration_id = repo.registration_id
+        watcher.repo_resolver = Mock()
+        watcher.repo_resolver.resolve.return_value = ctx
+
+        @contextmanager
+        def lease(repo_id, *, ctx):
+            assert repo_id == "repo-1"
+            assert ctx.sqlite_store is not None
+            yield "semantic-indexer"
+
+        watcher.dispatcher._semantic_registry = Mock(lease=lease)
+        watcher._sync_repository("repo-1", "callback123")
+
+        watcher.repo_resolver.resolve.assert_called_once_with(repo.path)
+        assert (
+            watcher._artifact_publisher.publish_on_reindex.call_args.kwargs["semantic_indexer"]
+            == "semantic-indexer"
+        )
+
+    def test_publish_refuses_unscoped_semantic_owner(self, tmp_path):
+        watcher, registry, _ = self._watcher_for_sync(tmp_path, "full_index")
+        semantic = Mock()
+        watcher.dispatcher._semantic_registry = semantic
+
+        watcher._sync_repository("repo-1", "callback123")
+
+        semantic.lease.assert_not_called()
+        watcher._artifact_publisher.publish_on_reindex.assert_not_called()
+        registry.update_artifact_state.assert_called_once_with(
+            "repo-1",
+            expected_owner=registry.get_repository("repo-1"),
+            artifact_health="publish_failed",
         )
 
     @pytest.mark.parametrize("action", ["wrong_branch", "up_to_date", "downloaded", "failed"])
@@ -469,8 +656,12 @@ class TestArtifactPublishTriggers:
 
         watcher._sync_repository("repo-1", "callback123")
 
-        artifact_manager.create_commit_artifact.assert_called_once()
-        registry.update_artifact_state.assert_any_call("repo-1", artifact_health="publish_failed")
+        artifact_manager.create_commit_artifact.assert_not_called()
+        registry.update_artifact_state.assert_any_call(
+            "repo-1",
+            expected_owner=registry.get_repository("repo-1"),
+            artifact_health="publish_failed",
+        )
 
     def test_local_only_health_is_reserved_for_no_remote_publisher(self, tmp_path):
         watcher, registry, artifact_manager = self._watcher_for_sync(tmp_path, "full_index")
@@ -478,11 +669,15 @@ class TestArtifactPublishTriggers:
 
         watcher._sync_repository("repo-1", "callback123")
 
-        artifact_manager.create_commit_artifact.assert_called_once()
+        artifact_manager.create_commit_artifact.assert_not_called()
         registry.update_artifact_state.assert_any_call(
             "repo-1",
-            last_published_commit="synced123",
+            expected_owner=registry.get_repository("repo-1"),
             artifact_health="local_only",
+        )
+        assert all(
+            "last_published_commit" not in call.kwargs
+            for call in registry.update_artifact_state.call_args_list
         )
 
     def test_add_repository_after_start_begins_watching(self, tmp_path):
@@ -565,11 +760,15 @@ class TestArtifactPublishTriggers:
             # repo-1 observer still running
             assert "repo-1" in watcher.observers
             assert watcher.observers["repo-1"].is_alive()
-            store_registry.close.assert_called_once_with("repo-2")
-            plugin_registry.evict.assert_called_once_with("repo-2")
-            semantic_registry.evict.assert_called_once_with("repo-2")
+            store_registry.close.assert_called_once_with(
+                "repo-2", expected_owner=ctx2.registry_entry
+            )
+            plugin_registry.evict.assert_not_called()
+            semantic_registry.evict.assert_called_once_with(
+                "repo-2", expected_owner=ctx2.registry_entry
+            )
             dispatcher.evict_repository_state.assert_called_once_with(
-                "repo-2", repo_root=Path(repos["repo-2"].path)
+                "repo-2", repo_root=Path(repos["repo-2"].path), expected_owner=ctx2.registry_entry
             )
         finally:
             watcher.stop_watching_all()

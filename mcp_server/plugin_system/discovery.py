@@ -157,6 +157,9 @@ class PluginDiscovery:
         # Check class attributes
         if hasattr(plugin_class, "language"):
             return plugin_class.language
+        declared_language = getattr(plugin_class, "lang", None)
+        if isinstance(declared_language, str) and declared_language:
+            return declared_language
         if hasattr(plugin_class, "get_language"):
             try:
                 # Create temporary instance

@@ -28,6 +28,12 @@ def validate_required_metadata_fields(metadata: Dict[str, Any]) -> List[str]:
     if "tracked_branch" not in metadata and "branch" in metadata:
         metadata = dict(metadata)
         metadata["tracked_branch"] = metadata["branch"]
+    elif (
+        "tracked_branch" in metadata
+        and "branch" in metadata
+        and (metadata["tracked_branch"] != metadata["branch"])
+    ):
+        reasons.append("metadata branch aliases disagree")
 
     required_keys = [
         "repo_id",
@@ -83,21 +89,6 @@ def _calculate_checksum(file_path: Path) -> str:
     return sha256.hexdigest()
 
 
-def _read_expected_checksum(
-    metadata: Dict[str, Any], checksum_path: Optional[Path]
-) -> Optional[str]:
-    """Resolve expected checksum from sidecar file first, then metadata."""
-    if checksum_path and checksum_path.exists():
-        contents = checksum_path.read_text().strip()
-        if not contents:
-            return None
-        return contents.split()[0]
-    checksum = metadata.get("checksum")
-    if checksum is None:
-        return None
-    return str(checksum)
-
-
 def _extract_manifest_v2_payload(metadata: Dict[str, Any]) -> Optional[Any]:
     """Extract optional manifest v2 payload from known metadata keys."""
     for key in ["manifest_v2", "artifact_manifest_v2"]:
@@ -114,7 +105,12 @@ def validate_artifact_integrity(
     """Validate metadata, checksum, and optional manifest v2 payload."""
     reasons = validate_required_metadata_fields(metadata)
 
-    expected_checksum = _read_expected_checksum(metadata, checksum_path)
+    expected_checksum = str(metadata.get("checksum") or "") or None
+    if checksum_path and checksum_path.exists():
+        fields = checksum_path.read_text().split()
+        sidecar_checksum = fields[0] if fields else None
+        if sidecar_checksum != expected_checksum:
+            reasons.append("checksum sidecar disagrees with signed metadata")
     actual_checksum: Optional[str] = None
     if not expected_checksum:
         reasons.append("artifact checksum is required but missing")
@@ -127,13 +123,62 @@ def validate_artifact_integrity(
 
     manifest_v2_validated = False
     manifest_v2_payload = _extract_manifest_v2_payload(metadata)
-    if manifest_v2_payload is not None:
+    if "manifest_v2" in metadata or "artifact_manifest_v2" in metadata:
+        if (
+            "manifest_v2" in metadata
+            and "artifact_manifest_v2" in metadata
+            and (metadata["manifest_v2"] != metadata["artifact_manifest_v2"])
+        ):
+            reasons.append("manifest_v2 aliases disagree")
         if not isinstance(manifest_v2_payload, dict):
             reasons.append("manifest_v2 must be an object")
         else:
             try:
-                ArtifactManifestV2.from_dict(manifest_v2_payload)
-                manifest_v2_validated = True
+                manifest = ArtifactManifestV2.from_dict(manifest_v2_payload)
+                bound_fields = {
+                    "repo_id": manifest.repo_id,
+                    "tracked_branch": manifest.canonical_tracked_branch,
+                    "commit": manifest.commit,
+                    "schema_version": manifest.schema_version,
+                    "semantic_profile_hash": manifest.semantic_profile_hash,
+                    "checksum": manifest.resolved_checksum,
+                    "artifact_type": manifest.artifact_type,
+                }
+                manifest_reasons = []
+                for key, value in bound_fields.items():
+                    outer = metadata.get(key)
+                    if key == "tracked_branch":
+                        outer = outer or metadata.get("branch")
+                    if str(outer) != str(value):
+                        manifest_reasons.append(f"manifest_v2 {key} disagrees with metadata")
+                if "logical_artifact_id" in metadata and (
+                    manifest.logical_artifact_id != metadata["logical_artifact_id"]
+                ):
+                    manifest_reasons.append(
+                        "manifest_v2 logical_artifact_id disagrees with metadata"
+                    )
+                compatibility = metadata.get("compatibility")
+                if isinstance(compatibility, dict):
+                    if str(compatibility.get("schema_version")) != str(manifest.schema_version):
+                        manifest_reasons.append("manifest_v2 schema disagrees with compatibility")
+                    if "chunk_schema_version" not in compatibility:
+                        manifest_reasons.append("manifest_v2 chunk schema is unbound")
+                    elif str(compatibility["chunk_schema_version"]) != str(
+                        manifest.chunk_schema_version
+                    ):
+                        manifest_reasons.append(
+                            "manifest_v2 chunk schema disagrees with compatibility"
+                        )
+                lexical = next(unit for unit in manifest.units if unit.unit_type == "lexical")
+                if lexical.size_bytes != archive_path.stat().st_size:
+                    manifest_reasons.append("manifest_v2 lexical size disagrees with archive")
+                if (
+                    "compressed_size" in metadata
+                    and metadata["compressed_size"] != lexical.size_bytes
+                ):
+                    manifest_reasons.append("manifest_v2 compressed size disagrees with metadata")
+                reasons.extend(manifest_reasons)
+                manifest_v2_validated = not manifest_reasons
             except (KeyError, TypeError, ValueError) as exc:
                 reasons.append(f"invalid manifest_v2: {exc}")
 

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from tests.test_release_metadata import EXPECTED_TAG, EXPECTED_VERSION
+
 REPO = Path(__file__).parent.parent.parent
 
 GA_CHECKLIST = REPO / "docs" / "validation" / "ga-readiness-checklist.md"
@@ -24,13 +26,14 @@ def test_rc8_contract_surfaces_and_workflow_path_are_frozen():
     evidence = _read(GA_RC)
 
     for expected in (
-        "v1.4.0",
-        "1.4.0",
-        "softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b",
+        EXPECTED_TAG,
+        EXPECTED_VERSION,
+        'gh release create "$RELEASE_VERSION"',
+        "--verify-tag",
     ):
         assert expected in workflow
 
-    for expected in ("v1.4.0", "1.4.0", "protected-main"):
+    for expected in (EXPECTED_TAG, EXPECTED_VERSION, "protected-main"):
         assert expected in release_metadata
 
     for expected in ("v1.2.0-rc8", "1.2.0-rc8", "recut succeeded"):

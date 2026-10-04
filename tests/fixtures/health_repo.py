@@ -73,6 +73,7 @@ def make_repo_info(
         )
         conn.execute("CREATE TABLE symbols (id INTEGER PRIMARY KEY, name TEXT)")
         conn.execute("CREATE TABLE code_chunks (id INTEGER PRIMARY KEY, content TEXT)")
+        conn.execute("CREATE TABLE chunk_summaries (chunk_hash TEXT PRIMARY KEY)")
         if not empty_index:
             conn.execute("INSERT INTO files (path, is_deleted) VALUES ('README.md', 0)")
         conn.commit()

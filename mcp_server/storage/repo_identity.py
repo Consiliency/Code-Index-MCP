@@ -7,6 +7,7 @@ That divergence is accepted as out-of-scope for P1 and noted as a future hardeni
 
 import hashlib
 import logging
+import os
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -87,6 +88,14 @@ def compute_repo_id(path: Path) -> RepoIdentity:
             common_dir = common_dir.resolve(strict=False)
         except Exception:
             pass
+        mounted_common = os.environ.get("MCP_GIT_COMMON_DIR")
+        if mounted_common:
+            mounted_path = Path(mounted_common)
+            try:
+                if mounted_path.is_absolute() and mounted_path.samefile(common_dir):
+                    common_dir = mounted_path.resolve()
+            except OSError:
+                pass
         posix = common_dir.as_posix()
         return RepoIdentity(
             repo_id=_sha256_hex16(posix),

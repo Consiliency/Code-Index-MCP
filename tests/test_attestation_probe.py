@@ -99,7 +99,7 @@ def test_no_boot_warn_when_probe_true(caplog, monkeypatch):
 
 def test_no_boot_warn_when_not_enforce_mode(caplog, monkeypatch):
     """warn_if_gh_attestation_missing does not warn when mode != enforce."""
-    monkeypatch.setenv("MCP_ATTESTATION_MODE", "log")
+    monkeypatch.setenv("MCP_ATTESTATION_MODE", "warn")
     mock_result = MagicMock()
     mock_result.returncode = 1
     with patch("subprocess.run", return_value=mock_result):

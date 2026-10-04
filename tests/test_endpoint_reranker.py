@@ -15,6 +15,7 @@ No network is performed anywhere: every transport is a fake.
 """
 
 import asyncio
+from dataclasses import replace
 
 import pytest
 
@@ -39,7 +40,6 @@ from mcp_server.interfaces.rerank_contracts import (
     RerankContractError,
     RerankRequest,
 )
-
 
 # --------------------------------------------------------------------------
 # Helpers
@@ -116,6 +116,35 @@ def test_indexing_interfaces_reexports_canonical():
     assert indexing_interfaces.IReranker is IReranker
     assert indexing_interfaces.RerankResult is RerankResult
     assert issubclass(EndpointReranker, IReranker)
+
+
+@pytest.mark.asyncio
+async def test_cache_key_covers_all_content_and_profile_inputs():
+    from mcp_server.indexer.reranker import TFIDFReranker
+
+    candidates = [replace(_results(1)[0], file_path=f"file-{i}.py") for i in range(11)]
+    reranker = TFIDFReranker({"profile": "one"})
+    before = await reranker._get_cache_key("query", candidates)
+    assert before == await TFIDFReranker({"profile": "one"})._get_cache_key("query", candidates)
+    assert before != await reranker._get_cache_key("query", candidates, top_k=1)
+    changed_content = [replace(candidates[0], snippet="updated at the same line"), *candidates[1:]]
+    assert before != await reranker._get_cache_key("query", changed_content)
+    changed_last = [*candidates[:10], replace(candidates[10], context="generation two")]
+    assert before != await reranker._get_cache_key("query", changed_last)
+    bound = [replace(candidate, generation_key="repo:one:profile-a") for candidate in candidates]
+    other_generation = [
+        replace(candidate, generation_key="repo:two:profile-a") for candidate in candidates
+    ]
+    assert await reranker._get_cache_key("query", bound) != await reranker._get_cache_key(
+        "query", other_generation
+    )
+    await reranker._cache_results("query", candidates, ["unbound"])
+    assert await reranker._get_cached_results("query", candidates) is None
+    await reranker._cache_results("query", bound, ["bound"])
+    assert await reranker._get_cached_results("query", bound) == ["bound"]
+    assert await reranker._get_cached_results("query", other_generation) is None
+    reranker.config["profile"] = "two"
+    assert before != await reranker._get_cache_key("query", candidates)
 
 
 # --------------------------------------------------------------------------
@@ -368,9 +397,7 @@ def test_in_process_reranker_requires_explicit_standalone_flag():
     fr = factory.create_standalone_reranker("flashrank", standalone_profile=True)
     assert isinstance(fr, FlashRankReranker)
 
-    ce = factory.create_standalone_reranker(
-        "cross-encoder", standalone_profile=True
-    )
+    ce = factory.create_standalone_reranker("cross-encoder", standalone_profile=True)
     assert isinstance(ce, CrossEncoderReranker)
 
 

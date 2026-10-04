@@ -43,7 +43,8 @@ async def test_run_write_summaries_task_returns_sync_shaped_payload() -> None:
         patch("mcp_server.cli.task_write_summaries.ComprehensiveChunkWriter") as writer_cls,
     ):
         settings_factory.return_value = SimpleNamespace(
-            semantic_default_profile="oss_high",
+            semantic_default_profile="legacy-default",
+            get_semantic_default_profile=lambda: "oss_high",
             get_profile_summarization_config=lambda _profile: {},
         )
         writer = MagicMock()
@@ -65,6 +66,7 @@ async def test_run_write_summaries_task_returns_sync_shaped_payload() -> None:
             limit_arg=10,
             model_used="gpt-test",
         )
+        assert writer_cls.call_args.kwargs["summarization_config"]["profile_id"] == "oss_high"
 
     payload = result.structuredContent
     assert payload["chunks_summarized"] == 3
@@ -87,6 +89,7 @@ async def test_run_write_summaries_task_records_cancelled_terminal_result() -> N
     ):
         settings_factory.return_value = SimpleNamespace(
             semantic_default_profile="oss_high",
+            get_semantic_default_profile=lambda: "oss_high",
             get_profile_summarization_config=lambda _profile: {},
         )
         writer = MagicMock()

@@ -9,6 +9,7 @@ Covers:
 """
 
 import concurrent.futures
+import multiprocessing
 import queue
 import sqlite3
 import threading
@@ -123,3 +124,95 @@ class TestWritePathWithPool:
         assert row["language"] == "python"
 
         pool.close_all()
+
+
+def _exercise_pool_boundary(path, mode, result):
+    """Keep a failing deadlock reproduction bounded to its synthetic child process."""
+    pool = _make_pool(str(path), size=1)
+    if mode == "shutdown":
+        waiting, finished = threading.Event(), threading.Event()
+        original_wait = threading.Condition.wait
+
+        def observed_wait(condition, *args, **kwargs):
+            if threading.current_thread() is waiter:
+                waiting.set()
+            return original_wait(condition, *args, **kwargs)
+
+        def borrow():
+            try:
+                with pool.acquire():
+                    result.put("unexpected borrow")
+            except RuntimeError:
+                result.put("closed")
+            finally:
+                finished.set()
+
+        waiter = threading.Thread(target=borrow, daemon=True)
+        threading.Condition.wait = observed_wait
+        try:
+            with pool.acquire() as held:
+                waiter.start()
+                assert waiting.wait(2)
+                pool.close_all()
+                assert finished.wait(2), "pool shutdown stranded an existing waiter"
+                assert held.execute("SELECT 1").fetchone()[0] == 1
+            waiter.join(2)
+            try:
+                held.execute("SELECT 1")
+            except sqlite3.ProgrammingError:
+                pass
+            else:
+                raise AssertionError("returned connection was not closed")
+        finally:
+            threading.Condition.wait = original_wait
+    else:
+        store = SQLiteStore(str(path), pool=pool)
+        with pytest.raises(ValueError, match="abort outer"):
+            with store._get_connection() as outer:
+                repository_id = store.create_repository("synthetic", "synthetic")
+                store.store_file(repository_id, relative_path="sample.py", content_hash="hash-one")
+                assert outer.execute("SELECT COUNT(*) FROM files").fetchone()[0] == 1
+                raise ValueError("abort outer")
+        with store._get_connection() as connection:
+            assert connection.execute("SELECT COUNT(*) FROM files").fetchone()[0] == 0
+            assert connection.execute("SELECT COUNT(*) FROM repositories").fetchone()[0] == 0
+        result.put("rolled back")
+        store.close()
+
+
+@pytest.mark.parametrize("mode, expected", [("shutdown", "closed"), ("nested", "rolled back")])
+def test_pool_lifetime_boundaries(tmp_path, mode, expected):
+    context = multiprocessing.get_context("spawn")
+    result = context.Queue()
+    worker = context.Process(
+        target=_exercise_pool_boundary, args=(tmp_path / "boundary.db", mode, result)
+    )
+    worker.start()
+    try:
+        worker.join(5)
+        assert not worker.is_alive(), "pool operation deadlocked"
+        assert worker.exitcode == 0
+        assert result.get(timeout=1) == expected
+    finally:
+        if worker.is_alive():
+            worker.terminate()
+        worker.join(5)
+        worker.close()
+        result.close()
+        result.join_thread()
+
+
+def test_cancelled_borrow_rolls_back_before_connection_reuse(tmp_path):
+    path = str(tmp_path / "cancelled.db")
+    store = SQLiteStore(path, pool=_make_pool(path, size=1))
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            with store._get_connection() as connection:
+                connection.execute(
+                    "INSERT INTO repositories(path, name) VALUES ('synthetic', 'cancelled')"
+                )
+                raise KeyboardInterrupt()
+        with store._get_connection() as connection:
+            assert connection.execute("SELECT COUNT(*) FROM repositories").fetchone()[0] == 0
+    finally:
+        store.close()

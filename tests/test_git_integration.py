@@ -63,12 +63,23 @@ class TestGitIntegration:
     def _align_tracked_branch(self, registry, repo_id):
         info = registry.get_repository(repo_id)
         if info:
-            current_branch = registry._get_git_branch(Path(info.path))
-            registry._registry[repo_id]["tracked_branch"] = current_branch
-            registry._registry[repo_id]["current_branch"] = current_branch
-            registry.save()
-            info.tracked_branch = current_branch
-            info.current_branch = current_branch
+            if registry._get_git_branch(Path(info.path)) != "main":
+                TestRepositoryBuilder.run_git_command("git branch -m main", info.path)
+            ignore_path = Path(info.path) / ".gitignore"
+            existing = ignore_path.read_text() if ignore_path.exists() else ""
+            ignore_path.write_text(existing + "\n.mcp-index/\n")
+            TestRepositoryBuilder.run_git_command("git add .gitignore", info.path)
+            TestRepositoryBuilder.run_git_command(
+                "git commit -m 'Exclude synthetic index outputs'", info.path
+            )
+            registry.update_git_state(repo_id)
+            with registry._transaction(write=True):
+                registry._registry[repo_id]["tracked_branch"] = "main"
+            info = registry.get(repo_id)
+            from mcp_server.health.repository_readiness import ReadinessClassifier
+
+            readiness = ReadinessClassifier.classify_registered(info)
+            assert readiness.current_branch == "main", str(readiness.to_dict())
         if info:
             Path(info.index_location).mkdir(parents=True, exist_ok=True)
         return info

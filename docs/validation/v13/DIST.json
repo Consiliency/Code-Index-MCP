@@ -1,0 +1,348 @@
+{
+  "schema_version": "v13.phase-receipt.v1",
+  "phase": "DIST",
+  "execution_mode": "manual",
+  "terminal_status": "complete",
+  "verification_status": "passed",
+  "human_required": false,
+  "blocker_class": null,
+  "timestamp": "2026-09-11T10:05:45Z",
+  "source_commit": "3e99c40c1c092e209498b9091380fe9d3dfd218e",
+  "source_tree": "2753a85ca1aa8ee11481f20e04cbf0c8e7f1af03",
+  "roadmap_sha256": "178b8328d8e7dc76ddc0804d7b72d3ccddb55e23577a3d52cb7cbd70d5fd5308",
+  "contract_sha256": "d1686bb23ca55e73ec54e8211de0269dd1332c593cef70f2e80d275f965573d8",
+  "plan_sha256": "0df7965b6a9a480e817e3682b07c85fe0cc949b9f136f8b9e5f406c54ade974d",
+  "verification_artifact_path": ".phase-loop/runs/v13-DIST-20260911-3e99c40/verification.json",
+  "verification_artifact_sha256": "f0557cdcb69cd4f425bdd06c8b56736d48b5f85938f2038d5851f707f35e0bac",
+  "verification_log_sha256": "092f2e3051eab2ec9dee12cea929bb2f2b1160f1ec67ad0a6933b1f5d976b3a2",
+  "verification_summary": "All seven commands, locked environment refresh and phase suite exited 0. Broad offline baseline: 2977 passed, 153 skipped, 31 deselected; isolated Git integration: 9 passed; phase suite: 314 passed.",
+  "started_at": "2026-09-11T09:57:01Z",
+  "finished_at": "2026-09-11T10:05:45Z",
+  "environment_identity": {
+    "os": "Linux",
+    "wheel_python": "3.12.12",
+    "container_python": "3.12.14",
+    "dependency_lock": "uv.lock",
+    "wheel_uid": 1000,
+    "container_uid": 999,
+    "inputs": "Synthetic temporary repositories and databases only"
+  },
+  "artifact_digests": {
+    "wheel": {
+      "name": "index_it_mcp-1.4.0-py3-none-any.whl",
+      "sha256": "383e8215fb603d938f9f83f96a137967ac638c11131a0983a21ab5fc24244295",
+      "distribution": "locally built, independently installed outside checkout; not published"
+    },
+    "image": {
+      "name": "ghcr.io/consiliency/code-index-mcp:local-smoke",
+      "image_id": "sha256:ea2293ea18ad67d9ec2f3c714635167713bd27e3c83a2f13e0291338a7666242",
+      "distribution": "locally built, configured non-root startup tested by immutable image ID; not published"
+    }
+  },
+  "per_goal_results": [
+    {
+      "goal": "EC-DIST-1",
+      "status": "passed",
+      "evidence": "Installed SQL resources, fresh/v1 partial upgrade/schema reconciliation/reopen, retained rows and rollback controls passed. Real installed wheel MCP and final non-root container HTTP registered/indexed/queried/refused and restarted against disposable Git fixtures. No fake dispatcher/resolver or checkout import."
+    },
+    {
+      "goal": "EC-DIST-2",
+      "status": "passed",
+      "evidence": "Independent historical deletion inventory and exact existing workflow census repaired; deleted/untracked changed-path routing covered. Local agent gate passed 51 fast, 38 DIST and 263 production/readiness tests. Broad integration/slow baseline and separate Git suite passed; exclusions below remain unaccepted coverage."
+    },
+    {
+      "goal": "EC-DIST-3",
+      "status": "passed",
+      "evidence": "BAML 0.221.0 exact generator/runtime/client parity and reproducible generation passed without inference. Canonical support/agent/coverage docs distinguish Linux/Python 3.12 proof from untested combinations and preserve published language tiers. Lock check passed."
+    }
+  ],
+  "finding_dispositions": [
+    {
+      "id": "C10",
+      "status": "fixed",
+      "evidence": "Packaged migration resources, transactional script parsing, duplicate-column continuation and failure propagation; seven focused migration regressions."
+    },
+    {
+      "id": "C11",
+      "status": "fixed",
+      "evidence": "Git installed in final non-root image; non-editable application imported from site-packages with no source-tree PYTHONPATH."
+    },
+    {
+      "id": "C21",
+      "status": "fixed",
+      "evidence": "Real installed runtime workflows replaced help/mock smoke; normal gate selects new regressions."
+    },
+    {
+      "id": "R06",
+      "status": "fixed",
+      "evidence": "Fresh/partial legacy upgrades agree structurally, retain rows and reopen idempotently; late SQL errors roll back DDL/data/version. Preopened pooled and memory connections covered."
+    },
+    {
+      "id": "R08",
+      "status": "bounded",
+      "evidence": "Canonical support statement admits Linux/Python 3.12 remediation evidence only; Python 3.13+, macOS and Windows require their own installed acceptance before rollout. Published language tiers unchanged."
+    },
+    {
+      "id": "R09",
+      "status": "fixed",
+      "evidence": "Exact BAML 0.221.0 pin, generated client and reproducible formatter-normalized regeneration."
+    },
+    {
+      "id": "R11",
+      "status": "fixed",
+      "evidence": "Historical/workflow failures repaired without removing inventory or action pin constraints; excluded suites explicitly recorded."
+    },
+    {
+      "id": "R12",
+      "status": "fixed",
+      "evidence": "Coverage docs state normal pytest 35-percent floor versus bounded coverage reporting and no-cov runs. Existing selection/thresholds unchanged; PREP still owes full release/coverage acceptance."
+    }
+  ],
+  "prerequisite_repairs": [
+    "SDK validation exposed missing staged_full and failure variants in the reindex output schema; actual SDK validation remains enabled.",
+    "HTTP SymbolDef required start_line/end_line fields absent from the dispatcher response; producer response and schema regression repaired.",
+    "Once pooled initialization succeeded, installed rebuild exposed a source-only skip cache omitting unchanged files from empty staging stores. Destination content is checked before skipping. This is not acceptance of STATE's full C04/R03 generation contract."
+  ],
+  "commands": [
+    {
+      "argv": [
+        "/home/viperjuice/.local/share/uv/tools/phase-loop-runtime/bin/python",
+        "/home/viperjuice/.codex/skills/codex-plan-phase/scripts/validate_plan_doc.py",
+        "/mnt/HC_Volume_105438154/worktrees/Code-Index-MCP-v13-audit-remediation/plans/phase-plan-v13-DIST.md"
+      ],
+      "cwd": ".",
+      "duration_s": 0.41877,
+      "exit_code": 0,
+      "log_end_offset": 816,
+      "log_offset": 164
+    },
+    {
+      "argv": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "cwd": ".",
+      "duration_s": 0.006728,
+      "exit_code": 0,
+      "log_end_offset": 816,
+      "log_offset": 816
+    },
+    {
+      "argv": [
+        "uv",
+        "lock",
+        "--check"
+      ],
+      "cwd": ".",
+      "duration_s": 0.022204,
+      "exit_code": 0,
+      "log_end_offset": 845,
+      "log_offset": 816
+    },
+    {
+      "argv": [
+        "make",
+        "agent-gate"
+      ],
+      "cwd": ".",
+      "duration_s": 69.159986,
+      "exit_code": 0,
+      "log_end_offset": 357355,
+      "log_offset": 845
+    },
+    {
+      "argv": [
+        "make",
+        "release-smoke-container"
+      ],
+      "cwd": ".",
+      "duration_s": 84.833621,
+      "exit_code": 0,
+      "log_end_offset": 361660,
+      "log_offset": 357355
+    },
+    {
+      "argv": [
+        "env",
+        "SEMANTIC_SEARCH_ENABLED=false",
+        "MCP_TEST_MODE=1",
+        "uv",
+        "run",
+        "--locked",
+        "--extra",
+        "dev",
+        "pytest",
+        "tests/test_git_integration.py",
+        "-m",
+        "integration",
+        "-q",
+        "--no-cov",
+        "-o",
+        "log_cli=false"
+      ],
+      "cwd": ".",
+      "duration_s": 7.326026,
+      "exit_code": 0,
+      "log_end_offset": 362625,
+      "log_offset": 361660
+    },
+    {
+      "argv": [
+        "env",
+        "SEMANTIC_SEARCH_ENABLED=false",
+        "MCP_TEST_MODE=1",
+        "uv",
+        "run",
+        "--locked",
+        "--extra",
+        "dev",
+        "pytest",
+        "tests",
+        "-m",
+        "not requires_network and not benchmark",
+        "--ignore=tests/test_git_integration.py",
+        "-q",
+        "--no-cov",
+        "-o",
+        "log_cli=false"
+      ],
+      "cwd": ".",
+      "duration_s": 325.264232,
+      "exit_code": 0,
+      "log_end_offset": 389637,
+      "log_offset": 362625
+    }
+  ],
+  "env_refresh": {
+    "exit_code": 0,
+    "install_argv": [
+      "uv",
+      "sync",
+      "--locked",
+      "--python",
+      "3.12",
+      "--extra",
+      "dev"
+    ],
+    "log_end_offset": 164,
+    "log_offset": 107,
+    "manifests": [
+      "pyproject.toml",
+      "uv.lock"
+    ],
+    "triggered": true
+  },
+  "suite": {
+    "argv": [
+      "uv",
+      "run",
+      "--locked",
+      "--extra",
+      "dev",
+      "pytest",
+      "tests/test_sqlite_migrations.py",
+      "tests/test_sqlite_store.py",
+      "tests/test_go_plugin.py",
+      "tests/test_procenv_cli_call_sites.py",
+      "tests/test_tool_schema_handler_parity.py",
+      "tests/test_dispatcher.py",
+      "tests/smoke/test_release_smoke_contract.py",
+      "tests/docs/test_p8_historical_sweep.py",
+      "tests/test_workflow_action_pins.py",
+      "tests/test_baml_contract.py",
+      "tests/docs/test_v13_freeze_contract.py",
+      "-q",
+      "--no-cov"
+    ],
+    "duration_s": 37.157311,
+    "exit_code": 0,
+    "log_end_offset": 830929,
+    "log_offset": 389637
+  },
+  "exclusions": {
+    "marker_expression": "not requires_network and not benchmark",
+    "marker_deselected": 31,
+    "reported_skips": 153,
+    "isolated_suite": "tests/test_git_integration.py was excluded from the broad process and separately run with -m integration: 9 passed.",
+    "skipped_modules": [
+      "tests/comparison/test_token_breakdown.py",
+      "tests/performance/test_document_indexing_performance.py",
+      "tests/performance/test_document_memory_usage.py",
+      "tests/performance/test_document_search_performance.py",
+      "tests/real_world/test_advanced_indexing.py",
+      "tests/real_world/test_cross_language.py",
+      "tests/real_world/test_developer_workflows.py",
+      "tests/real_world/test_memory_usage.py",
+      "tests/real_world/test_performance_scaling.py",
+      "tests/real_world/test_redis_caching.py",
+      "tests/real_world/test_repository_indexing.py",
+      "tests/real_world/test_semantic_search.py",
+      "tests/real_world/test_symbol_search.py",
+      "tests/security/test_artifact_attestation.py",
+      "tests/test_bootstrap.py",
+      "tests/test_cache.py",
+      "tests/test_dart_plugin.py",
+      "tests/test_document_edge_cases.py",
+      "tests/test_js_plugin.py",
+      "tests/test_malformed_documents.py",
+      "tests/test_metrics.py",
+      "tests/test_multi_repo_search.py",
+      "tests/test_python_plugin.py",
+      "tests/test_release_readiness_p20.py",
+      "tests/test_reranking_metadata_preservation.py",
+      "tests/test_unicode_documents.py"
+    ],
+    "interpretation": "Reported skips, including collection skips, are not passing evidence. No network/provider, Redis/fleet, full language matrix, live Qdrant-server, inference, signing, browser or PMCP acceptance is claimed. No coverage percentage follows from no-cov; unchanged coverage target remains PREP work."
+  },
+  "operational_receipts": {
+    "wheel": "Both canonical entrypoints present; obsolete entrypoint absent; installed migrations verified; two real SDK sessions passed.",
+    "container": "Schema and prepare probes plus configured HTTP startup/query/refusal and restart passed as uid 999.",
+    "publication": {
+      "published": false,
+      "merged": false,
+      "version_bumped": false,
+      "pr": "Consiliency/Code-Index-MCP#97",
+      "pr_state": "draft at checkpoint"
+    }
+  },
+  "prior_attempts": [
+    {
+      "path": ".phase-loop/runs/v13-DIST-20260911-final/verification.json",
+      "accepted": false,
+      "reason": "Git integration command selected zero tests (exit 5). Corrected explicit marker selection exposed and led to repair of pooled schema visibility."
+    },
+    {
+      "path": ".phase-loop/runs/v13-DIST-20260911-9af4a24/verification.json",
+      "accepted": false,
+      "reason": "Installed wheel/container caught destination-unaware skip cache; fixed and all original checks rerun on the frozen final candidate."
+    }
+  ],
+  "if_gates_produced": [
+    "IF-0-DIST-1"
+  ],
+  "issue_inventory": [],
+  "issue_dispositions": [],
+  "required_human_inputs": [],
+  "tool_diagnostics": [
+    "Manifest registered after manual execution began; actual chronology retained rather than backdated.",
+    "Installed validator emits the known agent-harness#819 import warning and one release-shaped-plan warning; this phase performs no release dispatch. Independent stamped verification validates successfully."
+  ],
+  "doc_delta_decision": "docs_updated",
+  "spec_delta_closeout": {
+    "schema": "spec_delta_closeout.v1",
+    "decision": "canonical_spec_update",
+    "target_surfaces": [
+      "docs/SUPPORT_MATRIX.md",
+      "docs/status/localci-validation-contract.md",
+      "AGENTS.md"
+    ],
+    "redaction_posture": "metadata_only",
+    "evidence_paths": [
+      "docs/validation/v13/DIST.json"
+    ]
+  },
+  "next_phase": "STATE",
+  "next_skill": "codex-plan-phase",
+  "next_command": "codex-plan-phase specs/phase-plans-v13.md STATE"
+}

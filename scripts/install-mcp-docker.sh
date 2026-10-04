@@ -12,8 +12,9 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Configuration
-MCP_VERSION="${MCP_VERSION:-v1.4.0}"
-MCP_VARIANT="${MCP_VARIANT:-v1.4.0}"
+# Canonical release image: ghcr.io/consiliency/code-index-mcp, pinned by digest.
+MCP_VERSION="${MCP_VERSION:-v1.4.1}"
+MCP_VARIANT="${MCP_VARIANT:-v1.4.1}"
 DOCKER_REGISTRY="${DOCKER_REGISTRY:-ghcr.io}"
 MCP_IMAGE="${DOCKER_REGISTRY}/consiliency/code-index-mcp"
 
@@ -115,9 +116,9 @@ install_docker() {
 choose_variant() {
     echo
     echo "Choose MCP Index variant:"
-    echo "1) v1.4.0      - Published release image (default)"
+    echo "1) v1.4.1      - Versioned release image (requires publication)"
     echo "2) local-smoke - Locally built via make release-smoke-container"
-    echo "3) latest      - Stable channel (published)"
+    echo "3) latest      - Latest GitHub release, pinned by digest"
     echo
 
     read -p "Select variant [1-3] (default: 1): " -n 1 -r
@@ -133,14 +134,15 @@ choose_variant() {
             print_info "Selected: latest"
             ;;
         *)
-            MCP_VARIANT="v1.4.0"
-            print_info "Selected: v1.4.0"
+            MCP_VARIANT="v1.4.1"
+            print_info "Selected: v1.4.1"
             ;;
     esac
 }
 
 pull_image() {
     if [ "$MCP_VARIANT" = "local-smoke" ]; then
+        MCP_IMAGE_REF="${MCP_IMAGE}:local-smoke"
         print_info "Using the locally built smoke image (dev option)."
         if ! docker image inspect "${MCP_IMAGE}:local-smoke" >/dev/null 2>&1; then
             print_error "Local smoke image not found. Run 'make release-smoke-container' first."
@@ -148,8 +150,21 @@ pull_image() {
         fi
         return
     fi
-    print_info "Pulling MCP Index image: ${MCP_IMAGE}:${MCP_VARIANT}"
-    docker pull "${MCP_IMAGE}:${MCP_VARIANT}"
+    if [ "$MCP_VARIANT" = "latest" ]; then
+        release_path="latest/download"
+    elif [[ "$MCP_VARIANT" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?$ ]]; then
+        release_path="download/${MCP_VARIANT}"
+    else
+        print_error "Select a release version, latest release, or local-smoke."
+        return 1
+    fi
+    MCP_IMAGE_REF=$(curl -fsSL --max-time 30 "https://github.com/Consiliency/Code-Index-MCP/releases/${release_path}/image-reference.txt")
+    if [[ ! "$MCP_IMAGE_REF" =~ ^ghcr\.io/consiliency/code-index-mcp@sha256:[0-9a-f]{64}$ ]]; then
+        print_error "Release image reference is missing or invalid; no tag fallback is permitted."
+        return 1
+    fi
+    print_info "Pulling MCP Index image: ${MCP_IMAGE_REF}"
+    docker pull "$MCP_IMAGE_REF"
 }
 
 create_launcher() {
@@ -163,31 +178,70 @@ create_launcher() {
 # MCP Index Docker Launcher
 
 # Default settings
-MCP_VARIANT="${MCP_VARIANT:-v1.4.0}"
-MCP_IMAGE="${MCP_IMAGE:-ghcr.io/consiliency/code-index-mcp}"
+MCP_IMAGE_REF='@MCP_IMAGE_REF@'
 WORKSPACE="${WORKSPACE:-$(pwd)}"
+MCP_REGISTRY_DIR="${MCP_REGISTRY_DIR:-$WORKSPACE/.mcp-index/docker-registry}"
+mkdir -p "$MCP_REGISTRY_DIR"
+GIT_MOUNTS=()
+if [ -d "$WORKSPACE/.git" ]; then
+    git_common=$(while IFS= read -r git_variable; do unset "$git_variable"; done < <(git rev-parse --local-env-vars); git -C "$WORKSPACE" rev-parse --path-format=absolute --git-common-dir)
+    GIT_MOUNTS=(-v "$git_common:/mcp-git:ro" -e MCP_GIT_COMMON_DIR=/mcp-git)
+elif [ -f "$WORKSPACE/.git" ]; then
+    git_common=$(while IFS= read -r git_variable; do unset "$git_variable"; done < <(git rev-parse --local-env-vars); git -C "$WORKSPACE" rev-parse --path-format=absolute --git-common-dir)
+    git_dir=$(while IFS= read -r git_variable; do unset "$git_variable"; done < <(git rev-parse --local-env-vars); git -C "$WORKSPACE" rev-parse --path-format=absolute --git-dir)
+    pointer="$MCP_REGISTRY_DIR/worktree-pointer.git"
+    temporary_pointer=$(mktemp "$MCP_REGISTRY_DIR/worktree-pointer.XXXXXX")
+    worktree_name="${git_dir##*/}"
+    if [ "$git_dir" != "$git_common/worktrees/$worktree_name" ]; then
+        echo "Unsupported Git worktree metadata layout" >&2
+        exit 1
+    fi
+    printf 'gitdir: /mcp-git/worktrees/%s\n' "$worktree_name" > "$temporary_pointer"
+    mv "$temporary_pointer" "$pointer"
+    GIT_MOUNTS=(-v "$git_common:/mcp-git:ro" -v "$pointer:/workspace/.git:ro" -e MCP_GIT_COMMON_DIR=/mcp-git)
+fi
 
 # Handle commands
 case "$1" in
     setup)
-        echo "Running MCP Index setup wizard..."
-        docker run -it --rm -v "$WORKSPACE:/workspace" "${MCP_IMAGE}:${MCP_VARIANT}" --setup
+        echo "Registering workspace with MCP Index..."
+        docker run -i --rm \
+            --user "$(id -u):$(id -g)" \
+            --workdir /workspace \
+            -v "$WORKSPACE:/workspace" \
+            -v "$MCP_REGISTRY_DIR:/app/.mcp" \
+            "${GIT_MOUNTS[@]}" \
+            -e HOME=/app/.mcp \
+            -e MCP_ENVIRONMENT=development \
+            -e MCP_REPO_REGISTRY=/app/.mcp/repository_registry.json \
+            -e MCP_WORKSPACE_ROOT=/workspace \
+            -e MCP_ALLOWED_ROOTS=/workspace \
+            "$MCP_IMAGE_REF" index-it-mcp repository register /workspace
         ;;
     upgrade)
-        echo "Upgrading MCP Index..."
-        docker pull "${MCP_IMAGE}:${MCP_VARIANT}"
+        echo "Refreshing the pinned image. Rerun the installer to select another release."
+        docker pull "$MCP_IMAGE_REF"
         ;;
     *)
         # Run MCP server with all arguments passed through
         docker run -i --rm \
+            --user "$(id -u):$(id -g)" \
+            --workdir /workspace \
             -v "$WORKSPACE:/workspace" \
-            -v "$HOME/.mcp-index:/app/.mcp-index" \
+            -v "$MCP_REGISTRY_DIR:/app/.mcp" \
+            "${GIT_MOUNTS[@]}" \
+            -e HOME=/app/.mcp \
+            -e MCP_ENVIRONMENT=development \
+            -e MCP_REPO_REGISTRY=/app/.mcp/repository_registry.json \
+            -e MCP_WORKSPACE_ROOT=/workspace \
+            -e MCP_ALLOWED_ROOTS=/workspace \
             -e VOYAGE_API_KEY="${VOYAGE_API_KEY:-}" \
             -e MCP_ARTIFACT_SYNC="${MCP_ARTIFACT_SYNC:-true}" \
-            "${MCP_IMAGE}:${MCP_VARIANT}" "$@"
+            "$MCP_IMAGE_REF" index-it-mcp "${@:-stdio}"
         ;;
 esac
 EOF
+    sed -i.bak "s|@MCP_IMAGE_REF@|$MCP_IMAGE_REF|g" /tmp/mcp-index
     
     # Install the launcher
     if [ -w /usr/local/bin ]; then
@@ -208,17 +262,8 @@ setup_mcp_json() {
 {
   "mcpServers": {
     "code-index": {
-      "command": "docker",
-      "args": [
-        "run", 
-        "-i", 
-        "--rm",
-        "-v", "\${workspace}:/workspace",
-        "-v", "\${HOME}/.mcp-index:/app/.mcp-index",
-        "-e", "VOYAGE_API_KEY=\${VOYAGE_API_KEY:-}",
-        "-e", "MCP_ARTIFACT_SYNC=\${MCP_ARTIFACT_SYNC:-true}",
-        "${MCP_IMAGE}:${MCP_VARIANT}"
-      ]
+      "command": "mcp-index",
+      "args": ["stdio"]
     }
   }
 }
@@ -235,8 +280,9 @@ print_next_steps() {
     echo "1. Test the installation:"
     echo "   mcp-index --version"
     echo
-    echo "2. Index your current directory:"
-    echo "   mcp-index"
+    echo "2. Register and index your current directory:"
+    echo "   mcp-index setup"
+    echo "   mcp-index repository sync"
     echo
     
     echo "3. Optional: configure semantic search:"
@@ -284,4 +330,6 @@ main() {
 }
 
 # Run main function
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi

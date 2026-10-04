@@ -90,9 +90,10 @@ def build_offload_plan(target: str) -> OffloadPlan:
 
 def _changed_paths() -> list[str]:
     commands = [
-        ["git", "diff", "--name-only", "--diff-filter=ACMR", "HEAD"],
-        ["git", "status", "--short"],
+        ["git", "diff", "--name-only", "-z", "--diff-filter=ACMRD", "HEAD"],
+        ["git", "ls-files", "--others", "--exclude-standard", "-z"],
     ]
+    paths = set()
     for cmd in commands:
         result = subprocess.run(
             cmd,
@@ -103,12 +104,11 @@ def _changed_paths() -> list[str]:
             env=get_full_env(),
         )
         if result.returncode != 0:
-            continue
-        lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
-        if cmd[:2] == ["git", "status"]:
-            return [line.split(maxsplit=1)[1] for line in lines if len(line.split(maxsplit=1)) == 2]
-        return lines
-    return []
+            raise RuntimeError(
+                "Cannot determine changed paths; refusing a reduced validation gate."
+            )
+        paths.update(path for path in result.stdout.split("\0") if path)
+    return sorted(paths)
 
 
 def cmd_doctor() -> int:

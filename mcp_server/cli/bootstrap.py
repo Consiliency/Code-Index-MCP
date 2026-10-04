@@ -66,6 +66,7 @@ def initialize_stateless_services(
             multi_repo_enabled=None,
             reranker_type=reranker_type,
             semantic_indexer_registry=semantic_registry,
+            registry_path=resolved_registry_path,
         )
 
     git_index_manager = GitAwareIndexManager(
@@ -80,13 +81,8 @@ def initialize_stateless_services(
 
 def reset_process_singletons() -> None:
     """Null all module-level process singletons; tolerates pruned installs."""
-    try:
-        import mcp_server.metrics.prometheus_exporter as _m
-
-        setattr(_m, "_exporter", None)
-    except ImportError:
-        pass
-
+    # Metrics have process lifetime, not bootstrap/repository lifetime. Resetting
+    # their owner leaks listeners and re-registers duplicate shared collectors.
     try:
         import mcp_server.gateway as _m
 
