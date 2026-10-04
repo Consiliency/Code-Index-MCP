@@ -179,7 +179,7 @@ def renewed_candidate(candidate, monkeypatch):
         "constraints_sha256": digest_file(root / "constraints.txt"),
     }
     (root / "manifest.json").write_text(json.dumps(manifest))
-    canonical = runs / "v13-PILOT-allowance-20260915"
+    canonical = runs / "v13-PILOT-allowance-20261004"
     monkeypatch.setattr(budget, "RENEWED_ROOT", canonical)
     budget.BudgetLedger.initialize(
         canonical, digest_json(manifest), approval=budget.RENEWED_APPROVAL
@@ -573,7 +573,7 @@ def test_renewed_hashes_bind_the_receipt_bytes_actually_validated(renewed_candid
 
 def test_renewed_ledger_replacement_during_validation_is_refused(renewed_candidate, monkeypatch):
     repo, root, _ = renewed_candidate
-    canonical = repo / ".phase-loop/runs/v13-PILOT-allowance-20260915/ledger.sqlite"
+    canonical = repo / ".phase-loop/runs/v13-PILOT-allowance-20261004/ledger.sqlite"
     snapshot = budget.BudgetLedger.snapshot
 
     def replace_during_snapshot(self):

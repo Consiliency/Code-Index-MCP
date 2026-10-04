@@ -29,13 +29,15 @@ The first candidate (6310af8) was rejected during review. Subsequent runtime
 repairs are NOT version-only, so that comparator must refuse inheritance of
 the old pilot. A fresh candidate-bound pilot and metadata-signature validation
 are required before acceptance. The owner approved one replacement synthetic-local
-pilot and one digest-only signing validation on September 15, 2026. These remain
-unused until recorded first admission and accepted dispatch, respectively. The
+pilot and one digest-only signing validation on September 15, 2026. The pilot
+allowance was consumed by its first admission; signing remains unused. The
 old ledger and consumed signing job are not reusable authorizations.
 
-The renewed pilot uses only approval
-`v13-prep-178b8328-20260915-synthetic-local` and the canonical
-`.phase-loop/runs/v13-PILOT-allowance-20260915/` ledger: 100000 input units
+The September 15 pilot admitted one 33-unit request before an unknown provider
+transport outcome. Its ledger remains blocked and read-only. The owner approved
+one replacement pilot on October 4. It uses only approval
+`v13-prep-178b8328-20261004-synthetic-local` and the canonical
+`.phase-loop/runs/v13-PILOT-allowance-20261004/` ledger: 100000 input units
 including retries, 900 seconds from first admission, concurrency one. The
 distinct `--renewed-pilot-root` validator requires matching clean source, wheel,
 lock, offline/browser/rehearsal/live proof and the canonical ledger. The legacy

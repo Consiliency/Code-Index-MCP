@@ -20,7 +20,7 @@
   "prior_candidate_status": "6310af8 rejected by full gate and diagnostic review",
   "runtime_repairs_invalidate_version_only_consumption": true,
   "fresh_pilot_and_metadata_signature_required": true,
-  "replacement_allowances": "approved_20260915_unconsumed_at_checkpoint",
+  "replacement_allowances": "20260915_pilot_spent_and_blocked; 20261004_pilot_approved_unconsumed; 20260915_signing_approved_unconsumed",
   "review_route": "owner_authorized_manual_pointer_reads_20260917",
   "blocker_class": "contract_bug",
   "human_required": false,

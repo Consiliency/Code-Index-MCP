@@ -92,7 +92,7 @@ def test_manifest_change_cannot_reuse_allowance(ledger):
 @pytest.fixture
 def renewal_roots(tmp_path, monkeypatch):
     original = tmp_path / "v13-PILOT-allowance"
-    renewed = tmp_path / "v13-PILOT-allowance-20260915"
+    renewed = tmp_path / "v13-PILOT-allowance-20261004"
     monkeypatch.setattr(budget, "ORIGINAL_ROOT", original)
     monkeypatch.setattr(budget, "RENEWED_ROOT", renewed)
     return original, renewed
@@ -154,6 +154,28 @@ def test_original_canonical_ledger_is_read_only(renewal_roots, tmp_path):
             with pytest.raises(BudgetDenied, match="ledger_read_only"):
                 BudgetLedger(original, "a" * 64)
     assert (original / "ledger.sqlite").read_bytes() == before
+
+
+def test_spent_renewal_is_read_only(renewal_roots, tmp_path, monkeypatch):
+    spent = tmp_path / "v13-PILOT-allowance-20260915"
+    monkeypatch.setattr(budget, "SPENT_ROOT", spent)
+    fixture = tmp_path / "spent-fixture"
+    BudgetLedger.initialize(fixture, "b" * 64)
+    with sqlite3.connect(fixture / "ledger.sqlite") as db:
+        db.execute("UPDATE allowance SET approval=?", (budget.SPENT_APPROVAL,))
+    fixture.rename(spent)
+    before = (spent / "ledger.sqlite").read_bytes()
+    assert (
+        BudgetLedger(spent, "b" * 64, approval=budget.SPENT_APPROVAL, read_only=True).snapshot()[
+            "request_count"
+        ]
+        == 0
+    )
+    with pytest.raises(BudgetDenied, match="ledger_read_only"):
+        BudgetLedger(spent, "b" * 64, approval=budget.SPENT_APPROVAL)
+    with pytest.raises(BudgetDenied, match="ledger_read_only"):
+        BudgetLedger.initialize(spent, "b" * 64, approval=budget.SPENT_APPROVAL)
+    assert (spent / "ledger.sqlite").read_bytes() == before
 
 
 def test_archived_renewal_is_readable_but_not_a_second_allowance(renewal_roots, tmp_path):

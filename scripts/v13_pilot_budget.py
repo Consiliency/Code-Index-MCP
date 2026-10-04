@@ -21,10 +21,12 @@ import httpx
 INPUT_LIMIT = 100000
 SECONDS_LIMIT = 900
 APPROVAL = "v13-freeze-178b8328-20260911-synthetic-local"
-RENEWED_APPROVAL = "v13-prep-178b8328-20260915-synthetic-local"
+SPENT_APPROVAL = "v13-prep-178b8328-20260915-synthetic-local"
+RENEWED_APPROVAL = "v13-prep-178b8328-20261004-synthetic-local"
 _RUNS_ROOT = Path(__file__).resolve().parents[1] / ".phase-loop" / "runs"
 ORIGINAL_ROOT = _RUNS_ROOT / "v13-PILOT-allowance"
-RENEWED_ROOT = _RUNS_ROOT / "v13-PILOT-allowance-20260915"
+SPENT_ROOT = _RUNS_ROOT / "v13-PILOT-allowance-20260915"
+RENEWED_ROOT = _RUNS_ROOT / "v13-PILOT-allowance-20261004"
 ENDPOINTS = {"embedding": "http://ai:8001/v1", "enrichment": "http://ai:8002/v1"}
 ROUTES = {
     ("GET", "/embedding/v1/models"): ("embedding", "/models"),
@@ -43,18 +45,24 @@ class BudgetLedger:
 
     @staticmethod
     def _check_root(root: Path, approval: str, read_only: bool) -> None:
-        if approval not in {APPROVAL, RENEWED_APPROVAL}:
+        if approval not in {APPROVAL, SPENT_APPROVAL, RENEWED_APPROVAL}:
             raise BudgetDenied("approval_unknown")
         if root.absolute() != root.resolve():
             raise BudgetDenied("allowance_root_invalid")
         if root == ORIGINAL_ROOT and not read_only:
             raise BudgetDenied("ledger_read_only")
+        if root == SPENT_ROOT and not read_only:
+            raise BudgetDenied("ledger_read_only")
+        if root == SPENT_ROOT and approval != SPENT_APPROVAL:
+            raise BudgetDenied("approval_root_mismatch")
         if root == RENEWED_ROOT and approval != RENEWED_APPROVAL:
             raise BudgetDenied("approval_root_mismatch")
         if approval == RENEWED_APPROVAL and (
-            root == ORIGINAL_ROOT or (not read_only and root != RENEWED_ROOT)
+            root in {ORIGINAL_ROOT, SPENT_ROOT} or (not read_only and root != RENEWED_ROOT)
         ):
             raise BudgetDenied("approval_root_mismatch")
+        if approval == SPENT_APPROVAL and not read_only:
+            raise BudgetDenied("ledger_read_only")
 
     @staticmethod
     def initialize(root: Path, manifest_sha256: str, *, approval: str = APPROVAL) -> None:

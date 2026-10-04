@@ -616,7 +616,7 @@ def verify_renewed_pilot(repo: Path, root: Path) -> dict:
         )
         if live["budget"]["approval"] != RENEWED_APPROVAL:
             raise CandidateRefused("renewed_approval_mismatch")
-        canonical = runs / "v13-PILOT-allowance-20260915"
+        canonical = runs / "v13-PILOT-allowance-20261004"
         archived = [item for item in live["artifacts"] if item["role"] == "allowance_ledger"]
         canonical_ledger = canonical / "ledger.sqlite"
         with evidence_snapshot([canonical_ledger]) as copies:

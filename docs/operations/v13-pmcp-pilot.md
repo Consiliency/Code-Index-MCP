@@ -79,10 +79,13 @@ Failed requests consume reservations; redirects and ambient proxies are refused.
 
 The historical PILOT allowance was 100000 input units, 900 seconds from first
 admission and concurrency one, using .phase-loop/runs/v13-PILOT-allowance.
-That exhausted ledger is read-only. The owner-approved PREP plan grants exactly
-one separate allowance at .phase-loop/runs/v13-PILOT-allowance-20260915 with the
-same limits. No further ledger, reset, refund, or ordinary-test inference retry
-is authorized; see plans/phase-plan-v13-PREP.md for admission order and bounds.
+That exhausted ledger is read-only. The September 15 PREP allowance at
+.phase-loop/runs/v13-PILOT-allowance-20260915 admitted one 33-unit request and
+blocked after an unknown transport outcome; it too is read-only. The owner
+approved one separately named replacement on October 4 at
+.phase-loop/runs/v13-PILOT-allowance-20261004 with the same limits. No ledger
+reset, refund, or ordinary-test inference retry is authorized; see
+plans/phase-plan-v13-PREP.md for admission order and bounds.
 
 ## Evidence And Repeatable Checks
 

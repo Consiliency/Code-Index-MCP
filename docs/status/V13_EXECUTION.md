@@ -1,7 +1,24 @@
 # V13 Manual Execution
 
-Updated 2026-09-29. Branch: `codex/v13-audit-remediation`.
+Updated 2026-10-04. Branch: `codex/v13-audit-remediation`.
 Worktree: `/mnt/workspace/worktrees/viperjuice/Code-Index-MCP-v13-audit-remediation-closure`.
+
+## October 4 Replacement Pilot Checkpoint
+
+Exact candidate `dddbdc0` passed 4,062 tests, the local Agent Gate, protected
+Agent Gate and Docker checks, both Qdrant modes, installed PMCP checks, browser
+interactions and synthetic rehearsal. Sol 6, Sol 5.6, Opus 5.5 and Gemini 3.1
+Pro each approved the complete candidate. The September 15 live allowance then
+admitted one 33-unit embedding provenance request and blocked with
+`unsettled_transport`; no live receipt was produced. The `ai` providers are
+healthy locally, while direct access from dev0 is refused. Signing was not
+dispatched, and Code-Index-MCP#97 remains draft.
+
+The owner authorized one separately named replacement on October 4 under the
+same 100000-unit, 900-second, concurrency-one limits. This candidate change
+keeps the failed ledger readable but unwritable and binds live admission to a
+new ledger. The changed candidate requires new exact-source gates and four-seat
+review before admission. PREP is not accepted.
 
 ## Progress
 

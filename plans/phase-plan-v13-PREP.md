@@ -135,6 +135,26 @@ This supersedes the pending-effect restriction above, not historical receipts.
   records and archived ledger unchanged, with before/after hashes, alongside
   the negative control rejecting repaired runtime as version-only.
 
+## Replacement Pilot Approval - 2026-10-04
+
+The September 15 allowance admitted one 33-unit embedding provenance request
+on September 29. The provider connection failed with `transport_unknown`; its
+ledger is blocked as `unsettled_transport` and remains read-only. No successful
+live receipt was produced. The owner authorized one separately named replacement
+pilot on October 4 with the same synthetic-only 100000 input-unit, 900-second,
+concurrency-one limits. Approval ID
+`v13-prep-178b8328-20261004-synthetic-local` is bound exclusively to
+`.phase-loop/runs/v13-PILOT-allowance-20261004/`. The original and September 15
+ledgers remain read-only. There is no reset, refund, automatic retry, commercial
+inference, or change to the unused September 15 digest-only signing allowance.
+
+The replacement candidate must be committed and pass the same exact-source
+local, installed, Qdrant, container, browser, rehearsal and four-seat review
+gates before live admission. Run the pilot where both fixed `ai` provider roles
+are reachable, after read-only model-catalog and vector-dimension preflight.
+Only this new approved identity may be writable. Preserve any uncertain outcome
+and stop without another dispatch.
+
 ## Owner-Authorized Manual Review Route - 2026-09-17
 
 The owner's "go with your recomendation. You have my auth" approves the
@@ -449,7 +469,8 @@ SL-1 — Independent review and evidence reducer
 Scratch read/write: `.phase-loop/runs/v13-PREP-*/**` and newly created
 `.phase-loop/runs/v13-PILOT-PREP-*/**`, `build/**`,
 `index_it_mcp.egg-info/**`, and the sole new canonical
-`.phase-loop/runs/v13-PILOT-allowance-20260915/**`. Only new PREP-created Qdrant proof outputs under
+`.phase-loop/runs/v13-PILOT-allowance-20261004/**`. The September 15 allowance
+root is read-only. Only new PREP-created Qdrant proof outputs under
 `.phase-loop/runs/v13-DATA-qdrant-*/pytest.log` and `junit.xml` are readable.
 Read-only original PILOT inputs: the accepted receipt's exact manifest and
 referenced metadata/verification/browser/live records beneath
