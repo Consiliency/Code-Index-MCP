@@ -82,7 +82,12 @@ def test_qdrant():
         
         try:
             # Try HTTP connection first
-            client = QdrantClient(url=f"http://{qdrant_host}:{qdrant_port}")
+            from mcp_server.config.env_vars import resolve_qdrant_server_api_key
+
+            client = QdrantClient(
+                url=f"http://{qdrant_host}:{qdrant_port}",
+                api_key=resolve_qdrant_server_api_key(),
+            )
             collections = client.get_collections()
             print(f"✓ Qdrant HTTP connection successful")
             print(f"  Collections: {len(collections.collections)}")

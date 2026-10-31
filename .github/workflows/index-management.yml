@@ -10,6 +10,9 @@ on:
         default: 'false'
         type: boolean
 
+# Least privilege: echo-only job; GITHUB_TOKEN needs no scopes.
+permissions: {}
+
 env:
   LOCALCI_WORKFLOW_POSTURE: manual-only
 

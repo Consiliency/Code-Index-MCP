@@ -78,6 +78,8 @@ services:
     environment:
       - REDIS_URL=redis://redis:6379
       - QDRANT_URL=http://qdrant:6333
+      - QDRANT_API_KEY=${QDRANT_API_KEY:?QDRANT_API_KEY is required for the authenticated qdrant service}
+      - QDRANT_REQUIRE_API_KEY=true
       - SEMANTIC_SEARCH_ENABLED=true
       - VOYAGE_API_KEY=${VOYAGE_API_KEY:-}
       - MCP_TEST_MODE=1

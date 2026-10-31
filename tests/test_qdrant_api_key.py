@@ -1,6 +1,8 @@
-"""QDRANT_API_KEY is sent to every server-mode Qdrant connection.
+"""QDRANT_API_KEY is sent to every server-mode Qdrant connection, failing closed.
 
-The qdrant client and HTTP probes are mocked - no live server is used.
+Server-mode clients require a key unless QDRANT_REQUIRE_API_KEY=false explicitly opts
+out (disposable test servers only). The qdrant client and HTTP probes are mocked - no
+live server is used; see tests/integration/test_qdrant_auth_container.py for that.
 """
 
 import io
@@ -12,7 +14,12 @@ import pytest
 
 from mcp_server.artifacts.secure_export import SecureIndexExporter
 from mcp_server.cli.index_management import _get_vector_backend_status
-from mcp_server.config.env_vars import get_qdrant_api_key
+from mcp_server.config.env_vars import (
+    QdrantAuthConfigError,
+    get_qdrant_api_key,
+    qdrant_api_key_required,
+    resolve_qdrant_server_api_key,
+)
 from mcp_server.setup import semantic_preflight
 from mcp_server.setup.semantic_preflight import (
     bootstrap_active_profile_collection,
@@ -44,13 +51,23 @@ def _reset_recorder():
     RecordingQdrantClient.instances = []
 
 
-@pytest.fixture(params=[API_KEY, None], ids=["key-set", "key-unset"])
+@pytest.fixture(params=[API_KEY, None], ids=["key-set", "explicit-opt-out"])
 def api_key(request, monkeypatch):
+    """Configurations that may connect: a key, or an explicit unauthenticated opt-out."""
     if request.param is None:
         monkeypatch.delenv("QDRANT_API_KEY", raising=False)
+        monkeypatch.setenv("QDRANT_REQUIRE_API_KEY", "false")
     else:
         monkeypatch.setenv("QDRANT_API_KEY", request.param)
+        monkeypatch.delenv("QDRANT_REQUIRE_API_KEY", raising=False)
     return request.param
+
+
+@pytest.fixture
+def missing_key(monkeypatch):
+    """Default configuration with no key: every server-mode client must fail closed."""
+    monkeypatch.delenv("QDRANT_API_KEY", raising=False)
+    monkeypatch.delenv("QDRANT_REQUIRE_API_KEY", raising=False)
 
 
 def test_get_qdrant_api_key_reads_env(monkeypatch):
@@ -65,6 +82,67 @@ def test_get_qdrant_api_key_unset_or_blank_is_none(monkeypatch, value):
     else:
         monkeypatch.setenv("QDRANT_API_KEY", value)
     assert get_qdrant_api_key() is None
+
+
+@pytest.mark.parametrize("value", [None, "", "true", "1", "yes", "ON"])
+def test_api_key_required_by_default_and_when_enabled(monkeypatch, value):
+    if value is None:
+        monkeypatch.delenv("QDRANT_REQUIRE_API_KEY", raising=False)
+    else:
+        monkeypatch.setenv("QDRANT_REQUIRE_API_KEY", value)
+    assert qdrant_api_key_required() is True
+
+
+@pytest.mark.parametrize("value", ["false", "0", "no", "OFF"])
+def test_api_key_requirement_explicit_opt_out(monkeypatch, value):
+    monkeypatch.setenv("QDRANT_REQUIRE_API_KEY", value)
+    assert qdrant_api_key_required() is False
+
+
+def test_api_key_requirement_rejects_unknown_value(monkeypatch):
+    monkeypatch.setenv("QDRANT_REQUIRE_API_KEY", "maybe")
+    with pytest.raises(QdrantAuthConfigError):
+        qdrant_api_key_required()
+
+
+@pytest.mark.parametrize("value", [None, "", "   "])
+def test_resolver_fails_closed_without_key(monkeypatch, value):
+    monkeypatch.delenv("QDRANT_REQUIRE_API_KEY", raising=False)
+    if value is None:
+        monkeypatch.delenv("QDRANT_API_KEY", raising=False)
+    else:
+        monkeypatch.setenv("QDRANT_API_KEY", value)
+    with pytest.raises(QdrantAuthConfigError, match="QDRANT_API_KEY"):
+        resolve_qdrant_server_api_key()
+
+
+def test_resolver_error_never_contains_key_value(monkeypatch):
+    monkeypatch.setenv("QDRANT_API_KEY", API_KEY)
+    monkeypatch.setenv("QDRANT_REQUIRE_API_KEY", "bogus")
+    with pytest.raises(QdrantAuthConfigError) as excinfo:
+        resolve_qdrant_server_api_key()
+    assert API_KEY not in str(excinfo.value)
+
+
+def test_resolver_returns_key_when_set(monkeypatch):
+    monkeypatch.delenv("QDRANT_REQUIRE_API_KEY", raising=False)
+    monkeypatch.setenv("QDRANT_API_KEY", f"  {API_KEY}  ")
+    assert resolve_qdrant_server_api_key() == API_KEY
+
+
+def test_semantic_indexer_server_mode_without_key_fails_closed(monkeypatch, missing_key):
+    monkeypatch.setattr("mcp_server.utils.semantic_indexer.QdrantClient", RecordingQdrantClient)
+    indexer = SemanticIndexer.__new__(SemanticIndexer)
+    with pytest.raises(QdrantAuthConfigError, match="QDRANT_API_KEY"):
+        indexer._init_qdrant_client("http://qdrant.test:6333")
+    assert RecordingQdrantClient.instances == []
+
+
+def test_semantic_indexer_file_mode_needs_no_key(monkeypatch, missing_key, tmp_path):
+    monkeypatch.setattr("mcp_server.utils.semantic_indexer.QdrantClient", RecordingQdrantClient)
+    indexer = SemanticIndexer.__new__(SemanticIndexer)
+    client = indexer._init_qdrant_client(str(tmp_path / "vectors"))
+    assert client.kwargs == {"path": str(tmp_path / "vectors")}
 
 
 def test_semantic_indexer_server_mode_passes_api_key(monkeypatch, api_key):
@@ -114,6 +192,89 @@ def test_index_management_server_backend_passes_api_key(monkeypatch, tmp_path, a
     (client,) = RecordingQdrantClient.instances
     assert client.kwargs["url"] == "http://qdrant.test:6333"
     assert client.kwargs["api_key"] == api_key
+
+
+def test_index_management_server_backend_without_key_fails_closed(
+    monkeypatch, tmp_path, missing_key
+):
+    monkeypatch.setenv("QDRANT_PATH", str(tmp_path / "absent.qdrant"))
+    monkeypatch.setenv("QDRANT_USE_SERVER", "true")
+    monkeypatch.setenv("QDRANT_URL", "http://qdrant.test:6333")
+    monkeypatch.setattr("qdrant_client.QdrantClient", RecordingQdrantClient)
+
+    with pytest.raises(QdrantAuthConfigError):
+        _get_vector_backend_status()
+    assert RecordingQdrantClient.instances == []
+
+
+def _secure_export_fixture(monkeypatch, tmp_path):
+    backend = "http://qdrant.test:6333"
+    monkeypatch.setenv("QDRANT_URL", backend)
+    monkeypatch.setattr("qdrant_client.QdrantClient", RecordingQdrantClient)
+    monkeypatch.setattr(
+        SecureIndexExporter,
+        "read_generation_metadata",
+        lambda *args: {
+            "qdrant_path": backend,
+            "semantic_profile": "profile",
+            "semantic_profiles": {"profile": {"attested": True}},
+            "collection_name": "collection",
+        },
+    )
+    database = tmp_path / "current.db"
+    with sqlite3.connect(database) as db:
+        db.execute("CREATE TABLE semantic_points (profile_id TEXT, point_id TEXT, collection TEXT)")
+        db.execute("INSERT INTO semantic_points VALUES ('profile', 'point', 'collection')")
+    exporter = SecureIndexExporter(repo_path=tmp_path, index_location=tmp_path, index_path=database)
+    return exporter, database
+
+
+def test_secure_export_server_backend_without_key_fails_closed(monkeypatch, tmp_path, missing_key):
+    exporter, database = _secure_export_fixture(monkeypatch, tmp_path)
+    with pytest.raises(QdrantAuthConfigError):
+        exporter._export_vectors(database, tmp_path / "vectors.jsonl")
+    assert RecordingQdrantClient.instances == []
+
+
+def test_bootstrap_collection_without_key_is_blocked(monkeypatch, missing_key):
+    monkeypatch.setattr(
+        "mcp_server.setup.semantic_preflight.check_qdrant",
+        lambda *args, **kwargs: _ready_check("qdrant"),
+    )
+    monkeypatch.setattr("qdrant_client.QdrantClient", RecordingQdrantClient)
+
+    result = bootstrap_active_profile_collection(settings=_semantic_settings(), profile="oss_high")
+
+    assert result.status == "blocked"
+    assert "QDRANT_API_KEY" in result.message
+    assert RecordingQdrantClient.instances == []
+
+
+def test_check_qdrant_without_key_fails_closed_without_probe(monkeypatch, missing_key):
+    calls = _capture_get_json(monkeypatch, {"result": {"collections": []}})
+
+    result = check_qdrant("http://qdrant.test:6333", timeout_s=0.1)
+
+    assert not result.ok
+    assert result.details["failure_class"] == "qdrant_api_key_missing"
+    assert any("QDRANT_API_KEY" in fix for fix in result.fixes)
+    assert calls == []
+
+
+def test_check_qdrant_collection_without_key_fails_closed_without_probe(monkeypatch, missing_key):
+    calls = _capture_get_json(monkeypatch, {"result": {}})
+
+    result = check_qdrant_collection(
+        qdrant_url="http://qdrant.test:6333",
+        collection_name="code",
+        expected_dimension=4,
+        expected_distance="cosine",
+        timeout_s=0.1,
+    )
+
+    assert not result.ok
+    assert result.details["failure_class"] == "qdrant_api_key_missing"
+    assert calls == []
 
 
 def test_secure_export_server_backend_passes_api_key(monkeypatch, tmp_path, api_key):
@@ -210,7 +371,7 @@ def test_check_qdrant_collection_probe_sends_api_key_header(monkeypatch, api_key
 
 
 def test_check_qdrant_unauthorized_suggests_api_key(monkeypatch):
-    monkeypatch.delenv("QDRANT_API_KEY", raising=False)
+    monkeypatch.setenv("QDRANT_API_KEY", "wrong-key")
 
     def _unauthorized(url, timeout_s, headers=None):
         raise error.HTTPError(url, 401, "Unauthorized", {}, io.BytesIO(b"Must provide an API key"))

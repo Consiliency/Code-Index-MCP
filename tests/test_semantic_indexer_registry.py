@@ -341,6 +341,7 @@ def test_server_staging_uses_distinct_collection_for_same_commit(
 
     monkeypatch.setenv("QDRANT_URL", "http://127.0.0.1:6333")
     monkeypatch.setenv("QDRANT_USE_SERVER", "true")
+    monkeypatch.setenv("QDRANT_API_KEY", "test-qdrant-key")
     repo_reg = _make_registry_with_repos(tmp_path)
     active = repo_reg.get("repo-a")
     store = SQLiteStore(str(tmp_path / "stage.db"))

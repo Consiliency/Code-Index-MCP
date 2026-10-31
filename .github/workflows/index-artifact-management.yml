@@ -33,6 +33,10 @@ on:
         default: '7'
         type: number
 
+# Least privilege: checkout and Actions artifacts need no write scope on GITHUB_TOKEN.
+permissions:
+  contents: read
+
 env:
   MAX_ARTIFACT_SIZE_MB: '500'
 

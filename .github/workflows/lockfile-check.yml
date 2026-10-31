@@ -4,6 +4,9 @@ name: lockfile-check
 on:
   workflow_dispatch:
 
+# Least privilege: echo-only job; GITHUB_TOKEN needs no scopes.
+permissions: {}
+
 jobs:
   retired-lockfile-check:
     name: Retired - Lockfile Check

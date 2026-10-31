@@ -9,6 +9,9 @@ on:
         type: boolean
         default: false
 
+# Least privilege: echo-only jobs; GITHUB_TOKEN needs no scopes.
+permissions: {}
+
 env:
   MCP_INDEX_ENABLED: ${{ vars.MCP_INDEX_ENABLED || 'true' }}
 

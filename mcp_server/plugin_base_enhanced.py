@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional
 
 from typing_extensions import TypedDict
 
+from .config.env_vars import QdrantAuthConfigError
 from .plugin_base import (
     IPlugin,
     SearchOpts,
@@ -69,6 +70,10 @@ class PluginWithSemanticSearch(IPlugin):
                     collection=f"{collection_name}-{self.lang}", qdrant_path=qdrant_path
                 )
                 logger.info(f"Semantic search enabled for {self.lang} plugin")
+            except QdrantAuthConfigError as e:
+                logger.warning("Semantic search disabled for %s: %s", self.lang, e)
+                self._enable_semantic = False
+                self._semantic_indexer = None
             except ConnectionRefusedError:
                 logger.debug(
                     f"Qdrant not available at {qdrant_path}, semantic search disabled for {self.lang}"

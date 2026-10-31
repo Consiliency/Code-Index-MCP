@@ -7,6 +7,9 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, closed]
 
+# Least privilege: notifies an external worker with its own secret; GITHUB_TOKEN needs no scopes.
+permissions: {}
+
 jobs:
   notify-worker:
     runs-on: ubuntu-latest

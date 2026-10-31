@@ -78,7 +78,7 @@ docker-compose --env-file .env.production up -d
 |---------|------|-------------|--------------|
 | mcp-server | 8000 | Main MCP Server API | `/health` |
 | redis | 6379 | Cache and session storage | `redis-cli ping` |
-| qdrant | 6333, 6334 | Vector database for semantic search | `/health` |
+| qdrant | 6333, 6334 (loopback) | Vector database for semantic search; requires `QDRANT_API_KEY` (see `docs/operations/qdrant-authentication.md`) | `/readyz` |
 
 ### Monitoring Services (Optional)
 
@@ -210,7 +210,7 @@ cp ./data/code_index.db ./backup/code_index-$(date +%Y%m%d).db
 docker-compose exec mcp-server env | grep VOYAGE_API_KEY
 
 # Check Qdrant connection
-docker-compose exec mcp-server curl -f http://qdrant:6333/health
+docker-compose exec mcp-server curl -f http://qdrant:6333/readyz
 
 # Check logs
 docker-compose logs mcp-server | grep -i semantic
