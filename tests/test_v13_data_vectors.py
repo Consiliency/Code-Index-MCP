@@ -303,9 +303,12 @@ def test_explicit_server_backend_never_contacts_default_server(monkeypatch):
     monkeypatch.setattr("mcp_server.utils.semantic_indexer.QdrantClient", factory)
     monkeypatch.setenv("QDRANT_URL", "http://127.0.0.1:9")
     monkeypatch.setenv("QDRANT_USE_SERVER", "true")
+    monkeypatch.setenv("QDRANT_API_KEY", "test-qdrant-key")
     indexer = SemanticIndexer.__new__(SemanticIndexer)
     indexer._init_qdrant_client("http://127.0.0.1:6339")
-    factory.assert_called_once_with(url="http://127.0.0.1:6339", api_key=None, timeout=5)
+    factory.assert_called_once_with(
+        url="http://127.0.0.1:6339", api_key="test-qdrant-key", timeout=5
+    )
 
 
 def test_file_backend_refuses_live_lock_without_unlink_or_fallback(tmp_path, monkeypatch):
@@ -479,6 +482,7 @@ def test_another_process_owns_file_lock_until_it_closes(tmp_path):
 def test_failed_explicit_server_has_no_backend_fallback(monkeypatch):
     factory = MagicMock(side_effect=ConnectionError("private server failure"))
     monkeypatch.setattr("mcp_server.utils.semantic_indexer.QdrantClient", factory)
+    monkeypatch.setenv("QDRANT_API_KEY", "test-qdrant-key")
     indexer = SemanticIndexer.__new__(SemanticIndexer)
     with pytest.raises(RuntimeError) as error:
         indexer._init_qdrant_client("http://127.0.0.1:1")

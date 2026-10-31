@@ -3,6 +3,8 @@
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import pytest
+
 from mcp_server.config.settings import Settings
 from mcp_server.setup.semantic_preflight import (
     ServiceStatus,
@@ -15,6 +17,13 @@ from mcp_server.setup.semantic_preflight import (
     run_semantic_preflight,
     summarize_collection_bootstrap,
 )
+
+
+@pytest.fixture(autouse=True)
+def _qdrant_api_key(monkeypatch):
+    """Server-mode Qdrant fails closed without a key; tests/test_qdrant_api_key.py covers that."""
+    monkeypatch.setenv("QDRANT_API_KEY", "test-qdrant-key")
+    monkeypatch.delenv("QDRANT_REQUIRE_API_KEY", raising=False)
 
 
 def _ready_check(name: str) -> SimpleNamespace:

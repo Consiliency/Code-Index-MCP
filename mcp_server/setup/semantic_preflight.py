@@ -11,7 +11,7 @@ from urllib import error, request
 
 from mcp_server.artifacts.semantic_namespace import SemanticNamespaceResolver
 from mcp_server.artifacts.semantic_profiles import SemanticProfile, SemanticProfileRegistry
-from mcp_server.config.env_vars import get_qdrant_api_key
+from mcp_server.config.env_vars import QdrantAuthConfigError, resolve_qdrant_server_api_key
 from mcp_server.config.settings import Settings
 
 
@@ -205,10 +205,14 @@ def _redacted_auth_headers(api_key_env: str) -> Dict[str, str]:
 
 
 def _qdrant_auth_headers() -> Dict[str, str]:
-    api_key = get_qdrant_api_key()
+    """Qdrant API-key header; raises QdrantAuthConfigError when a required key is missing."""
+    api_key = resolve_qdrant_server_api_key()
     if not api_key:
         return {}
     return {"api-key": api_key}
+
+
+_QDRANT_API_KEY_FIX = "Set QDRANT_API_KEY to the server's API key (QDRANT__SERVICE__API_KEY)"
 
 
 def _missing_api_key_result(
@@ -352,7 +356,17 @@ def check_qdrant(qdrant_url: str, timeout_s: float = 5.0) -> CheckResult:
     """Check Qdrant API reachability."""
     probe = qdrant_url.rstrip("/") + "/collections"
     try:
-        payload = _http_get_json(probe, timeout_s=timeout_s, headers=_qdrant_auth_headers())
+        headers = _qdrant_auth_headers()
+    except QdrantAuthConfigError as exc:
+        return CheckResult(
+            name="qdrant",
+            status=ServiceStatus.MISCONFIGURED,
+            message=str(exc),
+            details={"url": qdrant_url, "failure_class": "qdrant_api_key_missing"},
+            fixes=[_QDRANT_API_KEY_FIX],
+        )
+    try:
+        payload = _http_get_json(probe, timeout_s=timeout_s, headers=headers)
         collections = payload.get("result", {}).get("collections", [])
         return CheckResult(
             name="qdrant",
@@ -371,7 +385,7 @@ def check_qdrant(qdrant_url: str, timeout_s: float = 5.0) -> CheckResult:
             "Or set QDRANT_URL to a reachable server endpoint",
         ]
         if status_code in (401, 403):
-            fixes.insert(0, "Set QDRANT_API_KEY to the server's API key (QDRANT__SERVICE__API_KEY)")
+            fixes.insert(0, _QDRANT_API_KEY_FIX)
         return CheckResult(
             name="qdrant",
             status=ServiceStatus.UNREACHABLE,
@@ -797,10 +811,25 @@ def check_qdrant_collection(
     resolver = namespace_resolver or SemanticNamespaceResolver()
     normalized_collection = resolver.normalize_collection_name(collection_name)
     try:
+        headers = _qdrant_auth_headers()
+    except QdrantAuthConfigError as exc:
+        return CheckResult(
+            name="qdrant_collection",
+            status=ServiceStatus.MISCONFIGURED,
+            message=str(exc),
+            details={
+                "qdrant_url": qdrant_url,
+                "collection_name": collection_name,
+                "normalized_collection_name": normalized_collection,
+                "failure_class": "qdrant_api_key_missing",
+            },
+            fixes=[_QDRANT_API_KEY_FIX],
+        )
+    try:
         payload = _http_get_json(
             qdrant_url.rstrip("/") + f"/collections/{collection_name}",
             timeout_s=timeout_s,
-            headers=_qdrant_auth_headers(),
+            headers=headers,
         )
         result = payload.get("result") or {}
         vectors = (((result.get("config") or {}).get("params") or {}).get("vectors")) or {}
@@ -1098,7 +1127,9 @@ def bootstrap_active_profile_collection(
     from mcp_server.utils.semantic_indexer import ensure_qdrant_collection
 
     try:
-        client = QdrantClient(url=qdrant_url, api_key=get_qdrant_api_key(), timeout=timeout)
+        client = QdrantClient(
+            url=qdrant_url, api_key=resolve_qdrant_server_api_key(), timeout=timeout
+        )
         ensure_result = ensure_qdrant_collection(
             client,
             collection_name=collection_name,

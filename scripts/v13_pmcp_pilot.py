@@ -2123,7 +2123,9 @@ def rehearsal_provider() -> ThreadingHTTPServer:
     return ThreadingHTTPServer(("127.0.0.1", 0), Handler)
 
 
-async def runtime_provenance(fixture: dict, qdrant_url: str) -> list[dict]:
+async def runtime_provenance(
+    fixture: dict, qdrant_url: str, api_key: str | None = None
+) -> list[dict]:
     registry = json.loads((fixture["root"] / "registry.json").read_text())
     reported = json.loads((fixture["root"] / "runtime-metadata.json").read_text())
     records = []
@@ -2141,6 +2143,7 @@ async def runtime_provenance(fixture: dict, qdrant_url: str) -> list[dict]:
             response = await http.post(
                 f"{qdrant_url}/collections/{collection}/points/scroll",
                 json={"limit": 100, "with_payload": True, "with_vector": False},
+                headers={"api-key": api_key} if api_key else None,
             )
             response.raise_for_status()
             resident = response.json()["result"]["points"]
@@ -2338,6 +2341,8 @@ async def inference_pilot(
 
     try:
         port = free_port()
+        # Per-run Qdrant API key, passed to docker by name only (never in argv or logs).
+        qdrant_api_key = secrets.token_urlsafe(32)
         network_args = (
             [
                 "--network",
@@ -2362,10 +2367,13 @@ async def inference_pilot(
                     *network_args,
                     "-e",
                     "QDRANT__TELEMETRY_DISABLED=true",
+                    "-e",
+                    "QDRANT__SERVICE__API_KEY",
                     image,
                 ],
                 directory,
                 "qdrant-start",
+                env={**clean_env(directory), "QDRANT__SERVICE__API_KEY": qdrant_api_key},
             )
         ).strip()
         if len(container_id) != 64 or any(c not in "0123456789abcdef" for c in container_id):
@@ -2461,6 +2469,7 @@ async def inference_pilot(
             MCP_DEPLOYMENT_PROFILE="fleet_local",
             QDRANT_URL=qdrant_url,
             QDRANT_USE_SERVER="true",
+            QDRANT_API_KEY=qdrant_api_key,
             PILOT_GUARD_KEY=token,
         )
         config_path = directory / "project/.mcp.json"
@@ -2552,7 +2561,7 @@ async def inference_pilot(
             await query(client, tools, "ledger", "semantic")
             await query(client, tools, "catalog", "semantic")
             result["goals"]["restart"] = True
-            provenance = await runtime_provenance(fixture, qdrant_url)
+            provenance = await runtime_provenance(fixture, qdrant_url, qdrant_api_key)
             write_json(directory / "runtime-provenance.json", {"repositories": provenance})
         result["goals"].update(
             retrieval=True,

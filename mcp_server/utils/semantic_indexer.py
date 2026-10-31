@@ -40,7 +40,7 @@ from ..artifacts.semantic_profiles import (
     extract_semantic_profile_metadata,
     get_primary_semantic_profile_metadata,
 )
-from ..config.env_vars import get_qdrant_api_key
+from ..config.env_vars import resolve_qdrant_server_api_key
 from ..core.path_resolver import PathResolver
 from ..interfaces.inference_contracts import EmbeddingRole
 from ..plugins.language_registry import get_language_by_extension
@@ -1100,7 +1100,7 @@ class SemanticIndexer:
         elif qdrant_path.startswith(("http://", "https://")):
             mode, kwargs = "server", {
                 "url": qdrant_path,
-                "api_key": get_qdrant_api_key(),
+                "api_key": resolve_qdrant_server_api_key(),
                 "timeout": 5,
             }
         else:

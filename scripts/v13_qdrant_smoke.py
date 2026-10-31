@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import json
 import os
+import secrets
 import socket
 import subprocess
 import sys
@@ -41,6 +42,9 @@ def main() -> None:
     try:
         if args.mode == "server":
             run_token = uuid.uuid4().hex
+            # Per-run API key, passed by name only so it never appears in argv or logs.
+            api_key = secrets.token_urlsafe(32)
+            docker_env = {**os.environ, "QDRANT__SERVICE__API_KEY": api_key}
             name = "v13-qdrant-" + run_token[:12]
             if args.network == "host":
                 with socket.socket() as probe:
@@ -66,6 +70,8 @@ def main() -> None:
                     *network_args,
                     "--env",
                     "QDRANT__TELEMETRY_DISABLED=true",
+                    "--env",
+                    "QDRANT__SERVICE__API_KEY",
                     *(
                         ["--env", "QDRANT__SERVICE__HTTP_PORT=6335"]
                         if args.network == "host"
@@ -73,6 +79,7 @@ def main() -> None:
                     ),
                     IMAGE,
                 ],
+                env=docker_env,
                 text=True,
                 timeout=30,
             ).strip()
@@ -119,6 +126,7 @@ def main() -> None:
             env["V13_TEST_QDRANT_URL"] = endpoint
             env["V13_TEST_QDRANT_CONTAINER"] = container
             env["V13_TEST_QDRANT_NETWORK"] = args.network
+            env["QDRANT_API_KEY"] = api_key
 
         with tempfile.TemporaryDirectory(prefix="v13-qdrant-proof-") as tmp:
             report = Path(tmp) / "junit.xml"

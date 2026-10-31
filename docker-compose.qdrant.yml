@@ -1,20 +1,36 @@
 version: '3.8'
 
+# Authenticated local Qdrant for Code-Index-MCP semantic search.
+#
+# QDRANT_API_KEY is required. Compose refuses to render this file without it, and the
+# container refuses to start if the key reaches it empty. Clients (Code-Index-MCP) need
+# the same value in QDRANT_API_KEY. Never commit the key; inject it from a secret
+# manager, for example: op run --env-file=.mcp.env -- docker compose -f docker-compose.qdrant.yml up -d
+# See docs/operations/qdrant-authentication.md for migration and rollback.
+
 services:
   qdrant:
-    image: qdrant/qdrant:latest
+    # Pinned to the release that wrote existing data; upgrade deliberately, never via :latest.
+    image: qdrant/qdrant:v1.17.0@sha256:f1c7272cdac52b38c1a0e89313922d940ba50afd90d593a1605dbbc214e66ffb
     container_name: mcp_qdrant
     restart: unless-stopped
     ports:
-      - "6333:6333"
-      - "6334:6334"
+      - "127.0.0.1:6333:6333"
+      - "127.0.0.1:6334:6334"
     volumes:
       - ./qdrant_storage:/qdrant/storage:z
     environment:
       - QDRANT__SERVICE__GRPC_PORT=6334
-      # Require an API key; Code-Index-MCP then needs the same value in QDRANT_API_KEY.
-      # The /readyz health endpoint is exempt from API-key auth.
-      # - QDRANT__SERVICE__API_KEY=${QDRANT_API_KEY}
+      - QDRANT__TELEMETRY_DISABLED=true
+      # Every API call except the /healthz, /livez and /readyz probes needs this key.
+      - QDRANT__SERVICE__API_KEY=${QDRANT_API_KEY:?QDRANT_API_KEY is required; Qdrant must not run unauthenticated}
+    # Fail closed: refuse to start the server without an API key.
+    entrypoint:
+      - /bin/bash
+      - -c
+      - 'if [ -z "$${QDRANT__SERVICE__API_KEY:-}" ]; then echo "QDRANT__SERVICE__API_KEY is empty; refusing to start Qdrant unauthenticated" >&2; exit 64; fi; exec "$$@"'
+      - qdrant-auth-guard
+    command: ["./entrypoint.sh"]
     healthcheck:
       test: ["CMD", "bash", "-lc", "exec 3<>/dev/tcp/127.0.0.1/6333 && printf 'GET /readyz HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3 && cat <&3 | grep -q '200 OK'"]
       interval: 5s

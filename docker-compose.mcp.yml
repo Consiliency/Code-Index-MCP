@@ -27,6 +27,9 @@ services:
       - VOYAGE_API_KEY=${VOYAGE_API_KEY:-}
       - SEMANTIC_SEARCH_ENABLED=${SEMANTIC_SEARCH_ENABLED:-false}
       - SEMANTIC_EMBEDDING_MODEL=${SEMANTIC_EMBEDDING_MODEL:-voyage-code-3}
+      # Server-mode Qdrant (with-vectors profile) requires an API key; clients fail closed without it.
+      - QDRANT_API_KEY=${QDRANT_API_KEY:-}
+      - QDRANT_REQUIRE_API_KEY=true
       
       # Reranking settings
       - RERANKING_ENABLED=${RERANKING_ENABLED:-true}
@@ -52,13 +55,25 @@ services:
 
   # Optional: Qdrant for vector search
   qdrant:
-    image: qdrant/qdrant:latest
+    # Pinned; upgrade deliberately, never via :latest.
+    image: qdrant/qdrant:v1.17.0@sha256:f1c7272cdac52b38c1a0e89313922d940ba50afd90d593a1605dbbc214e66ffb
     container_name: code-index-qdrant
     restart: unless-stopped
     volumes:
       - qdrant-data:/qdrant/storage
     environment:
       - QDRANT__SERVICE__GRPC_PORT=6334
+      - QDRANT__TELEMETRY_DISABLED=true
+      # Required. This file also serves users without vectors, so the key is not forced
+      # at render time; the guard below refuses to start Qdrant when it is empty.
+      - QDRANT__SERVICE__API_KEY=${QDRANT_API_KEY:-}
+    # Fail closed: refuse to start the server without an API key.
+    entrypoint:
+      - /bin/bash
+      - -c
+      - 'if [ -z "$${QDRANT__SERVICE__API_KEY:-}" ]; then echo "QDRANT__SERVICE__API_KEY is empty; refusing to start Qdrant unauthenticated" >&2; exit 64; fi; exec "$$@"'
+      - qdrant-auth-guard
+    command: ["./entrypoint.sh"]
     networks:
       - mcp-network
     profiles:

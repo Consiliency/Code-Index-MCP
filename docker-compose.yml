@@ -27,7 +27,9 @@ services:
       # Semantic search configuration (dormant - requires API key)
       - SEMANTIC_SEARCH_ENABLED=false
       - QDRANT_URL=http://qdrant:6333
-      - QDRANT_API_KEY=${QDRANT_API_KEY:-}  # empty = no key; see qdrant service below
+      # Required: must match the qdrant service key below; never commit it.
+      - QDRANT_API_KEY=${QDRANT_API_KEY:?QDRANT_API_KEY is required for the authenticated qdrant service}
+      - QDRANT_REQUIRE_API_KEY=true
       - SEMANTIC_COLLECTION_NAME=code-index
       - SEMANTIC_VECTOR_SIZE=1024
       - SEMANTIC_SEARCH_LIMIT=10
@@ -98,7 +100,8 @@ services:
 
   # Qdrant vector database (for semantic search)
   qdrant:
-    image: qdrant/qdrant:latest
+    # Pinned; upgrade deliberately, never via :latest.
+    image: qdrant/qdrant:v1.17.0@sha256:f1c7272cdac52b38c1a0e89313922d940ba50afd90d593a1605dbbc214e66ffb
     ports:
       - "127.0.0.1:6333:6333"
       - "127.0.0.1:6334:6334"
@@ -107,13 +110,21 @@ services:
     environment:
       - QDRANT__SERVICE__HTTP_PORT=6333
       - QDRANT__SERVICE__GRPC_PORT=6334
-      # Require an API key; clients then need the same value in QDRANT_API_KEY.
-      # - QDRANT__SERVICE__API_KEY=${QDRANT_API_KEY}
+      - QDRANT__TELEMETRY_DISABLED=true
+      # Every API call except the /healthz, /livez and /readyz probes needs this key.
+      - QDRANT__SERVICE__API_KEY=${QDRANT_API_KEY:?QDRANT_API_KEY is required; Qdrant must not run unauthenticated}
+    # Fail closed: refuse to start the server without an API key.
+    entrypoint:
+      - /bin/bash
+      - -c
+      - 'if [ -z "$${QDRANT__SERVICE__API_KEY:-}" ]; then echo "QDRANT__SERVICE__API_KEY is empty; refusing to start Qdrant unauthenticated" >&2; exit 64; fi; exec "$$@"'
+      - qdrant-auth-guard
+    command: ["./entrypoint.sh"]
     restart: unless-stopped
     networks:
       - mcp-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:6333/health"]
+      test: ["CMD", "bash", "-lc", "exec 3<>/dev/tcp/127.0.0.1/6333 && printf 'GET /readyz HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3 && cat <&3 | grep -q '200 OK'"]
       interval: 30s
       timeout: 10s
       retries: 3
