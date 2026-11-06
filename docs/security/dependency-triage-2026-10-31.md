@@ -72,3 +72,27 @@ advisories. starlette still matches 4 advisories, all listed as not applicable b
 - The installed and deployed versions on operator hosts were not inventoried. A host
   that installed before this change keeps starlette 1.0.0 and the old certifi until it
   runs `uv sync --locked` again or the image is rebuilt.
+
+## Re-scan and runtime applicability (2026-11-05)
+
+- Re-scan: `uv.lock` at `1a61533`, same export and scanner (`pip-audit` 2.10.1), advisory
+  data as of 2026-11-05. The result is 393 rows in 35 packages and 278 distinct advisories.
+  Every package's distinct advisory count equals the count in the tables above. The only
+  difference is that the two advisories fixed by the starlette and certifi upgrades are
+  gone. No new advisory applies, and every disposition above stands.
+- certifi: GHSA-6q48-6c7w-9gw2 now recommends 2026.10.19 or later. 2026.10.18 removed every
+  emSign root, and 2026.10.19 restored the roots that are not affected. The locked
+  2026.10.18 is outside the vulnerable range. The difference affects only availability for
+  servers chained to the restored roots, so there is no security action. Pick it up with the
+  next routine lock refresh.
+- Installed lexical STDIO deployments that predate the upgrade keep starlette 1.0.0 and
+  certifi 2026.2.25. In that mode neither advisory applies:
+  - `python -m mcp_server.cli stdio` imports Starlette (through the MCP SDK) but builds
+    no ASGI application. It never imports `mcp_server.gateway` or
+    `mcp_server.security.security_middleware`, so `AuthenticationMiddleware` is never
+    instantiated and no HTTP listener reads `request.url`.
+  - With semantic search disabled and no summarization provider key in the process
+    environment, no HTTPS client runs, so the certifi bundle has no reachable consumer.
+  - Reopen this assessment, or reinstall from the current lock, before such a host
+    serves the HTTP gateway (`mcp-index serve` or `uvicorn mcp_server.gateway:app`),
+    enables semantic search or reranking, or passes a summarization provider key.
