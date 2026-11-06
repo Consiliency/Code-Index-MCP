@@ -103,7 +103,9 @@ Plan for downtime.
    jobs if any, and operator shells. Source and editable checkouts also load
    `.env.local`, `.env` and `.env.native` from the checkout root
    (`mcp_server/config/environment.py` `load_local_env_files`) unless
-   `PYTHON_DOTENV_DISABLED=1` is set. Values already in the process environment win.
+   `PYTHON_DOTENV_DISABLED=1` is set. python-dotenv itself honours that variable from
+   version 1.2 (the lock pins 1.2.2); an install that does not use `uv.lock` can resolve
+   an older python-dotenv that ignores it. Values already in the process environment win.
    Treat a `QDRANT_API_KEY` or `QDRANT_URL` in those files as a client credential source.
 5. Restart Qdrant through the repository Compose file with the key in the environment:
    `op run --env-file=<env> -- docker compose -f docker-compose.qdrant.yml [-f <host override>] up -d qdrant`.
@@ -116,12 +118,15 @@ Plan for downtime.
    - `GET /collections` with the key returns 200, and the expected collections and point
      counts are present.
    - `mcp-index setup semantic` preflight reports Qdrant `ready`.
-   - A semantic search returns results.
+   - If semantic search is enabled for this deployment, run a semantic search as a
+     separate check (see below). It is not part of the authentication readback.
    - The running container matches the reviewed Compose inputs: its
-     `com.docker.compose.config-hash` label equals the hash printed by
-     `docker compose <same -f files and --env-file> config --hash qdrant`. That command
-     prints only a hash. Do not run `docker compose config` without `--hash`, because
-     it renders the key.
+     `com.docker.compose.config-hash` label equals the hash from step 5's exact command
+     with `config --hash qdrant` in place of `up -d qdrant`, including the same `op run`
+     wrapper, `--env-file` and `-f` files. It prints `qdrant <hash>`; compare the hash
+     field. Without the wrapper the command fails, and with a different key value it
+     reports a different hash, so only a mismatch from the same invocation is drift.
+     Do not run `docker compose config` without `--hash`, because it renders the key.
 7. Restart the MCP clients and confirm that readiness is `ready`.
 
 ## Rollback
