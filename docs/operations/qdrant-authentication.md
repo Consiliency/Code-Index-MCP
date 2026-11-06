@@ -53,6 +53,18 @@ Not migrated:
   now fails closed when a server URL is used without the key. The repository ships no
   Qdrant server manifest for Kubernetes.
 
+### Deployment consumer inventory
+
+The list above covers clients in this repository. Each deployment also needs its own
+inventory. Record every client that can reach the deployment, whether it is running,
+scheduled, dormant or unreachable to the operator. For each client, record: owner, state
+(active/inactive/unknown), the client artifact and interpreter, mode (server, file or
+memory), the credential **source name** (never the value), the transport, whether it
+needs read or write access, its test receipt and the remaining action. A client you
+cannot inspect, such as another user's configuration or a remote host behind a tunnel,
+stays `unknown` with a named owner. Finding no running client does not show that none
+exists.
+
 ## Configuration
 
 - `QDRANT_API_KEY`: the key. Use at least 32 random bytes, for example
@@ -82,12 +94,19 @@ Plan for downtime.
    `QDRANT__SERVICE__API_KEY`. Print only the variable names, never the values.
 2. Back up the storage. Take a Qdrant snapshot of each collection with the current
    credentials, or stop the container and copy the storage directory. Verify the
-   backup's size and file count before you continue.
+   backup's size and file count, and record a SHA-256 manifest of its files, before you
+   continue.
 3. Provision the key in the secret manager. Do not create or rotate it without
    owner approval.
 4. Update every client environment that sets `QDRANT_URL` with the same
    `QDRANT_API_KEY`: MCP server `.mcp.env` and `.mcp.json` entries, CI or scheduled
-   jobs if any, and operator shells.
+   jobs if any, and operator shells. Source and editable checkouts also load
+   `.env.local`, `.env` and `.env.native` from the checkout root
+   (`mcp_server/config/environment.py` `load_local_env_files`) unless
+   `PYTHON_DOTENV_DISABLED=1` is set. python-dotenv itself honours that variable from
+   version 1.2 (the lock pins 1.2.2); an install that does not use `uv.lock` can resolve
+   an older python-dotenv that ignores it. Values already in the process environment win.
+   Treat a `QDRANT_API_KEY` or `QDRANT_URL` in those files as a client credential source.
 5. Restart Qdrant through the repository Compose file with the key in the environment:
    `op run --env-file=<env> -- docker compose -f docker-compose.qdrant.yml [-f <host override>] up -d qdrant`.
    In the merged model, `environment` takes precedence over `env_file`, so a host
@@ -99,7 +118,15 @@ Plan for downtime.
    - `GET /collections` with the key returns 200, and the expected collections and point
      counts are present.
    - `mcp-index setup semantic` preflight reports Qdrant `ready`.
-   - A semantic search returns results.
+   - If semantic search is enabled for this deployment, run a semantic search as a
+     separate check (see below). It is not part of the authentication readback.
+   - The running container matches the reviewed Compose inputs: its
+     `com.docker.compose.config-hash` label equals the hash from step 5's exact command
+     with `config --hash qdrant` in place of `up -d qdrant`, including the same `op run`
+     wrapper, `--env-file` and `-f` files. It prints `qdrant <hash>`; compare the hash
+     field. Without the wrapper the command fails, and with a different key value it
+     reports a different hash, so only a mismatch from the same invocation is drift.
+     Do not run `docker compose config` without `--hash`, because it renders the key.
 7. Restart the MCP clients and confirm that readiness is `ready`.
 
 ## Rollback
@@ -115,7 +142,8 @@ the unsafe state that #106 removes.
 - **Qdrant does not start (guard exit 64, or a Compose render error):** the key did not
   reach the container. Fix the injection and run the restart again. The data on disk
   has not changed.
-- **Data problem after the restart:** stop the container, restore the backup from
+- **Data problem after the restart:** stop the container, move the failed storage
+  aside (keep it), check the backup against its SHA-256 manifest, restore the backup from
   step 2 into the storage path, and start it again with the API key still required.
 - **Code regression:** revert this change's commits. The authenticated server
   configuration can stay in place, because the previous client code sends
@@ -135,6 +163,9 @@ the unsafe state that #106 removes.
 
   It skips when Docker or the pinned image is unavailable:
   `uv run --extra dev pytest tests/integration/test_qdrant_auth_container.py -m integration --no-cov`.
+
+Synthetic create, write, query and delete checks prove authentication only. They do not
+show that embedding-backed MCP semantic search works. Track that check separately.
 
 A source change does not prove that a running deployment is repaired. Only the
 readback in step 6 against the live service shows that.
