@@ -1718,6 +1718,14 @@ async def _serve(registry_path=None) -> None:
             watchdog = threading.Timer(_SHUTDOWN_GRACE_SECONDS, _force_shutdown)
             watchdog.daemon = True
             watchdog.start()
+            # An in-flight reindex runs in a worker thread that the serve scope
+            # cannot cancel (abandon_on_cancel=False): without this it kept
+            # building, published, and left cleanup too little of the grace
+            # window, so the watchdog force-exited a healthy service
+            # (#116 review S1).
+            request_shutdown = getattr(git_index_manager, "request_shutdown", None)
+            if callable(request_shutdown):
+                request_shutdown()
         serve_scope.cancel()
 
     try:

@@ -82,13 +82,21 @@ def run(root: Path, entrypoint: str, env: dict[str, str]):
         )
 
     commit_fixture()
+    hold = root / "rebuild.hold"
     for mode in ("sigterm", "sigint", "eof", "repeated", "partial_input", "inflight"):
         log = root / f"safety-{mode}.log"
+        mode_env = dict(env)
+        if mode == "inflight":
+            # Park the staged rebuild at a pre-publication checkpoint while the
+            # hold file exists, so a writer is deterministically in flight when
+            # SIGTERM arrives (no reliance on a slow fixture; #116 review S1).
+            mode_env["MCP_TEST_REBUILD_HOLD_STAGE"] = "stage_created"
+            mode_env["MCP_TEST_REBUILD_HOLD_FILE"] = str(hold)
         with log.open("wb") as stderr:
             proc = subprocess.Popen(
                 [entrypoint, "stdio"],
                 cwd=root,
-                env=env,
+                env=mode_env,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=stderr,
@@ -203,15 +211,17 @@ def run(root: Path, entrypoint: str, env: dict[str, str]):
                     if connection.status == "LISTEN"
                 )
                 admitted = False
+                generation_before = None
                 if mode == "inflight":
-                    slow = fixture / "slow_synthetic.py"
-                    # The writer must outlive the 3 s shutdown grace window. treesitter-chunker
-                    # 6 chunks 20k functions about 34x faster than 4.x (~1.3 s), which let the
-                    # write publish during shutdown; 100k keeps it in flight (#115).
-                    slow.write_text(
-                        "\n".join(f"def synthetic_{i}():\n    return {i}\n" for i in range(100000))
+                    from mcp_server.storage.repository_registry import RepositoryRegistry
+
+                    registry_path = root / "registry.json"
+                    generation_before = (
+                        RepositoryRegistry(registry_path).list_all()[0].index_generation
                     )
-                    commit_fixture(slow)
+                    held = Path(f"{hold}.held")
+                    held.unlink(missing_ok=True)
+                    hold.write_text("hold\n")
                     send(
                         proc,
                         "tools/call",
@@ -221,12 +231,11 @@ def run(root: Path, entrypoint: str, env: dict[str, str]):
                         },
                         4,
                     )
-                    deadline = time.monotonic() + 10
-                    while time.monotonic() < deadline:
-                        if "index_publication_pending" in (root / "registry.json").read_text():
-                            admitted = True
-                            break
+                    deadline = time.monotonic() + 30
+                    while time.monotonic() < deadline and not held.exists():
                         time.sleep(0.01)
+                    assert held.exists(), "inflight writer never reached its checkpoint"
+                    admitted = "index_publication_pending" in registry_path.read_text()
                     assert admitted, "inflight writer was not observed admitted"
                 start = time.monotonic()
                 if mode == "eof":
@@ -243,10 +252,10 @@ def run(root: Path, entrypoint: str, env: dict[str, str]):
                 proc.wait(timeout=6)
                 duration = time.monotonic() - start
                 assert duration <= 5, (mode, duration)
-                if mode != "inflight":
-                    assert proc.returncode == 0, (mode, proc.returncode)
-                else:
-                    assert proc.returncode in (0, 1), proc.returncode
+                # Including inflight: shutdown asks the writer to stop before it
+                # publishes, so cleanup finishes inside the grace window and the
+                # watchdog never force-exits (rc 1) a healthy service.
+                assert proc.returncode == 0, (mode, proc.returncode)
                 live = [
                     child.pid
                     for child in children
@@ -257,8 +266,17 @@ def run(root: Path, entrypoint: str, env: dict[str, str]):
                     with socket.socket() as listener:
                         listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                         listener.bind(("127.0.0.1", port))
-                if mode == "inflight" and proc.returncode == 1:
-                    assert "index_publication_pending" in (root / "registry.json").read_text()
+                if mode == "inflight":
+                    from mcp_server.storage.repository_registry import RepositoryRegistry
+
+                    after = RepositoryRegistry(root / "registry.json").list_all()[0]
+                    # The parked generation was abandoned, never published, and
+                    # recorded as a recoverable failure (not left pending).
+                    assert after.index_generation == generation_before, after.index_generation
+                    assert after.staleness_reason == "partial_index_failure", after.staleness_reason
+                    assert hold.exists(), "shutdown, not the hold file, released the writer"
+                    raw = json.loads((root / "registry.json").read_text())
+                    assert "RebuildShutdownRequested" in json.dumps(raw), raw
                 assert "PRIVATE_QUERY_SENTINEL_73051" not in log.read_text()
                 receipts.append(
                     {
@@ -285,7 +303,8 @@ def run(root: Path, entrypoint: str, env: dict[str, str]):
                     if stream is not None and not stream.closed:
                         stream.close()
         if mode == "inflight":
-            slow.unlink()
+            hold.unlink(missing_ok=True)
+            Path(f"{hold}.held").unlink(missing_ok=True)
     print(json.dumps({"installed_lifecycle": "passed", "uid": os.getuid(), "cases": receipts}))
     worker_source.unlink()
 

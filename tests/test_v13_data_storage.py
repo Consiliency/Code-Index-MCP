@@ -344,6 +344,104 @@ def test_failed_generation_retains_old_bytes_and_pending_fence(runtime, monkeypa
     assert current.staleness_reason == "partial_index_failure"
 
 
+@pytest.mark.parametrize(
+    "stage", ["stage_created", "before_replacement", "after_replacement", "before_provenance"]
+)
+def test_shutdown_request_abandons_the_unpublished_generation(runtime, stage):
+    """#116 review S1: an in-flight rebuild stops before it publishes once the
+    owning service starts shutting down, instead of finishing a full rebuild
+    the shutdown watchdog then cuts off."""
+    repo, registry, repo_id, store, manager = runtime
+    _seed_retained(store, repo)
+    registry.update_indexed_commit(repo_id, _get_head_commit(repo), branch="main")
+    original = registry.get(repo_id)
+    before = original.index_path.read_bytes()
+    checkpoint = manager._rebuild_checkpoint
+
+    def shutdown_at(point):
+        if point == stage:
+            manager.request_shutdown()
+        checkpoint(point)
+
+    manager._rebuild_checkpoint = shutdown_at
+    result = manager.rebuild_repository_index(repo_id)
+    assert result.action == "failed"
+    assert "RebuildShutdownRequested" in result.error
+    current = RepositoryRegistry(registry.registry_path).get(repo_id)
+    assert current.index_path == original.index_path
+    assert current.index_generation == original.index_generation
+    assert original.index_path.read_bytes() == before
+    assert current.staleness_reason == "partial_index_failure"
+
+
+def test_rebuild_held_in_flight_is_released_by_shutdown_not_by_time(runtime, monkeypatch, tmp_path):
+    """Deterministic in-flight-at-shutdown: the writer parks on an event-like
+    hold and only the shutdown request releases it (no fixture-size timing)."""
+    import threading
+
+    repo, registry, repo_id, store, manager = runtime
+    _seed_retained(store, repo)
+    original = registry.get(repo_id)
+    hold = tmp_path / "rebuild.hold"
+    hold.write_text("hold\n")
+    monkeypatch.setenv("MCP_TEST_REBUILD_HOLD_STAGE", "stage_created")
+    monkeypatch.setenv("MCP_TEST_REBUILD_HOLD_FILE", str(hold))
+    results = []
+    writer = threading.Thread(
+        target=lambda: results.append(manager.rebuild_repository_index(repo_id)), daemon=True
+    )
+    writer.start()
+    held = Path(f"{hold}.held")
+    for _ in range(3000):
+        if held.exists():
+            break
+        writer.join(0.01)
+    assert held.exists(), "writer never parked at its checkpoint"
+    assert writer.is_alive()
+    pending = RepositoryRegistry(registry.registry_path).get(repo_id)
+    assert pending.staleness_reason == "index_publication_pending"
+
+    manager.request_shutdown()
+    writer.join(30)
+    assert not writer.is_alive()
+    assert hold.exists(), "the hold file was never removed; shutdown released the writer"
+    assert results[0].action == "failed"
+    assert "RebuildShutdownRequested" in results[0].error
+    current = RepositoryRegistry(registry.registry_path).get(repo_id)
+    assert current.index_generation == original.index_generation
+    assert current.staleness_reason == "partial_index_failure"
+
+
+def test_rebuild_hold_seam_is_inert_without_its_hold_file(runtime, monkeypatch, tmp_path):
+    repo, registry, repo_id, store, manager = runtime
+    _seed_retained(store, repo)
+    monkeypatch.setenv("MCP_TEST_REBUILD_HOLD_STAGE", "stage_created")
+    monkeypatch.setenv("MCP_TEST_REBUILD_HOLD_FILE", str(tmp_path / "absent.hold"))
+    result = manager.rebuild_repository_index(repo_id)
+    assert result.action == "full_index", result.error
+    assert not (tmp_path / "absent.hold.held").exists()
+
+
+def test_full_index_walk_observes_the_shutdown_request(runtime, monkeypatch):
+    repo, registry, repo_id, store, manager = runtime
+    _seed_retained(store, repo)
+    seen = {}
+    original = manager.dispatcher.index_directory
+
+    def index_directory(ctx, path, recursive=True, cancel_check=None, **kwargs):
+        seen["cancel_check"] = cancel_check
+        manager.request_shutdown()
+        return original(ctx, path, recursive=recursive, cancel_check=cancel_check, **kwargs)
+
+    monkeypatch.setattr(manager.dispatcher, "index_directory", index_directory)
+    result = manager.rebuild_repository_index(repo_id)
+    assert seen["cancel_check"] is not None and seen["cancel_check"]() is True
+    assert result.action == "failed"
+    assert RepositoryRegistry(registry.registry_path).get(repo_id).staleness_reason == (
+        "partial_index_failure"
+    )
+
+
 def test_storing_identical_files_does_not_invent_a_rename(tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()
