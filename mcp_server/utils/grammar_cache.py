@@ -14,8 +14,12 @@ The cache root resolves the same way the pack resolves it:
 2. otherwise ``$XDG_CACHE_HOME``,
 3. otherwise ``$HOME/.cache``.
 
-A warm cache is read-only safe: loading cached grammars needs no write access,
-so images can ship a root-owned cache.
+The pack refuses a cache directory that is not owned by the running uid or is
+group- or other-writable, so a cache is per user. A warm cache loads without
+write access. For images and other shared installs, export the prefetched
+parser libraries to a shared directory and point
+``TREE_SITTER_LANGUAGE_PACK_LIBS_DIR`` at it: the pack loads that directory
+first, without the ownership check and without touching ``$HOME``.
 """
 
 from __future__ import annotations
@@ -29,6 +33,12 @@ from mcp_server.plugins.language_registry import get_required_grammars
 
 #: Environment variable the language pack reads for its cache root.
 CACHE_DIR_ENV = "TREE_SITTER_LANGUAGE_PACK_CACHE_DIR"
+
+#: Environment variable for a shared, read-only parser-library directory.
+LIBS_DIR_ENV = "TREE_SITTER_LANGUAGE_PACK_LIBS_DIR"
+
+#: Pack grammar names whose library file uses a different C symbol name.
+_LIBRARY_SYMBOL_NAMES = {"csharp": "c_sharp"}
 
 #: Smallest snippet every grammar parses; we only need a tree, not valid code.
 _PROBE_SOURCE = b"x\n"
@@ -81,9 +91,58 @@ def effective_cache_dir() -> str:
     return str(_pack().cache_dir())
 
 
+def libs_dir() -> Optional[Path]:
+    """Return the shared parser-library directory, when configured."""
+    value = (os.environ.get(LIBS_DIR_ENV) or "").strip()
+    return Path(value).expanduser() if value else None
+
+
+def _library_names(directory: Path) -> set:
+    names = set()
+    if directory.is_dir():
+        for entry in directory.iterdir():
+            stem = entry.name.split(".", 1)[0]
+            if stem.startswith("libtree_sitter_"):
+                names.add(stem[len("libtree_sitter_") :])
+            elif stem.startswith("tree_sitter_"):
+                names.add(stem[len("tree_sitter_") :])
+    return names
+
+
 def cached_grammars() -> List[str]:
-    """Return grammar names already present in the local cache."""
-    return sorted(_pack().downloaded_languages())
+    """Return grammar names loadable without a download (cache or libs dir)."""
+    names = set(_pack().downloaded_languages())
+    shared = libs_dir()
+    if shared is not None:
+        symbols = _library_names(shared)
+        names.update(name for name in get_required_grammars() if _symbol(name) in symbols)
+        names.update(symbols)
+    return sorted(names)
+
+
+def _symbol(name: str) -> str:
+    return _LIBRARY_SYMBOL_NAMES.get(name, name)
+
+
+def export_libs(destination: str | Path) -> List[str]:
+    """Copy the cached parser libraries into a shared, world-readable directory.
+
+    Point ``TREE_SITTER_LANGUAGE_PACK_LIBS_DIR`` at ``destination`` so any user
+    loads them offline without a per-user cache. Returns the copied file names.
+    """
+    import shutil
+
+    source = Path(effective_cache_dir())
+    target = Path(destination).expanduser().resolve()
+    target.mkdir(parents=True, exist_ok=True)
+    copied = []
+    for entry in sorted(source.iterdir()):
+        if entry.is_file():
+            shutil.copyfile(entry, target / entry.name)
+            (target / entry.name).chmod(0o644)
+            copied.append(entry.name)
+    target.chmod(0o755)
+    return copied
 
 
 def missing_grammars(languages: Optional[Iterable[str]] = None) -> List[str]:
@@ -128,7 +187,7 @@ def verify(languages: Optional[Sequence[str]] = None, *, offline: bool = True) -
 
     pack = _pack()
     names = sorted(set(languages if languages is not None else get_required_grammars()))
-    cached = set(pack.downloaded_languages()) if offline else set()
+    cached = set(cached_grammars()) if offline else set()
     result = GrammarCheck()
     for name in names:
         if offline and name not in cached:

@@ -104,3 +104,30 @@ def test_resolve_cache_root_matches_pack_resolution_order():
     env.pop("XDG_CACHE_HOME")
     assert str(grammar_cache.resolve_cache_root(env)) == "/h/.cache"
     assert grammar_cache.resolve_cache_root({}) is None
+
+
+def test_exported_libs_dir_loads_every_grammar_without_a_cache(warm_grammar_cache, tmp_path):
+    """Images export libraries to a shared dir loaded via LIBS_DIR (any owner/mode)."""
+    import subprocess
+    import sys
+
+    shared = tmp_path / "libs"
+    copied = grammar_cache.export_libs(shared)
+    assert copied and (shared.stat().st_mode & 0o777) == 0o755
+    script = (
+        "from mcp_server.utils import grammar_cache as g; "
+        "r = g.verify(offline=True); print(r.ok, len(r.loaded), sorted(r.failed))"
+    )
+    env = {
+        "PATH": os.environ.get("PATH", ""),
+        "HOME": str(tmp_path / "empty-home"),
+        grammar_cache.LIBS_DIR_ENV: str(shared),
+        # An unreachable manifest proves nothing is downloaded.
+        "TREE_SITTER_LANGUAGE_PACK_MANIFEST_URL": "http://127.0.0.1:9/unreachable",
+    }
+    result = subprocess.run(
+        [sys.executable, "-c", script], env=env, capture_output=True, text=True, timeout=120
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.split()[:2] == ["True", str(len(warm_grammar_cache))]
+    assert not (tmp_path / "empty-home" / ".cache").exists()

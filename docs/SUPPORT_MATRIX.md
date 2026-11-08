@@ -155,9 +155,14 @@ tiers above are unchanged by the upgrade.
   network access is available; `mcp-index grammars check` verifies every
   grammar loads offline. A cold cache with no network fails with
   `DownloadError`/`LanguageNotFoundError`. A warm cache works offline and
-  read-only. Container images prefetch into `/opt/tree-sitter-language-pack`,
-  CI prefetches before the agent gate, and sandboxed plugin workers inherit the
-  host cache root even though their environment is scrubbed.
+  read-only. The pack refuses a cache directory that is not owned by the
+  running user or is group- or other-writable, so the cache is per user. For
+  shared installs, `mcp-index grammars prefetch --export-libs DIR` copies the
+  libraries to a world-readable directory that any user loads through
+  `TREE_SITTER_LANGUAGE_PACK_LIBS_DIR=DIR`. Container images do this into
+  `/opt/tree-sitter-language-pack/libs`, CI prefetches before the agent gate,
+  and sandboxed plugin workers keep the host cache root and libs directory even
+  though their environment is scrubbed.
 - **Grammar names.** The public language code `c_sharp` is unchanged; the pack
   grammar is `csharp`.
 - **Platform floor.** The language-pack Linux wheels need glibc 2.34 or newer.

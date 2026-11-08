@@ -47,8 +47,14 @@ def _venv_bin(root: Path, name: str) -> Path:
     )
 
 
+_GRAMMAR_ENV = ("TREE_SITTER_LANGUAGE_PACK_CACHE_DIR", "TREE_SITTER_LANGUAGE_PACK_LIBS_DIR")
+
+
 def _clean_env(root: Path) -> dict[str, str]:
+    # Grammar-location paths only (not credentials): reuse prefetched grammars (#115).
+    grammar = {key: os.environ[key] for key in _GRAMMAR_ENV if os.environ.get(key)}
     return {
+        **grammar,
         "PATH": os.environ.get("PATH", os.defpath),
         "HOME": str(root),
         "PIP_DISABLE_PIP_VERSION_CHECK": "1",

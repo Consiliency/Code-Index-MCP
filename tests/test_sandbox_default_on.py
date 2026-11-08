@@ -128,12 +128,19 @@ from mcp_server.sandbox.caps_apply import apply
 apply(CapabilitySet(fs_read=(), fs_write=(), env_allow=frozenset()))
 print(os.environ.get("TREE_SITTER_LANGUAGE_PACK_CACHE_DIR"))
 print("XDG_CACHE_HOME" in os.environ)
+print(os.environ.get("TREE_SITTER_LANGUAGE_PACK_LIBS_DIR"))
 """
-    env = {k: v for k, v in os.environ.items() if k != "TREE_SITTER_LANGUAGE_PACK_CACHE_DIR"}
+    env = {k: v for k, v in os.environ.items() if not k.startswith("TREE_SITTER_LANGUAGE_PACK_")}
     env.update({"HOME": "/host-home", "XDG_CACHE_HOME": "/host-xdg", "TMPDIR": str(tmp_path)})
     result = subprocess.run([sys.executable, "-c", script], env=env, capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
-    assert result.stdout.splitlines() == ["/host-xdg", "False"]
+    assert result.stdout.splitlines() == ["/host-xdg", "False", "None"]
+
+    env["TREE_SITTER_LANGUAGE_PACK_LIBS_DIR"] = "/opt/tree-sitter-language-pack/libs"
+    result = subprocess.run([sys.executable, "-c", script], env=env, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines()[2] == "/opt/tree-sitter-language-pack/libs"
+    env.pop("TREE_SITTER_LANGUAGE_PACK_LIBS_DIR")
 
     env["TREE_SITTER_LANGUAGE_PACK_CACHE_DIR"] = "/opt/grammars"
     result = subprocess.run([sys.executable, "-c", script], env=env, capture_output=True, text=True)

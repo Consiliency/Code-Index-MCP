@@ -23,13 +23,12 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel uv && \
     uv sync --locked --no-install-project
 
 # Prefetch every registry grammar (tree-sitter-language-pack 1.20 downloads on
-# first use) into a world-readable cache so containers never download at runtime
-# (Consiliency/Code-Index-MCP#115).
+# first use) and export the parser libraries to a shared read-only directory, so
+# containers never download at runtime (Consiliency/Code-Index-MCP#115).
 COPY mcp_server/ ./mcp_server/
-ENV TREE_SITTER_LANGUAGE_PACK_CACHE_DIR=/opt/tree-sitter-language-pack
-RUN .venv/bin/python -m mcp_server.cli.grammar_commands prefetch && \
-    rm -rf /opt/tree-sitter-language-pack/tree-sitter-language-pack/*/bundles && \
-    chmod -R a+rX /opt/tree-sitter-language-pack
+RUN .venv/bin/python -m mcp_server.cli.grammar_commands prefetch --cache-dir /tmp/ts-grammar-cache \
+        --export-libs /opt/tree-sitter-language-pack/libs && \
+    rm -rf /tmp/ts-grammar-cache
 
 # Final stage - minimal runtime
 FROM python:3.12-slim
@@ -46,10 +45,10 @@ RUN useradd -m -s /bin/bash -u 1000 mcp
 # Set working directory
 WORKDIR /app
 
-# Copy from builder (virtualenv and the prefetched, read-only grammar cache)
+# Copy from builder (virtualenv and the shared, read-only parser libraries)
 COPY --from=builder /build/.venv /app/.venv
 COPY --from=builder /opt/tree-sitter-language-pack /opt/tree-sitter-language-pack
-ENV TREE_SITTER_LANGUAGE_PACK_CACHE_DIR=/opt/tree-sitter-language-pack
+ENV TREE_SITTER_LANGUAGE_PACK_LIBS_DIR=/opt/tree-sitter-language-pack/libs
 
 # Copy application code
 COPY --chown=mcp:mcp mcp_server/ ./mcp_server/

@@ -16,14 +16,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - `mcp-index grammars prefetch` and `mcp-index grammars check` manage the
   language-pack grammar cache. Language-pack 1.20 downloads grammars on first
-  use, so CI, container images and the devcontainer prefetch them; see
-  `docs/SUPPORT_MATRIX.md` for the cache location and offline use.
+  use, so CI, container images and the devcontainer prefetch them.
+  `--export-libs DIR` writes a shared library directory for
+  `TREE_SITTER_LANGUAGE_PACK_LIBS_DIR`, which images use because the pack only
+  accepts a per-user cache. See `docs/SUPPORT_MATRIX.md` for the cache location
+  and offline use.
 
 ### Fixed
 - Pack grammar lookups use `csharp` for the `c_sharp` language; the public
   language code is unchanged.
-- Sandboxed plugin workers keep the host grammar cache root after their
-  environment is scrubbed, instead of starting from a cold cache.
+- Sandboxed plugin workers keep the host grammar cache root and libs
+  directory after their environment is scrubbed, instead of starting from a
+  cold cache.
+- The release smoke harness passes the grammar location through and keeps the
+  private grammar cache out of its world-writable cleanup sweep.
 - The devcontainer moves to Debian bookworm because the language-pack wheels
   need glibc 2.34 or newer.
 

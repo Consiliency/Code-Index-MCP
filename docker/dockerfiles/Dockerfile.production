@@ -27,13 +27,13 @@ RUN mkdir -p /home/mcp && \
     uv sync --locked --extra production --no-editable
 
 # tree-sitter-language-pack 1.20 downloads grammars on first use. Prefetch every
-# registry grammar at build time so the image never downloads at runtime
-# (Consiliency/Code-Index-MCP#115). The pack writes a private (0700) cache, so
-# make it world-readable; the archive bundles are not needed once extracted.
-ENV TREE_SITTER_LANGUAGE_PACK_CACHE_DIR=/opt/tree-sitter-language-pack
-RUN /home/mcp/.venv/bin/mcp-index grammars prefetch && \
-    rm -rf /opt/tree-sitter-language-pack/tree-sitter-language-pack/*/bundles && \
-    chmod -R a+rX /opt/tree-sitter-language-pack
+# registry grammar at build time and export the parser libraries to a shared
+# read-only directory (Consiliency/Code-Index-MCP#115). The pack only accepts a
+# cache owned by the running uid, so the non-root runtime user loads these via
+# TREE_SITTER_LANGUAGE_PACK_LIBS_DIR instead of a root-built cache.
+RUN /home/mcp/.venv/bin/mcp-index grammars prefetch --cache-dir /tmp/ts-grammar-cache \
+        --export-libs /opt/tree-sitter-language-pack/libs && \
+    rm -rf /tmp/ts-grammar-cache
 
 # Production stage
 FROM python:3.12-slim AS production
@@ -53,10 +53,10 @@ RUN groupadd -r mcp && useradd -r -g mcp -d /app -s /bin/bash mcp
 # Set up application directory
 WORKDIR /app
 
-# Copy Python dependencies and the prefetched, read-only grammar cache
+# Copy Python dependencies and the shared, read-only parser libraries
 COPY --from=builder /home/mcp/.venv /home/mcp/.venv
 COPY --from=builder /opt/tree-sitter-language-pack /opt/tree-sitter-language-pack
-ENV TREE_SITTER_LANGUAGE_PACK_CACHE_DIR=/opt/tree-sitter-language-pack
+ENV TREE_SITTER_LANGUAGE_PACK_LIBS_DIR=/opt/tree-sitter-language-pack/libs
 
 # Make sure virtualenv scripts are usable
 ENV PATH=/home/mcp/.venv/bin:$PATH

@@ -23,9 +23,17 @@ SOURCE = 'def release_smoke_token():\n    return "installed lexical fixture"\n'
 PASSWORD = "synthetic-smoke-admin-password-00000000"
 
 
+#: Grammar-location paths (not credentials) passed through so the probe uses the
+#: caller's prefetched tree-sitter grammars instead of downloading them
+#: (Consiliency/Code-Index-MCP#115).
+GRAMMAR_ENV = ("TREE_SITTER_LANGUAGE_PACK_CACHE_DIR", "TREE_SITTER_LANGUAGE_PACK_LIBS_DIR")
+
+
 def environment(root: Path) -> dict[str, str]:
     """Use only synthetic configuration, never operator credentials or live indexes."""
+    grammar = {key: os.environ[key] for key in GRAMMAR_ENV if os.environ.get(key)}
     return {
+        **grammar,
         "PATH": os.environ.get("PATH", os.defpath),
         "HOME": str(root / "home"),
         "XDG_CONFIG_HOME": str(root / "home" / ".config"),
@@ -325,7 +333,11 @@ def main() -> None:
             http_probe(args.root, args.url, not args.restart)
     finally:
         # Only synthetic smoke outputs; permit the host tempfile owner to clean mounted dirs.
+        # A tree-sitter-language-pack cache stays private: the pack refuses a group- or
+        # other-writable cache directory.
         for path in args.root.rglob("*"):
+            if "tree-sitter-language-pack" in path.parts:
+                continue
             if path.is_dir() and not path.is_symlink():
                 path.chmod(0o777)
 

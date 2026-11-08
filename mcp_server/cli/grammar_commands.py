@@ -33,7 +33,18 @@ def grammars() -> None:
     multiple=True,
     help="Grammar name to fetch (repeatable). Defaults to every registry grammar.",
 )
-def prefetch_command(cache_dir: Optional[str], languages: Tuple[str, ...]) -> None:
+@click.option(
+    "--export-libs",
+    type=click.Path(file_okay=False),
+    default=None,
+    help=(
+        "Also copy the parser libraries into this shared, world-readable directory; "
+        "set TREE_SITTER_LANGUAGE_PACK_LIBS_DIR to it at runtime (images, multi-user hosts)."
+    ),
+)
+def prefetch_command(
+    cache_dir: Optional[str], languages: Tuple[str, ...], export_libs: Optional[str]
+) -> None:
     """Download every grammar the registry needs, then verify each one parses."""
     from mcp_server.utils import grammar_cache
 
@@ -48,6 +59,12 @@ def prefetch_command(cache_dir: Optional[str], languages: Tuple[str, ...]) -> No
     click.echo(f"Cache root: {root}")
     click.echo(f"Parser libraries: {grammar_cache.effective_cache_dir()}")
     click.echo(f"Prefetched and verified {len(check.loaded)}/{len(names)} grammars.")
+    if check.ok and export_libs:
+        copied = grammar_cache.export_libs(export_libs)
+        click.echo(
+            f"Exported {len(copied)} parser libraries to {export_libs}; "
+            f"set {grammar_cache.LIBS_DIR_ENV}={export_libs} at runtime."
+        )
     if not check.ok:
         for name, reason in sorted(check.failed.items()):
             click.echo(f"  FAILED {name}: {reason}", err=True)

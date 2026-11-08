@@ -9,10 +9,11 @@ ORDERING CONTRACT (matters for correctness):
   3. Scrub ``os.environ`` down to ``caps.env_allow`` and set HOME to the
      worker scratch directory when HOME was not explicitly allowed. The host's
      tree-sitter grammar cache root is resolved first and pinned through
-     ``TREE_SITTER_LANGUAGE_PACK_CACHE_DIR`` so the worker reads the prefetched
-     parser libraries instead of a cold scratch-HOME cache that would trigger a
-     first-use download (Consiliency/Code-Index-MCP#115). It is a path, not a
-     credential.
+     ``TREE_SITTER_LANGUAGE_PACK_CACHE_DIR`` (and a shared
+     ``TREE_SITTER_LANGUAGE_PACK_LIBS_DIR`` is kept) so the worker reads the
+     prefetched parser libraries instead of a cold scratch-HOME cache that would
+     trigger a first-use download (Consiliency/Code-Index-MCP#115). These are
+     paths, not credentials.
   4. If ``caps.network is False`` — monkey-patch ``socket`` to forbid connect.
   5. Soft resource limits via :mod:`resource` (best-effort; swallow failures).
   6. If ``caps.sqlite == "none"`` — monkey-patch ``sqlite3.connect`` to raise.
@@ -99,6 +100,7 @@ def _scrub_env(env_allow: frozenset) -> None:
 
 
 _GRAMMAR_CACHE_ENV = "TREE_SITTER_LANGUAGE_PACK_CACHE_DIR"
+_GRAMMAR_LIBS_ENV = "TREE_SITTER_LANGUAGE_PACK_LIBS_DIR"
 
 
 def _host_grammar_cache_root() -> Optional[Path]:
@@ -314,10 +316,13 @@ def apply(caps: CapabilitySet) -> None:
     # 3. scrub env, keeping the host's grammar cache root (resolved before the
     # scrub, since it can derive from HOME/XDG_CACHE_HOME).
     grammar_cache_root = _host_grammar_cache_root()
+    grammar_libs_dir = (os.environ.get(_GRAMMAR_LIBS_ENV) or "").strip()
     _scrub_env(caps.env_allow)
     os.environ.setdefault("HOME", str(_SCRATCH_DIR))
     if grammar_cache_root is not None:
         os.environ[_GRAMMAR_CACHE_ENV] = str(grammar_cache_root)
+    if grammar_libs_dir:
+        os.environ[_GRAMMAR_LIBS_ENV] = grammar_libs_dir
 
     # 4. network deny.
     if not caps.network:
