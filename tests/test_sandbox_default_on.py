@@ -152,3 +152,24 @@ print(os.environ.get("TREE_SITTER_LANGUAGE_PACK_LIBS_DIR"))
     result = subprocess.run([sys.executable, "-c", script], env=env, capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
     assert result.stdout.splitlines()[0] == "/host-home/.cache"
+
+
+def test_sandboxed_python_plugin_still_produces_chunker_chunks(tmp_path):
+    """treesitter-chunker 6 reads dist-info metadata on the first python parser
+    load; the worker warms the parser before its FS guard so chunk_text does not
+    fail inside the sandbox and silently drop every chunk (#115)."""
+    from mcp_server.plugins.sandboxed_plugin import SandboxedPlugin
+    from mcp_server.sandbox.capabilities import CapabilitySet
+
+    source = tmp_path / "mod.py"
+    source.write_text("def helper():\n    return 'ok'\n", encoding="utf-8")
+    plugin = SandboxedPlugin(
+        "mcp_server.plugins.python_plugin",
+        CapabilitySet(fs_read=(tmp_path,), fs_write=(), env_allow=frozenset()),
+    )
+    try:
+        shard = plugin.indexFile(str(source), source.read_text(encoding="utf-8"))
+    finally:
+        plugin.close()
+    assert shard["symbols"], shard
+    assert len(shard.get("chunks") or []) >= 1, shard

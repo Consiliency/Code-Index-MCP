@@ -28,6 +28,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Sandboxed plugin workers keep the host grammar cache root and libs
   directory after their environment is scrubbed, instead of starting from a
   cold cache.
+- Sandboxed plugin workers warm the chunker parser for their language before
+  installing the filesystem guard. Chunker 6 reads installed package metadata
+  on the first python/javascript parser load, and the guard made `chunk_text`
+  fail, so the sandboxed Python plugin stored no chunks.
 - The release smoke harness passes the grammar location through and keeps the
   private grammar cache out of its world-writable cleanup sweep.
 - The devcontainer moves to Debian bookworm because the language-pack wheels
