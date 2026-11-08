@@ -295,6 +295,7 @@ def test_export_libs_refuses_symlinked_target_and_components(fake_cache_libs, tm
 def test_export_libs_refuses_a_planted_library_symlink(fake_cache_libs, tmp_path):
     shared = tmp_path / "shared"
     shared.mkdir()
+    os.chmod(shared, 0o755)  # independent of the umask (002 on some hosts)
     victim = tmp_path / "victim"
     victim.write_bytes(b"precious")
     (shared / "libtree_sitter_c.so").symlink_to(victim)
@@ -314,6 +315,7 @@ def test_export_libs_refuses_world_writable_and_foreign_dirs(fake_cache_libs, tm
 
     populated = tmp_path / "populated"
     populated.mkdir()
+    os.chmod(populated, 0o755)  # independent of the umask (002 on some hosts)
     (populated / "etc").mkdir()
     with pytest.raises(grammar_cache.UnsafeLibsDirError, match="other than parser libraries"):
         grammar_cache.export_libs(populated)
