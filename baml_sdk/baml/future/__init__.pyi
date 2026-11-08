@@ -29,6 +29,8 @@ import pydantic
 if typing.TYPE_CHECKING:
     from ... import baml
 
+from ..._invocation_types import BamlOptions as _BamlOptions
+
 
 E = typing.TypeVar("E")
 Err = typing.TypeVar("Err")
@@ -43,48 +45,58 @@ class State(str, enum.Enum):
 
 
 class Future(pydantic.BaseModel, typing.Generic[T, E]):
-    def cancel(self) -> bool:
-        """Request cancellation of the future. If the future is already
-        settled, this is a no-op and returns `false`. Otherwise the
-        future's cancel token fires; the spawned thread will throw
-        `baml.panics.Cancelled` at its next `await` point.
+    def cancel(self, *, _baml: _BamlOptions | None = None) -> bool:
+        """Request cancellation of the future: fires its cancel token. A task that
+        has not started yet never starts; a running one throws
+        `baml.panics.Cancelled` at its next checkpoint (an `await` or an IO
+        call) and at every one after that, outside a `defer`. The task settles
+        the future: `Cancelled` once it unwinds or if it never started, `Ready`
+        with its value if it had no checkpoint left, or handled the panic and
+        completed. Until then the future stays `Pending`.
 
-        Returns `true` if a transition to the Cancelled state was
-        performed, `false` if the future was already settled."""
-    async def cancel_async(self) -> bool:
-        """Request cancellation of the future. If the future is already
-        settled, this is a no-op and returns `false`. Otherwise the
-        future's cancel token fires; the spawned thread will throw
-        `baml.panics.Cancelled` at its next `await` point.
+        Returns `true` if this call fired the token, `false` if the future was
+        already settled or cancellation was already requested."""
+    async def cancel_async(self, *, _baml: _BamlOptions | None = None) -> bool:
+        """Request cancellation of the future: fires its cancel token. A task that
+        has not started yet never starts; a running one throws
+        `baml.panics.Cancelled` at its next checkpoint (an `await` or an IO
+        call) and at every one after that, outside a `defer`. The task settles
+        the future: `Cancelled` once it unwinds or if it never started, `Ready`
+        with its value if it had no checkpoint left, or handled the panic and
+        completed. Until then the future stays `Pending`.
 
-        Returns `true` if a transition to the Cancelled state was
-        performed, `false` if the future was already settled."""
-    def is_settled(self) -> bool:
+        Returns `true` if this call fired the token, `false` if the future was
+        already settled or cancellation was already requested."""
+    def is_settled(self, *, _baml: _BamlOptions | None = None) -> bool:
         """`true` if the future has reached a terminal state (Ready, Error,
         or Cancelled). Once `true`, this method's result never changes."""
-    async def is_settled_async(self) -> bool:
+    async def is_settled_async(self, *, _baml: _BamlOptions | None = None) -> bool:
         """`true` if the future has reached a terminal state (Ready, Error,
         or Cancelled). Once `true`, this method's result never changes."""
-    def is_cancelled(self) -> bool:
+    def is_cancelled(self, *, _baml: _BamlOptions | None = None) -> bool:
         """`true` if the future was cancelled before producing a value.
         Implies `is_settled() == true`."""
-    async def is_cancelled_async(self) -> bool:
+    async def is_cancelled_async(self, *, _baml: _BamlOptions | None = None) -> bool:
         """`true` if the future was cancelled before producing a value.
         Implies `is_settled() == true`."""
-    def is_result(self) -> bool:
+    def is_result(self, *, _baml: _BamlOptions | None = None) -> bool:
         """`true` if the future settled with a successful value. Implies
         `is_settled() == true`."""
-    async def is_result_async(self) -> bool:
+    async def is_result_async(self, *, _baml: _BamlOptions | None = None) -> bool:
         """`true` if the future settled with a successful value. Implies
         `is_settled() == true`."""
-    def is_error(self) -> bool:
+    def is_error(self, *, _baml: _BamlOptions | None = None) -> bool:
         """`true` if the future settled with an error. Implies
         `is_settled() == true`."""
-    async def is_error_async(self) -> bool:
+    async def is_error_async(self, *, _baml: _BamlOptions | None = None) -> bool:
         """`true` if the future settled with an error. Implies
         `is_settled() == true`."""
-    def state(self) -> State: ...
-    async def state_async(self) -> State: ...
+    def state(self, *, _baml: _BamlOptions | None = None) -> State:
+        """Return the current state of the future as a [`State`]
+        variant."""
+    async def state_async(self, *, _baml: _BamlOptions | None = None) -> State:
+        """Return the current state of the future as a [`State`]
+        variant."""
 
 
 class Success(pydantic.BaseModel, typing.Generic[T]):
@@ -100,7 +112,7 @@ class Panicked(pydantic.BaseModel):
     context: baml.errors.Context
 
 
-def all_settled(futures: typing.List[typing.Any], *, _types: dict[str, typing.Any] | None = None) -> typing.Any:
+def all_settled(futures: typing.List[typing.Any], *, _types: dict[str, typing.Any] | None = None, _baml: _BamlOptions | None = None) -> typing.Any:
     """Wait for every input and return one outcome per input, in input order.
     Typed errors become `Failure`; panics, including input cancellation, become
     `Panicked`. No input is cancelled because another input failed or panicked.
@@ -108,7 +120,7 @@ def all_settled(futures: typing.List[typing.Any], *, _types: dict[str, typing.An
 
     Cancelling the collector stops the wait; it is not an input outcome. Inputs
     remain governed by their own cancellation tokens and task groups."""
-async def all_settled_async(futures: typing.List[typing.Any], *, _types: dict[str, typing.Any] | None = None) -> typing.Any:
+async def all_settled_async(futures: typing.List[typing.Any], *, _types: dict[str, typing.Any] | None = None, _baml: _BamlOptions | None = None) -> typing.Any:
     """Wait for every input and return one outcome per input, in input order.
     Typed errors become `Failure`; panics, including input cancellation, become
     `Panicked`. No input is cancelled because another input failed or panicked.
@@ -118,14 +130,14 @@ async def all_settled_async(futures: typing.List[typing.Any], *, _types: dict[st
     remain governed by their own cancellation tokens and task groups."""
 
 
-def all(futures: typing.List[typing.Any], *, _types: dict[str, typing.Any] | None = None) -> typing.Any:
+def all(futures: typing.List[typing.Any], *, _types: dict[str, typing.Any] | None = None, _baml: _BamlOptions | None = None) -> typing.Any:
     """Await every future and return their values in input order. On the first
     observed typed error, cancel the remaining futures and rethrow that error.
     Use `all_settled` to let every input settle and inspect each outcome.
 
     Failures are observed in input order, not strictly first-to-fail in
     wall-clock time. Panics propagate normally."""
-async def all_async(futures: typing.List[typing.Any], *, _types: dict[str, typing.Any] | None = None) -> typing.Any:
+async def all_async(futures: typing.List[typing.Any], *, _types: dict[str, typing.Any] | None = None, _baml: _BamlOptions | None = None) -> typing.Any:
     """Await every future and return their values in input order. On the first
     observed typed error, cancel the remaining futures and rethrow that error.
     Use `all_settled` to let every input settle and inspect each outcome.
@@ -138,14 +150,14 @@ class AllFailed(pydantic.BaseModel, typing.Generic[E]):
     errors: typing.List[E]
 
 
-def __await_any(futures: typing.List[typing.Any], *, _types: dict[str, typing.Any] | None = None) -> int:
+def __await_any(futures: typing.List[typing.Any], *, _types: dict[str, typing.Any] | None = None, _baml: _BamlOptions | None = None) -> int:
     """(internal) BEP-034 internal primitive: suspend until the FIRST of `futures` settles —
     whether it succeeds, fails, or is cancelled — and return its index in input
     order. Compiles to a dedicated `AwaitAny` suspend point (it is `await` over
     many futures), and is the building block for `race` and `any`. The inputs
     are already running, so this only decides *which* settled first; it never
     re-throws (callers `await futures[i]` to observe the value or error)."""
-async def __await_any_async(futures: typing.List[typing.Any], *, _types: dict[str, typing.Any] | None = None) -> int:
+async def __await_any_async(futures: typing.List[typing.Any], *, _types: dict[str, typing.Any] | None = None, _baml: _BamlOptions | None = None) -> int:
     """(internal) BEP-034 internal primitive: suspend until the FIRST of `futures` settles —
     whether it succeeds, fails, or is cancelled — and return its index in input
     order. Compiles to a dedicated `AwaitAny` suspend point (it is `await` over
@@ -154,36 +166,37 @@ async def __await_any_async(futures: typing.List[typing.Any], *, _types: dict[st
     re-throws (callers `await futures[i]` to observe the value or error)."""
 
 
-def race(futures: typing.List[typing.Any], *, _types: dict[str, typing.Any] | None = None) -> typing.Any:
+def race(futures: typing.List[typing.Any], *, _types: dict[str, typing.Any] | None = None, _baml: _BamlOptions | None = None) -> typing.Any:
     """Settle with the FIRST future to settle, whether it succeeds or fails; the
     remaining futures are cancelled (JS `Promise.race`). A fast failure from
     one input therefore wins the race — use `any` when you want the first
     SUCCESS. Racing an empty array never settles (matching JS)."""
-async def race_async(futures: typing.List[typing.Any], *, _types: dict[str, typing.Any] | None = None) -> typing.Any:
+async def race_async(futures: typing.List[typing.Any], *, _types: dict[str, typing.Any] | None = None, _baml: _BamlOptions | None = None) -> typing.Any:
     """Settle with the FIRST future to settle, whether it succeeds or fails; the
     remaining futures are cancelled (JS `Promise.race`). A fast failure from
     one input therefore wins the race — use `any` when you want the first
     SUCCESS. Racing an empty array never settles (matching JS)."""
 
 
-def any(futures: typing.List[typing.Any], *, _types: dict[str, typing.Any] | None = None) -> typing.Any:
+def any(futures: typing.List[typing.Any], *, _types: dict[str, typing.Any] | None = None, _baml: _BamlOptions | None = None) -> typing.Any:
     """Settle with the first future to SUCCEED; the remaining futures are then
     cancelled (JS `Promise.any`). If every future fails, throws `AllFailed<E>`
     carrying all the errors in input order. Cancelled inputs are skipped (they
     neither win nor contribute an error)."""
-async def any_async(futures: typing.List[typing.Any], *, _types: dict[str, typing.Any] | None = None) -> typing.Any:
+async def any_async(futures: typing.List[typing.Any], *, _types: dict[str, typing.Any] | None = None, _baml: _BamlOptions | None = None) -> typing.Any:
     """Settle with the first future to SUCCEED; the remaining futures are then
     cancelled (JS `Promise.any`). If every future fails, throws `AllFailed<E>`
     carrying all the errors in input order. Cancelled inputs are skipped (they
     neither win nor contribute an error)."""
 
 
-def with_timeout(limit: baml.time.Duration, body: typing.Callable[[], T], *, _types: dict[str, typing.Any]) -> T:
+def with_timeout(limit: baml.time.Duration, body: typing.Callable[[], T], *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> T:
     """Run `body` under a deadline.
 
     # Throws
 
-    - `baml.errors.Timeout` if `limit` elapses first.
+    - `baml.errors.Timeout` if `limit` elapses first, with `duration` set to
+      `limit` and `timeout_type` set to `"limit"`.
     - whatever `body` throws.
 
     # Panics
@@ -193,12 +206,13 @@ def with_timeout(limit: baml.time.Duration, body: typing.Callable[[], T], *, _ty
 
     Raises:
         Timeout"""
-async def with_timeout_async(limit: baml.time.Duration, body: typing.Callable[[], T], *, _types: dict[str, typing.Any]) -> T:
+async def with_timeout_async(limit: baml.time.Duration, body: typing.Callable[[], T], *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> T:
     """Run `body` under a deadline.
 
     # Throws
 
-    - `baml.errors.Timeout` if `limit` elapses first.
+    - `baml.errors.Timeout` if `limit` elapses first, with `duration` set to
+      `limit` and `timeout_type` set to `"limit"`.
     - whatever `body` throws.
 
     # Panics

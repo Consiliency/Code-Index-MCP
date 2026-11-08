@@ -29,21 +29,24 @@ import pydantic
 
 if typing.TYPE_CHECKING:
     from ... import ai
+    from ... import baml
     from ...baml import UNSET as UNSET
+
+from ..._invocation_types import BamlOptions as _BamlOptions
 
 
 class Client(pydantic.BaseModel):
     model: str
     api_key: typing.Optional[ai.Credential] = None
     base_url: typing.Optional[ai.Credential] = None
-    request_timeout_ms: typing.Optional[int] = None
+    timeout: typing.Union[baml.time.Duration, ai.LlmTimeoutOptions, None] = None
     capture_wire: bool
     @staticmethod
-    def new(*, model: typing.Union[str, UNSET] = "jev-latest", api_key: typing.Union[ai.Credential, None, UNSET] = UNSET, base_url: typing.Union[ai.Credential, None, UNSET] = "https://api.typesafe.ai/v1", request_timeout_ms: typing.Union[int, None, UNSET] = None, capture_wire: typing.Union[bool, UNSET] = True) -> Client:
+    def new(*, model: typing.Union[str, UNSET] = "jev-latest", api_key: typing.Union[ai.Credential, None, UNSET] = UNSET, base_url: typing.Union[ai.Credential, None, UNSET] = "https://api.typesafe.ai/v1", timeout: typing.Union[baml.time.Duration, ai.LlmTimeoutOptions, None, UNSET] = None, capture_wire: typing.Union[bool, UNSET] = True, _baml: _BamlOptions | None = None) -> Client:
         """Construction is pure. Credentials resolve when invoking, using
         TYPESAFE_API_KEY unless an explicit credential is provided."""
     @staticmethod
-    async def new_async(*, model: typing.Union[str, UNSET] = "jev-latest", api_key: typing.Union[ai.Credential, None, UNSET] = UNSET, base_url: typing.Union[ai.Credential, None, UNSET] = "https://api.typesafe.ai/v1", request_timeout_ms: typing.Union[int, None, UNSET] = None, capture_wire: typing.Union[bool, UNSET] = True) -> Client:
+    async def new_async(*, model: typing.Union[str, UNSET] = "jev-latest", api_key: typing.Union[ai.Credential, None, UNSET] = UNSET, base_url: typing.Union[ai.Credential, None, UNSET] = "https://api.typesafe.ai/v1", timeout: typing.Union[baml.time.Duration, ai.LlmTimeoutOptions, None, UNSET] = None, capture_wire: typing.Union[bool, UNSET] = True, _baml: _BamlOptions | None = None) -> Client:
         """Construction is pure. Credentials resolve when invoking, using
         TYPESAFE_API_KEY unless an explicit credential is provided."""
 

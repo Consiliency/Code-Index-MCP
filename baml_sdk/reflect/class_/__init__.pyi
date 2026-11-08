@@ -29,6 +29,8 @@ if typing.TYPE_CHECKING:
     from ... import reflect
     from ...baml import UNSET as UNSET
 
+from ..._invocation_types import BamlOptions as _BamlOptions
+
 from baml_bridge import BamlPyHandle as _BamlPyHandle
 
 
@@ -37,49 +39,25 @@ T = typing.TypeVar("T")
 
 class Field(pydantic.BaseModel):
     name: str
-    type: typing.Optional[typing.Any] = None
+    type: typing.Any
     meta: reflect.Meta
     field_owner: typing.Optional[typing.Any] = pydantic.Field(default=None, alias="_owner")
-    def metadata(self) -> reflect.Meta:
+    def metadata(self, *, _baml: _BamlOptions | None = None) -> reflect.Meta:
         """This field's schema metadata. Same value as the `meta` field."""
-    async def metadata_async(self) -> reflect.Meta:
+    async def metadata_async(self, *, _baml: _BamlOptions | None = None) -> reflect.Meta:
         """This field's schema metadata. Same value as the `meta` field."""
-    def value(self, *, _types: dict[str, typing.Any]) -> typing.Optional[T]:
+    def value(self, *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> typing.Optional[T]:
         """Read this field from its bound owner. An ownerless type-side descriptor
         returns `null`.
 
         Raises:
             TypeMismatch"""
-    async def value_async(self, *, _types: dict[str, typing.Any]) -> typing.Optional[T]:
+    async def value_async(self, *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> typing.Optional[T]:
         """Read this field from its bound owner. An ownerless type-side descriptor
         returns `null`.
 
         Raises:
             TypeMismatch"""
-
-
-def new(name: str, fields: typing.Dict[str, typing.Union[typing.Any, reflect.WithMeta[typing.Any]]], *, implementations: typing.Union[typing.List[reflect.interface.Implementation], UNSET] = []) -> Type:
-    """Construct a closed runtime class. Map iteration order is definition order.
-
-    Raises:
-        CompilationError"""
-async def new_async(name: str, fields: typing.Dict[str, typing.Union[typing.Any, reflect.WithMeta[typing.Any]]], *, implementations: typing.Union[typing.List[reflect.interface.Implementation], UNSET] = []) -> Type:
-    """Construct a closed runtime class. Map iteration order is definition order.
-
-    Raises:
-        CompilationError"""
-
-
-def _new(name: str, fields: typing.Dict[str, typing.Union[typing.Any, reflect.WithMeta[typing.Any]]], implementations: typing.List[reflect.interface.Implementation]) -> Type:
-    """Raises:
-        CompilationError"""
-async def _new_async(name: str, fields: typing.Dict[str, typing.Union[typing.Any, reflect.WithMeta[typing.Any]]], implementations: typing.List[reflect.interface.Implementation]) -> Type:
-    """Raises:
-        CompilationError"""
-
-
-def builder(name: str) -> Builder: ...
-async def builder_async(name: str) -> Builder: ...
 
 
 class Builder(pydantic.BaseModel):
@@ -87,29 +65,77 @@ class Builder(pydantic.BaseModel):
     field_roots: typing.List[typing.Any] = pydantic.Field(alias="_roots")
     field_neighbors: typing.List[Builder] = pydantic.Field(alias="_neighbors")
     field_resolved: typing.Optional[typing.Any] = pydantic.Field(default=None, alias="_resolved")
-    def field(self, name: str, ty: typing.Union[typing.Any, reflect.WithMeta[typing.Any], PendingType, reflect.WithMeta[PendingType]]) -> Builder:
-        """Raises:
+    def field(self, name: str, ty: typing.Union[typing.Any, reflect.WithMeta[typing.Any], PendingType, reflect.WithMeta[PendingType]], *, _baml: _BamlOptions | None = None) -> Builder:
+        """Append one field in definition order.
+
+        A recursive field carries metadata the same way a resolved one does:
+        `PendingType.meta(...)` produces the `WithMeta<PendingType>` row, and the
+        metadata survives the atomic group build.
+
+        Raises:
             CompilationError"""
-    async def field_async(self, name: str, ty: typing.Union[typing.Any, reflect.WithMeta[typing.Any], PendingType, reflect.WithMeta[PendingType]]) -> Builder:
-        """Raises:
+    async def field_async(self, name: str, ty: typing.Union[typing.Any, reflect.WithMeta[typing.Any], PendingType, reflect.WithMeta[PendingType]], *, _baml: _BamlOptions | None = None) -> Builder:
+        """Append one field in definition order.
+
+        A recursive field carries metadata the same way a resolved one does:
+        `PendingType.meta(...)` produces the `WithMeta<PendingType>` row, and the
+        metadata survives the atomic group build.
+
+        Raises:
             CompilationError"""
-    def type(self) -> PendingType: ...
-    async def type_async(self) -> PendingType: ...
-    def build(self, *, implementations: typing.Union[typing.List[reflect.interface.Implementation], UNSET] = []) -> Type:
+    def _field_(self, name: str, ty: typing.Union[typing.Any, reflect.WithMeta[typing.Any], PendingType, reflect.WithMeta[PendingType]], *, _baml: _BamlOptions | None = None) -> Builder:
+        """(internal) Internal native backing `field`; a field type that is not
+        pending is a `type` value.
+
+        Raises:
+            CompilationError"""
+    async def _field__async(self, name: str, ty: typing.Union[typing.Any, reflect.WithMeta[typing.Any], PendingType, reflect.WithMeta[PendingType]], *, _baml: _BamlOptions | None = None) -> Builder:
+        """(internal) Internal native backing `field`; a field type that is not
+        pending is a `type` value.
+
+        Raises:
+            CompilationError"""
+    def fields_from(self, some_class: reflect.Class, *, _baml: _BamlOptions | None = None) -> Builder:
+        """Append every field of `some_class`, in declaration order, with all of
+        its metadata: alias, description, docstring, other and skip.
+
+        Only the fields are copied. The new class gets neither `some_class`'s
+        own metadata nor its interfaces; it implements what `build` is given.
+
+        Raises:
+            CompilationError"""
+    async def fields_from_async(self, some_class: reflect.Class, *, _baml: _BamlOptions | None = None) -> Builder:
+        """Append every field of `some_class`, in declaration order, with all of
+        its metadata: alias, description, docstring, other and skip.
+
+        Only the fields are copied. The new class gets neither `some_class`'s
+        own metadata nor its interfaces; it implements what `build` is given.
+
+        Raises:
+            CompilationError"""
+    def type(self, *, _baml: _BamlOptions | None = None) -> PendingType:
+        """A statically-distinct reference to this builder's eventual class type."""
+    async def type_async(self, *, _baml: _BamlOptions | None = None) -> PendingType:
+        """A statically-distinct reference to this builder's eventual class type."""
+    def build(self, *, implementations: typing.Union[typing.List[reflect.interface.Implementation], UNSET] = [], _baml: _BamlOptions | None = None) -> reflect.Class:
         """Validate and freeze this builder's complete connected recursive group.
 
         Raises:
             CompilationError"""
-    async def build_async(self, *, implementations: typing.Union[typing.List[reflect.interface.Implementation], UNSET] = []) -> Type:
+    async def build_async(self, *, implementations: typing.Union[typing.List[reflect.interface.Implementation], UNSET] = [], _baml: _BamlOptions | None = None) -> reflect.Class:
         """Validate and freeze this builder's complete connected recursive group.
 
         Raises:
             CompilationError"""
-    def _build_(self, implementations: typing.List[reflect.interface.Implementation]) -> Type:
-        """Raises:
+    def _build_(self, implementations: typing.List[reflect.interface.Implementation], *, _baml: _BamlOptions | None = None) -> reflect.Class:
+        """(internal) Internal native backing `build`; all arguments have been materialized.
+
+        Raises:
             CompilationError"""
-    async def _build__async(self, implementations: typing.List[reflect.interface.Implementation]) -> Type:
-        """Raises:
+    async def _build__async(self, implementations: typing.List[reflect.interface.Implementation], *, _baml: _BamlOptions | None = None) -> reflect.Class:
+        """(internal) Internal native backing `build`; all arguments have been materialized.
+
+        Raises:
             CompilationError"""
 
 
@@ -117,43 +143,38 @@ class PendingType(pydantic.BaseModel):
     field_handle: _BamlPyHandle = pydantic.Field(alias="_handle")
     field_roots: typing.List[typing.Any] = pydantic.Field(alias="_roots")
     field_resolved: typing.Optional[typing.Any] = pydantic.Field(default=None, alias="_resolved")
-    def array(self) -> PendingType: ...
-    async def array_async(self) -> PendingType: ...
-    def optional(self) -> PendingType: ...
-    async def optional_async(self) -> PendingType: ...
-    def union(self, others: typing.List[typing.Union[typing.Any, PendingType]]) -> PendingType: ...
-    async def union_async(self, others: typing.List[typing.Union[typing.Any, PendingType]]) -> PendingType: ...
-    def resolved(self) -> typing.Optional[typing.Any]: ...
-    async def resolved_async(self) -> typing.Optional[typing.Any]: ...
-    def meta(self, *, alias: typing.Union[str, None, UNSET] = None, description: typing.Union[str, None, UNSET] = None, docstring: typing.Union[str, None, UNSET] = None, other: typing.Union[typing.Dict[str, str], None, UNSET] = None) -> reflect.WithMeta[PendingType]: ...
-    async def meta_async(self, *, alias: typing.Union[str, None, UNSET] = None, description: typing.Union[str, None, UNSET] = None, docstring: typing.Union[str, None, UNSET] = None, other: typing.Union[typing.Dict[str, str], None, UNSET] = None) -> reflect.WithMeta[PendingType]: ...
-
-
-def get_field(value: typing.Any, name: str, *, _types: dict[str, typing.Any]) -> T:
-    """Raises:
-        CompilationError"""
-async def get_field_async(value: typing.Any, name: str, *, _types: dict[str, typing.Any]) -> T:
-    """Raises:
-        CompilationError"""
-
-
-class Type(pydantic.BaseModel):
-    field_ty: typing.Any = pydantic.Field(alias="_ty")
-    def fields(self) -> typing.List[Field]: ...
-    async def fields_async(self) -> typing.List[Field]: ...
-    def meta(self) -> reflect.Meta: ...
-    async def meta_async(self) -> reflect.Meta: ...
+    def array(self, *, _baml: _BamlOptions | None = None) -> PendingType:
+        """Construct an array over this pending type."""
+    async def array_async(self, *, _baml: _BamlOptions | None = None) -> PendingType:
+        """Construct an array over this pending type."""
+    def optional(self, *, _baml: _BamlOptions | None = None) -> PendingType:
+        """Construct the canonical union of this pending type and null."""
+    async def optional_async(self, *, _baml: _BamlOptions | None = None) -> PendingType:
+        """Construct the canonical union of this pending type and null."""
+    def union(self, others: typing.List[typing.Union[typing.Any, PendingType]], *, _baml: _BamlOptions | None = None) -> PendingType:
+        """Construct a union containing this pending type and `others`."""
+    async def union_async(self, others: typing.List[typing.Union[typing.Any, PendingType]], *, _baml: _BamlOptions | None = None) -> PendingType:
+        """Construct a union containing this pending type and `others`."""
+    def _union_(self, others: typing.List[typing.Union[typing.Any, PendingType]], *, _baml: _BamlOptions | None = None) -> PendingType:
+        """(internal) Internal native backing `union`; a member that is not
+        pending is a `type` value."""
+    async def _union__async(self, others: typing.List[typing.Union[typing.Any, PendingType]], *, _baml: _BamlOptions | None = None) -> PendingType:
+        """(internal) Internal native backing `union`; a member that is not
+        pending is a `type` value."""
+    def resolved(self, *, _baml: _BamlOptions | None = None) -> typing.Optional[typing.Any]:
+        """Return the frozen type, or null while any referenced builder is pending."""
+    async def resolved_async(self, *, _baml: _BamlOptions | None = None) -> typing.Optional[typing.Any]:
+        """Return the frozen type, or null while any referenced builder is pending."""
+    def meta(self, *, alias: typing.Union[str, None, UNSET] = None, description: typing.Union[str, None, UNSET] = None, docstring: typing.Union[str, None, UNSET] = None, other: typing.Union[typing.Dict[str, str], None, UNSET] = None, _baml: _BamlOptions | None = None) -> reflect.WithMeta[PendingType]:
+        """Pair this pending reference with schema metadata, mirroring `reflect.Type.meta`.
+        Only `Builder.field` accepts the result."""
+    async def meta_async(self, *, alias: typing.Union[str, None, UNSET] = None, description: typing.Union[str, None, UNSET] = None, docstring: typing.Union[str, None, UNSET] = None, other: typing.Union[typing.Dict[str, str], None, UNSET] = None, _baml: _BamlOptions | None = None) -> reflect.WithMeta[PendingType]:
+        """Pair this pending reference with schema metadata, mirroring `reflect.Type.meta`.
+        Only `Builder.field` accepts the result."""
 
 
 __all__ = [
     "Field",
-    "new",
-    "new_async",
-    "builder",
-    "builder_async",
     "Builder",
     "PendingType",
-    "get_field",
-    "get_field_async",
-    "Type",
 ]

@@ -29,6 +29,8 @@ import pydantic
 if typing.TYPE_CHECKING:
     from ...baml import UNSET as UNSET
 
+from ..._invocation_types import BamlOptions as _BamlOptions
+
 
 class ErrorMode(str, enum.Enum):
     Report = "Report"
@@ -42,39 +44,77 @@ class Tool(pydantic.BaseModel):
     handler: typing.Optional[typing.Any] = None
     raw_handler: typing.Optional[typing.Callable[[typing.Dict[str, typing.Any]], str]] = None
     on_error: typing.Optional[ErrorMode] = None
-    def call(self, args: typing.Dict[str, typing.Any]) -> str:
+    def call(self, args: typing.Dict[str, typing.Any], *, _baml: _BamlOptions | None = None) -> str:
         """The total boundary around one call. A throw here is the tool's
         failure, not the run's.
 
         A raw tool (`raw_tool`) hands the argument map straight to its
         `raw_handler` and returns that string as-is. A schema-derived tool
-        validates, dispatches through reflection, and JSON-serializes the
-        result; that reflection boundary widens exactly representable integral
-        arguments into float parameters (see reflect.call_any)."""
-    async def call_async(self, args: typing.Dict[str, typing.Any]) -> str:
+        aligns a model's arguments to its handler's parameters
+        (`_typed_arguments`), dispatches through reflection, which validates
+        them, and JSON-serializes the result."""
+    async def call_async(self, args: typing.Dict[str, typing.Any], *, _baml: _BamlOptions | None = None) -> str:
         """The total boundary around one call. A throw here is the tool's
         failure, not the run's.
 
         A raw tool (`raw_tool`) hands the argument map straight to its
         `raw_handler` and returns that string as-is. A schema-derived tool
-        validates, dispatches through reflection, and JSON-serializes the
-        result; that reflection boundary widens exactly representable integral
-        arguments into float parameters (see reflect.call_any)."""
+        aligns a model's arguments to its handler's parameters
+        (`_typed_arguments`), dispatches through reflection, which validates
+        them, and JSON-serializes the result."""
 
 
-def tool(handler: typing.Any, *, name: typing.Union[str, None, UNSET] = None, description: typing.Union[str, None, UNSET] = None, on_error: typing.Union[ErrorMode, None, UNSET] = None) -> Tool:
+def _typed_arguments(tool: str, handler: typing.Any, args: typing.Dict[str, typing.Any], *, _baml: _BamlOptions | None = None) -> typing.Dict[str, typing.Any]:
+    """(internal) The arguments of a tool call as `reflect.call_any` takes them.
+
+    A provider hands over a model's arguments as parsed JSON: a class is a
+    map, an enum a string, a list a list of json. `reflect.call_any` takes
+    values of the parameter types, and the only JSON values that are such
+    values are the scalars. So the parameters that were sent JSON are read as
+    the fields of one class, the JSON is aligned to that class as any other
+    model output is (`baml.sap.coerce`), and the fields of the result are
+    the arguments.
+
+    An argument passes as it arrived when it names no parameter, and when it is
+    already a value of its parameter's type: that is what BAML code passes when
+    it calls a tool itself, and it is every value of an `unknown` parameter.
+    `reflect.call_any` judges every argument that passed.
+
+    Raises:
+        InvalidArgument"""
+async def _typed_arguments_async(tool: str, handler: typing.Any, args: typing.Dict[str, typing.Any], *, _baml: _BamlOptions | None = None) -> typing.Dict[str, typing.Any]:
+    """(internal) The arguments of a tool call as `reflect.call_any` takes them.
+
+    A provider hands over a model's arguments as parsed JSON: a class is a
+    map, an enum a string, a list a list of json. `reflect.call_any` takes
+    values of the parameter types, and the only JSON values that are such
+    values are the scalars. So the parameters that were sent JSON are read as
+    the fields of one class, the JSON is aligned to that class as any other
+    model output is (`baml.sap.coerce`), and the fields of the result are
+    the arguments.
+
+    An argument passes as it arrived when it names no parameter, and when it is
+    already a value of its parameter's type: that is what BAML code passes when
+    it calls a tool itself, and it is every value of an `unknown` parameter.
+    `reflect.call_any` judges every argument that passed.
+
+    Raises:
+        InvalidArgument"""
+
+
+def tool(handler: typing.Any, *, name: typing.Union[str, None, UNSET] = None, description: typing.Union[str, None, UNSET] = None, on_error: typing.Union[ErrorMode, None, UNSET] = None, _baml: _BamlOptions | None = None) -> Tool:
     """The explicit constructor. `tools: [f]` normalizes through this.
 
     Raises:
-        InvalidArgument, Unsupported"""
-async def tool_async(handler: typing.Any, *, name: typing.Union[str, None, UNSET] = None, description: typing.Union[str, None, UNSET] = None, on_error: typing.Union[ErrorMode, None, UNSET] = None) -> Tool:
+        InvalidArgument, Unsupported, DecodeError"""
+async def tool_async(handler: typing.Any, *, name: typing.Union[str, None, UNSET] = None, description: typing.Union[str, None, UNSET] = None, on_error: typing.Union[ErrorMode, None, UNSET] = None, _baml: _BamlOptions | None = None) -> Tool:
     """The explicit constructor. `tools: [f]` normalizes through this.
 
     Raises:
-        InvalidArgument, Unsupported"""
+        InvalidArgument, Unsupported, DecodeError"""
 
 
-def raw_tool(name: str, description: str, input_schema: typing.Dict[str, typing.Any], handler: typing.Callable[[typing.Dict[str, typing.Any]], str], *, on_error: typing.Union[ErrorMode, None, UNSET] = None) -> Tool:
+def raw_tool(name: str, description: str, input_schema: typing.Dict[str, typing.Any], handler: typing.Callable[[typing.Dict[str, typing.Any]], str], *, on_error: typing.Union[ErrorMode, None, UNSET] = None, _baml: _BamlOptions | None = None) -> Tool:
     """The constructor for tools whose schema does not derive from a BAML
     signature: the caller supplies the JSON Schema and a handler over the raw
     argument map. This is how dynamic tool sources (MCP servers) become
@@ -82,7 +122,7 @@ def raw_tool(name: str, description: str, input_schema: typing.Dict[str, typing.
 
     Raises:
         InvalidArgument"""
-async def raw_tool_async(name: str, description: str, input_schema: typing.Dict[str, typing.Any], handler: typing.Callable[[typing.Dict[str, typing.Any]], str], *, on_error: typing.Union[ErrorMode, None, UNSET] = None) -> Tool:
+async def raw_tool_async(name: str, description: str, input_schema: typing.Dict[str, typing.Any], handler: typing.Callable[[typing.Dict[str, typing.Any]], str], *, on_error: typing.Union[ErrorMode, None, UNSET] = None, _baml: _BamlOptions | None = None) -> Tool:
     """The constructor for tools whose schema does not derive from a BAML
     signature: the caller supplies the JSON Schema and a handler over the raw
     argument map. This is how dynamic tool sources (MCP servers) become
@@ -95,23 +135,23 @@ async def raw_tool_async(name: str, description: str, input_schema: typing.Dict[
 class Toolbox(pydantic.BaseModel):
     entries: typing.List[Tool]
     @staticmethod
-    def new(tools: typing.List[Tool]) -> Toolbox:
+    def new(tools: typing.List[Tool], *, _baml: _BamlOptions | None = None) -> Toolbox:
         """Rejects duplicate names, so a toolbox is well-formed on construction.
 
         Raises:
             InvalidArgument"""
     @staticmethod
-    async def new_async(tools: typing.List[Tool]) -> Toolbox:
+    async def new_async(tools: typing.List[Tool], *, _baml: _BamlOptions | None = None) -> Toolbox:
         """Rejects duplicate names, so a toolbox is well-formed on construction.
 
         Raises:
             InvalidArgument"""
-    def list(self) -> typing.List[Tool]: ...
-    async def list_async(self) -> typing.List[Tool]: ...
-    def get(self, name: str) -> typing.Optional[Tool]: ...
-    async def get_async(self, name: str) -> typing.Optional[Tool]: ...
-    def is_empty(self) -> bool: ...
-    async def is_empty_async(self) -> bool: ...
+    def list(self, *, _baml: _BamlOptions | None = None) -> typing.List[Tool]: ...
+    async def list_async(self, *, _baml: _BamlOptions | None = None) -> typing.List[Tool]: ...
+    def get(self, name: str, *, _baml: _BamlOptions | None = None) -> typing.Optional[Tool]: ...
+    async def get_async(self, name: str, *, _baml: _BamlOptions | None = None) -> typing.Optional[Tool]: ...
+    def is_empty(self, *, _baml: _BamlOptions | None = None) -> bool: ...
+    async def is_empty_async(self, *, _baml: _BamlOptions | None = None) -> bool: ...
 
 
 __all__ = [

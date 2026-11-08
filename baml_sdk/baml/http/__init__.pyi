@@ -29,10 +29,51 @@ if typing.TYPE_CHECKING:
     from ... import baml
     from ...baml import UNSET as UNSET
 
+from ..._invocation_types import BamlOptions as _BamlOptions
+
 from baml_bridge import BamlPyHandle as _BamlPyHandle
 
 
 class Request(pydantic.BaseModel):
+    method: str
+    url: str
+    headers: typing.Dict[str, str]
+    body: str
+    timeout: typing.Optional[baml.time.Duration] = None
+    connect_timeout: typing.Optional[baml.time.Duration] = None
+    @staticmethod
+    def from_url(url: str, *, _baml: _BamlOptions | None = None) -> Request:
+        """A request for `url` with no method, headers or body. Set the method with
+        `set_method` before sending: a request with no method is rejected with
+        `InvalidArgument`."""
+    @staticmethod
+    async def from_url_async(url: str, *, _baml: _BamlOptions | None = None) -> Request:
+        """A request for `url` with no method, headers or body. Set the method with
+        `set_method` before sending: a request with no method is rejected with
+        `InvalidArgument`."""
+    def set_method(self, method: str, *, _baml: _BamlOptions | None = None) -> Request:
+        """Sets the HTTP method, e.g. `"GET"` or `"POST"`. Mutates and returns `self`."""
+    async def set_method_async(self, method: str, *, _baml: _BamlOptions | None = None) -> Request:
+        """Sets the HTTP method, e.g. `"GET"` or `"POST"`. Mutates and returns `self`."""
+    def set_headers(self, headers: typing.Dict[str, str], *, _baml: _BamlOptions | None = None) -> Request:
+        """Replaces all headers with `headers`. Mutates and returns `self`."""
+    async def set_headers_async(self, headers: typing.Dict[str, str], *, _baml: _BamlOptions | None = None) -> Request:
+        """Replaces all headers with `headers`. Mutates and returns `self`."""
+    def set_body(self, body: str, *, _baml: _BamlOptions | None = None) -> Request:
+        """Sets the request body. Mutates and returns `self`."""
+    async def set_body_async(self, body: str, *, _baml: _BamlOptions | None = None) -> Request:
+        """Sets the request body. Mutates and returns `self`."""
+    def set_timeout(self, timeout: typing.Optional[baml.time.Duration], *, _baml: _BamlOptions | None = None) -> Request:
+        """Sets the end-to-end limit (see `timeout`). Mutates and returns `self`."""
+    async def set_timeout_async(self, timeout: typing.Optional[baml.time.Duration], *, _baml: _BamlOptions | None = None) -> Request:
+        """Sets the end-to-end limit (see `timeout`). Mutates and returns `self`."""
+    def set_connect_timeout(self, connect_timeout: typing.Optional[baml.time.Duration], *, _baml: _BamlOptions | None = None) -> Request:
+        """Sets the connection limit (see `connect_timeout`). Mutates and returns `self`."""
+    async def set_connect_timeout_async(self, connect_timeout: typing.Optional[baml.time.Duration], *, _baml: _BamlOptions | None = None) -> Request:
+        """Sets the connection limit (see `connect_timeout`). Mutates and returns `self`."""
+
+
+class ServerRequest(pydantic.BaseModel):
     method: str
     url: str
     headers: typing.Dict[str, str]
@@ -45,19 +86,19 @@ class Response(pydantic.BaseModel):
     url: str
     field_body: _BamlPyHandle = pydantic.Field(alias="_body")
     @staticmethod
-    def new(status_code: int, headers: typing.Dict[str, str], body: bytes) -> Response:
+    def new(status_code: int, headers: typing.Dict[str, str], body: bytes, *, _baml: _BamlOptions | None = None) -> Response:
         """Builds a response, typically to return from a `baml.http.Server` handler.
 
         `body` is sent verbatim as the response body. `headers` should include a
         `Content-Type` if the client needs one; `Content-Length` is set for you."""
     @staticmethod
-    async def new_async(status_code: int, headers: typing.Dict[str, str], body: bytes) -> Response:
+    async def new_async(status_code: int, headers: typing.Dict[str, str], body: bytes, *, _baml: _BamlOptions | None = None) -> Response:
         """Builds a response, typically to return from a `baml.http.Server` handler.
 
         `body` is sent verbatim as the response body. `headers` should include a
         `Content-Type` if the client needs one; `Content-Length` is set for you."""
     @staticmethod
-    def new_streaming(status_code: int, headers: typing.Dict[str, str]) -> Response:
+    def new_streaming(status_code: int, headers: typing.Dict[str, str], *, _baml: _BamlOptions | None = None) -> Response:
         """Builds a *streaming* response to return from an `http.Server` handler: the
         status line and `headers` are sent immediately, then the body is written
         incrementally with successive `write` calls and ended with `end`. The
@@ -79,7 +120,7 @@ class Response(pydantic.BaseModel):
         resp
         ```"""
     @staticmethod
-    async def new_streaming_async(status_code: int, headers: typing.Dict[str, str]) -> Response:
+    async def new_streaming_async(status_code: int, headers: typing.Dict[str, str], *, _baml: _BamlOptions | None = None) -> Response:
         """Builds a *streaming* response to return from an `http.Server` handler: the
         status line and `headers` are sent immediately, then the body is written
         incrementally with successive `write` calls and ended with `end`. The
@@ -100,7 +141,7 @@ class Response(pydantic.BaseModel):
         };
         resp
         ```"""
-    def text(self) -> str:
+    def text(self, *, _baml: _BamlOptions | None = None) -> str:
         """Returns the response body as a string. Live client responses are decoded
         lossily as UTF-8, replacing malformed bytes with U+FFFD. Buffered `Bytes`
         responses use strict UTF-8 decoding.
@@ -109,7 +150,7 @@ class Response(pydantic.BaseModel):
 
         Raises:
             Io, Timeout"""
-    async def text_async(self) -> str:
+    async def text_async(self, *, _baml: _BamlOptions | None = None) -> str:
         """Returns the response body as a string. Live client responses are decoded
         lossily as UTF-8, replacing malformed bytes with U+FFFD. Buffered `Bytes`
         responses use strict UTF-8 decoding.
@@ -118,25 +159,25 @@ class Response(pydantic.BaseModel):
 
         Raises:
             Io, Timeout"""
-    def bytes(self) -> bytes:
+    def bytes(self, *, _baml: _BamlOptions | None = None) -> bytes:
         """Returns the response body as raw bytes.
         Throws `Timeout` if the request deadline elapses while reading the body,
         or `Io` if the body was unavailable.
 
         Raises:
             Io, Timeout"""
-    async def bytes_async(self) -> bytes:
+    async def bytes_async(self, *, _baml: _BamlOptions | None = None) -> bytes:
         """Returns the response body as raw bytes.
         Throws `Timeout` if the request deadline elapses while reading the body,
         or `Io` if the body was unavailable.
 
         Raises:
             Io, Timeout"""
-    def ok(self) -> bool:
+    def ok(self, *, _baml: _BamlOptions | None = None) -> bool:
         """Returns `true` if `status_code` is in the 200–299 range."""
-    async def ok_async(self) -> bool:
+    async def ok_async(self, *, _baml: _BamlOptions | None = None) -> bool:
         """Returns `true` if `status_code` is in the 200–299 range."""
-    def write(self, data: bytes) -> None:
+    def write(self, data: bytes, *, _baml: _BamlOptions | None = None) -> None:
         """Writes one chunk to a streaming response body (see `new_streaming`),
         flushing it to the client. Applies backpressure: `write` suspends until the
         previous chunk has been accepted by the connection. Raises `Io` if the
@@ -145,7 +186,7 @@ class Response(pydantic.BaseModel):
 
         Raises:
             Io"""
-    async def write_async(self, data: bytes) -> None:
+    async def write_async(self, data: bytes, *, _baml: _BamlOptions | None = None) -> None:
         """Writes one chunk to a streaming response body (see `new_streaming`),
         flushing it to the client. Applies backpressure: `write` suspends until the
         previous chunk has been accepted by the connection. Raises `Io` if the
@@ -154,14 +195,14 @@ class Response(pydantic.BaseModel):
 
         Raises:
             Io"""
-    def end(self) -> None:
+    def end(self, *, _baml: _BamlOptions | None = None) -> None:
         """Ends a streaming response body (see `new_streaming`), signaling
         end-of-stream to the client so the chunked response completes. Subsequent
         `write` calls raise `Io`. A no-op on an already-ended response.
 
         Raises:
             Io"""
-    async def end_async(self) -> None:
+    async def end_async(self, *, _baml: _BamlOptions | None = None) -> None:
         """Ends a streaming response body (see `new_streaming`), signaling
         end-of-stream to the client so the chunked response completes. Subsequent
         `write` calls raise `Io`. A no-op on an already-ended response.
@@ -175,136 +216,166 @@ class SseStream(pydantic.BaseModel):
     status_code: int
     headers: typing.Dict[str, str]
     field_handle: _BamlPyHandle = pydantic.Field(alias="_handle")
-    def next(self) -> typing.Optional[str]:
+    def next(self, *, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
         """Only returns `null` if the stream is done/closed.
         Otherwise, waits until a new event is available.
 
         Raises:
             Io, Timeout"""
-    async def next_async(self) -> typing.Optional[str]:
+    async def next_async(self, *, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
         """Only returns `null` if the stream is done/closed.
         Otherwise, waits until a new event is available.
 
         Raises:
             Io, Timeout"""
-    def close(self) -> None:
+    def close(self, *, _baml: _BamlOptions | None = None) -> None:
         """Closes the SSE stream and releases the underlying connection."""
-    async def close_async(self) -> None:
+    async def close_async(self, *, _baml: _BamlOptions | None = None) -> None:
         """Closes the SSE stream and releases the underlying connection."""
 
 
-def _timeout_nanos(timeout: typing.Optional[baml.time.Duration]) -> int:
-    """(internal) Converts an optional timeout into the nanosecond count carried across the
-    sys-op boundary. `null` (no deadline) becomes `0n`, which the native layer
-    treats as unbounded. Modeled on Rust's `Option<Duration>`."""
-async def _timeout_nanos_async(timeout: typing.Optional[baml.time.Duration]) -> int:
-    """(internal) Converts an optional timeout into the nanosecond count carried across the
-    sys-op boundary. `null` (no deadline) becomes `0n`, which the native layer
-    treats as unbounded. Modeled on Rust's `Option<Duration>`."""
+def _timeout_nanos(timeout: typing.Optional[baml.time.Duration], default: baml.time.Duration, *, _baml: _BamlOptions | None = None) -> int:
+    """(internal) The limit a request runs under, as the nanosecond count carried
+    across the sys-op boundary: `timeout`, else `default` when it is null. The
+    native layer treats zero or negative as no limit."""
+async def _timeout_nanos_async(timeout: typing.Optional[baml.time.Duration], default: baml.time.Duration, *, _baml: _BamlOptions | None = None) -> int:
+    """(internal) The limit a request runs under, as the nanosecond count carried
+    across the sys-op boundary: `timeout`, else `default` when it is null. The
+    native layer treats zero or negative as no limit."""
 
 
-def fetch(url: str, *, timeout: typing.Union[baml.time.Duration, None, UNSET] = None) -> Response:
+def _default_timeout(*, _baml: _BamlOptions | None = None) -> baml.time.Duration:
+    """(internal) The end-to-end limit used when neither the `timeout` argument nor
+    `Request.timeout` is set."""
+async def _default_timeout_async(*, _baml: _BamlOptions | None = None) -> baml.time.Duration:
+    """(internal) The end-to-end limit used when neither the `timeout` argument nor
+    `Request.timeout` is set."""
+
+
+def _default_connect_timeout(*, _baml: _BamlOptions | None = None) -> baml.time.Duration:
+    """(internal) The connection limit used when `Request.connect_timeout` is not set."""
+async def _default_connect_timeout_async(*, _baml: _BamlOptions | None = None) -> baml.time.Duration:
+    """(internal) The connection limit used when `Request.connect_timeout` is not set."""
+
+
+def fetch(url: str, *, timeout: typing.Union[baml.time.Duration, None, UNSET] = None, _baml: _BamlOptions | None = None) -> Response:
     """Sends a GET request to `url` and returns the response.
 
-    `timeout` is the total deadline for the request (connection + response
-    headers + body). `null` (the default) imposes no deadline. On expiry this
-    throws `baml.errors.Timeout`.
+    `timeout` is the end-to-end limit for the request: connecting, waiting for
+    response headers and reading the body. `null` (the default) is 5 minutes; a
+    zero or negative duration is no limit. Connecting is also limited to 10
+    seconds; use `send` with a `Request` to change that. On expiry this throws
+    `baml.errors.Timeout`, whose `timeout_type` is `"timeout"` or
+    `"connect_timeout"`.
 
     Raises:
         Io, Timeout"""
-async def fetch_async(url: str, *, timeout: typing.Union[baml.time.Duration, None, UNSET] = None) -> Response:
+async def fetch_async(url: str, *, timeout: typing.Union[baml.time.Duration, None, UNSET] = None, _baml: _BamlOptions | None = None) -> Response:
     """Sends a GET request to `url` and returns the response.
 
-    `timeout` is the total deadline for the request (connection + response
-    headers + body). `null` (the default) imposes no deadline. On expiry this
-    throws `baml.errors.Timeout`.
+    `timeout` is the end-to-end limit for the request: connecting, waiting for
+    response headers and reading the body. `null` (the default) is 5 minutes; a
+    zero or negative duration is no limit. Connecting is also limited to 10
+    seconds; use `send` with a `Request` to change that. On expiry this throws
+    `baml.errors.Timeout`, whose `timeout_type` is `"timeout"` or
+    `"connect_timeout"`.
 
     Raises:
         Io, Timeout"""
 
 
-def _fetch(url: str, timeout_nanos: int) -> Response:
+def _fetch(url: str, timeout_nanos: int, connect_timeout_nanos: int, *, _baml: _BamlOptions | None = None) -> Response:
     """Raises:
         Io, Timeout"""
-async def _fetch_async(url: str, timeout_nanos: int) -> Response:
+async def _fetch_async(url: str, timeout_nanos: int, connect_timeout_nanos: int, *, _baml: _BamlOptions | None = None) -> Response:
     """Raises:
         Io, Timeout"""
 
 
-def send(request: Request, *, timeout: typing.Union[baml.time.Duration, None, UNSET] = None) -> Response:
+def send(request: Request, *, timeout: typing.Union[baml.time.Duration, None, UNSET] = None, _baml: _BamlOptions | None = None) -> Response:
     """Sends an HTTP request and returns the response.
 
-    `timeout` is the total deadline for the request, as in `fetch`. `null` (the
-    default) imposes no deadline.
+    The request runs under `request.timeout` (end to end, 5 minutes when null)
+    and `request.connect_timeout` (10 seconds when null). The `timeout`
+    argument, when given, overrides `request.timeout`. A zero or negative
+    duration is no limit.
 
     # Throws
 
     - `InvalidArgument` if `request.method` is not a valid HTTP method.
     - `Io` if the request cannot be sent or the response cannot be read.
-    - `Timeout` if `timeout` elapses first.
+    - `Timeout` if a limit elapses first. Its `timeout_type` is `"timeout"` or
+      `"connect_timeout"`, the name of the field that set the limit.
 
     Raises:
         Io, Timeout, InvalidArgument"""
-async def send_async(request: Request, *, timeout: typing.Union[baml.time.Duration, None, UNSET] = None) -> Response:
+async def send_async(request: Request, *, timeout: typing.Union[baml.time.Duration, None, UNSET] = None, _baml: _BamlOptions | None = None) -> Response:
     """Sends an HTTP request and returns the response.
 
-    `timeout` is the total deadline for the request, as in `fetch`. `null` (the
-    default) imposes no deadline.
+    The request runs under `request.timeout` (end to end, 5 minutes when null)
+    and `request.connect_timeout` (10 seconds when null). The `timeout`
+    argument, when given, overrides `request.timeout`. A zero or negative
+    duration is no limit.
 
     # Throws
 
     - `InvalidArgument` if `request.method` is not a valid HTTP method.
     - `Io` if the request cannot be sent or the response cannot be read.
-    - `Timeout` if `timeout` elapses first.
+    - `Timeout` if a limit elapses first. Its `timeout_type` is `"timeout"` or
+      `"connect_timeout"`, the name of the field that set the limit.
 
     Raises:
         Io, Timeout, InvalidArgument"""
 
 
-def _send(request: Request, timeout_nanos: int) -> Response:
+def _send(request: Request, timeout_nanos: int, connect_timeout_nanos: int, *, _baml: _BamlOptions | None = None) -> Response:
     """Raises:
         Io, Timeout, InvalidArgument"""
-async def _send_async(request: Request, timeout_nanos: int) -> Response:
+async def _send_async(request: Request, timeout_nanos: int, connect_timeout_nanos: int, *, _baml: _BamlOptions | None = None) -> Response:
     """Raises:
         Io, Timeout, InvalidArgument"""
 
 
-def fetch_sse(request: Request, *, timeout: typing.Union[baml.time.Duration, None, UNSET] = None, first_event_timeout: typing.Union[baml.time.Duration, None, UNSET] = None) -> SseStream:
+def send_sse(request: Request, *, timeout: typing.Union[baml.time.Duration, None, UNSET] = None, _baml: _BamlOptions | None = None) -> SseStream:
     """Sends an HTTP request and returns a Server-Sent Events stream for streaming responses.
 
-    On native transports, `timeout` covers the request and streaming body.
-    `first_event_timeout` starts after open and ends on the first parsed event.
-    Null/non-positive is unbounded; browser/Wasm does not enforce these fields.
+    The limits are the ones `send` applies: `request.timeout` (overridden by the
+    `timeout` argument) covers opening the stream and reading all of it, and
+    `request.connect_timeout` covers connecting. `SseStream.next()` throws
+    `Timeout` once the end-to-end limit elapses. Browser/Wasm does not enforce
+    these limits.
 
     # Throws
 
     - `InvalidArgument` if `request.method` is not a valid HTTP method.
     - `Io` if the request cannot be sent or the stream cannot be opened.
-    - `Timeout` if `timeout` or `first_event_timeout` elapses first.
+    - `Timeout` if a limit elapses first.
 
     Raises:
         Io, Timeout, InvalidArgument"""
-async def fetch_sse_async(request: Request, *, timeout: typing.Union[baml.time.Duration, None, UNSET] = None, first_event_timeout: typing.Union[baml.time.Duration, None, UNSET] = None) -> SseStream:
+async def send_sse_async(request: Request, *, timeout: typing.Union[baml.time.Duration, None, UNSET] = None, _baml: _BamlOptions | None = None) -> SseStream:
     """Sends an HTTP request and returns a Server-Sent Events stream for streaming responses.
 
-    On native transports, `timeout` covers the request and streaming body.
-    `first_event_timeout` starts after open and ends on the first parsed event.
-    Null/non-positive is unbounded; browser/Wasm does not enforce these fields.
+    The limits are the ones `send` applies: `request.timeout` (overridden by the
+    `timeout` argument) covers opening the stream and reading all of it, and
+    `request.connect_timeout` covers connecting. `SseStream.next()` throws
+    `Timeout` once the end-to-end limit elapses. Browser/Wasm does not enforce
+    these limits.
 
     # Throws
 
     - `InvalidArgument` if `request.method` is not a valid HTTP method.
     - `Io` if the request cannot be sent or the stream cannot be opened.
-    - `Timeout` if `timeout` or `first_event_timeout` elapses first.
+    - `Timeout` if a limit elapses first.
 
     Raises:
         Io, Timeout, InvalidArgument"""
 
 
-def _fetch_sse(request: Request, timeout_nanos: int, first_event_timeout_nanos: int) -> SseStream:
+def _send_sse(request: Request, timeout_nanos: int, connect_timeout_nanos: int, *, _baml: _BamlOptions | None = None) -> SseStream:
     """Raises:
         Io, Timeout, InvalidArgument"""
-async def _fetch_sse_async(request: Request, timeout_nanos: int, first_event_timeout_nanos: int) -> SseStream:
+async def _send_sse_async(request: Request, timeout_nanos: int, connect_timeout_nanos: int, *, _baml: _BamlOptions | None = None) -> SseStream:
     """Raises:
         Io, Timeout, InvalidArgument"""
 
@@ -313,7 +384,7 @@ class Server(pydantic.BaseModel):
     addr: str
     field_state: _BamlPyHandle = pydantic.Field(alias="_state")
     @staticmethod
-    def bind(addr: str) -> Server:
+    def bind(addr: str, *, _baml: _BamlOptions | None = None) -> Server:
         """Binds a TCP listener on `addr` and returns a `Server` ready to `serve`.
         `":0"` (e.g. `"127.0.0.1:0"`) asks the OS for an ephemeral port; the chosen
         address is available as `.addr`. The socket starts queuing incoming
@@ -325,7 +396,7 @@ class Server(pydantic.BaseModel):
         Raises:
             Io"""
     @staticmethod
-    async def bind_async(addr: str) -> Server:
+    async def bind_async(addr: str, *, _baml: _BamlOptions | None = None) -> Server:
         """Binds a TCP listener on `addr` and returns a `Server` ready to `serve`.
         `":0"` (e.g. `"127.0.0.1:0"`) asks the OS for an ephemeral port; the chosen
         address is available as `.addr`. The socket starts queuing incoming
@@ -336,7 +407,7 @@ class Server(pydantic.BaseModel):
 
         Raises:
             Io"""
-    def serve(self, handler: typing.Callable[[Request], Response], *, websocket: typing.Union[typing.Callable[[Request], typing.Union[Response, WsAccept]], UNSET] = UNSET, tls_config: typing.Union[TlsConfig, None, UNSET] = None, allow_http1: typing.Union[bool, UNSET] = True, allow_http2: typing.Union[bool, UNSET] = True, max_body_size: typing.Union[int, UNSET] = 104857600, max_connections: typing.Union[int, UNSET] = 1024, header_read_timeout: typing.Union[baml.time.Duration, UNSET] = UNSET) -> None:
+    def serve(self, handler: typing.Callable[[ServerRequest], Response], *, websocket: typing.Union[typing.Callable[[ServerRequest], typing.Union[Response, WsAccept]], UNSET] = UNSET, tls_config: typing.Union[TlsConfig, None, UNSET] = None, allow_http1: typing.Union[bool, UNSET] = True, allow_http2: typing.Union[bool, UNSET] = True, max_body_size: typing.Union[int, UNSET] = 104857600, max_connections: typing.Union[int, UNSET] = 1024, header_read_timeout: typing.Union[baml.time.Duration, UNSET] = UNSET, _baml: _BamlOptions | None = None) -> None:
         """Serves requests with `handler`, blocking the current thread until it is
         cancelled. To run it in the background, use `spawn { server.serve(...) }`.
 
@@ -353,7 +424,7 @@ class Server(pydantic.BaseModel):
         dropped, not when a serve ends.
 
         # Parameters
-        - `handler`: Turns each incoming `Request` into a `Response`.
+        - `handler`: Turns each incoming `ServerRequest` into a `Response`.
         - `websocket`: Handles WebSocket upgrade requests (see `WsAccept`). Returning a
           `Response` refuses the upgrade and serves that response; returning a `WsAccept`
           completes the handshake and runs it with the connected socket. The default
@@ -390,7 +461,7 @@ class Server(pydantic.BaseModel):
 
         Raises:
             Io"""
-    async def serve_async(self, handler: typing.Callable[[Request], Response], *, websocket: typing.Union[typing.Callable[[Request], typing.Union[Response, WsAccept]], UNSET] = UNSET, tls_config: typing.Union[TlsConfig, None, UNSET] = None, allow_http1: typing.Union[bool, UNSET] = True, allow_http2: typing.Union[bool, UNSET] = True, max_body_size: typing.Union[int, UNSET] = 104857600, max_connections: typing.Union[int, UNSET] = 1024, header_read_timeout: typing.Union[baml.time.Duration, UNSET] = UNSET) -> None:
+    async def serve_async(self, handler: typing.Callable[[ServerRequest], Response], *, websocket: typing.Union[typing.Callable[[ServerRequest], typing.Union[Response, WsAccept]], UNSET] = UNSET, tls_config: typing.Union[TlsConfig, None, UNSET] = None, allow_http1: typing.Union[bool, UNSET] = True, allow_http2: typing.Union[bool, UNSET] = True, max_body_size: typing.Union[int, UNSET] = 104857600, max_connections: typing.Union[int, UNSET] = 1024, header_read_timeout: typing.Union[baml.time.Duration, UNSET] = UNSET, _baml: _BamlOptions | None = None) -> None:
         """Serves requests with `handler`, blocking the current thread until it is
         cancelled. To run it in the background, use `spawn { server.serve(...) }`.
 
@@ -407,7 +478,7 @@ class Server(pydantic.BaseModel):
         dropped, not when a serve ends.
 
         # Parameters
-        - `handler`: Turns each incoming `Request` into a `Response`.
+        - `handler`: Turns each incoming `ServerRequest` into a `Response`.
         - `websocket`: Handles WebSocket upgrade requests (see `WsAccept`). Returning a
           `Response` refuses the upgrade and serves that response; returning a `WsAccept`
           completes the handshake and runs it with the connected socket. The default
@@ -444,22 +515,22 @@ class Server(pydantic.BaseModel):
 
         Raises:
             Io"""
-    def _serve_(self, handler: typing.Callable[[Request], Response], websocket: typing.Callable[[Request], typing.Union[Response, WsAccept]], tls_config: typing.Optional[TlsConfig], allow_http1: bool, allow_http2: bool, max_body_size: int, max_connections: int, header_read_timeout_nanos: int) -> None:
+    def _serve_(self, handler: typing.Callable[[ServerRequest], Response], websocket: typing.Callable[[ServerRequest], typing.Union[Response, WsAccept]], tls_config: typing.Optional[TlsConfig], allow_http1: bool, allow_http2: bool, max_body_size: int, max_connections: int, header_read_timeout_nanos: int, *, _baml: _BamlOptions | None = None) -> None:
         """Raises:
             Io"""
-    async def _serve__async(self, handler: typing.Callable[[Request], Response], websocket: typing.Callable[[Request], typing.Union[Response, WsAccept]], tls_config: typing.Optional[TlsConfig], allow_http1: bool, allow_http2: bool, max_body_size: int, max_connections: int, header_read_timeout_nanos: int) -> None:
+    async def _serve__async(self, handler: typing.Callable[[ServerRequest], Response], websocket: typing.Callable[[ServerRequest], typing.Union[Response, WsAccept]], tls_config: typing.Optional[TlsConfig], allow_http1: bool, allow_http2: bool, max_body_size: int, max_connections: int, header_read_timeout_nanos: int, *, _baml: _BamlOptions | None = None) -> None:
         """Raises:
             Io"""
 
 
-def reject_websocket(req: Request) -> Response:
+def reject_websocket(req: ServerRequest, *, _baml: _BamlOptions | None = None) -> Response:
     """The `websocket` handler `serve` uses when none is supplied: refuse every
     upgrade, leaving the server HTTP-only.
 
     RFC 6455 §4.1 fails the client handshake on any status other than `101`; the
     status here says specifically that this server implements no WebSocket
     endpoint, rather than blaming the request."""
-async def reject_websocket_async(req: Request) -> Response:
+async def reject_websocket_async(req: ServerRequest, *, _baml: _BamlOptions | None = None) -> Response:
     """The `websocket` handler `serve` uses when none is supplied: refuse every
     upgrade, leaving the server HTTP-only.
 
@@ -474,7 +545,7 @@ class TlsConfig(pydantic.BaseModel):
     field_private_key: _BamlPyHandle = pydantic.Field(alias="_private_key")
     field_handshake_timeout_nanos: int = pydantic.Field(alias="_handshake_timeout_nanos")
     @staticmethod
-    def new(cert_pem: bytes, key_pem: bytes, *, allow_tls1_2: typing.Union[bool, UNSET] = True, handshake_timeout: typing.Union[baml.time.Duration, UNSET] = UNSET) -> TlsConfig:
+    def new(cert_pem: bytes, key_pem: bytes, *, allow_tls1_2: typing.Union[bool, UNSET] = True, handshake_timeout: typing.Union[baml.time.Duration, UNSET] = UNSET, _baml: _BamlOptions | None = None) -> TlsConfig:
         """Parses a PEM-encoded certificate chain and private key into a TLS configuration.
 
         # Parameters
@@ -487,7 +558,7 @@ class TlsConfig(pydantic.BaseModel):
         Raises:
             Io"""
     @staticmethod
-    async def new_async(cert_pem: bytes, key_pem: bytes, *, allow_tls1_2: typing.Union[bool, UNSET] = True, handshake_timeout: typing.Union[baml.time.Duration, UNSET] = UNSET) -> TlsConfig:
+    async def new_async(cert_pem: bytes, key_pem: bytes, *, allow_tls1_2: typing.Union[bool, UNSET] = True, handshake_timeout: typing.Union[baml.time.Duration, UNSET] = UNSET, _baml: _BamlOptions | None = None) -> TlsConfig:
         """Parses a PEM-encoded certificate chain and private key into a TLS configuration.
 
         # Parameters
@@ -500,11 +571,11 @@ class TlsConfig(pydantic.BaseModel):
         Raises:
             Io"""
     @staticmethod
-    def _new_(cert_pem: bytes, key_pem: bytes, allow_tls1_2: bool, handshake_timeout_nanos: int) -> TlsConfig:
+    def _new_(cert_pem: bytes, key_pem: bytes, allow_tls1_2: bool, handshake_timeout_nanos: int, *, _baml: _BamlOptions | None = None) -> TlsConfig:
         """Raises:
             Io"""
     @staticmethod
-    async def _new__async(cert_pem: bytes, key_pem: bytes, allow_tls1_2: bool, handshake_timeout_nanos: int) -> TlsConfig:
+    async def _new__async(cert_pem: bytes, key_pem: bytes, allow_tls1_2: bool, handshake_timeout_nanos: int, *, _baml: _BamlOptions | None = None) -> TlsConfig:
         """Raises:
             Io"""
 
@@ -514,14 +585,15 @@ WsAccept: typing.TypeAlias = typing.Callable[[baml.ws.WebSocket], None]
 
 __all__ = [
     "Request",
+    "ServerRequest",
     "Response",
     "SseStream",
     "fetch",
     "fetch_async",
     "send",
     "send_async",
-    "fetch_sse",
-    "fetch_sse_async",
+    "send_sse",
+    "send_sse_async",
     "Server",
     "reject_websocket",
     "reject_websocket_async",

@@ -25,54 +25,104 @@ import typing
 import typing_extensions
 import pydantic
 
+from ..._invocation_types import BamlOptions as _BamlOptions
+
 from baml_bridge import BamlPyHandle as _BamlPyHandle
 
 
 class Aes256GcmSiv(pydantic.BaseModel):
     field_cipher: _BamlPyHandle = pydantic.Field(alias="_cipher")
     @staticmethod
-    def new(key: bytes) -> Aes256GcmSiv:
-        """Raises:
+    def new(key: bytes, *, _baml: _BamlOptions | None = None) -> Aes256GcmSiv:
+        """Creates a cipher from a 32-byte (256-bit) key.
+
+        ## Throws
+
+        - `baml.errors.InvalidArgument` if `key` is not exactly 32 bytes.
+
+        Raises:
             InvalidArgument"""
     @staticmethod
-    async def new_async(key: bytes) -> Aes256GcmSiv:
-        """Raises:
+    async def new_async(key: bytes, *, _baml: _BamlOptions | None = None) -> Aes256GcmSiv:
+        """Creates a cipher from a 32-byte (256-bit) key.
+
+        ## Throws
+
+        - `baml.errors.InvalidArgument` if `key` is not exactly 32 bytes.
+
+        Raises:
             InvalidArgument"""
 
 
 class Aes128GcmSiv(pydantic.BaseModel):
     field_cipher: _BamlPyHandle = pydantic.Field(alias="_cipher")
     @staticmethod
-    def new(key: bytes) -> Aes128GcmSiv:
-        """Raises:
+    def new(key: bytes, *, _baml: _BamlOptions | None = None) -> Aes128GcmSiv:
+        """Creates a cipher from a 16-byte (128-bit) key.
+
+        ## Throws
+
+        - `baml.errors.InvalidArgument` if `key` is not exactly 16 bytes.
+
+        Raises:
             InvalidArgument"""
     @staticmethod
-    async def new_async(key: bytes) -> Aes128GcmSiv:
-        """Raises:
+    async def new_async(key: bytes, *, _baml: _BamlOptions | None = None) -> Aes128GcmSiv:
+        """Creates a cipher from a 16-byte (128-bit) key.
+
+        ## Throws
+
+        - `baml.errors.InvalidArgument` if `key` is not exactly 16 bytes.
+
+        Raises:
             InvalidArgument"""
 
 
 class ChaCha20Poly1305(pydantic.BaseModel):
     field_cipher: _BamlPyHandle = pydantic.Field(alias="_cipher")
     @staticmethod
-    def new(key: bytes) -> ChaCha20Poly1305:
-        """Raises:
+    def new(key: bytes, *, _baml: _BamlOptions | None = None) -> ChaCha20Poly1305:
+        """Creates a cipher from a 32-byte (256-bit) key.
+
+        ## Throws
+
+        - `baml.errors.InvalidArgument` if `key` is not exactly 32 bytes.
+
+        Raises:
             InvalidArgument"""
     @staticmethod
-    async def new_async(key: bytes) -> ChaCha20Poly1305:
-        """Raises:
+    async def new_async(key: bytes, *, _baml: _BamlOptions | None = None) -> ChaCha20Poly1305:
+        """Creates a cipher from a 32-byte (256-bit) key.
+
+        ## Throws
+
+        - `baml.errors.InvalidArgument` if `key` is not exactly 32 bytes.
+
+        Raises:
             InvalidArgument"""
 
 
 class XChaCha20Poly1305(pydantic.BaseModel):
     field_cipher: _BamlPyHandle = pydantic.Field(alias="_cipher")
     @staticmethod
-    def new(key: bytes) -> XChaCha20Poly1305:
-        """Raises:
+    def new(key: bytes, *, _baml: _BamlOptions | None = None) -> XChaCha20Poly1305:
+        """Creates a cipher from a 32-byte (256-bit) key.
+
+        ## Throws
+
+        - `baml.errors.InvalidArgument` if `key` is not exactly 32 bytes.
+
+        Raises:
             InvalidArgument"""
     @staticmethod
-    async def new_async(key: bytes) -> XChaCha20Poly1305:
-        """Raises:
+    async def new_async(key: bytes, *, _baml: _BamlOptions | None = None) -> XChaCha20Poly1305:
+        """Creates a cipher from a 32-byte (256-bit) key.
+
+        ## Throws
+
+        - `baml.errors.InvalidArgument` if `key` is not exactly 32 bytes.
+
+        Raises:
             InvalidArgument"""
 
 
@@ -84,9 +134,13 @@ class DecryptionFailure(pydantic.BaseModel):
 class Sha256(pydantic.BaseModel):
     field_state: _BamlPyHandle = pydantic.Field(alias="_state")
     @staticmethod
-    def new() -> Sha256: ...
+    def new(*, _baml: _BamlOptions | None = None) -> Sha256:
+        """Creates a hasher with no data fed into it yet. Calling `finish` on it
+        immediately returns the digest of the empty message."""
     @staticmethod
-    async def new_async() -> Sha256: ...
+    async def new_async(*, _baml: _BamlOptions | None = None) -> Sha256:
+        """Creates a hasher with no data fed into it yet. Calling `finish` on it
+        immediately returns the digest of the empty message."""
 
 
 __all__ = [

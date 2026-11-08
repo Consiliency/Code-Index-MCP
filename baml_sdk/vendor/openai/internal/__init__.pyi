@@ -21,6 +21,8 @@
 
 from __future__ import annotations
 
+from . import decisions
+
 import enum
 import typing
 import typing_extensions
@@ -32,8 +34,10 @@ if typing.TYPE_CHECKING:
     from .... import vendor
     from ....baml import UNSET as UNSET
 
+from ...._invocation_types import BamlOptions as _BamlOptions
 
-def _reject(provider: str, detail: str) -> ai.errors.InvalidRequest:
+
+def _reject(provider: str, detail: str, *, _baml: _BamlOptions | None = None) -> ai.errors.InvalidRequest:
     """(internal) Every LOCAL, pre-send rejection in the chat family throws ONE error
     identity: `ai.errors.InvalidRequest` with a null status code — the class
     `ResponsesClient`, `GeminiClient`, `ImageClient` and the Bedrock client
@@ -44,7 +48,7 @@ def _reject(provider: str, detail: str) -> ai.errors.InvalidRequest:
     into an untyped `baml.errors.UnknownError`, and `ai.Fallback` only advances
     to the next member on a TYPED failure. A missing key in one member of a
     fallback chain has to fall through, not abort the chain."""
-async def _reject_async(provider: str, detail: str) -> ai.errors.InvalidRequest:
+async def _reject_async(provider: str, detail: str, *, _baml: _BamlOptions | None = None) -> ai.errors.InvalidRequest:
     """(internal) Every LOCAL, pre-send rejection in the chat family throws ONE error
     identity: `ai.errors.InvalidRequest` with a null status code — the class
     `ResponsesClient`, `GeminiClient`, `ImageClient` and the Bedrock client
@@ -57,12 +61,60 @@ async def _reject_async(provider: str, detail: str) -> ai.errors.InvalidRequest:
     fallback chain has to fall through, not abort the chain."""
 
 
-def _azure_reject(detail: str) -> ai.errors.InvalidRequest:
+def _azure_reject(detail: str, *, _baml: _BamlOptions | None = None) -> ai.errors.InvalidRequest:
     """(internal) `_reject` for the Azure wrapper, whose config errors are raised before a
     `ChatCompat` exists to name the provider."""
-async def _azure_reject_async(detail: str) -> ai.errors.InvalidRequest:
+async def _azure_reject_async(detail: str, *, _baml: _BamlOptions | None = None) -> ai.errors.InvalidRequest:
     """(internal) `_reject` for the Azure wrapper, whose config errors are raised before a
     `ChatCompat` exists to name the provider."""
+
+
+def _rejects_cache_breakpoint(model: str, *, _baml: _BamlOptions | None = None) -> bool:
+    """(internal) Whether `model` rejects `prompt_cache_breakpoint`. OpenAI added
+    the field with GPT-5.6; every earlier model answers 400
+    ("prompt_cache_breakpoint is not supported on this model") on both Chat
+    Completions and Responses, and caches implicitly whatever the request says.
+
+    The list is the OLD families, because that set is closed and the new one
+    is not: a model this does not recognize is treated as one that takes the
+    field, so a new family works without a change here. A model matches a
+    family by being it or by starting with it plus "-", so "gpt-5" covers
+    "gpt-5-mini" and "gpt-5-2025-08-07" but not "gpt-5.6-luna". A fine-tune
+    (`ft:<base model>:<org>:<suffix>:<id>`) is judged by its base model.
+    Each family is also matched with an "openai." prefix, the model id Bedrock
+    gives an OpenAI model ("openai.gpt-5.5").
+
+    `chat-latest` is a moving alias that points at an old model today."""
+async def _rejects_cache_breakpoint_async(model: str, *, _baml: _BamlOptions | None = None) -> bool:
+    """(internal) Whether `model` rejects `prompt_cache_breakpoint`. OpenAI added
+    the field with GPT-5.6; every earlier model answers 400
+    ("prompt_cache_breakpoint is not supported on this model") on both Chat
+    Completions and Responses, and caches implicitly whatever the request says.
+
+    The list is the OLD families, because that set is closed and the new one
+    is not: a model this does not recognize is treated as one that takes the
+    field, so a new family works without a change here. A model matches a
+    family by being it or by starting with it plus "-", so "gpt-5" covers
+    "gpt-5-mini" and "gpt-5-2025-08-07" but not "gpt-5.6-luna". A fine-tune
+    (`ft:<base model>:<org>:<suffix>:<id>`) is judged by its base model.
+    Each family is also matched with an "openai." prefix, the model id Bedrock
+    gives an OpenAI model ("openai.gpt-5.5").
+
+    `chat-latest` is a moving alias that points at an old model today."""
+
+
+def default_cache_breakpoint(model: str, *, _baml: _BamlOptions | None = None) -> baml.json.json:
+    """The `prompt_cache_breakpoint` a `${cache()}` sends to `model`:
+    `{"mode": "explicit"}`, the only value the field takes, or null for a model
+    that rejects the field (GPT-5.5 and earlier), where a `${cache()}` sends
+    nothing. The value marks one position; it is not the request-level
+    `prompt_cache_options.mode`, so the request stays in OpenAI's implicit mode."""
+async def default_cache_breakpoint_async(model: str, *, _baml: _BamlOptions | None = None) -> baml.json.json:
+    """The `prompt_cache_breakpoint` a `${cache()}` sends to `model`:
+    `{"mode": "explicit"}`, the only value the field takes, or null for a model
+    that rejects the field (GPT-5.5 and earlier), where a `${cache()}` sends
+    nothing. The value marks one position; it is not the request-level
+    `prompt_cache_options.mode`, so the request stays in OpenAI's implicit mode."""
 
 
 class ChatAuth(str, enum.Enum):
@@ -85,12 +137,14 @@ class ChatCompat(pydantic.BaseModel):
     default_max_tokens: typing.Optional[int] = None
     default_role: str
     compat_query: typing.Dict[str, str]
+    cache_breakpoints: bool
+    default_cache_args: baml.json.json = None
     @staticmethod
-    def new(provider: str, base_url: str, *, path: typing.Union[str, UNSET] = "/chat/completions", auth: typing.Union[ChatAuth, UNSET] = UNSET, api_key_env: typing.Union[str, None, UNSET] = None, api_key_required: typing.Union[bool, UNSET] = False, collapse_text_content: typing.Union[bool, UNSET] = False, inline_image_urls: typing.Union[bool, UNSET] = False, send_stream_options: typing.Union[bool, UNSET] = False, max_tokens_key: typing.Union[str, UNSET] = "max_tokens", default_max_tokens: typing.Union[int, None, UNSET] = None, default_role: typing.Union[str, UNSET] = "user", compat_query: typing.Union[typing.Dict[str, str], None, UNSET] = None) -> ChatCompat:
+    def new(provider: str, base_url: str, *, path: typing.Union[str, UNSET] = "/chat/completions", auth: typing.Union[ChatAuth, UNSET] = UNSET, api_key_env: typing.Union[str, None, UNSET] = None, api_key_required: typing.Union[bool, UNSET] = False, collapse_text_content: typing.Union[bool, UNSET] = False, inline_image_urls: typing.Union[bool, UNSET] = False, send_stream_options: typing.Union[bool, UNSET] = False, max_tokens_key: typing.Union[str, UNSET] = "max_tokens", default_max_tokens: typing.Union[int, None, UNSET] = None, default_role: typing.Union[str, UNSET] = "user", compat_query: typing.Union[typing.Dict[str, str], None, UNSET] = None, cache_breakpoints: typing.Union[bool, UNSET] = False, default_cache_args: typing.Union[baml.json.json, UNSET] = None, _baml: _BamlOptions | None = None) -> ChatCompat:
         """Every field defaults to the plain-OpenAI shape; a wrapper overrides the
         handful that differ."""
     @staticmethod
-    async def new_async(provider: str, base_url: str, *, path: typing.Union[str, UNSET] = "/chat/completions", auth: typing.Union[ChatAuth, UNSET] = UNSET, api_key_env: typing.Union[str, None, UNSET] = None, api_key_required: typing.Union[bool, UNSET] = False, collapse_text_content: typing.Union[bool, UNSET] = False, inline_image_urls: typing.Union[bool, UNSET] = False, send_stream_options: typing.Union[bool, UNSET] = False, max_tokens_key: typing.Union[str, UNSET] = "max_tokens", default_max_tokens: typing.Union[int, None, UNSET] = None, default_role: typing.Union[str, UNSET] = "user", compat_query: typing.Union[typing.Dict[str, str], None, UNSET] = None) -> ChatCompat:
+    async def new_async(provider: str, base_url: str, *, path: typing.Union[str, UNSET] = "/chat/completions", auth: typing.Union[ChatAuth, UNSET] = UNSET, api_key_env: typing.Union[str, None, UNSET] = None, api_key_required: typing.Union[bool, UNSET] = False, collapse_text_content: typing.Union[bool, UNSET] = False, inline_image_urls: typing.Union[bool, UNSET] = False, send_stream_options: typing.Union[bool, UNSET] = False, max_tokens_key: typing.Union[str, UNSET] = "max_tokens", default_max_tokens: typing.Union[int, None, UNSET] = None, default_role: typing.Union[str, UNSET] = "user", compat_query: typing.Union[typing.Dict[str, str], None, UNSET] = None, cache_breakpoints: typing.Union[bool, UNSET] = False, default_cache_args: typing.Union[baml.json.json, UNSET] = None, _baml: _BamlOptions | None = None) -> ChatCompat:
         """Every field defaults to the plain-OpenAI shape; a wrapper overrides the
         handful that differ."""
 
@@ -107,18 +161,11 @@ class ChatParams(pydantic.BaseModel):
     headers: typing.Optional[typing.Dict[str, str]] = None
     query_params: typing.Optional[typing.Dict[str, str]] = None
     request_body: typing.Optional[baml.json.json] = None
+    structured_output: bool
     @staticmethod
-    def new(model: str, *, api_key: typing.Union[str, None, UNSET] = None, temperature: typing.Union[float, None, UNSET] = None, max_tokens: typing.Union[int, None, UNSET] = None, max_completion_tokens: typing.Union[int, None, UNSET] = None, top_p: typing.Union[float, None, UNSET] = None, stop: typing.Union[typing.List[str], None, UNSET] = None, seed: typing.Union[int, None, UNSET] = None, headers: typing.Union[typing.Dict[str, str], None, UNSET] = None, query_params: typing.Union[typing.Dict[str, str], None, UNSET] = None, request_body: typing.Union[baml.json.json, None, UNSET] = None) -> ChatParams: ...
+    def new(model: str, *, api_key: typing.Union[str, None, UNSET] = None, temperature: typing.Union[float, None, UNSET] = None, max_tokens: typing.Union[int, None, UNSET] = None, max_completion_tokens: typing.Union[int, None, UNSET] = None, top_p: typing.Union[float, None, UNSET] = None, stop: typing.Union[typing.List[str], None, UNSET] = None, seed: typing.Union[int, None, UNSET] = None, headers: typing.Union[typing.Dict[str, str], None, UNSET] = None, query_params: typing.Union[typing.Dict[str, str], None, UNSET] = None, request_body: typing.Union[baml.json.json, None, UNSET] = None, structured_output: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> ChatParams: ...
     @staticmethod
-    async def new_async(model: str, *, api_key: typing.Union[str, None, UNSET] = None, temperature: typing.Union[float, None, UNSET] = None, max_tokens: typing.Union[int, None, UNSET] = None, max_completion_tokens: typing.Union[int, None, UNSET] = None, top_p: typing.Union[float, None, UNSET] = None, stop: typing.Union[typing.List[str], None, UNSET] = None, seed: typing.Union[int, None, UNSET] = None, headers: typing.Union[typing.Dict[str, str], None, UNSET] = None, query_params: typing.Union[typing.Dict[str, str], None, UNSET] = None, request_body: typing.Union[baml.json.json, None, UNSET] = None) -> ChatParams: ...
-
-
-def chat_client_id(compat: ChatCompat, params: ChatParams) -> str:
-    """`provider/model` — the client identity used for `ai.Client.id()`, journal
-    attribution, and `ai.wire.sanitize_for_client`."""
-async def chat_client_id_async(compat: ChatCompat, params: ChatParams) -> str:
-    """`provider/model` — the client identity used for `ai.Client.id()`, journal
-    attribution, and `ai.wire.sanitize_for_client`."""
+    async def new_async(model: str, *, api_key: typing.Union[str, None, UNSET] = None, temperature: typing.Union[float, None, UNSET] = None, max_tokens: typing.Union[int, None, UNSET] = None, max_completion_tokens: typing.Union[int, None, UNSET] = None, top_p: typing.Union[float, None, UNSET] = None, stop: typing.Union[typing.List[str], None, UNSET] = None, seed: typing.Union[int, None, UNSET] = None, headers: typing.Union[typing.Dict[str, str], None, UNSET] = None, query_params: typing.Union[typing.Dict[str, str], None, UNSET] = None, request_body: typing.Union[baml.json.json, None, UNSET] = None, structured_output: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> ChatParams: ...
 
 
 class ChatTextPart(pydantic.BaseModel):
@@ -160,12 +207,12 @@ class ChatExtraPart(pydantic.BaseModel):
     extra: typing.Dict[str, baml.json.json]
 
 
-def _chat_directives_key() -> str:
-    """(internal) The reserved key `ChatExtraPart` parks per-message directives under between
+def _chat_directives_key(*, _baml: _BamlOptions | None = None) -> str:
+    """(internal) The reserved key `ChatExtraPart` parks its extra keys under between
     serialization and `_chat_apply_directives`. It exists only inside that
     window; nothing with this key is ever sent."""
-async def _chat_directives_key_async() -> str:
-    """(internal) The reserved key `ChatExtraPart` parks per-message directives under between
+async def _chat_directives_key_async(*, _baml: _BamlOptions | None = None) -> str:
+    """(internal) The reserved key `ChatExtraPart` parks its extra keys under between
     serialization and `_chat_apply_directives`. It exists only inside that
     window; nothing with this key is ever sent."""
 
@@ -203,6 +250,17 @@ class ChatStreamOptions(pydantic.BaseModel):
     include_usage: bool
 
 
+class ChatJsonSchema(pydantic.BaseModel):
+    name: str
+    strict: bool
+    schema: baml.json.json = None
+
+
+class ChatResponseFormat(pydantic.BaseModel):
+    type: str
+    json_schema: ChatJsonSchema
+
+
 class ChatRequest(pydantic.BaseModel):
     model: str
     messages: typing.List[ChatMessage]
@@ -216,6 +274,7 @@ class ChatRequest(pydantic.BaseModel):
     tool_choice: typing.Optional[str] = None
     stream: typing.Optional[bool] = None
     stream_options: typing.Optional[ChatStreamOptions] = None
+    response_format: typing.Optional[ChatResponseFormat] = None
 
 
 class CcFunctionCall(pydantic.BaseModel):
@@ -271,6 +330,7 @@ class CcChoice(pydantic.BaseModel):
 
 class CcPromptTokensDetails(pydantic.BaseModel):
     cached_tokens: typing.Optional[int] = None
+    cache_write_tokens: typing.Optional[int] = None
 
 
 class CcCompletionTokensDetails(pydantic.BaseModel):
@@ -285,7 +345,18 @@ class CcUsage(pydantic.BaseModel):
     completion_tokens_details: typing.Optional[CcCompletionTokensDetails] = None
 
 
+class CcError(pydantic.BaseModel):
+    message: typing.Optional[str] = None
+    type: typing.Optional[str] = None
+    code: typing.Union[str, int, None] = None
+
+
+def _chat_provider_error(error: CcError, provider: str, raw: str, *, _baml: _BamlOptions | None = None) -> ai.errors.ProviderError: ...
+async def _chat_provider_error_async(error: CcError, provider: str, raw: str, *, _baml: _BamlOptions | None = None) -> ai.errors.ProviderError: ...
+
+
 class CcResponse(pydantic.BaseModel):
+    error: typing.Optional[CcError] = None
     id: typing.Optional[str] = None
     model: typing.Optional[str] = None
     choices: typing.Optional[typing.List[CcChoice]] = None
@@ -297,32 +368,32 @@ class ChatPromptMessage(pydantic.BaseModel):
     parts: typing.List[ChatContentPart]
 
 
-def _chat_media_url(resolved: ai.wire.ResolvedMedia) -> str:
+def _chat_media_url(resolved: ai.wire.ResolvedMedia, *, _baml: _BamlOptions | None = None) -> str:
     """(internal) `data:<mime>;base64,<data>` for inline payloads, the original URL otherwise."""
-async def _chat_media_url_async(resolved: ai.wire.ResolvedMedia) -> str:
+async def _chat_media_url_async(resolved: ai.wire.ResolvedMedia, *, _baml: _BamlOptions | None = None) -> str:
     """(internal) `data:<mime>;base64,<data>` for inline payloads, the original URL otherwise."""
 
 
-def _chat_audio_format(mime_type: str) -> str:
+def _chat_audio_format(mime_type: str, *, _baml: _BamlOptions | None = None) -> str:
     """(internal) `input_audio.format` is the mime subtype, with the one alias the API needs.
     Unknown subtypes are forwarded rather than rejected: OpenAI documents wav/mp3
     but transcodes others, and a compatible server may accept more (this is the
     engine's behaviour; sys_llm hard-errored on anything but wav/mp3)."""
-async def _chat_audio_format_async(mime_type: str) -> str:
+async def _chat_audio_format_async(mime_type: str, *, _baml: _BamlOptions | None = None) -> str:
     """(internal) `input_audio.format` is the mime subtype, with the one alias the API needs.
     Unknown subtypes are forwarded rather than rejected: OpenAI documents wav/mp3
     but transcodes others, and a compatible server may accept more (this is the
     engine's behaviour; sys_llm hard-errored on anything but wav/mp3)."""
 
 
-def _chat_audio_output_mime(request_body: typing.Optional[baml.json.json]) -> str:
+def _chat_audio_output_mime(request_body: typing.Optional[baml.json.json], *, _baml: _BamlOptions | None = None) -> str:
     """(internal) The mime type of an audio OUTPUT payload. The response's `message.audio`
     object carries the bytes but never says what they are — the format is
     whatever the request asked for, so it is read back out of the passthrough
     body (`{"audio":{"format":"wav"}}`). OpenAI accepts wav|mp3|flac|opus|pcm16
     and defaults to nothing, so wav is the assumption when the caller enabled the
     modality some other way."""
-async def _chat_audio_output_mime_async(request_body: typing.Optional[baml.json.json]) -> str:
+async def _chat_audio_output_mime_async(request_body: typing.Optional[baml.json.json], *, _baml: _BamlOptions | None = None) -> str:
     """(internal) The mime type of an audio OUTPUT payload. The response's `message.audio`
     object carries the bytes but never says what they are — the format is
     whatever the request asked for, so it is read back out of the passthrough
@@ -331,23 +402,23 @@ async def _chat_audio_output_mime_async(request_body: typing.Optional[baml.json.
     modality some other way."""
 
 
-def _chat_media_part(media: ai.MediaPart, compat: ChatCompat, *, preview: typing.Union[bool, UNSET] = False) -> ChatContentPart:
+def _chat_media_part(media: ai.MediaPart, compat: ChatCompat, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> ChatContentPart:
     """(internal) One media prompt part -> one typed content part. Media is allowed in any
     role: the chat endpoint imposes no role restriction (the engine imposes none
     either; sys_llm's hard error was stricter than the API).
 
     Raises:
-        InvalidArgument, Io, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
-async def _chat_media_part_async(media: ai.MediaPart, compat: ChatCompat, *, preview: typing.Union[bool, UNSET] = False) -> ChatContentPart:
+        InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+async def _chat_media_part_async(media: ai.MediaPart, compat: ChatCompat, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> ChatContentPart:
     """(internal) One media prompt part -> one typed content part. Media is allowed in any
     role: the chat endpoint imposes no role restriction (the engine imposes none
     either; sys_llm's hard error was stricter than the API).
 
     Raises:
-        InvalidArgument, Io, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+        InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
 
 
-def _chat_lower_block(block: ai.content.Block, compat: ChatCompat, *, preview: typing.Union[bool, UNSET] = False) -> ChatContentPart:
+def _chat_lower_block(block: ai.content.Block, compat: ChatCompat, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> ChatContentPart:
     """(internal) One content block -> one typed content part. Chat completions imposes no
     role restriction on media, so every position accepts what the endpoint
     has a part for — except a `tool` message, whose content is text only, so
@@ -361,8 +432,8 @@ def _chat_lower_block(block: ai.content.Block, compat: ChatCompat, *, preview: t
       tool_result | Accept | Degrade | Degrade | Degrade | Reject
 
     Raises:
-        InvalidArgument, Io, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
-async def _chat_lower_block_async(block: ai.content.Block, compat: ChatCompat, *, preview: typing.Union[bool, UNSET] = False) -> ChatContentPart:
+        InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+async def _chat_lower_block_async(block: ai.content.Block, compat: ChatCompat, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> ChatContentPart:
     """(internal) One content block -> one typed content part. Chat completions imposes no
     role restriction on media, so every position accepts what the endpoint
     has a part for — except a `tool` message, whose content is text only, so
@@ -376,70 +447,100 @@ async def _chat_lower_block_async(block: ai.content.Block, compat: ChatCompat, *
       tool_result | Accept | Degrade | Degrade | Degrade | Reject
 
     Raises:
-        InvalidArgument, Io, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+        InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
 
 
-def _chat_lower_blocks(blocks: typing.List[ai.content.Block], compat: ChatCompat, *, preview: typing.Union[bool, UNSET] = False) -> typing.List[ChatContentPart]:
+def _chat_lower_blocks(blocks: typing.List[ai.content.Block], compat: ChatCompat, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> typing.List[ChatContentPart]:
     """Raises:
-        InvalidArgument, Io, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
-async def _chat_lower_blocks_async(blocks: typing.List[ai.content.Block], compat: ChatCompat, *, preview: typing.Union[bool, UNSET] = False) -> typing.List[ChatContentPart]:
+        InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+async def _chat_lower_blocks_async(blocks: typing.List[ai.content.Block], compat: ChatCompat, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> typing.List[ChatContentPart]:
     """Raises:
-        InvalidArgument, Io, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+        InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
 
 
-def _chat_apply_metadata(parts: typing.List[ChatContentPart], metadata: typing.Dict[str, baml.json.json]) -> None:
-    """(internal) Attach a message's authored `metadata` to its LAST content part (see
-    ChatExtraPart). A message that lowered to no parts has nowhere to put the
-    directive, and an empty metadata map is the common case, so both are no-ops."""
-async def _chat_apply_metadata_async(parts: typing.List[ChatContentPart], metadata: typing.Dict[str, baml.json.json]) -> None:
-    """(internal) Attach a message's authored `metadata` to its LAST content part (see
-    ChatExtraPart). A message that lowered to no parts has nowhere to put the
-    directive, and an empty metadata map is the common case, so both are no-ops."""
+def _chat_apply_cache_delimiter(parts: typing.List[ChatContentPart], delimiter: ai.CacheDelimiter, *, _baml: _BamlOptions | None = None) -> None:
+    """(internal) Put a `${cache(args)}` on the wire: `prompt_cache_breakpoint: args` on
+    the LAST part lowered so far (see ChatExtraPart). Nothing is sent when no
+    part precedes the delimiter in its message, or when `args` is null (a
+    `${cache()}` with no default, which `ai.wire.prompt_parts` removes). A second
+    delimiter with no part in between replaces the first."""
+async def _chat_apply_cache_delimiter_async(parts: typing.List[ChatContentPart], delimiter: ai.CacheDelimiter, *, _baml: _BamlOptions | None = None) -> None:
+    """(internal) Put a `${cache(args)}` on the wire: `prompt_cache_breakpoint: args` on
+    the LAST part lowered so far (see ChatExtraPart). Nothing is sent when no
+    part precedes the delimiter in its message, or when `args` is null (a
+    `${cache()}` with no default, which `ai.wire.prompt_parts` removes). A second
+    delimiter with no part in between replaces the first."""
 
 
-def _chat_all_text(parts: typing.List[ChatContentPart]) -> bool:
+def _chat_prompt_parts(message: ai.PromptMessage, compat: ChatCompat, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> typing.List[ChatContentPart]:
+    """(internal) One prompt message as content parts. With `compat.cache_breakpoints` a
+    `${cache(args)}` becomes a breakpoint on the part before it, with the text on
+    either side trimmed where it faces the delimiter (`ai.wire.prompt_parts`);
+    without, the
+    delimiter is dropped and the text around it is one part again
+    (`ai.wire.prompt_blocks`), so the request is the one the prompt would
+    produce without it.
+
+    Raises:
+        InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+async def _chat_prompt_parts_async(message: ai.PromptMessage, compat: ChatCompat, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> typing.List[ChatContentPart]:
+    """(internal) One prompt message as content parts. With `compat.cache_breakpoints` a
+    `${cache(args)}` becomes a breakpoint on the part before it, with the text on
+    either side trimmed where it faces the delimiter (`ai.wire.prompt_parts`);
+    without, the
+    delimiter is dropped and the text around it is one part again
+    (`ai.wire.prompt_blocks`), so the request is the one the prompt would
+    produce without it.
+
+    Raises:
+        InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+
+
+def _chat_all_text(parts: typing.List[ChatContentPart], *, _baml: _BamlOptions | None = None) -> bool:
     """(internal) Every part is text — the precondition for `collapse_text_content`. A
     `ChatExtraPart` never qualifies even when it wraps text: collapsing to a bare
-    string would drop the directive it carries."""
-async def _chat_all_text_async(parts: typing.List[ChatContentPart]) -> bool:
+    string would drop the cache breakpoint it carries."""
+async def _chat_all_text_async(parts: typing.List[ChatContentPart], *, _baml: _BamlOptions | None = None) -> bool:
     """(internal) Every part is text — the precondition for `collapse_text_content`. A
     `ChatExtraPart` never qualifies even when it wraps text: collapsing to a bare
-    string would drop the directive it carries."""
+    string would drop the cache breakpoint it carries."""
 
 
-def _chat_content(parts: typing.List[ChatContentPart], collapse: bool) -> ChatMessageContent:
+def _chat_content(parts: typing.List[ChatContentPart], collapse: bool, *, _baml: _BamlOptions | None = None) -> ChatMessageContent:
     """(internal) Render the accumulated parts into the wire `content` value."""
-async def _chat_content_async(parts: typing.List[ChatContentPart], collapse: bool) -> ChatMessageContent:
+async def _chat_content_async(parts: typing.List[ChatContentPart], collapse: bool, *, _baml: _BamlOptions | None = None) -> ChatMessageContent:
     """(internal) Render the accumulated parts into the wire `content` value."""
 
 
-def chat_lower_prompt(prompt: ai.Prompt, compat: ChatCompat, *, preview: typing.Union[bool, UNSET] = False) -> typing.List[ChatMessage]:
+def chat_lower_prompt(prompt: ai.Prompt, compat: ChatCompat, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> typing.List[ChatMessage]:
     """A rendered structural prompt becomes chat-completions messages. A role-less
     message takes the compat's default role; an authored `tool` role becomes user
     content, because a wire `tool` message must answer a specific `tool_call_id`
     and only the journal path has one. Adjacent same-role messages merge, as both
-    prior implementations did. A message's authored `metadata` rides on its last
-    content part (see `ChatExtraPart`).
+    prior implementations did. A `${cache(args)}` in a message becomes a
+    breakpoint on the part before it, when the endpoint takes one
+    (`_chat_prompt_parts`).
 
     Raises:
-        InvalidArgument, Io, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
-async def chat_lower_prompt_async(prompt: ai.Prompt, compat: ChatCompat, *, preview: typing.Union[bool, UNSET] = False) -> typing.List[ChatMessage]:
+        InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+async def chat_lower_prompt_async(prompt: ai.Prompt, compat: ChatCompat, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> typing.List[ChatMessage]:
     """A rendered structural prompt becomes chat-completions messages. A role-less
     message takes the compat's default role; an authored `tool` role becomes user
     content, because a wire `tool` message must answer a specific `tool_call_id`
     and only the journal path has one. Adjacent same-role messages merge, as both
-    prior implementations did. A message's authored `metadata` rides on its last
-    content part (see `ChatExtraPart`).
+    prior implementations did. A `${cache(args)}` in a message becomes a
+    breakpoint on the part before it, when the endpoint takes one
+    (`_chat_prompt_parts`).
 
     Raises:
-        InvalidArgument, Io, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+        InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
 
 
-def chat_lower_journal(j: ai.Journal, compat: ChatCompat, *, preview: typing.Union[bool, UNSET] = False) -> typing.List[ChatMessage]:
+def chat_lower_journal(j: ai.Journal, compat: ChatCompat, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> typing.List[ChatMessage]:
     """`ai.Journal` -> chat-completions messages. Assistant turns carry their text
     in `content` and their calls in `tool_calls`; each result comes back as its
     own `role: "tool"` message keyed by `tool_call_id`. Journal-only events
-    (`RunStarted`, `ToolRequested`, `Usage`, `FinalProduced`) and reasoning
+    (`RunStarted`, `ToolRequested`, `FinalProduced`) and reasoning
     blocks lower to nothing.
 
     Callers pass the journal through `ai.wire.sanitize_for_client` first, so
@@ -448,15 +549,15 @@ def chat_lower_journal(j: ai.Journal, compat: ChatCompat, *, preview: typing.Uni
     A journal turn's text always collapses to a bare string (`_chat_content`
     with `collapse = true`): a text-only turn was always sent that way, and a
     bare string is the one content shape every compatible server accepts. A
-    turn carrying media, or a user turn carrying `metadata`, is a part list.
+    turn carrying media is a part list.
 
     Raises:
-        InvalidArgument, Io, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported"""
-async def chat_lower_journal_async(j: ai.Journal, compat: ChatCompat, *, preview: typing.Union[bool, UNSET] = False) -> typing.List[ChatMessage]:
+        InvalidArgument, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+async def chat_lower_journal_async(j: ai.Journal, compat: ChatCompat, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> typing.List[ChatMessage]:
     """`ai.Journal` -> chat-completions messages. Assistant turns carry their text
     in `content` and their calls in `tool_calls`; each result comes back as its
     own `role: "tool"` message keyed by `tool_call_id`. Journal-only events
-    (`RunStarted`, `ToolRequested`, `Usage`, `FinalProduced`) and reasoning
+    (`RunStarted`, `ToolRequested`, `FinalProduced`) and reasoning
     blocks lower to nothing.
 
     Callers pass the journal through `ai.wire.sanitize_for_client` first, so
@@ -465,51 +566,55 @@ async def chat_lower_journal_async(j: ai.Journal, compat: ChatCompat, *, preview
     A journal turn's text always collapses to a bare string (`_chat_content`
     with `collapse = true`): a text-only turn was always sent that way, and a
     bare string is the one content shape every compatible server accepts. A
-    turn carrying media, or a user turn carrying `metadata`, is a part list.
+    turn carrying media is a part list.
 
     Raises:
-        InvalidArgument, Io, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+        InvalidArgument, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported"""
 
 
-def _chat_is_opaque_key(key: str) -> bool:
+def _chat_is_opaque_key(key: str, *, _baml: _BamlOptions | None = None) -> bool:
     """(internal) Keys whose value is a document AUTHORED BY THE CALLER rather than a wire
     field this file owns. Inside them a `null` is data, not an unset option:
       * `parameters` — a tool's JSON Schema, where `{"default": null}` and
         `{"type": ["string", "null"]}` sibling nulls are meaningful, and where a
         strict-schema server validates what it was given.
+      * `schema` — the output type's JSON Schema under
+        `response_format.json_schema`, for the same reasons.
 
     The `request_body` passthrough needs no entry here: it is merged AFTER the
     prune (`chat_render_body`), so it is never walked."""
-async def _chat_is_opaque_key_async(key: str) -> bool:
+async def _chat_is_opaque_key_async(key: str, *, _baml: _BamlOptions | None = None) -> bool:
     """(internal) Keys whose value is a document AUTHORED BY THE CALLER rather than a wire
     field this file owns. Inside them a `null` is data, not an unset option:
       * `parameters` — a tool's JSON Schema, where `{"default": null}` and
         `{"type": ["string", "null"]}` sibling nulls are meaningful, and where a
         strict-schema server validates what it was given.
+      * `schema` — the output type's JSON Schema under
+        `response_format.json_schema`, for the same reasons.
 
     The `request_body` passthrough needs no entry here: it is merged AFTER the
     prune (`chat_render_body`), so it is never walked."""
 
 
-def _chat_apply_directives(j: baml.json.json) -> baml.json.json:
+def _chat_apply_directives(j: baml.json.json, *, _baml: _BamlOptions | None = None) -> baml.json.json:
     """(internal) Splice each parked directives object back onto the content part that carries
     it, dropping the reserved key. Runs right after `_chat_prune_nulls` and
     before the `request_body` passthrough merge, so the authored directives sit
     on the wire exactly as written and the caller's passthrough still wins last."""
-async def _chat_apply_directives_async(j: baml.json.json) -> baml.json.json:
+async def _chat_apply_directives_async(j: baml.json.json, *, _baml: _BamlOptions | None = None) -> baml.json.json:
     """(internal) Splice each parked directives object back onto the content part that carries
     it, dropping the reserved key. Runs right after `_chat_prune_nulls` and
     before the `request_body` passthrough merge, so the authored directives sit
     on the wire exactly as written and the caller's passthrough still wins last."""
 
 
-def _chat_prune_nulls(j: baml.json.json) -> baml.json.json:
+def _chat_prune_nulls(j: baml.json.json, *, _baml: _BamlOptions | None = None) -> baml.json.json:
     """(internal) Drop every null-valued map entry, recursively. Typed request classes declare
     their optional fields, and this is what keeps an unset one off the wire
     instead of sending `"seed": null`. Runs BEFORE the passthrough merge, so a
     user's explicit `null` override still deletes a key the client did set.
     `_chat_is_opaque_key` subtrees are copied verbatim (the aws/google rule)."""
-async def _chat_prune_nulls_async(j: baml.json.json) -> baml.json.json:
+async def _chat_prune_nulls_async(j: baml.json.json, *, _baml: _BamlOptions | None = None) -> baml.json.json:
     """(internal) Drop every null-valued map entry, recursively. Typed request classes declare
     their optional fields, and this is what keeps an unset one off the wire
     instead of sending `"seed": null`. Runs BEFORE the passthrough merge, so a
@@ -517,41 +622,41 @@ async def _chat_prune_nulls_async(j: baml.json.json) -> baml.json.json:
     `_chat_is_opaque_key` subtrees are copied verbatim (the aws/google rule)."""
 
 
-def _chat_body_mentions(overrides: typing.Optional[baml.json.json], key: str) -> bool:
+def _chat_body_mentions(overrides: typing.Optional[baml.json.json], key: str, *, _baml: _BamlOptions | None = None) -> bool:
     """(internal) Does the passthrough body mention `key` at all (even as an explicit null)?
     Used for the Azure max_tokens guard, where "the caller said something about
     this key" is the question, not "what did they say"."""
-async def _chat_body_mentions_async(overrides: typing.Optional[baml.json.json], key: str) -> bool:
+async def _chat_body_mentions_async(overrides: typing.Optional[baml.json.json], key: str, *, _baml: _BamlOptions | None = None) -> bool:
     """(internal) Does the passthrough body mention `key` at all (even as an explicit null)?
     Used for the Azure max_tokens guard, where "the caller said something about
     this key" is the question, not "what did they say"."""
 
 
-def _chat_percent_encode(value: str) -> str:
+def _chat_percent_encode(value: str, *, _baml: _BamlOptions | None = None) -> str:
     """(internal) Percent-encode one query value per RFC 3986 (unreserved characters survive,
     everything else becomes %XX over its UTF-8 bytes). The stdlib has no URL
     encoder, and Azure's `api-version` plus arbitrary user query params both need
     one."""
-async def _chat_percent_encode_async(value: str) -> str:
+async def _chat_percent_encode_async(value: str, *, _baml: _BamlOptions | None = None) -> str:
     """(internal) Percent-encode one query value per RFC 3986 (unreserved characters survive,
     everything else becomes %XX over its UTF-8 bytes). The stdlib has no URL
     encoder, and Azure's `api-version` plus arbitrary user query params both need
     one."""
 
 
-def _chat_url(compat: ChatCompat, params: ChatParams) -> str:
+def _chat_url(compat: ChatCompat, params: ChatParams, *, _baml: _BamlOptions | None = None) -> str:
     """(internal) Endpoint-required query params first, user params merged over them."""
-async def _chat_url_async(compat: ChatCompat, params: ChatParams) -> str:
+async def _chat_url_async(compat: ChatCompat, params: ChatParams, *, _baml: _BamlOptions | None = None) -> str:
     """(internal) Endpoint-required query params first, user params merged over them."""
 
 
-def _chat_headers(compat: ChatCompat, params: ChatParams, *, preview: typing.Union[bool, UNSET] = False) -> typing.Dict[str, str]:
+def _chat_headers(compat: ChatCompat, params: ChatParams, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> typing.Dict[str, str]:
     """(internal) content-type, then the caller's headers, then the credential — so the
     endpoint's own auth header always wins over a user override of the same name.
 
     Raises:
         InvalidRequest"""
-async def _chat_headers_async(compat: ChatCompat, params: ChatParams, *, preview: typing.Union[bool, UNSET] = False) -> typing.Dict[str, str]:
+async def _chat_headers_async(compat: ChatCompat, params: ChatParams, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> typing.Dict[str, str]:
     """(internal) content-type, then the caller's headers, then the credential — so the
     endpoint's own auth header always wins over a user override of the same name.
 
@@ -559,39 +664,53 @@ async def _chat_headers_async(compat: ChatCompat, params: ChatParams, *, preview
         InvalidRequest"""
 
 
-def _chat_tools(toolbox: ai.tools.Toolbox) -> typing.Optional[typing.List[ChatTool]]:
+def _chat_tools(toolbox: ai.tools.Toolbox, *, _baml: _BamlOptions | None = None) -> typing.Optional[typing.List[ChatTool]]:
     """(internal) The typed tool declarations for this turn, or null when the toolbox is empty.
 
     Raises:
         SerializationError"""
-async def _chat_tools_async(toolbox: ai.tools.Toolbox) -> typing.Optional[typing.List[ChatTool]]:
+async def _chat_tools_async(toolbox: ai.tools.Toolbox, *, _baml: _BamlOptions | None = None) -> typing.Optional[typing.List[ChatTool]]:
     """(internal) The typed tool declarations for this turn, or null when the toolbox is empty.
 
     Raises:
         SerializationError"""
 
 
-def chat_build_request(compat: ChatCompat, params: ChatParams, input: ai.ModelTurnInput, stream: bool, *, preview: typing.Union[bool, UNSET] = False) -> ChatRequest:
+def chat_build_request(compat: ChatCompat, params: ChatParams, input: ai.ModelTurnInput, structured: typing.Optional[StructuredOutput], stream: bool, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> ChatRequest:
     """The typed body for one turn. Separate from the HTTP framing so tests (and a
     future Azure/Vertex-style reuse) can assert on the request object itself.
 
     Raises:
-        InvalidArgument, Io, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
-async def chat_build_request_async(compat: ChatCompat, params: ChatParams, input: ai.ModelTurnInput, stream: bool, *, preview: typing.Union[bool, UNSET] = False) -> ChatRequest:
+        InvalidArgument, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
+async def chat_build_request_async(compat: ChatCompat, params: ChatParams, input: ai.ModelTurnInput, structured: typing.Optional[StructuredOutput], stream: bool, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> ChatRequest:
     """The typed body for one turn. Separate from the HTTP framing so tests (and a
     future Azure/Vertex-style reuse) can assert on the request object itself.
 
     Raises:
-        InvalidArgument, Io, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
+        InvalidArgument, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
 
 
-def chat_render_body(compat: ChatCompat, params: ChatParams, request: ChatRequest) -> str:
+def chat_structured_output(compat: ChatCompat, params: ChatParams, input: ai.ModelTurnInput, *, _baml: _BamlOptions | None = None) -> typing.Optional[StructuredOutput]:
+    """(internal) The structured output a chat request carries: null unless the client
+    turned structured outputs on.
+
+    Raises:
+        InvalidRequest"""
+async def chat_structured_output_async(compat: ChatCompat, params: ChatParams, input: ai.ModelTurnInput, *, _baml: _BamlOptions | None = None) -> typing.Optional[StructuredOutput]:
+    """(internal) The structured output a chat request carries: null unless the client
+    turned structured outputs on.
+
+    Raises:
+        InvalidRequest"""
+
+
+def chat_render_body(compat: ChatCompat, params: ChatParams, request: ChatRequest, *, _baml: _BamlOptions | None = None) -> str:
     """The serialized body: typed request -> json -> drop unset options -> apply the
     caller's `request_body` passthrough LAST (PLAN P0.3 / `ai.wire`).
 
     Raises:
         SerializationError"""
-async def chat_render_body_async(compat: ChatCompat, params: ChatParams, request: ChatRequest) -> str:
+async def chat_render_body_async(compat: ChatCompat, params: ChatParams, request: ChatRequest, *, _baml: _BamlOptions | None = None) -> str:
     """The serialized body: typed request -> json -> drop unset options -> apply the
     caller's `request_body` passthrough LAST (PLAN P0.3 / `ai.wire`).
 
@@ -599,47 +718,47 @@ async def chat_render_body_async(compat: ChatCompat, params: ChatParams, request
         SerializationError"""
 
 
-def chat_render(compat: ChatCompat, params: ChatParams, input: ai.ModelTurnInput, stream: bool) -> baml.http.Request:
+def chat_render(compat: ChatCompat, params: ChatParams, input: ai.ModelTurnInput, structured: typing.Optional[StructuredOutput], stream: bool, *, _baml: _BamlOptions | None = None) -> baml.http.Request:
     """`ai.ModelTurnInput` -> one chat-completions HTTP request.
 
     Raises:
-        InvalidArgument, Io, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
-async def chat_render_async(compat: ChatCompat, params: ChatParams, input: ai.ModelTurnInput, stream: bool) -> baml.http.Request:
+        InvalidArgument, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
+async def chat_render_async(compat: ChatCompat, params: ChatParams, input: ai.ModelTurnInput, structured: typing.Optional[StructuredOutput], stream: bool, *, _baml: _BamlOptions | None = None) -> baml.http.Request:
     """`ai.ModelTurnInput` -> one chat-completions HTTP request.
 
     Raises:
-        InvalidArgument, Io, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
+        InvalidArgument, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
 
 
-def chat_preview(compat: ChatCompat, params: ChatParams, input: ai.ModelTurnInput) -> baml.http.Request:
+def chat_preview(compat: ChatCompat, params: ChatParams, input: ai.ModelTurnInput, *, _baml: _BamlOptions | None = None) -> baml.http.Request:
     """The request one chat `render` would send. Media is lowered through the
-    preview-only resolver and never reads files or downloads URLs.
+    preview-only resolver and never downloads URLs.
 
     Raises:
-        InvalidArgument, Io, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
-async def chat_preview_async(compat: ChatCompat, params: ChatParams, input: ai.ModelTurnInput) -> baml.http.Request:
+        InvalidArgument, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
+async def chat_preview_async(compat: ChatCompat, params: ChatParams, input: ai.ModelTurnInput, *, _baml: _BamlOptions | None = None) -> baml.http.Request:
     """The request one chat `render` would send. Media is lowered through the
-    preview-only resolver and never reads files or downloads URLs.
+    preview-only resolver and never downloads URLs.
 
     Raises:
-        InvalidArgument, Io, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
+        InvalidArgument, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
 
 
-def chat_stop_reason(reason: str) -> ai.content.StopReason:
+def chat_stop_reason(reason: str, *, _baml: _BamlOptions | None = None) -> ai.content.StopReason:
     """One wire `finish_reason` -> the canonical stop reason."""
-async def chat_stop_reason_async(reason: str) -> ai.content.StopReason:
+async def chat_stop_reason_async(reason: str, *, _baml: _BamlOptions | None = None) -> ai.content.StopReason:
     """One wire `finish_reason` -> the canonical stop reason."""
 
 
-def _chat_media_block(url: str) -> ai.content.Media:
+def _chat_media_block(url: str, *, _baml: _BamlOptions | None = None) -> ai.content.Media:
     """(internal) A response image reference -> a media block. Data URLs become inline base64;
     everything else is kept as a URL so the caller can fetch it."""
-async def _chat_media_block_async(url: str) -> ai.content.Media:
+async def _chat_media_block_async(url: str, *, _baml: _BamlOptions | None = None) -> ai.content.Media:
     """(internal) A response image reference -> a media block. Data URLs become inline base64;
     everything else is kept as a URL so the caller can fetch it."""
 
 
-def _chat_tool_args(raw: str, provider: str) -> typing.Dict[str, typing.Any]:
+def _chat_tool_args(raw: str, provider: str, *, _baml: _BamlOptions | None = None) -> typing.Dict[str, typing.Any]:
     """(internal) A tool call's `arguments` is a JSON *string* the model produced, so it can be
     malformed (a truncated call, a model that emitted prose). Degrading to `{}`
     would hand the runner an empty-argument invocation of a real tool and tell
@@ -648,7 +767,7 @@ def _chat_tool_args(raw: str, provider: str) -> typing.Dict[str, typing.Any]:
 
     Raises:
         ParseFailed"""
-async def _chat_tool_args_async(raw: str, provider: str) -> typing.Dict[str, typing.Any]:
+async def _chat_tool_args_async(raw: str, provider: str, *, _baml: _BamlOptions | None = None) -> typing.Dict[str, typing.Any]:
     """(internal) A tool call's `arguments` is a JSON *string* the model produced, so it can be
     malformed (a truncated call, a model that emitted prose). Degrading to `{}`
     would hand the runner an empty-argument invocation of a real tool and tell
@@ -659,18 +778,18 @@ async def _chat_tool_args_async(raw: str, provider: str) -> typing.Dict[str, typ
         ParseFailed"""
 
 
-def _chat_push_tool_uses(content: typing.List[ai.content.ModelBlock], calls: typing.List[CcToolCall], provider: str) -> None:
+def _chat_push_tool_uses(content: typing.List[ai.content.ModelBlock], calls: typing.List[CcToolCall], provider: str, *, _baml: _BamlOptions | None = None) -> None:
     """Raises:
         ParseFailed"""
-async def _chat_push_tool_uses_async(content: typing.List[ai.content.ModelBlock], calls: typing.List[CcToolCall], provider: str) -> None:
+async def _chat_push_tool_uses_async(content: typing.List[ai.content.ModelBlock], calls: typing.List[CcToolCall], provider: str, *, _baml: _BamlOptions | None = None) -> None:
     """Raises:
         ParseFailed"""
 
 
-def chat_parse(response: CcResponse, provider: str, raw: str, *, audio_mime: typing.Union[str, UNSET] = "audio/wav") -> ai.ModelTurn:
-    """One decoded response -> canonical content blocks, stop reason and usage.
+def chat_parse(response: CcResponse, provider: str, raw: str, *, audio_mime: typing.Union[str, UNSET] = "audio/wav", _baml: _BamlOptions | None = None) -> ai.ModelTurn:
+    """One decoded response -> canonical content blocks and stop reason.
 
-    `raw` is the response text, used only to populate `ai.errors.ParseFailed`
+    `raw` is the response text, used to populate `ai.errors.InvalidResponse`
     when the envelope carries no usable choice.
 
     Divergence from both prior implementations, deliberate: more than one choice
@@ -679,11 +798,11 @@ def chat_parse(response: CcResponse, provider: str, raw: str, *, audio_mime: typ
     hostile; the first choice is used and the rest ignored.
 
     Raises:
-        ParseFailed"""
-async def chat_parse_async(response: CcResponse, provider: str, raw: str, *, audio_mime: typing.Union[str, UNSET] = "audio/wav") -> ai.ModelTurn:
-    """One decoded response -> canonical content blocks, stop reason and usage.
+        InvalidResponse, ParseFailed, ProviderError"""
+async def chat_parse_async(response: CcResponse, provider: str, raw: str, *, audio_mime: typing.Union[str, UNSET] = "audio/wav", _baml: _BamlOptions | None = None) -> ai.ModelTurn:
+    """One decoded response -> canonical content blocks and stop reason.
 
-    `raw` is the response text, used only to populate `ai.errors.ParseFailed`
+    `raw` is the response text, used to populate `ai.errors.InvalidResponse`
     when the envelope carries no usable choice.
 
     Divergence from both prior implementations, deliberate: more than one choice
@@ -692,39 +811,45 @@ async def chat_parse_async(response: CcResponse, provider: str, raw: str, *, aud
     hostile; the first choice is used and the rest ignored.
 
     Raises:
-        ParseFailed"""
+        InvalidResponse, ParseFailed, ProviderError"""
 
 
-def _chat_send(request: baml.http.Request, provider: str, client_name: str, *, capture_wire: typing.Union[bool, UNSET] = True, audio_mime: typing.Union[str, UNSET] = "audio/wav", request_timeout_ms: typing.Union[int, None, UNSET] = None) -> ai.ModelTurn:
+def chat_usage(usage: typing.Optional[CcUsage], *, _baml: _BamlOptions | None = None) -> typing.Optional[ai.events.Usage]:
+    """A chat response's or stream chunk's usage, null when it reported none."""
+async def chat_usage_async(usage: typing.Optional[CcUsage], *, _baml: _BamlOptions | None = None) -> typing.Optional[ai.events.Usage]:
+    """A chat response's or stream chunk's usage, null when it reported none."""
+
+
+def _chat_send(request: baml.http.Request, provider: str, requested_model: str, *, capture_wire: typing.Union[bool, UNSET] = True, audio_mime: typing.Union[str, UNSET] = "audio/wav", _baml: _BamlOptions | None = None) -> ai.ModelTurn:
     """(internal) Transport + classification for the non-streaming path. This mirrors
     `ai.wire.send_as_with_wire` but decodes through `baml.json.to`, which honours
     the `baml.FromJson` override that maps the `function` wire key onto
-    `CcToolCall.fn` — so the LLMCall wire record is built inline here with the
+    `CcToolCall.fn` — so the ModelCall wire record is built inline here with the
     same shape `send_as_with_wire` produces.
 
     Raises:
         Timeout"""
-async def _chat_send_async(request: baml.http.Request, provider: str, client_name: str, *, capture_wire: typing.Union[bool, UNSET] = True, audio_mime: typing.Union[str, UNSET] = "audio/wav", request_timeout_ms: typing.Union[int, None, UNSET] = None) -> ai.ModelTurn:
+async def _chat_send_async(request: baml.http.Request, provider: str, requested_model: str, *, capture_wire: typing.Union[bool, UNSET] = True, audio_mime: typing.Union[str, UNSET] = "audio/wav", _baml: _BamlOptions | None = None) -> ai.ModelTurn:
     """(internal) Transport + classification for the non-streaming path. This mirrors
     `ai.wire.send_as_with_wire` but decodes through `baml.json.to`, which honours
     the `baml.FromJson` override that maps the `function` wire key onto
-    `CcToolCall.fn` — so the LLMCall wire record is built inline here with the
+    `CcToolCall.fn` — so the ModelCall wire record is built inline here with the
     same shape `send_as_with_wire` produces.
 
     Raises:
         Timeout"""
 
 
-def chat_invoke(compat: ChatCompat, params: ChatParams, input: ai.ModelTurnInput, *, capture_wire: typing.Union[bool, UNSET] = True, request_timeout_ms: typing.Union[int, None, UNSET] = None) -> ai.ModelTurn:
+def chat_invoke(compat: ChatCompat, params: ChatParams, input: ai.ModelTurnInput, *, capture_wire: typing.Union[bool, UNSET] = True, timeout_options: typing.Union[ai.LlmTimeoutOptions, None, UNSET] = None, _baml: _BamlOptions | None = None) -> ai.ModelTurn:
     """The one internal entry point: render, send, normalize — one model turn.
 
     Raises:
-        InvalidArgument, Io, Timeout, SerializationError"""
-async def chat_invoke_async(compat: ChatCompat, params: ChatParams, input: ai.ModelTurnInput, *, capture_wire: typing.Union[bool, UNSET] = True, request_timeout_ms: typing.Union[int, None, UNSET] = None) -> ai.ModelTurn:
+        InvalidArgument, Timeout, SerializationError"""
+async def chat_invoke_async(compat: ChatCompat, params: ChatParams, input: ai.ModelTurnInput, *, capture_wire: typing.Union[bool, UNSET] = True, timeout_options: typing.Union[ai.LlmTimeoutOptions, None, UNSET] = None, _baml: _BamlOptions | None = None) -> ai.ModelTurn:
     """The one internal entry point: render, send, normalize — one model turn.
 
     Raises:
-        InvalidArgument, Io, Timeout, SerializationError"""
+        InvalidArgument, Timeout, SerializationError"""
 
 
 class CcDelta(pydantic.BaseModel):
@@ -742,6 +867,7 @@ class CcStreamChoice(pydantic.BaseModel):
 
 
 class CcStreamChunk(pydantic.BaseModel):
+    error: typing.Optional[CcError] = None
     id: typing.Optional[str] = None
     model: typing.Optional[str] = None
     choices: typing.Optional[typing.List[CcStreamChoice]] = None
@@ -759,69 +885,69 @@ class ChatStreamDecoder(pydantic.BaseModel):
     provider: str
     calls: typing.List[ChatToolCallBuffer]
     @staticmethod
-    def new(provider: str) -> ChatStreamDecoder: ...
+    def new(provider: str, *, _baml: _BamlOptions | None = None) -> ChatStreamDecoder: ...
     @staticmethod
-    async def new_async(provider: str) -> ChatStreamDecoder: ...
-    def _absorb_call_(self, delta: CcToolCall, position: int) -> None:
+    async def new_async(provider: str, *, _baml: _BamlOptions | None = None) -> ChatStreamDecoder: ...
+    def _absorb_call_(self, delta: CcToolCall, position: int, *, _baml: _BamlOptions | None = None) -> None:
         """(internal) Extend (or open) the buffer for one tool-call delta."""
-    async def _absorb_call__async(self, delta: CcToolCall, position: int) -> None:
+    async def _absorb_call__async(self, delta: CcToolCall, position: int, *, _baml: _BamlOptions | None = None) -> None:
         """(internal) Extend (or open) the buffer for one tool-call delta."""
-    def decode(self, batch: str) -> typing.List[ai.stream.Event]:
+    def decode(self, batch: str, *, _baml: _BamlOptions | None = None) -> typing.List[ai.stream.Event]:
         """One `SseStream.next()` batch -> provider-agnostic stream events.
 
         Raises:
-            DecodeError, ParseError, ParseFailed"""
-    async def decode_async(self, batch: str) -> typing.List[ai.stream.Event]:
+            DecodeError, ParseError, InvalidResponse, ProviderError"""
+    async def decode_async(self, batch: str, *, _baml: _BamlOptions | None = None) -> typing.List[ai.stream.Event]:
         """One `SseStream.next()` batch -> provider-agnostic stream events.
 
         Raises:
-            DecodeError, ParseError, ParseFailed"""
-    def tool_uses(self) -> typing.List[ai.content.ToolUse]:
+            DecodeError, ParseError, InvalidResponse, ProviderError"""
+    def tool_uses(self, *, _baml: _BamlOptions | None = None) -> typing.List[ai.content.ToolUse]:
         """The tool calls assembled from the stream, in wire order.
 
         Raises:
             ParseFailed"""
-    async def tool_uses_async(self) -> typing.List[ai.content.ToolUse]:
+    async def tool_uses_async(self, *, _baml: _BamlOptions | None = None) -> typing.List[ai.content.ToolUse]:
         """The tool calls assembled from the stream, in wire order.
 
         Raises:
             ParseFailed"""
 
 
-def _chat_stream_failure(provider: str, detail: str) -> typing.Any:
-    """(internal) `baml.http.fetch_sse` reports a non-2xx as `baml.errors.Io` whose message
+def _chat_stream_failure(provider: str, detail: str, *, _baml: _BamlOptions | None = None) -> typing.Any:
+    """(internal) `baml.http.send_sse` reports a non-2xx as `baml.errors.Io` whose message
     embeds the status and body: "SSE request failed with status 400: {…}". The
     status is the only thing standing between a 400 and a retry-safe
     NetworkFailure that a Retry wrapper would happily replay, so it is recovered
     here and run through the same classifier the non-streaming path uses."""
-async def _chat_stream_failure_async(provider: str, detail: str) -> typing.Any:
-    """(internal) `baml.http.fetch_sse` reports a non-2xx as `baml.errors.Io` whose message
+async def _chat_stream_failure_async(provider: str, detail: str, *, _baml: _BamlOptions | None = None) -> typing.Any:
+    """(internal) `baml.http.send_sse` reports a non-2xx as `baml.errors.Io` whose message
     embeds the status and body: "SSE request failed with status 400: {…}". The
     status is the only thing standing between a 400 and a retry-safe
     NetworkFailure that a Retry wrapper would happily replay, so it is recovered
     here and run through the same classifier the non-streaming path uses."""
 
 
-def _chat_stream_open_failure(provider: str, error: typing.Any) -> None:
+def _chat_stream_open_failure(provider: str, error: typing.Any, *, _baml: _BamlOptions | None = None) -> None:
     """Raises:
         Timeout"""
-async def _chat_stream_open_failure_async(provider: str, error: typing.Any) -> None:
+async def _chat_stream_open_failure_async(provider: str, error: typing.Any, *, _baml: _BamlOptions | None = None) -> None:
     """Raises:
         Timeout"""
 
 
-def chat_invoke_stream(compat: ChatCompat, params: ChatParams, input: ai.ModelTurnInput, *, capture_wire: typing.Union[bool, UNSET] = True, request_timeout_ms: typing.Union[int, None, UNSET] = None, time_to_first_token_timeout_ms: typing.Union[int, None, UNSET] = None) -> ai.stream.TurnStream:
+def chat_invoke_stream(compat: ChatCompat, params: ChatParams, input: ai.ModelTurnInput, *, capture_wire: typing.Union[bool, UNSET] = True, timeout_options: typing.Union[ai.LlmTimeoutOptions, None, UNSET] = None, _baml: _BamlOptions | None = None) -> ai.stream.TurnStream:
     """The streaming entry point: the same request as `chat_invoke` with
     `stream: true`, wrapped in an `ai.stream.TurnStream` over the SSE connection.
 
     Raises:
-        InvalidArgument, Io, Timeout, SerializationError"""
-async def chat_invoke_stream_async(compat: ChatCompat, params: ChatParams, input: ai.ModelTurnInput, *, capture_wire: typing.Union[bool, UNSET] = True, request_timeout_ms: typing.Union[int, None, UNSET] = None, time_to_first_token_timeout_ms: typing.Union[int, None, UNSET] = None) -> ai.stream.TurnStream:
+        InvalidArgument, Timeout, SerializationError"""
+async def chat_invoke_stream_async(compat: ChatCompat, params: ChatParams, input: ai.ModelTurnInput, *, capture_wire: typing.Union[bool, UNSET] = True, timeout_options: typing.Union[ai.LlmTimeoutOptions, None, UNSET] = None, _baml: _BamlOptions | None = None) -> ai.stream.TurnStream:
     """The streaming entry point: the same request as `chat_invoke` with
     `stream: true`, wrapped in an `ai.stream.TurnStream` over the SSE connection.
 
     Raises:
-        InvalidArgument, Io, Timeout, SerializationError"""
+        InvalidArgument, Timeout, SerializationError"""
 
 
 class OaImagesRequest(pydantic.BaseModel):
@@ -867,42 +993,38 @@ class OaImagesResponse(pydantic.BaseModel):
     usage: typing.Optional[OaImagesUsage] = None
 
 
-def _oai_images_client_id(c: vendor.openai.ImageClient) -> str:
-    """(internal) The client's canonical id, shared by `ai.Client.id` and the error paths."""
-async def _oai_images_client_id_async(c: vendor.openai.ImageClient) -> str:
-    """(internal) The client's canonical id, shared by `ai.Client.id` and the error paths."""
-
-
-def _oai_images_drop_nulls(value: baml.json.json) -> baml.json.json:
-    """(internal) Drop every null-valued key, recursively. A typed request class serializes
+def _oai_images_drop_nulls(value: baml.json.json, *, _baml: _BamlOptions | None = None) -> baml.json.json:
+    """(internal) The client's canonical id, shared by `ai.Client.id` and the error paths.
+    (internal) Drop every null-valued key, recursively. A typed request class serializes
     its unset options as explicit nulls; the Images API wants them absent (and
     `merge_request_body`'s null-deletes-a-key contract only makes sense against a
     null-free base)."""
-async def _oai_images_drop_nulls_async(value: baml.json.json) -> baml.json.json:
-    """(internal) Drop every null-valued key, recursively. A typed request class serializes
+async def _oai_images_drop_nulls_async(value: baml.json.json, *, _baml: _BamlOptions | None = None) -> baml.json.json:
+    """(internal) The client's canonical id, shared by `ai.Client.id` and the error paths.
+    (internal) Drop every null-valued key, recursively. A typed request class serializes
     its unset options as explicit nulls; the Images API wants them absent (and
     `merge_request_body`'s null-deletes-a-key contract only makes sense against a
     null-free base)."""
 
 
-def _oai_images_media_rejected(kind: str) -> ai.errors.InvalidRequest:
+def _oai_images_media_rejected(kind: str, *, _baml: _BamlOptions | None = None) -> ai.errors.InvalidRequest:
     """(internal) Media in a prompt is a hard error: /v1/images/generations takes text only
     (image-to-image lives behind /v1/images/edits, which is a multipart endpoint
     and a separate client)."""
-async def _oai_images_media_rejected_async(kind: str) -> ai.errors.InvalidRequest:
+async def _oai_images_media_rejected_async(kind: str, *, _baml: _BamlOptions | None = None) -> ai.errors.InvalidRequest:
     """(internal) Media in a prompt is a hard error: /v1/images/generations takes text only
     (image-to-image lives behind /v1/images/edits, which is a multipart endpoint
     and a separate client)."""
 
 
-def _oai_images_collect(blocks: typing.List[ai.content.Block], parts: typing.List[str]) -> None:
+def _oai_images_collect(blocks: typing.List[ai.content.Block], parts: typing.List[str], *, _baml: _BamlOptions | None = None) -> None:
     """(internal) Collect a turn's text into `parts`: every text block trimmed, blanks
     dropped. Any media block is a hard error: /v1/images/generations takes
     text only, at every position.
 
     Raises:
         InvalidRequest"""
-async def _oai_images_collect_async(blocks: typing.List[ai.content.Block], parts: typing.List[str]) -> None:
+async def _oai_images_collect_async(blocks: typing.List[ai.content.Block], parts: typing.List[str], *, _baml: _BamlOptions | None = None) -> None:
     """(internal) Collect a turn's text into `parts`: every text block trimmed, blanks
     dropped. Any media block is a hard error: /v1/images/generations takes
     text only, at every position.
@@ -911,7 +1033,7 @@ async def _oai_images_collect_async(blocks: typing.List[ai.content.Block], parts
         InvalidRequest"""
 
 
-def _oai_images_prompt_text(prompt: ai.Prompt, journal: ai.Journal) -> str:
+def _oai_images_prompt_text(prompt: ai.Prompt, journal: ai.Journal, *, _baml: _BamlOptions | None = None) -> str:
     """(internal) The rendered prompt as one text block, joined with a blank line. Roles
     carry no meaning for an image endpoint, so they are discarded (sys_llm's
     gateway builder does the same). Journal user turns follow the prompt so a
@@ -920,7 +1042,7 @@ def _oai_images_prompt_text(prompt: ai.Prompt, journal: ai.Journal) -> str:
 
     Raises:
         InvalidRequest"""
-async def _oai_images_prompt_text_async(prompt: ai.Prompt, journal: ai.Journal) -> str:
+async def _oai_images_prompt_text_async(prompt: ai.Prompt, journal: ai.Journal, *, _baml: _BamlOptions | None = None) -> str:
     """(internal) The rendered prompt as one text block, joined with a blank line. Roles
     carry no meaning for an image endpoint, so they are discarded (sys_llm's
     gateway builder does the same). Journal user turns follow the prompt so a
@@ -931,44 +1053,44 @@ async def _oai_images_prompt_text_async(prompt: ai.Prompt, journal: ai.Journal) 
         InvalidRequest"""
 
 
-def _oai_images_response_format(model: str, explicit: typing.Optional[str]) -> typing.Optional[str]:
+def _oai_images_response_format(model: str, explicit: typing.Optional[str], *, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
     """(internal) `response_format` is dall-e-only. An explicit setting always wins; otherwise
     the GPT image models get the field omitted (they reject it and always answer
     base64) and everything else gets `b64_json`, because a `url` answer — the
     dall-e default — is not what a media output type wants."""
-async def _oai_images_response_format_async(model: str, explicit: typing.Optional[str]) -> typing.Optional[str]:
+async def _oai_images_response_format_async(model: str, explicit: typing.Optional[str], *, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
     """(internal) `response_format` is dall-e-only. An explicit setting always wins; otherwise
     the GPT image models get the field omitted (they reject it and always answer
     base64) and everything else gets `b64_json`, because a `url` answer — the
     dall-e default — is not what a media output type wants."""
 
 
-def _oai_images_trim_slash(url: str) -> str: ...
-async def _oai_images_trim_slash_async(url: str) -> str: ...
+def _oai_images_trim_slash(url: str, *, _baml: _BamlOptions | None = None) -> str: ...
+async def _oai_images_trim_slash_async(url: str, *, _baml: _BamlOptions | None = None) -> str: ...
 
 
-def _oai_images_escape_query(raw: str) -> str:
+def _oai_images_escape_query(raw: str, *, _baml: _BamlOptions | None = None) -> str:
     """(internal) Percent-escape the characters that would otherwise change a URL's structure.
     `baml.http` has no query-string builder; this covers what a header/query
     passthrough realistically carries."""
-async def _oai_images_escape_query_async(raw: str) -> str:
+async def _oai_images_escape_query_async(raw: str, *, _baml: _BamlOptions | None = None) -> str:
     """(internal) Percent-escape the characters that would otherwise change a URL's structure.
     `baml.http` has no query-string builder; this covers what a header/query
     passthrough realistically carries."""
 
 
-def _oai_images_with_query(url: str, params: typing.Optional[typing.Dict[str, str]]) -> str: ...
-async def _oai_images_with_query_async(url: str, params: typing.Optional[typing.Dict[str, str]]) -> str: ...
+def _oai_images_with_query(url: str, params: typing.Optional[typing.Dict[str, str]], *, _baml: _BamlOptions | None = None) -> str: ...
+async def _oai_images_with_query_async(url: str, params: typing.Optional[typing.Dict[str, str]], *, _baml: _BamlOptions | None = None) -> str: ...
 
 
-def _oai_images_headers(c: vendor.openai.ImageClient, *, preview: typing.Union[bool, UNSET] = False) -> typing.Dict[str, str]:
+def _oai_images_headers(c: vendor.openai.ImageClient, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> typing.Dict[str, str]:
     """(internal) Provider defaults, then the user's `headers` (lowercased, as the HTTP layer
     stores them), then auth for a live request. A preview leaves user-supplied
     auth intact without resolving or exposing the configured credential.
 
     Raises:
         Io, ParseError, InvalidRequest"""
-async def _oai_images_headers_async(c: vendor.openai.ImageClient, *, preview: typing.Union[bool, UNSET] = False) -> typing.Dict[str, str]:
+async def _oai_images_headers_async(c: vendor.openai.ImageClient, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> typing.Dict[str, str]:
     """(internal) Provider defaults, then the user's `headers` (lowercased, as the HTTP layer
     stores them), then auth for a live request. A preview leaves user-supplied
     auth intact without resolving or exposing the configured credential.
@@ -977,29 +1099,29 @@ async def _oai_images_headers_async(c: vendor.openai.ImageClient, *, preview: ty
         Io, ParseError, InvalidRequest"""
 
 
-def images_render(c: vendor.openai.ImageClient, input: ai.ModelTurnInput, *, preview: typing.Union[bool, UNSET] = False) -> baml.http.Request:
+def images_render(c: vendor.openai.ImageClient, input: ai.ModelTurnInput, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> baml.http.Request:
     """ai.ModelTurnInput -> one Images API request.
 
     Raises:
         Io, ParseError, SerializationError, InvalidRequest, PromptRenderError"""
-async def images_render_async(c: vendor.openai.ImageClient, input: ai.ModelTurnInput, *, preview: typing.Union[bool, UNSET] = False) -> baml.http.Request:
+async def images_render_async(c: vendor.openai.ImageClient, input: ai.ModelTurnInput, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> baml.http.Request:
     """ai.ModelTurnInput -> one Images API request.
 
     Raises:
         Io, ParseError, SerializationError, InvalidRequest, PromptRenderError"""
 
 
-def _oai_images_mime(format: typing.Optional[str]) -> str:
+def _oai_images_mime(format: typing.Optional[str], *, _baml: _BamlOptions | None = None) -> str:
     """(internal) `output_format` names the encoding of the bytes in `b64_json`. The response
     echoes it for the GPT image models; otherwise the client's own setting is the
     best available answer, and png is the API default."""
-async def _oai_images_mime_async(format: typing.Optional[str]) -> str:
+async def _oai_images_mime_async(format: typing.Optional[str], *, _baml: _BamlOptions | None = None) -> str:
     """(internal) `output_format` names the encoding of the bytes in `b64_json`. The response
     echoes it for the GPT image models; otherwise the client's own setting is the
     best available answer, and png is the API default."""
 
 
-def _oai_images_fetch_inline(location: str, fallback_mime: str) -> baml.media.Image:
+def _oai_images_fetch_inline(location: str, fallback_mime: str, *, _baml: _BamlOptions | None = None) -> baml.media.Image:
     """(internal) A `url`-mode datum, fetched and inlined. dall-e's `response_format: "url"`
     answers with a link that OpenAI expires after 60 minutes, and a `-> image`
     value whose `base64()` is empty is useless to user code — so the bytes are
@@ -1008,7 +1130,7 @@ def _oai_images_fetch_inline(location: str, fallback_mime: str) -> baml.media.Im
 
     Raises:
         Io, Timeout, NetworkFailure"""
-async def _oai_images_fetch_inline_async(location: str, fallback_mime: str) -> baml.media.Image:
+async def _oai_images_fetch_inline_async(location: str, fallback_mime: str, *, _baml: _BamlOptions | None = None) -> baml.media.Image:
     """(internal) A `url`-mode datum, fetched and inlined. dall-e's `response_format: "url"`
     answers with a link that OpenAI expires after 60 minutes, and a `-> image`
     value whose `base64()` is empty is useless to user code — so the bytes are
@@ -1019,13 +1141,13 @@ async def _oai_images_fetch_inline_async(location: str, fallback_mime: str) -> b
         Io, Timeout, NetworkFailure"""
 
 
-def _oai_images_block(datum: OaImageDatum, mime: str) -> typing.Optional[ai.content.Media]:
+def _oai_images_block(datum: OaImageDatum, mime: str, *, _baml: _BamlOptions | None = None) -> typing.Optional[ai.content.Media]:
     """(internal) One `data[]` element as a canonical media block, or null when it carried
     neither base64 nor a URL.
 
     Raises:
         Io, Timeout, NetworkFailure"""
-async def _oai_images_block_async(datum: OaImageDatum, mime: str) -> typing.Optional[ai.content.Media]:
+async def _oai_images_block_async(datum: OaImageDatum, mime: str, *, _baml: _BamlOptions | None = None) -> typing.Optional[ai.content.Media]:
     """(internal) One `data[]` element as a canonical media block, or null when it carried
     neither base64 nor a URL.
 
@@ -1033,23 +1155,29 @@ async def _oai_images_block_async(datum: OaImageDatum, mime: str) -> typing.Opti
         Io, Timeout, NetworkFailure"""
 
 
-def images_parse(c: vendor.openai.ImageClient, resp: OaImagesResponse) -> ai.ModelTurn:
+def images_parse(c: vendor.openai.ImageClient, resp: OaImagesResponse, *, _baml: _BamlOptions | None = None) -> ai.ModelTurn:
     """One decoded response -> one model turn of media blocks. An image endpoint
     produces no text and never stops early, so the stop reason is always
     Complete; `usage` is present for the GPT image models only.
 
     Raises:
-        Io, Timeout, NetworkFailure, ParseFailed"""
-async def images_parse_async(c: vendor.openai.ImageClient, resp: OaImagesResponse) -> ai.ModelTurn:
+        Io, Timeout, SerializationError, InvalidResponse, NetworkFailure"""
+async def images_parse_async(c: vendor.openai.ImageClient, resp: OaImagesResponse, *, _baml: _BamlOptions | None = None) -> ai.ModelTurn:
     """One decoded response -> one model turn of media blocks. An image endpoint
     produces no text and never stops early, so the stop reason is always
     Complete; `usage` is present for the GPT image models only.
 
     Raises:
-        Io, Timeout, NetworkFailure, ParseFailed"""
+        Io, Timeout, SerializationError, InvalidResponse, NetworkFailure"""
 
 
-def images_invoke(c: vendor.openai.ImageClient, input: ai.ModelTurnInput) -> ai.ModelTurn:
+def images_usage(resp: OaImagesResponse, *, _baml: _BamlOptions | None = None) -> typing.Optional[ai.events.Usage]:
+    """One decoded response's usage, null when it reported none."""
+async def images_usage_async(resp: OaImagesResponse, *, _baml: _BamlOptions | None = None) -> typing.Optional[ai.events.Usage]:
+    """One decoded response's usage, null when it reported none."""
+
+
+def images_invoke(c: vendor.openai.ImageClient, input: ai.ModelTurnInput, *, _baml: _BamlOptions | None = None) -> ai.ModelTurn:
     """The one internal entry point: render, send, normalize — one model turn.
     There is no streaming counterpart: the Images API's `stream`/`partial_images`
     mode emits partially-rendered previews, which `ai.stream.Event` (text
@@ -1058,7 +1186,7 @@ def images_invoke(c: vendor.openai.ImageClient, input: ai.ModelTurnInput) -> ai.
 
     Raises:
         Io, ParseError, Timeout, SerializationError"""
-async def images_invoke_async(c: vendor.openai.ImageClient, input: ai.ModelTurnInput) -> ai.ModelTurn:
+async def images_invoke_async(c: vendor.openai.ImageClient, input: ai.ModelTurnInput, *, _baml: _BamlOptions | None = None) -> ai.ModelTurn:
     """The one internal entry point: render, send, normalize — one model turn.
     There is no streaming counterpart: the Images API's `stream`/`partial_images`
     mode emits partially-rendered previews, which `ai.stream.Event` (text
@@ -1145,6 +1273,14 @@ class OaReasoningParams(pydantic.BaseModel):
 
 class OaTextParams(pydantic.BaseModel):
     verbosity: typing.Optional[str] = None
+    format: typing.Optional[OaTextFormat] = None
+
+
+class OaTextFormat(pydantic.BaseModel):
+    type: str
+    name: str
+    strict: bool
+    schema: baml.json.json = None
 
 
 class OaResponsesRequest(pydantic.BaseModel):
@@ -1177,6 +1313,7 @@ class OaOutputItem(pydantic.BaseModel):
     arguments: typing.Optional[str] = None
     content: typing.Optional[typing.List[OaContentPart]] = None
     summary: typing.Optional[typing.List[OaContentPart]] = None
+    phase: typing.Optional[str] = None
     result: typing.Optional[str] = None
     revised_prompt: typing.Optional[str] = None
     output_format: typing.Optional[str] = None
@@ -1184,6 +1321,7 @@ class OaOutputItem(pydantic.BaseModel):
 
 class OaInputTokenDetails(pydantic.BaseModel):
     cached_tokens: typing.Optional[int] = None
+    cache_write_tokens: typing.Optional[int] = None
 
 
 class OaOutputTokenDetails(pydantic.BaseModel):
@@ -1218,7 +1356,7 @@ class OaResponse(pydantic.BaseModel):
     error: typing.Optional[OaErrorBody] = None
 
 
-def _prune_nulls(value: baml.json.json) -> baml.json.json:
+def _prune_nulls(value: baml.json.json, *, _baml: _BamlOptions | None = None) -> baml.json.json:
     """(internal) Drop every null-valued map entry, recursively. The typed request classes
     declare optional fields for everything the provider treats as absent, and
     `to_json` renders an unset optional as an explicit null — which is not the
@@ -1231,7 +1369,7 @@ def _prune_nulls(value: baml.json.json) -> baml.json.json:
     optionals. Those subtrees are written back verbatim afterwards by
     `_restore_tool_schemas`; `request_body` is merged after the prune and
     never sees it at all."""
-async def _prune_nulls_async(value: baml.json.json) -> baml.json.json:
+async def _prune_nulls_async(value: baml.json.json, *, _baml: _BamlOptions | None = None) -> baml.json.json:
     """(internal) Drop every null-valued map entry, recursively. The typed request classes
     declare optional fields for everything the provider treats as absent, and
     `to_json` renders an unset optional as an explicit null — which is not the
@@ -1246,53 +1384,53 @@ async def _prune_nulls_async(value: baml.json.json) -> baml.json.json:
     never sees it at all."""
 
 
-def _restore_tool_schemas(body: baml.json.json, tools: typing.Optional[typing.List[OaTool]]) -> baml.json.json:
+def _restore_tool_schemas(body: baml.json.json, tools: typing.Optional[typing.List[OaTool]], *, _baml: _BamlOptions | None = None) -> baml.json.json:
     """(internal) Put the caller's tool schemas back over the pruned body, verbatim. The
     pruned `tools` array is positionally identical to the typed one (prune drops
     map ENTRIES, never array elements), so tool i's schema goes back at index i.
     Only `OaFunctionTool` carries a schema; a builtin tool has nothing to restore."""
-async def _restore_tool_schemas_async(body: baml.json.json, tools: typing.Optional[typing.List[OaTool]]) -> baml.json.json:
+async def _restore_tool_schemas_async(body: baml.json.json, tools: typing.Optional[typing.List[OaTool]], *, _baml: _BamlOptions | None = None) -> baml.json.json:
     """(internal) Put the caller's tool schemas back over the pruned body, verbatim. The
     pruned `tools` array is positionally identical to the typed one (prune drops
     map ENTRIES, never array elements), so tool i's schema goes back at index i.
     Only `OaFunctionTool` carries a schema; a builtin tool has nothing to restore."""
 
 
-def _percent_encode(raw: str) -> str:
+def _percent_encode(raw: str, *, _baml: _BamlOptions | None = None) -> str:
     """(internal) Percent-encode one query-string component (RFC 3986 unreserved set kept).
 
     Raises:
         InvalidArgument"""
-async def _percent_encode_async(raw: str) -> str:
+async def _percent_encode_async(raw: str, *, _baml: _BamlOptions | None = None) -> str:
     """(internal) Percent-encode one query-string component (RFC 3986 unreserved set kept).
 
     Raises:
         InvalidArgument"""
 
 
-def _file_name(source: typing.Optional[str]) -> str:
+def _file_name(source: typing.Optional[str], *, _baml: _BamlOptions | None = None) -> str:
     """(internal) The filename an `input_file` part carries. The API wants one alongside
     `file_data`, and the basename of the source is more useful than a constant."""
-async def _file_name_async(source: typing.Optional[str]) -> str:
+async def _file_name_async(source: typing.Optional[str], *, _baml: _BamlOptions | None = None) -> str:
     """(internal) The filename an `input_file` part carries. The API wants one alongside
     `file_data`, and the basename of the source is more useful than a constant."""
 
 
-def _audio_format(mime_type: str) -> str:
+def _audio_format(mime_type: str, *, _baml: _BamlOptions | None = None) -> str:
     """(internal) The Responses API's `input_audio.format`. mp3 and wav are the documented
     formats; the remaining mappings are carried over from sys_llm so a provider
     that widens the set keeps working."""
-async def _audio_format_async(mime_type: str) -> str:
+async def _audio_format_async(mime_type: str, *, _baml: _BamlOptions | None = None) -> str:
     """(internal) The Responses API's `input_audio.format`. mp3 and wav are the documented
     formats; the remaining mappings are carried over from sys_llm so a provider
     that widens the set keeps working."""
 
 
-def _media_role_error(kind: str, role: str) -> typing.Any: ...
-async def _media_role_error_async(kind: str, role: str) -> typing.Any: ...
+def _media_role_error(kind: str, role: str, *, _baml: _BamlOptions | None = None) -> typing.Any: ...
+async def _media_role_error_async(kind: str, role: str, *, _baml: _BamlOptions | None = None) -> typing.Any: ...
 
 
-def _lower_block(block: ai.content.Block, position: str, *, preview: typing.Union[bool, UNSET] = False) -> OaInputPart:
+def _lower_block(block: ai.content.Block, position: str, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> OaInputPart:
     """(internal) One content block at `position` -> its typed input part. The Responses
     API's input modalities, per position:
 
@@ -1309,8 +1447,8 @@ def _lower_block(block: ai.content.Block, position: str, *, preview: typing.Unio
     (`lower_journal`). There is no video input part at all.
 
     Raises:
-        InvalidArgument, Io, Timeout"""
-async def _lower_block_async(block: ai.content.Block, position: str, *, preview: typing.Union[bool, UNSET] = False) -> OaInputPart:
+        InvalidArgument, Timeout"""
+async def _lower_block_async(block: ai.content.Block, position: str, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> OaInputPart:
     """(internal) One content block at `position` -> its typed input part. The Responses
     API's input modalities, per position:
 
@@ -1327,106 +1465,116 @@ async def _lower_block_async(block: ai.content.Block, position: str, *, preview:
     (`lower_journal`). There is no video input part at all.
 
     Raises:
-        InvalidArgument, Io, Timeout"""
+        InvalidArgument, Timeout"""
 
 
-def _lower_blocks(blocks: typing.List[ai.content.Block], position: str, *, preview: typing.Union[bool, UNSET] = False) -> typing.List[OaInputPart]:
+def _lower_blocks(blocks: typing.List[ai.content.Block], position: str, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> typing.List[OaInputPart]:
     """Raises:
-        InvalidArgument, Io, Timeout"""
-async def _lower_blocks_async(blocks: typing.List[ai.content.Block], position: str, *, preview: typing.Union[bool, UNSET] = False) -> typing.List[OaInputPart]:
+        InvalidArgument, Timeout"""
+async def _lower_blocks_async(blocks: typing.List[ai.content.Block], position: str, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> typing.List[OaInputPart]:
     """Raises:
-        InvalidArgument, Io, Timeout"""
+        InvalidArgument, Timeout"""
 
 
-def lower_prompt(prompt: ai.Prompt, *, preview: typing.Union[bool, UNSET] = False) -> typing.List[OaInputItem]:
+class OaCacheBreakpoint(pydantic.BaseModel):
+    item: int
+    part: int
+    args: baml.json.json = None
+
+
+def lower_prompt(prompt: ai.Prompt, breakpoints: typing.List[OaCacheBreakpoint], *, default_cache_args: typing.Union[baml.json.json, UNSET] = None, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> typing.List[OaInputItem]:
     """Role-less content uses the ordinary user role; `tool` is not a valid
     free-standing Responses message role, so authored tool context is user
     content (actual tool outputs come from the journal path below).
 
+    A `${cache(args)}` in a message becomes a cache breakpoint on the content
+    part before it: the Responses API places a breakpoint ON a part, while the
+    delimiter sits BETWEEN parts, so everything up to and including that part
+    is the cached prefix. The typed parts have no slot for it and `args` is
+    sent as written, so the position is recorded in `breakpoints` and
+    `_apply_cache_breakpoints` writes the key onto the serialized body. The text
+    on either side is trimmed where it faces the delimiter
+    (`ai.wire.prompt_parts`). A `${cache()}` carries `default_cache_args`.
+    Nothing is recorded when no part precedes the delimiter in its message, or
+    when the delimiter has no args and there is no default.
+
     Raises:
-        InvalidArgument, Io, Timeout"""
-async def lower_prompt_async(prompt: ai.Prompt, *, preview: typing.Union[bool, UNSET] = False) -> typing.List[OaInputItem]:
+        InvalidArgument, Timeout"""
+async def lower_prompt_async(prompt: ai.Prompt, breakpoints: typing.List[OaCacheBreakpoint], *, default_cache_args: typing.Union[baml.json.json, UNSET] = None, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> typing.List[OaInputItem]:
     """Role-less content uses the ordinary user role; `tool` is not a valid
     free-standing Responses message role, so authored tool context is user
     content (actual tool outputs come from the journal path below).
 
+    A `${cache(args)}` in a message becomes a cache breakpoint on the content
+    part before it: the Responses API places a breakpoint ON a part, while the
+    delimiter sits BETWEEN parts, so everything up to and including that part
+    is the cached prefix. The typed parts have no slot for it and `args` is
+    sent as written, so the position is recorded in `breakpoints` and
+    `_apply_cache_breakpoints` writes the key onto the serialized body. The text
+    on either side is trimmed where it faces the delimiter
+    (`ai.wire.prompt_parts`). A `${cache()}` carries `default_cache_args`.
+    Nothing is recorded when no part precedes the delimiter in its message, or
+    when the delimiter has no args and there is no default.
+
     Raises:
-        InvalidArgument, Io, Timeout"""
+        InvalidArgument, Timeout"""
 
 
-def prompt_metadata(prompt: ai.Prompt) -> typing.List[typing.Dict[str, baml.json.json]]:
-    """Per-message provider directives (`ai.PromptMessage.metadata`, authored as
-    `${ai.Role { name: "user", metadata: { … } }}`), in prompt order and
-    aligned one-to-one with the items `lower_prompt` produced — the prompt
-    items are always the FIRST items of `input`, the journal's are appended after.
-
-    The Responses API has no per-message directive slot, so PLAN §5's accepted
-    placement for this provider is the CONTENT PART: the keys are forwarded
-    verbatim onto the LAST content item of the message they were authored on
-    (the same "everything up to and including this block" rule the engine used).
-    Applied to the SERIALIZED body, after the null-prune, because a directive is
-    a provider shape: an explicit null in it is the caller's, not an unset field."""
-async def prompt_metadata_async(prompt: ai.Prompt) -> typing.List[typing.Dict[str, baml.json.json]]:
-    """Per-message provider directives (`ai.PromptMessage.metadata`, authored as
-    `${ai.Role { name: "user", metadata: { … } }}`), in prompt order and
-    aligned one-to-one with the items `lower_prompt` produced — the prompt
-    items are always the FIRST items of `input`, the journal's are appended after.
-
-    The Responses API has no per-message directive slot, so PLAN §5's accepted
-    placement for this provider is the CONTENT PART: the keys are forwarded
-    verbatim onto the LAST content item of the message they were authored on
-    (the same "everything up to and including this block" rule the engine used).
-    Applied to the SERIALIZED body, after the null-prune, because a directive is
-    a provider shape: an explicit null in it is the caller's, not an unset field."""
+def _set_cache_breakpoint(item: baml.json.json, breakpoint: OaCacheBreakpoint, *, _baml: _BamlOptions | None = None) -> None: ...
+async def _set_cache_breakpoint_async(item: baml.json.json, breakpoint: OaCacheBreakpoint, *, _baml: _BamlOptions | None = None) -> None: ...
 
 
-def _merge_onto_last_part(item: baml.json.json, directives: typing.Dict[str, baml.json.json]) -> None: ...
-async def _merge_onto_last_part_async(item: baml.json.json, directives: typing.Dict[str, baml.json.json]) -> None: ...
+def _apply_cache_breakpoints(body: baml.json.json, breakpoints: typing.List[OaCacheBreakpoint], *, _baml: _BamlOptions | None = None) -> baml.json.json:
+    """(internal) Write each recorded cache breakpoint onto its content part. The prompt's
+    items are always the FIRST items of `input` (the journal's are appended
+    after), and the null-prune drops map entries, never array elements, so the
+    recorded indices still address the same parts.
+
+    Applied to the SERIALIZED body, after the null-prune, because `args` is the
+    caller's own JSON: an explicit null inside it is theirs, not an unset field.
+    A second breakpoint on the same part replaces the first."""
+async def _apply_cache_breakpoints_async(body: baml.json.json, breakpoints: typing.List[OaCacheBreakpoint], *, _baml: _BamlOptions | None = None) -> baml.json.json:
+    """(internal) Write each recorded cache breakpoint onto its content part. The prompt's
+    items are always the FIRST items of `input` (the journal's are appended
+    after), and the null-prune drops map entries, never array elements, so the
+    recorded indices still address the same parts.
+
+    Applied to the SERIALIZED body, after the null-prune, because `args` is the
+    caller's own JSON: an explicit null inside it is theirs, not an unset field.
+    A second breakpoint on the same part replaces the first."""
 
 
-def _apply_message_metadata(body: baml.json.json, metadata: typing.List[typing.Dict[str, baml.json.json]]) -> baml.json.json: ...
-async def _apply_message_metadata_async(body: baml.json.json, metadata: typing.List[typing.Dict[str, baml.json.json]]) -> baml.json.json: ...
-
-
-def _tool_output(parts: typing.List[OaInputPart]) -> typing.Union[str, typing.List[OaInputPart]]:
+def _tool_output(parts: typing.List[OaInputPart], *, _baml: _BamlOptions | None = None) -> typing.Union[str, typing.List[OaInputPart]]:
     """(internal) A tool result's `output`: the plain string when the result is text
     only (one text part, or nothing), the part list otherwise."""
-async def _tool_output_async(parts: typing.List[OaInputPart]) -> typing.Union[str, typing.List[OaInputPart]]:
+async def _tool_output_async(parts: typing.List[OaInputPart], *, _baml: _BamlOptions | None = None) -> typing.Union[str, typing.List[OaInputPart]]:
     """(internal) A tool result's `output`: the plain string when the result is text
     only (one text part, or nothing), the part list otherwise."""
 
 
-def lower_journal(j: ai.Journal, metadata: typing.List[typing.Dict[str, baml.json.json]], *, preview: typing.Union[bool, UNSET] = False) -> typing.List[OaInputItem]:
+def lower_journal(j: ai.Journal, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> typing.List[OaInputItem]:
     """ai.Journal -> Responses API input items. Only promptable events lower;
     ai.RunStarted, ai.ToolRequested, ai.Usage, and ai.FinalProduced are
     journal-only. Callers pass the SANITIZED journal (see _request).
 
-    `metadata` is the per-item directive list `_apply_message_metadata` walks:
-    one map is appended per item produced here (a user turn's own, an empty
-    one for everything else) so it stays aligned one-to-one with `input`.
-
     Raises:
-        InvalidArgument, Io, Timeout, SerializationError"""
-async def lower_journal_async(j: ai.Journal, metadata: typing.List[typing.Dict[str, baml.json.json]], *, preview: typing.Union[bool, UNSET] = False) -> typing.List[OaInputItem]:
+        InvalidArgument, Timeout, SerializationError"""
+async def lower_journal_async(j: ai.Journal, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> typing.List[OaInputItem]:
     """ai.Journal -> Responses API input items. Only promptable events lower;
     ai.RunStarted, ai.ToolRequested, ai.Usage, and ai.FinalProduced are
     journal-only. Callers pass the SANITIZED journal (see _request).
 
-    `metadata` is the per-item directive list `_apply_message_metadata` walks:
-    one map is appended per item produced here (a user turn's own, an empty
-    one for everything else) so it stays aligned one-to-one with `input`.
-
     Raises:
-        InvalidArgument, Io, Timeout, SerializationError"""
+        InvalidArgument, Timeout, SerializationError"""
 
 
-def _wants_image(output_type: typing.Any) -> bool:
+def _wants_image(output_type: typing.Any, *, _baml: _BamlOptions | None = None) -> bool:
     """(internal) Does the declared output type ask for images? This is the port of sys_llm's
     `image_generation_mode` (lib.rs:465-508): every media shape that can hold an
     `image` enables the provider-side image_generation tool. sys_llm set
     `tool_choice` for both Required and Available, so the two modes only ever
     differed in that one is unreachable — one predicate is enough."""
-async def _wants_image_async(output_type: typing.Any) -> bool:
+async def _wants_image_async(output_type: typing.Any, *, _baml: _BamlOptions | None = None) -> bool:
     """(internal) Does the declared output type ask for images? This is the port of sys_llm's
     `image_generation_mode` (lib.rs:465-508): every media shape that can hold an
     `image` enables the provider-side image_generation tool. sys_llm set
@@ -1434,33 +1582,55 @@ async def _wants_image_async(output_type: typing.Any) -> bool:
     differed in that one is unreachable — one predicate is enough."""
 
 
-def _tools(toolbox: ai.tools.Toolbox, wants_image: bool) -> typing.Optional[typing.List[OaTool]]:
+def _tools(toolbox: ai.tools.Toolbox, wants_image: bool, *, _baml: _BamlOptions | None = None) -> typing.Optional[typing.List[OaTool]]:
     """Raises:
         SerializationError"""
-async def _tools_async(toolbox: ai.tools.Toolbox, wants_image: bool) -> typing.Optional[typing.List[OaTool]]:
+async def _tools_async(toolbox: ai.tools.Toolbox, wants_image: bool, *, _baml: _BamlOptions | None = None) -> typing.Optional[typing.List[OaTool]]:
     """Raises:
         SerializationError"""
 
 
-def _tool_choice(tools: typing.Optional[typing.List[OaTool]], wants_image: bool) -> typing.Union[str, OaToolChoiceObject, None]: ...
-async def _tool_choice_async(tools: typing.Optional[typing.List[OaTool]], wants_image: bool) -> typing.Union[str, OaToolChoiceObject, None]: ...
+def _tool_choice(tools: typing.Optional[typing.List[OaTool]], wants_image: bool, *, _baml: _BamlOptions | None = None) -> typing.Union[str, OaToolChoiceObject, None]: ...
+async def _tool_choice_async(tools: typing.Optional[typing.List[OaTool]], wants_image: bool, *, _baml: _BamlOptions | None = None) -> typing.Union[str, OaToolChoiceObject, None]: ...
 
 
-def _reasoning(c: vendor.openai.ResponsesClient) -> typing.Optional[OaReasoningParams]: ...
-async def _reasoning_async(c: vendor.openai.ResponsesClient) -> typing.Optional[OaReasoningParams]: ...
+def _reasoning(c: vendor.openai.ResponsesClient, *, _baml: _BamlOptions | None = None) -> typing.Optional[OaReasoningParams]: ...
+async def _reasoning_async(c: vendor.openai.ResponsesClient, *, _baml: _BamlOptions | None = None) -> typing.Optional[OaReasoningParams]: ...
 
 
-def _text(c: vendor.openai.ResponsesClient) -> typing.Optional[OaTextParams]: ...
-async def _text_async(c: vendor.openai.ResponsesClient) -> typing.Optional[OaTextParams]: ...
+def _text(c: vendor.openai.ResponsesClient, structured: typing.Optional[StructuredOutput], *, _baml: _BamlOptions | None = None) -> typing.Optional[OaTextParams]: ...
+async def _text_async(c: vendor.openai.ResponsesClient, structured: typing.Optional[StructuredOutput], *, _baml: _BamlOptions | None = None) -> typing.Optional[OaTextParams]: ...
 
 
-def _headers(c: vendor.openai.ResponsesClient, *, preview: typing.Union[bool, UNSET] = False) -> typing.Dict[str, str]:
+def _restore_format_schema(body: baml.json.json, structured: typing.Optional[StructuredOutput], *, _baml: _BamlOptions | None = None) -> baml.json.json:
+    """(internal) Put the output type's schema back over the pruned body, verbatim: the
+    prune treats a `null` in it as an unset option, which it is not."""
+async def _restore_format_schema_async(body: baml.json.json, structured: typing.Optional[StructuredOutput], *, _baml: _BamlOptions | None = None) -> baml.json.json:
+    """(internal) Put the output type's schema back over the pruned body, verbatim: the
+    prune treats a `null` in it as an unset option, which it is not."""
+
+
+def _structured_output(c: vendor.openai.ResponsesClient, input: ai.ModelTurnInput, *, _baml: _BamlOptions | None = None) -> typing.Optional[StructuredOutput]:
+    """(internal) The structured output a request carries: null unless the client turned
+    structured outputs on.
+
+    Raises:
+        InvalidRequest"""
+async def _structured_output_async(c: vendor.openai.ResponsesClient, input: ai.ModelTurnInput, *, _baml: _BamlOptions | None = None) -> typing.Optional[StructuredOutput]:
+    """(internal) The structured output a request carries: null unless the client turned
+    structured outputs on.
+
+    Raises:
+        InvalidRequest"""
+
+
+def _headers(c: vendor.openai.ResponsesClient, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> typing.Dict[str, str]:
     """(internal) content-type, then the caller's headers (lowercased), then authorization —
     credentials are the client's own business and always win.
 
     Raises:
         Io, ParseError, InvalidRequest"""
-async def _headers_async(c: vendor.openai.ResponsesClient, *, preview: typing.Union[bool, UNSET] = False) -> typing.Dict[str, str]:
+async def _headers_async(c: vendor.openai.ResponsesClient, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> typing.Dict[str, str]:
     """(internal) content-type, then the caller's headers (lowercased), then authorization —
     credentials are the client's own business and always win.
 
@@ -1468,47 +1638,47 @@ async def _headers_async(c: vendor.openai.ResponsesClient, *, preview: typing.Un
         Io, ParseError, InvalidRequest"""
 
 
-def _url(c: vendor.openai.ResponsesClient) -> str:
+def _url(c: vendor.openai.ResponsesClient, *, _baml: _BamlOptions | None = None) -> str:
     """Raises:
         InvalidArgument, Io, ParseError"""
-async def _url_async(c: vendor.openai.ResponsesClient) -> str:
+async def _url_async(c: vendor.openai.ResponsesClient, *, _baml: _BamlOptions | None = None) -> str:
     """Raises:
         InvalidArgument, Io, ParseError"""
 
 
-def render(c: vendor.openai.ResponsesClient, input: ai.ModelTurnInput) -> baml.http.Request:
+def render(c: vendor.openai.ResponsesClient, input: ai.ModelTurnInput, *, _baml: _BamlOptions | None = None) -> baml.http.Request:
     """ai.ModelTurnInput -> one Responses API request.
 
     Raises:
         InvalidArgument, Io, ParseError, Timeout, SerializationError"""
-async def render_async(c: vendor.openai.ResponsesClient, input: ai.ModelTurnInput) -> baml.http.Request:
+async def render_async(c: vendor.openai.ResponsesClient, input: ai.ModelTurnInput, *, _baml: _BamlOptions | None = None) -> baml.http.Request:
     """ai.ModelTurnInput -> one Responses API request.
 
     Raises:
         InvalidArgument, Io, ParseError, Timeout, SerializationError"""
 
 
-def preview(c: vendor.openai.ResponsesClient, input: ai.ModelTurnInput) -> baml.http.Request:
-    """The request one `render` would send. This path never reads local media or
-    downloads URLs; provider-unsupported URL forms return PreviewUnsupported.
+def preview(c: vendor.openai.ResponsesClient, input: ai.ModelTurnInput, *, _baml: _BamlOptions | None = None) -> baml.http.Request:
+    """The request one `render` would send. This path never downloads URLs;
+    provider-unsupported URL forms return PreviewUnsupported.
 
     Raises:
         InvalidArgument, Io, ParseError, Timeout, SerializationError"""
-async def preview_async(c: vendor.openai.ResponsesClient, input: ai.ModelTurnInput) -> baml.http.Request:
-    """The request one `render` would send. This path never reads local media or
-    downloads URLs; provider-unsupported URL forms return PreviewUnsupported.
+async def preview_async(c: vendor.openai.ResponsesClient, input: ai.ModelTurnInput, *, _baml: _BamlOptions | None = None) -> baml.http.Request:
+    """The request one `render` would send. This path never downloads URLs;
+    provider-unsupported URL forms return PreviewUnsupported.
 
     Raises:
         InvalidArgument, Io, ParseError, Timeout, SerializationError"""
 
 
-def _request(c: vendor.openai.ResponsesClient, input: ai.ModelTurnInput, stream: bool, *, preview: typing.Union[bool, UNSET] = False) -> baml.http.Request:
+def _request(c: vendor.openai.ResponsesClient, input: ai.ModelTurnInput, structured: typing.Optional[StructuredOutput], stream: bool, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> baml.http.Request:
     """(internal) The shared request builder: identical body for both paths, plus the
     `stream: true` flag on the streaming one.
 
     Raises:
         InvalidArgument, Io, ParseError, Timeout, SerializationError"""
-async def _request_async(c: vendor.openai.ResponsesClient, input: ai.ModelTurnInput, stream: bool, *, preview: typing.Union[bool, UNSET] = False) -> baml.http.Request:
+async def _request_async(c: vendor.openai.ResponsesClient, input: ai.ModelTurnInput, structured: typing.Optional[StructuredOutput], stream: bool, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> baml.http.Request:
     """(internal) The shared request builder: identical body for both paths, plus the
     `stream: true` flag on the streaming one.
 
@@ -1516,75 +1686,103 @@ async def _request_async(c: vendor.openai.ResponsesClient, input: ai.ModelTurnIn
         InvalidArgument, Io, ParseError, Timeout, SerializationError"""
 
 
-def _image_mime(output_format: typing.Optional[str]) -> str:
+def _image_mime(output_format: typing.Optional[str], *, _baml: _BamlOptions | None = None) -> str:
     """(internal) The mime type of an image_generation_call payload."""
-async def _image_mime_async(output_format: typing.Optional[str]) -> str:
+async def _image_mime_async(output_format: typing.Optional[str], *, _baml: _BamlOptions | None = None) -> str:
     """(internal) The mime type of an image_generation_call payload."""
 
 
-def _transient_code(code: str) -> bool:
-    """(internal) Error codes that name a TRANSIENT provider-side failure. The Responses API's
-    own `response.failed` example is `{"code":"server_error", …}` — a 500
-    delivered inside a 200 body — and the same failure arriving as an HTTP status
-    classifies as ai.errors.NetworkFailure (ai.errors.classify_http maps >=500
-    there). Classifying the in-body form as InvalidRequest instead would make it
-    permanently non-retryable under ai.Retry's default judgment, purely because
-    of which envelope the provider chose."""
-async def _transient_code_async(code: str) -> bool:
-    """(internal) Error codes that name a TRANSIENT provider-side failure. The Responses API's
-    own `response.failed` example is `{"code":"server_error", …}` — a 500
-    delivered inside a 200 body — and the same failure arriving as an HTTP status
-    classifies as ai.errors.NetworkFailure (ai.errors.classify_http maps >=500
-    there). Classifying the in-body form as InvalidRequest instead would make it
-    permanently non-retryable under ai.Retry's default judgment, purely because
-    of which envelope the provider chose."""
-
-
-def _error_failure(err: OaErrorBody) -> typing.Any:
-    """(internal) A provider-reported error becomes the precise ai.errors class, never a
-    blanket NetworkFailure: a retry-safe classification on a 400-shaped failure
-    is what makes a Retry policy replay an invalid request forever.
+def _error_failure(err: OaErrorBody, *, _baml: _BamlOptions | None = None) -> ai.errors.ProviderError:
+    """(internal) Preserve a valid provider-reported failure as structured data.
 
     Raises:
         SerializationError"""
-async def _error_failure_async(err: OaErrorBody) -> typing.Any:
-    """(internal) A provider-reported error becomes the precise ai.errors class, never a
-    blanket NetworkFailure: a retry-safe classification on a 400-shaped failure
-    is what makes a Retry policy replay an invalid request forever.
+async def _error_failure_async(err: OaErrorBody, *, _baml: _BamlOptions | None = None) -> ai.errors.ProviderError:
+    """(internal) Preserve a valid provider-reported failure as structured data.
 
     Raises:
         SerializationError"""
 
 
-def _response_failure(resp: OaResponse) -> typing.Any:
+def _response_failure(resp: OaResponse, *, _baml: _BamlOptions | None = None) -> typing.Any:
     """Raises:
         SerializationError"""
-async def _response_failure_async(resp: OaResponse) -> typing.Any:
+async def _response_failure_async(resp: OaResponse, *, _baml: _BamlOptions | None = None) -> typing.Any:
     """Raises:
         SerializationError"""
 
 
-def parse(resp: OaResponse) -> ai.ModelTurn:
+def parse(resp: OaResponse, *, _baml: _BamlOptions | None = None) -> ai.ModelTurn:
     """One decoded response -> canonical content blocks and a stop reason.
 
     Raises:
         SerializationError"""
-async def parse_async(resp: OaResponse) -> ai.ModelTurn:
+async def parse_async(resp: OaResponse, *, _baml: _BamlOptions | None = None) -> ai.ModelTurn:
     """One decoded response -> canonical content blocks and a stop reason.
 
     Raises:
         SerializationError"""
 
 
-def invoke(c: vendor.openai.ResponsesClient, input: ai.ModelTurnInput) -> ai.ModelTurn:
-    """The one internal entry point: render, send, normalize — one model turn.
+def usage(resp: OaResponse, *, _baml: _BamlOptions | None = None) -> typing.Optional[ai.events.Usage]:
+    """One decoded response's usage, null when it reported none."""
+async def usage_async(resp: OaResponse, *, _baml: _BamlOptions | None = None) -> typing.Optional[ai.events.Usage]:
+    """One decoded response's usage, null when it reported none."""
 
-    Raises:
+
+def _accepts_any_text(t: typing.Any, *, _baml: _BamlOptions | None = None) -> bool:
+    """The one internal entry point: render, send, normalize — one model turn.
+    Whether any text parses as `t`: `string`, or a union with a `string` member
+    (`string?` included)."""
+async def _accepts_any_text_async(t: typing.Any, *, _baml: _BamlOptions | None = None) -> bool:
+    """The one internal entry point: render, send, normalize — one model turn.
+    Whether any text parses as `t`: `string`, or a union with a `string` member
+    (`string?` included)."""
+
+
+def _parse_output(output_type: typing.Any, text: str, *, _baml: _BamlOptions | None = None) -> typing.Optional[ai.ParsedOutput]:
+    """`text` parsed into `output_type`, or null when it is blank or does not
+    parse."""
+async def _parse_output_async(output_type: typing.Any, text: str, *, _baml: _BamlOptions | None = None) -> typing.Optional[ai.ParsedOutput]:
+    """`text` parsed into `output_type`, or null when it is blank or does not
+    parse."""
+
+
+def _commentary_output(resp: OaResponse, output_type: typing.Any, *, _baml: _BamlOptions | None = None) -> typing.Optional[ai.ParsedOutput]:
+    """The output that a `commentary` message holds, or null.
+
+    Models from gpt-5.3-codex on can answer in several messages, labeled by
+    `phase`: `commentary` messages for the model's next step, then a
+    `final_answer`. When the output is prompted as text and the response makes
+    no native tool call, the model writes that step as the commentary (for
+    example the tool calls of a prompted action schema), then writes the
+    `final_answer` as if the step had already run. So the first commentary
+    message that parses into the output type is the turn's output: the runner
+    takes it and does not parse the final answer.
+
+    Null for a text-shaped output type: any text parses as a string, so a
+    commentary preamble would replace the answer."""
+async def _commentary_output_async(resp: OaResponse, output_type: typing.Any, *, _baml: _BamlOptions | None = None) -> typing.Optional[ai.ParsedOutput]:
+    """The output that a `commentary` message holds, or null.
+
+    Models from gpt-5.3-codex on can answer in several messages, labeled by
+    `phase`: `commentary` messages for the model's next step, then a
+    `final_answer`. When the output is prompted as text and the response makes
+    no native tool call, the model writes that step as the commentary (for
+    example the tool calls of a prompted action schema), then writes the
+    `final_answer` as if the step had already run. So the first commentary
+    message that parses into the output type is the turn's output: the runner
+    takes it and does not parse the final answer.
+
+    Null for a text-shaped output type: any text parses as a string, so a
+    commentary preamble would replace the answer."""
+
+
+def invoke(c: vendor.openai.ResponsesClient, input: ai.ModelTurnInput, *, _baml: _BamlOptions | None = None) -> ai.ModelTurn:
+    """Raises:
         InvalidArgument, Io, ParseError, Timeout, SerializationError"""
-async def invoke_async(c: vendor.openai.ResponsesClient, input: ai.ModelTurnInput) -> ai.ModelTurn:
-    """The one internal entry point: render, send, normalize — one model turn.
-
-    Raises:
+async def invoke_async(c: vendor.openai.ResponsesClient, input: ai.ModelTurnInput, *, _baml: _BamlOptions | None = None) -> ai.ModelTurn:
+    """Raises:
         InvalidArgument, Io, ParseError, Timeout, SerializationError"""
 
 
@@ -1608,18 +1806,18 @@ class OaStreamState(pydantic.BaseModel):
     text_started: typing.Dict[str, bool]
     call_arguments: typing.Dict[str, str]
     @staticmethod
-    def new() -> OaStreamState: ...
+    def new(*, _baml: _BamlOptions | None = None) -> OaStreamState: ...
     @staticmethod
-    async def new_async() -> OaStreamState: ...
+    async def new_async(*, _baml: _BamlOptions | None = None) -> OaStreamState: ...
 
 
-def _event_key(event: OaStreamEvent) -> str:
+def _event_key(event: OaStreamEvent, *, _baml: _BamlOptions | None = None) -> str:
     """(internal) Which CONTENT PART an event belongs to. `item_id` is the API's own item key
     (`output_index` is the fallback for events that omit it), and `content_index`
     distinguishes the parts within one item: a message may carry several text
     parts, and keying by item alone would let a delta on part 0 suppress the
     `output_text.done` that is the only delivery of part 1."""
-async def _event_key_async(event: OaStreamEvent) -> str:
+async def _event_key_async(event: OaStreamEvent, *, _baml: _BamlOptions | None = None) -> str:
     """(internal) Which CONTENT PART an event belongs to. `item_id` is the API's own item key
     (`output_index` is the fallback for events that omit it), and `content_index`
     distinguishes the parts within one item: a message may carry several text
@@ -1627,72 +1825,184 @@ async def _event_key_async(event: OaStreamEvent) -> str:
     `output_text.done` that is the only delivery of part 1."""
 
 
-def _stream_failure(event: OaStreamEvent) -> typing.Any:
+def _stream_failure(event: OaStreamEvent, *, _baml: _BamlOptions | None = None) -> typing.Any:
     """Raises:
         SerializationError"""
-async def _stream_failure_async(event: OaStreamEvent) -> typing.Any:
+async def _stream_failure_async(event: OaStreamEvent, *, _baml: _BamlOptions | None = None) -> typing.Any:
     """Raises:
         SerializationError"""
 
 
-def _stream_events(event: OaStreamEvent, sse_name: typing.Optional[str], state: OaStreamState) -> typing.List[ai.stream.Event]:
+def _stream_events(event: OaStreamEvent, sse_name: typing.Optional[str], state: OaStreamState, *, _baml: _BamlOptions | None = None) -> typing.List[ai.stream.Event]:
     """(internal) One decoded SSE event -> provider-agnostic stream events.
 
     Raises:
         SerializationError"""
-async def _stream_events_async(event: OaStreamEvent, sse_name: typing.Optional[str], state: OaStreamState) -> typing.List[ai.stream.Event]:
+async def _stream_events_async(event: OaStreamEvent, sse_name: typing.Optional[str], state: OaStreamState, *, _baml: _BamlOptions | None = None) -> typing.List[ai.stream.Event]:
     """(internal) One decoded SSE event -> provider-agnostic stream events.
 
     Raises:
         SerializationError"""
 
 
-def _decode_batch(batch: str, state: OaStreamState) -> typing.List[ai.stream.Event]:
+def _decode_batch(batch: str, state: OaStreamState, *, _baml: _BamlOptions | None = None) -> typing.List[ai.stream.Event]:
     """(internal) One SseStream batch -> provider-agnostic stream events.
 
     Raises:
         DecodeError, ParseError, SerializationError"""
-async def _decode_batch_async(batch: str, state: OaStreamState) -> typing.List[ai.stream.Event]:
+async def _decode_batch_async(batch: str, state: OaStreamState, *, _baml: _BamlOptions | None = None) -> typing.List[ai.stream.Event]:
     """(internal) One SseStream batch -> provider-agnostic stream events.
 
     Raises:
         DecodeError, ParseError, SerializationError"""
 
 
-def _sse_failure(error: typing.Any) -> typing.Any:
-    """(internal) A failure opening the SSE connection. `baml.http.fetch_sse` reports a non-2xx
+def _sse_failure(error: typing.Any, *, _baml: _BamlOptions | None = None) -> typing.Any:
+    """(internal) A failure opening the SSE connection. `baml.http.send_sse` reports a non-2xx
     status as an Io error whose message carries the status and body, so the
     status is recovered and classified exactly like ai.wire.send_as does — a 401
     or 429 on the streaming path must NOT be reported as a retry-safe transport
     failure."""
-async def _sse_failure_async(error: typing.Any) -> typing.Any:
-    """(internal) A failure opening the SSE connection. `baml.http.fetch_sse` reports a non-2xx
+async def _sse_failure_async(error: typing.Any, *, _baml: _BamlOptions | None = None) -> typing.Any:
+    """(internal) A failure opening the SSE connection. `baml.http.send_sse` reports a non-2xx
     status as an Io error whose message carries the status and body, so the
     status is recovered and classified exactly like ai.wire.send_as does — a 401
     or 429 on the streaming path must NOT be reported as a retry-safe transport
     failure."""
 
 
-def _stream_open_failure(error: typing.Any) -> None:
+def _stream_open_failure(error: typing.Any, *, _baml: _BamlOptions | None = None) -> None:
     """Raises:
         Timeout"""
-async def _stream_open_failure_async(error: typing.Any) -> None:
+async def _stream_open_failure_async(error: typing.Any, *, _baml: _BamlOptions | None = None) -> None:
     """Raises:
         Timeout"""
 
 
-def invoke_stream(c: vendor.openai.ResponsesClient, input: ai.ModelTurnInput) -> ai.stream.TurnStream:
+def invoke_stream(c: vendor.openai.ResponsesClient, input: ai.ModelTurnInput, *, _baml: _BamlOptions | None = None) -> ai.stream.TurnStream:
     """The streaming entry point: the same request as `invoke` with `stream: true`,
     wrapped in an ai.TurnStream over the SSE connection.
 
     Raises:
         InvalidArgument, Io, ParseError, Timeout, SerializationError"""
-async def invoke_stream_async(c: vendor.openai.ResponsesClient, input: ai.ModelTurnInput) -> ai.stream.TurnStream:
+async def invoke_stream_async(c: vendor.openai.ResponsesClient, input: ai.ModelTurnInput, *, _baml: _BamlOptions | None = None) -> ai.stream.TurnStream:
     """The streaming entry point: the same request as `invoke` with `stream: true`,
     wrapped in an ai.TurnStream over the SSE connection.
 
     Raises:
         InvalidArgument, Io, ParseError, Timeout, SerializationError"""
+
+
+class StructuredOutput(pydantic.BaseModel):
+    output_type: typing.Any
+    schema: baml.json.json = None
+    wrapped: bool
+    def name(self, *, _baml: _BamlOptions | None = None) -> str:
+        """The `name` the schema goes by on the wire."""
+    async def name_async(self, *, _baml: _BamlOptions | None = None) -> str:
+        """The `name` the schema goes by on the wire."""
+    def decode(self, provider: str, text: str, *, _baml: _BamlOptions | None = None) -> ai.ParsedOutput:
+        """The answer `text` as a value of the output type, read strictly: the
+        JSON must have the shape the schema describes, under the names it uses.
+        Anything else is `ai.errors.ParseFailed`, never a lenient parse.
+
+        Raises:
+            SerializationError, ParseFailed"""
+    async def decode_async(self, provider: str, text: str, *, _baml: _BamlOptions | None = None) -> ai.ParsedOutput:
+        """The answer `text` as a value of the output type, read strictly: the
+        JSON must have the shape the schema describes, under the names it uses.
+        Anything else is `ai.errors.ParseFailed`, never a lenient parse.
+
+        Raises:
+            SerializationError, ParseFailed"""
+
+
+def structured_output(output_type: typing.Any, provider: str, *, _baml: _BamlOptions | None = None) -> StructuredOutput:
+    """(internal) The structured output for `output_type`. A type strict mode cannot hold
+    is rejected here, before a request is sent, as `ai.errors.InvalidRequest`:
+    one with no JSON form (`baml.json.schema` says why), one that can hold
+    media, and one with a map in it.
+
+    Raises:
+        InvalidRequest"""
+async def structured_output_async(output_type: typing.Any, provider: str, *, _baml: _BamlOptions | None = None) -> StructuredOutput:
+    """(internal) The structured output for `output_type`. A type strict mode cannot hold
+    is rejected here, before a request is sent, as `ai.errors.InvalidRequest`:
+    one with no JSON form (`baml.json.schema` says why), one that can hold
+    media, and one with a map in it.
+
+    Raises:
+        InvalidRequest"""
+
+
+def _is_object_schema(schema: typing.Dict[str, baml.json.json], *, _baml: _BamlOptions | None = None) -> bool:
+    """(internal) Whether `schema` is a plain object schema, which strict mode takes at
+    the root as it is: not a union (`anyOf`), a reference, or a nullable object."""
+async def _is_object_schema_async(schema: typing.Dict[str, baml.json.json], *, _baml: _BamlOptions | None = None) -> bool:
+    """(internal) Whether `schema` is a plain object schema, which strict mode takes at
+    the root as it is: not a union (`anyOf`), a reference, or a nullable object."""
+
+
+def _strict(schema: baml.json.json, type_name: str, provider: str, *, _baml: _BamlOptions | None = None) -> baml.json.json:
+    """(internal) `schema`, from `baml.json.schema`, rewritten to the subset OpenAI's strict
+    mode accepts:
+
+      * every object lists all its properties in `required` and sets
+        `additionalProperties: false`. A property that may be absent is one
+        whose schema already admits `null`, and strict mode spells "optional"
+        exactly that way;
+      * a `$ref` with a `description` beside it becomes a one-member `anyOf`,
+        because strict mode rejects keywords beside `$ref`;
+      * a map (an object with schema-valued `additionalProperties`, or
+        `propertyNames`) is rejected: strict mode has no form for one.
+
+    Only the keywords that hold schemas are walked. `enum` and `const` hold
+    values, and are copied as they are.
+
+    Raises:
+        InvalidRequest"""
+async def _strict_async(schema: baml.json.json, type_name: str, provider: str, *, _baml: _BamlOptions | None = None) -> baml.json.json:
+    """(internal) `schema`, from `baml.json.schema`, rewritten to the subset OpenAI's strict
+    mode accepts:
+
+      * every object lists all its properties in `required` and sets
+        `additionalProperties: false`. A property that may be absent is one
+        whose schema already admits `null`, and strict mode spells "optional"
+        exactly that way;
+      * a `$ref` with a `description` beside it becomes a one-member `anyOf`,
+        because strict mode rejects keywords beside `$ref`;
+      * a map (an object with schema-valued `additionalProperties`, or
+        `propertyNames`) is rejected: strict mode has no form for one.
+
+    Only the keywords that hold schemas are walked. `enum` and `const` hold
+    values, and are copied as they are.
+
+    Raises:
+        InvalidRequest"""
+
+
+def _is_object_type(kind: baml.json.json, *, _baml: _BamlOptions | None = None) -> bool:
+    """(internal) Whether a schema's `type` is, or includes, `object`."""
+async def _is_object_type_async(kind: baml.json.json, *, _baml: _BamlOptions | None = None) -> bool:
+    """(internal) Whether a schema's `type` is, or includes, `object`."""
+
+
+def with_structured_output(turn: ai.ModelTurn, structured: StructuredOutput, provider: str, *, _baml: _BamlOptions | None = None) -> ai.ModelTurn:
+    """(internal) `turn` with its answer read through `structured`. A turn that calls
+    tools, was cut short, or refused holds no answer to read, and goes to the
+    runner as it is; any other turn's last text must decode, or this throws.
+    So `parsed_output` is never left for the runner to fill with SAP.
+
+    Raises:
+        SerializationError, ParseFailed"""
+async def with_structured_output_async(turn: ai.ModelTurn, structured: StructuredOutput, provider: str, *, _baml: _BamlOptions | None = None) -> ai.ModelTurn:
+    """(internal) `turn` with its answer read through `structured`. A turn that calls
+    tools, was cut short, or refused holds no answer to read, and goes to the
+    runner as it is; any other turn's last text must decode, or this throws.
+    So `parsed_output` is never left for the runner to fill with SAP.
+
+    Raises:
+        SerializationError, ParseFailed"""
 
 
 ChatContentPart: typing.TypeAlias = typing.Union[ChatTextPart, ChatImagePart, ChatAudioPart, ChatFilePart, ChatExtraPart]
@@ -1711,11 +2021,11 @@ OaTool: typing.TypeAlias = typing.Union[OaFunctionTool, OaBuiltinTool]
 
 
 __all__ = [
+    "default_cache_breakpoint",
+    "default_cache_breakpoint_async",
     "ChatAuth",
     "ChatCompat",
     "ChatParams",
-    "chat_client_id",
-    "chat_client_id_async",
     "ChatTextPart",
     "ChatImageUrl",
     "ChatImagePart",
@@ -1730,6 +2040,8 @@ __all__ = [
     "ChatToolFunction",
     "ChatTool",
     "ChatStreamOptions",
+    "ChatJsonSchema",
+    "ChatResponseFormat",
     "ChatRequest",
     "CcFunctionCall",
     "CcToolCall",
@@ -1742,6 +2054,7 @@ __all__ = [
     "CcPromptTokensDetails",
     "CcCompletionTokensDetails",
     "CcUsage",
+    "CcError",
     "CcResponse",
     "ChatPromptMessage",
     "chat_lower_prompt",
@@ -1750,6 +2063,8 @@ __all__ = [
     "chat_lower_journal_async",
     "chat_build_request",
     "chat_build_request_async",
+    "chat_structured_output",
+    "chat_structured_output_async",
     "chat_render_body",
     "chat_render_body_async",
     "chat_render",
@@ -1760,6 +2075,8 @@ __all__ = [
     "chat_stop_reason_async",
     "chat_parse",
     "chat_parse_async",
+    "chat_usage",
+    "chat_usage_async",
     "chat_invoke",
     "chat_invoke_async",
     "CcDelta",
@@ -1778,6 +2095,8 @@ __all__ = [
     "images_render_async",
     "images_parse",
     "images_parse_async",
+    "images_usage",
+    "images_usage_async",
     "images_invoke",
     "images_invoke_async",
     "OaInputText",
@@ -1794,6 +2113,7 @@ __all__ = [
     "OaToolChoiceObject",
     "OaReasoningParams",
     "OaTextParams",
+    "OaTextFormat",
     "OaResponsesRequest",
     "OaContentPart",
     "OaOutputItem",
@@ -1803,10 +2123,9 @@ __all__ = [
     "OaIncompleteDetails",
     "OaErrorBody",
     "OaResponse",
+    "OaCacheBreakpoint",
     "lower_prompt",
     "lower_prompt_async",
-    "prompt_metadata",
-    "prompt_metadata_async",
     "lower_journal",
     "lower_journal_async",
     "render",
@@ -1815,12 +2134,19 @@ __all__ = [
     "preview_async",
     "parse",
     "parse_async",
+    "usage",
+    "usage_async",
     "invoke",
     "invoke_async",
     "OaStreamEvent",
     "OaStreamState",
     "invoke_stream",
     "invoke_stream_async",
+    "StructuredOutput",
+    "structured_output",
+    "structured_output_async",
+    "with_structured_output",
+    "with_structured_output_async",
     "ChatContentPart",
     "ChatMessageContent",
     "OaInputPart",

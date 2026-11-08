@@ -282,10 +282,10 @@ _anth_supported_image_mime_async = _define_function("anthropic.internal._anth_su
 
 _media_block       = _define_function("anthropic.internal._media_block", "sync",  ["media", "block_type"], ["preview"], binding_name="_media_block", binding_qualname="_media_block", binding_module=__name__)
 _media_block.__doc__ = """Raises:
-    InvalidArgument, Io, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+    InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
 _media_block_async = _define_function("anthropic.internal._media_block", "async", ["media", "block_type"], ["preview"], binding_name="_media_block_async", binding_qualname="_media_block_async", binding_module=__name__)
 _media_block_async.__doc__ = """Raises:
-    InvalidArgument, Io, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+    InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
 
 
 _lower_block       = _define_function("anthropic.internal._lower_block", "sync",  ["block", "position"], ["preview"], binding_name="_lower_block", binding_qualname="_lower_block", binding_module=__name__)
@@ -304,7 +304,7 @@ There is no audio or video input block at all, so those are rejected
 everywhere — an invented `{"type":"input_audio"}` used to guarantee a 400.
 
 Raises:
-    InvalidArgument, Io, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+    InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
 _lower_block_async = _define_function("anthropic.internal._lower_block", "async", ["block", "position"], ["preview"], binding_name="_lower_block_async", binding_qualname="_lower_block_async", binding_module=__name__)
 _lower_block_async.__doc__ = """One content block at `position` -> its wire block, or null when it lowers
 to nothing. The Messages API's input modalities, per position:
@@ -321,23 +321,43 @@ There is no audio or video input block at all, so those are rejected
 everywhere — an invented `{"type":"input_audio"}` used to guarantee a 400.
 
 Raises:
-    InvalidArgument, Io, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+    InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
 
 
 _lower_blocks       = _define_function("anthropic.internal._lower_blocks", "sync",  ["blocks", "position"], ["preview"], binding_name="_lower_blocks", binding_qualname="_lower_blocks", binding_module=__name__)
 _lower_blocks.__doc__ = """Raises:
-    InvalidArgument, Io, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+    InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
 _lower_blocks_async = _define_function("anthropic.internal._lower_blocks", "async", ["blocks", "position"], ["preview"], binding_name="_lower_blocks_async", binding_qualname="_lower_blocks_async", binding_module=__name__)
 _lower_blocks_async.__doc__ = """Raises:
-    InvalidArgument, Io, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+    InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
 
 
-_lower_prompt       = _define_function("anthropic.internal._lower_prompt", "sync",  ["prompt"], ["preview"], binding_name="_lower_prompt", binding_qualname="_lower_prompt", binding_module=__name__)
+_prompt_blocks       = _define_function("anthropic.internal._prompt_blocks", "sync",  ["message", "position", "default_cache_args"], ["preview"], binding_name="_prompt_blocks", binding_qualname="_prompt_blocks", binding_module=__name__)
+_prompt_blocks.__doc__ = """(internal) One prompt message as Messages API blocks. Text and media lower
+exactly as they do for a journal turn; a `${cache(args)}` sets
+`cache_control` on the block before it (`_anth_apply_cache_control`), and
+the text on either side is trimmed where it faces the delimiter
+(`ai.wire.prompt_parts`). A `${cache()}` carries `default_cache_args`.
+
+Raises:
+    InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+_prompt_blocks_async = _define_function("anthropic.internal._prompt_blocks", "async", ["message", "position", "default_cache_args"], ["preview"], binding_name="_prompt_blocks_async", binding_qualname="_prompt_blocks_async", binding_module=__name__)
+_prompt_blocks_async.__doc__ = """(internal) One prompt message as Messages API blocks. Text and media lower
+exactly as they do for a journal turn; a `${cache(args)}` sets
+`cache_control` on the block before it (`_anth_apply_cache_control`), and
+the text on either side is trimmed where it faces the delimiter
+(`ai.wire.prompt_parts`). A `${cache()}` carries `default_cache_args`.
+
+Raises:
+    InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+
+
+_lower_prompt       = _define_function("anthropic.internal._lower_prompt", "sync",  ["prompt", "default_cache_args"], ["preview"], binding_name="_lower_prompt", binding_qualname="_lower_prompt", binding_module=__name__)
 _lower_prompt.__doc__ = """Raises:
-    InvalidArgument, Io, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
-_lower_prompt_async = _define_function("anthropic.internal._lower_prompt", "async", ["prompt"], ["preview"], binding_name="_lower_prompt_async", binding_qualname="_lower_prompt_async", binding_module=__name__)
+    InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+_lower_prompt_async = _define_function("anthropic.internal._lower_prompt", "async", ["prompt", "default_cache_args"], ["preview"], binding_name="_lower_prompt_async", binding_qualname="_lower_prompt_async", binding_module=__name__)
 _lower_prompt_async.__doc__ = """Raises:
-    InvalidArgument, Io, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+    InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
 
 
 _tool_result_content       = _define_function("anthropic.internal._tool_result_content", "sync",  ["blocks"], binding_name="_tool_result_content", binding_qualname="_tool_result_content", binding_module=__name__)
@@ -353,13 +373,13 @@ _lower_journal.__doc__ = """(internal) ai.RunStarted/ai.ToolRequested/ai.Usage/a
 skipped events never close an open tool_result group.
 
 Raises:
-    InvalidArgument, Io, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+    InvalidArgument, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported"""
 _lower_journal_async = _define_function("anthropic.internal._lower_journal", "async", ["j"], ["preview"], binding_name="_lower_journal_async", binding_qualname="_lower_journal_async", binding_module=__name__)
 _lower_journal_async.__doc__ = """(internal) ai.RunStarted/ai.ToolRequested/ai.Usage/ai.FinalProduced are not promptable and skip;
 skipped events never close an open tool_result group.
 
 Raises:
-    InvalidArgument, Io, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+    InvalidArgument, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported"""
 
 
 _render_messages       = _define_function("anthropic.internal._render_messages", "sync",  ["msgs"], binding_name="_render_messages", binding_qualname="_render_messages", binding_module=__name__)
@@ -385,7 +405,12 @@ class BodyParams(pydantic.BaseModel):
     thinking: typing.Optional[vendor.anthropic.ThinkingConfig] = None
     tool_choice: typing.Optional[vendor.anthropic.ToolChoice] = None
     request_body: typing.Optional[baml.json.json] = None
-    client_id: str
+    provider: str
+    default_cache_args: baml.json.json = None
+
+
+default_cache_control       = _define_function("anthropic.internal.default_cache_control", "sync",  [], binding_name="default_cache_control", binding_qualname="default_cache_control", binding_module=__name__)
+default_cache_control_async = _define_function("anthropic.internal.default_cache_control", "async", [], binding_name="default_cache_control_async", binding_qualname="default_cache_control_async", binding_module=__name__)
 
 
 _body_params       = _define_function("anthropic.internal._body_params", "sync",  ["c"], binding_name="_body_params", binding_qualname="_body_params", binding_module=__name__)
@@ -413,13 +438,13 @@ messages_request.__doc__ = """The typed Messages request for one model turn. Pub
 client can build the identical body and re-target it.
 
 Raises:
-    InvalidArgument, Io, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
+    InvalidArgument, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
 messages_request_async = _define_function("anthropic.internal.messages_request", "async", ["params", "input", "stream"], ["preview"], binding_name="messages_request_async", binding_qualname="messages_request_async", binding_module=__name__)
 messages_request_async.__doc__ = """The typed Messages request for one model turn. Public so a Vertex/Bedrock
 client can build the identical body and re-target it.
 
 Raises:
-    InvalidArgument, Io, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
+    InvalidArgument, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
 
 
 messages_body       = _define_function("anthropic.internal.messages_body", "sync",  ["params", "input", "stream"], ["preview"], binding_name="messages_body", binding_qualname="messages_body", binding_module=__name__)
@@ -427,13 +452,13 @@ messages_body.__doc__ = """The serialized request body: typed request -> json ->
 -> deep-merge the caller's `request_body` passthrough (LAST, per P0.3).
 
 Raises:
-    InvalidArgument, Io, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
+    InvalidArgument, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
 messages_body_async = _define_function("anthropic.internal.messages_body", "async", ["params", "input", "stream"], ["preview"], binding_name="messages_body_async", binding_qualname="messages_body_async", binding_module=__name__)
 messages_body_async.__doc__ = """The serialized request body: typed request -> json -> drop unset optionals
 -> deep-merge the caller's `request_body` passthrough (LAST, per P0.3).
 
 Raises:
-    InvalidArgument, Io, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
+    InvalidArgument, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
 
 
 _query_suffix       = _define_function("anthropic.internal._query_suffix", "sync",  ["query_params"], binding_name="_query_suffix", binding_qualname="_query_suffix", binding_module=__name__)
@@ -485,14 +510,12 @@ Raises:
 
 
 preview       = _define_function("anthropic.internal.preview", "sync",  ["c", "input"], binding_name="preview", binding_qualname="preview", binding_module=__name__)
-preview.__doc__ = """The request one `render` would send. URL media remains a URL reference;
-local files are rejected before any filesystem read.
+preview.__doc__ = """The request one `render` would send. URL media remains a URL reference.
 
 Raises:
     InvalidArgument, Io, ParseError, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
 preview_async = _define_function("anthropic.internal.preview", "async", ["c", "input"], binding_name="preview_async", binding_qualname="preview_async", binding_module=__name__)
-preview_async.__doc__ = """The request one `render` would send. URL media remains a URL reference;
-local files are rejected before any filesystem read.
+preview_async.__doc__ = """The request one `render` would send. URL media remains a URL reference.
 
 Raises:
     InvalidArgument, Io, ParseError, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
@@ -504,6 +527,14 @@ _stop_reason_async = _define_function("anthropic.internal._stop_reason", "async"
 
 parse       = _define_function("anthropic.internal.parse", "sync",  ["resp"], binding_name="parse", binding_qualname="parse", binding_module=__name__)
 parse_async = _define_function("anthropic.internal.parse", "async", ["resp"], binding_name="parse_async", binding_qualname="parse_async", binding_module=__name__)
+
+
+usage       = _define_function("anthropic.internal.usage", "sync",  ["resp"], binding_name="usage", binding_qualname="usage", binding_module=__name__)
+usage_async = _define_function("anthropic.internal.usage", "async", ["resp"], binding_name="usage_async", binding_qualname="usage_async", binding_module=__name__)
+
+
+_events_usage       = _define_function("anthropic.internal._events_usage", "sync",  ["input", "output", "cache_read", "cache_creation", "thinking"], binding_name="_events_usage", binding_qualname="_events_usage", binding_module=__name__)
+_events_usage_async = _define_function("anthropic.internal._events_usage", "async", ["input", "output", "cache_read", "cache_creation", "thinking"], binding_name="_events_usage_async", binding_qualname="_events_usage_async", binding_module=__name__)
 
 
 invoke       = _define_function("anthropic.internal.invoke", "sync",  ["c", "input"], binding_name="invoke", binding_qualname="invoke", binding_module=__name__)
@@ -533,6 +564,10 @@ class AnthStreamUsage(pydantic.BaseModel):
     cache_read_input_tokens: typing.Optional[int] = None
     cache_creation_input_tokens: typing.Optional[int] = None
     output_tokens_details: typing.Optional[AnthOutputTokensDetails] = None
+
+
+_anth_stream_meta       = _define_function("anthropic.internal._anth_stream_meta", "sync",  ["stop", "usage"], ["resolved_model"], binding_name="_anth_stream_meta", binding_qualname="_anth_stream_meta", binding_module=__name__)
+_anth_stream_meta_async = _define_function("anthropic.internal._anth_stream_meta", "async", ["stop", "usage"], ["resolved_model"], binding_name="_anth_stream_meta_async", binding_qualname="_anth_stream_meta_async", binding_module=__name__)
 
 
 class AnthStreamDelta(pydantic.BaseModel):
@@ -618,9 +653,9 @@ class AnthStreamToolCall(pydantic.BaseModel):
 class AnthStreamState(pydantic.BaseModel):
     """
     What a stream carried that `ai.stream.Event` cannot yet express:
-    tool calls, extended thinking, cache-token counts and the raw stop reason.
-    The decoder folds them here so nothing is silently dropped; wiring them to
-    the consumer needs the stdlib extensions listed in the workstream report.
+    tool calls, extended thinking and the raw stop reason. The decoder folds
+    them here so nothing is silently dropped; wiring them to the consumer
+    needs the stdlib extensions listed in the workstream report.
     """
     model_config = pydantic.ConfigDict(
         arbitrary_types_allowed=True,
@@ -630,9 +665,6 @@ class AnthStreamState(pydantic.BaseModel):
     thinking: str
     signature: str
     tool_calls: typing.List[AnthStreamToolCall]
-    cache_read_input_tokens: typing.Optional[int] = None
-    cache_creation_input_tokens: typing.Optional[int] = None
-    reasoning_tokens: typing.Optional[int] = None
     stop_reason_raw: typing.Optional[str] = None
     model: typing.Optional[str] = None
     new       = staticmethod(_define_function("anthropic.internal.AnthStreamState.new", "sync",  [], binding_name="new", binding_qualname="AnthStreamState.new", binding_module=__name__))
@@ -710,6 +742,8 @@ __all__ = [
     "Message",
     "Prompt",
     "BodyParams",
+    "default_cache_control",
+    "default_cache_control_async",
     "messages_request",
     "messages_request_async",
     "messages_body",
@@ -720,6 +754,8 @@ __all__ = [
     "preview_async",
     "parse",
     "parse_async",
+    "usage",
+    "usage_async",
     "invoke",
     "invoke_async",
     "AnthStreamUsage",

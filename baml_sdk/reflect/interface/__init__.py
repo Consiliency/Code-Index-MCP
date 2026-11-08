@@ -31,35 +31,13 @@ from baml_bridge import (
 )
 
 
-I = typing.TypeVar("I")
-
-
-class Type(pydantic.BaseModel):
-    """
-    An interface-kind view of a `type` value. Users never construct this class.
-
-    Attributes:
-        field_ty: The wrapped `type` value. Private by invariant: reflection natives are
-            its only readers, and each kind method panics if the held type no longer
-            classifies as this view's kind.
-    """
-    model_config = pydantic.ConfigDict(
-        arbitrary_types_allowed=True,
-        extra="ignore",
-        populate_by_name=True,
-    )
-    field_ty: typing.Any = pydantic.Field(alias="_ty")
-    implemented_by       = _define_function("reflect.interface.Type.implemented_by", "sync",  ["self", "other"], binding_name="implemented_by", binding_qualname="Type.implemented_by", binding_module=__name__)
-    implemented_by_async = _define_function("reflect.interface.Type.implemented_by", "async", ["self", "other"], binding_name="implemented_by_async", binding_qualname="Type.implemented_by_async", binding_module=__name__)
-
-
 class Implementation(pydantic.BaseModel):
     """
     An immutable structural-conformance witness.  Values are created only by
-    `implementation<I>()`; each `field` call returns a new witness.
+    `reflect.Interface.implementation<I>()`; each `field` call returns a new witness.
     A structural witness that a runtime-built class implements an interface.
 
-    Start one with `reflect.interface.implementation<I>()` and link each
+    Start one with `reflect.Interface.implementation<I>()` and link each
     interface field to the class field satisfying it with `field`.
     """
     model_config = pydantic.ConfigDict(
@@ -72,17 +50,6 @@ class Implementation(pydantic.BaseModel):
     field_async = _define_function("reflect.interface.Implementation.field", "async", ["self", "interface_field"], ["class_field"], binding_name="field_async", binding_qualname="Implementation.field_async", binding_module=__name__)
 
 
-implementation       = _define_function("reflect.interface.implementation", "sync",  [], binding_name="implementation", binding_qualname="implementation", binding_module=__name__, type_params=["I"])
-implementation.__doc__ = """Raises:
-    CompilationError"""
-implementation_async = _define_function("reflect.interface.implementation", "async", [], binding_name="implementation_async", binding_qualname="implementation_async", binding_module=__name__, type_params=["I"])
-implementation_async.__doc__ = """Raises:
-    CompilationError"""
-
-
 __all__ = [
-    "Type",
     "Implementation",
-    "implementation",
-    "implementation_async",
 ]

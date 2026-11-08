@@ -26,6 +26,12 @@ _LAZY_CHILDREN = frozenset({
 })
 
 def __getattr__(name):
+    if name == "experimental" and __name__ == "baml_sdk":
+        import importlib
+        return importlib.import_module(".experimental", __name__)
+    if name == "trace" and __name__ == "baml_sdk":
+        import importlib
+        return importlib.import_module(".vendor.trace", __name__)
     if name in _LAZY_CHILDREN:
         import importlib
         return importlib.import_module(f".{name}", __name__)
@@ -102,8 +108,9 @@ class GeminiClient(pydantic.BaseModel):
     response_modalities: typing.Optional[typing.List[str]] = None
     safety_settings: typing.Optional[typing.List[SafetySetting]] = None
     capture_wire: bool
-    new       = staticmethod(_define_function("google.GeminiClient.new", "sync",  [], ["model", "api_key", "base_url", "request_body", "headers", "query_params", "temperature", "max_output_tokens", "top_p", "top_k", "stop_sequences", "response_modalities", "safety_settings", "capture_wire"], binding_name="new", binding_qualname="GeminiClient.new", binding_module=__name__))
-    new_async = staticmethod(_define_function("google.GeminiClient.new", "async", [], ["model", "api_key", "base_url", "request_body", "headers", "query_params", "temperature", "max_output_tokens", "top_p", "top_k", "stop_sequences", "response_modalities", "safety_settings", "capture_wire"], binding_name="new_async", binding_qualname="GeminiClient.new_async", binding_module=__name__))
+    timeout: typing.Union[baml.time.Duration, ai.LlmTimeoutOptions, None] = None
+    new       = staticmethod(_define_function("google.GeminiClient.new", "sync",  [], ["model", "api_key", "base_url", "request_body", "headers", "query_params", "temperature", "max_output_tokens", "top_p", "top_k", "stop_sequences", "response_modalities", "safety_settings", "capture_wire", "timeout"], binding_name="new", binding_qualname="GeminiClient.new", binding_module=__name__))
+    new_async = staticmethod(_define_function("google.GeminiClient.new", "async", [], ["model", "api_key", "base_url", "request_body", "headers", "query_params", "temperature", "max_output_tokens", "top_p", "top_k", "stop_sequences", "response_modalities", "safety_settings", "capture_wire", "timeout"], binding_name="new_async", binding_qualname="GeminiClient.new_async", binding_module=__name__))
     resolved_api_key       = _define_function("google.GeminiClient.resolved_api_key", "sync",  ["self"], binding_name="resolved_api_key", binding_qualname="GeminiClient.resolved_api_key", binding_module=__name__)
     resolved_api_key_async = _define_function("google.GeminiClient.resolved_api_key", "async", ["self"], binding_name="resolved_api_key_async", binding_qualname="GeminiClient.resolved_api_key_async", binding_module=__name__)
     resolved_base_url       = _define_function("google.GeminiClient.resolved_base_url", "sync",  ["self"], binding_name="resolved_base_url", binding_qualname="GeminiClient.resolved_base_url", binding_module=__name__)
@@ -143,8 +150,7 @@ class VertexClient(pydantic.BaseModel):
     credentials_file: typing.Optional[str] = None
     api_key: typing.Optional[ai.Credential] = None
     base_url: typing.Optional[ai.Credential] = None
-    request_timeout_ms: typing.Optional[int] = None
-    time_to_first_token_timeout_ms: typing.Optional[int] = None
+    timeout: typing.Union[baml.time.Duration, ai.LlmTimeoutOptions, None] = None
     request_body: typing.Optional[baml.json.json] = None
     headers: typing.Optional[typing.Dict[str, str]] = None
     query_params: typing.Optional[typing.Dict[str, str]] = None
@@ -156,8 +162,8 @@ class VertexClient(pydantic.BaseModel):
     response_modalities: typing.Optional[typing.List[str]] = None
     safety_settings: typing.Optional[typing.List[SafetySetting]] = None
     capture_wire: bool
-    new       = staticmethod(_define_function("google.VertexClient.new", "sync",  [], ["model", "project_id", "location", "credentials_json", "credentials_file", "api_key", "base_url", "request_timeout_ms", "time_to_first_token_timeout_ms", "request_body", "headers", "query_params", "temperature", "max_output_tokens", "top_p", "top_k", "stop_sequences", "response_modalities", "safety_settings", "capture_wire"], binding_name="new", binding_qualname="VertexClient.new", binding_module=__name__))
-    new_async = staticmethod(_define_function("google.VertexClient.new", "async", [], ["model", "project_id", "location", "credentials_json", "credentials_file", "api_key", "base_url", "request_timeout_ms", "time_to_first_token_timeout_ms", "request_body", "headers", "query_params", "temperature", "max_output_tokens", "top_p", "top_k", "stop_sequences", "response_modalities", "safety_settings", "capture_wire"], binding_name="new_async", binding_qualname="VertexClient.new_async", binding_module=__name__))
+    new       = staticmethod(_define_function("google.VertexClient.new", "sync",  [], ["model", "project_id", "location", "credentials_json", "credentials_file", "api_key", "base_url", "timeout", "request_body", "headers", "query_params", "temperature", "max_output_tokens", "top_p", "top_k", "stop_sequences", "response_modalities", "safety_settings", "capture_wire"], binding_name="new", binding_qualname="VertexClient.new", binding_module=__name__))
+    new_async = staticmethod(_define_function("google.VertexClient.new", "async", [], ["model", "project_id", "location", "credentials_json", "credentials_file", "api_key", "base_url", "timeout", "request_body", "headers", "query_params", "temperature", "max_output_tokens", "top_p", "top_k", "stop_sequences", "response_modalities", "safety_settings", "capture_wire"], binding_name="new_async", binding_qualname="VertexClient.new_async", binding_module=__name__))
     resolved_api_key       = _define_function("google.VertexClient.resolved_api_key", "sync",  ["self"], binding_name="resolved_api_key", binding_qualname="VertexClient.resolved_api_key", binding_module=__name__)
     resolved_api_key_async = _define_function("google.VertexClient.resolved_api_key", "async", ["self"], binding_name="resolved_api_key_async", binding_qualname="VertexClient.resolved_api_key_async", binding_module=__name__)
     resolved_base_url       = _define_function("google.VertexClient.resolved_base_url", "sync",  ["self"], binding_name="resolved_base_url", binding_qualname="VertexClient.resolved_base_url", binding_module=__name__)

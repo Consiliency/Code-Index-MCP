@@ -26,6 +26,12 @@ _LAZY_CHILDREN = frozenset({
 })
 
 def __getattr__(name):
+    if name == "experimental" and __name__ == "baml_sdk":
+        import importlib
+        return importlib.import_module(".experimental", __name__)
+    if name == "trace" and __name__ == "baml_sdk":
+        import importlib
+        return importlib.import_module(".vendor.trace", __name__)
     if name in _LAZY_CHILDREN:
         import importlib
         return importlib.import_module(f".{name}", __name__)
@@ -110,8 +116,7 @@ class Client(pydantic.BaseModel):
     model: str
     api_key: typing.Optional[ai.Credential] = None
     base_url: typing.Optional[ai.Credential] = None
-    request_timeout_ms: typing.Optional[int] = None
-    time_to_first_token_timeout_ms: typing.Optional[int] = None
+    timeout: typing.Union[baml.time.Duration, ai.LlmTimeoutOptions, None] = None
     max_tokens: int
     temperature: typing.Optional[float] = None
     top_p: typing.Optional[float] = None
@@ -123,8 +128,8 @@ class Client(pydantic.BaseModel):
     headers: typing.Optional[typing.Dict[str, str]] = None
     query_params: typing.Optional[typing.Dict[str, str]] = None
     capture_wire: bool
-    new       = staticmethod(_define_function("anthropic.Client.new", "sync",  [], ["model", "api_key", "base_url", "request_timeout_ms", "time_to_first_token_timeout_ms", "max_tokens", "temperature", "top_p", "top_k", "stop_sequences", "thinking", "tool_choice", "request_body", "headers", "query_params", "capture_wire"], binding_name="new", binding_qualname="Client.new", binding_module=__name__))
-    new_async = staticmethod(_define_function("anthropic.Client.new", "async", [], ["model", "api_key", "base_url", "request_timeout_ms", "time_to_first_token_timeout_ms", "max_tokens", "temperature", "top_p", "top_k", "stop_sequences", "thinking", "tool_choice", "request_body", "headers", "query_params", "capture_wire"], binding_name="new_async", binding_qualname="Client.new_async", binding_module=__name__))
+    new       = staticmethod(_define_function("anthropic.Client.new", "sync",  [], ["model", "api_key", "base_url", "timeout", "max_tokens", "temperature", "top_p", "top_k", "stop_sequences", "thinking", "tool_choice", "request_body", "headers", "query_params", "capture_wire"], binding_name="new", binding_qualname="Client.new", binding_module=__name__))
+    new_async = staticmethod(_define_function("anthropic.Client.new", "async", [], ["model", "api_key", "base_url", "timeout", "max_tokens", "temperature", "top_p", "top_k", "stop_sequences", "thinking", "tool_choice", "request_body", "headers", "query_params", "capture_wire"], binding_name="new_async", binding_qualname="Client.new_async", binding_module=__name__))
     resolved_api_key       = _define_function("anthropic.Client.resolved_api_key", "sync",  ["self"], binding_name="resolved_api_key", binding_qualname="Client.resolved_api_key", binding_module=__name__)
     resolved_api_key_async = _define_function("anthropic.Client.resolved_api_key", "async", ["self"], binding_name="resolved_api_key_async", binding_qualname="Client.resolved_api_key_async", binding_module=__name__)
     resolved_base_url       = _define_function("anthropic.Client.resolved_base_url", "sync",  ["self"], binding_name="resolved_base_url", binding_qualname="Client.resolved_base_url", binding_module=__name__)

@@ -25,8 +25,6 @@ import typing
 import typing_extensions
 import pydantic
 
-from baml_bridge import define_function as _define_function
-
 
 class Parameter(pydantic.BaseModel):
     """
@@ -43,29 +41,6 @@ class Parameter(pydantic.BaseModel):
     optional: bool
 
 
-class Type(pydantic.BaseModel):
-    """
-    A function-kind view of a `type` value. Throws are intentionally not part
-    of the function reflection surface.
-
-    Attributes:
-        field_ty: The wrapped `type` value. Private by invariant: reflection natives are
-            its only readers, and each kind method panics if the held type no longer
-            classifies as this view's kind.
-    """
-    model_config = pydantic.ConfigDict(
-        arbitrary_types_allowed=True,
-        extra="ignore",
-        populate_by_name=True,
-    )
-    field_ty: typing.Any = pydantic.Field(alias="_ty")
-    params       = _define_function("reflect.function.Type.params", "sync",  ["self"], binding_name="params", binding_qualname="Type.params", binding_module=__name__)
-    params_async = _define_function("reflect.function.Type.params", "async", ["self"], binding_name="params_async", binding_qualname="Type.params_async", binding_module=__name__)
-    return_type       = _define_function("reflect.function.Type.return_type", "sync",  ["self"], binding_name="return_type", binding_qualname="Type.return_type", binding_module=__name__)
-    return_type_async = _define_function("reflect.function.Type.return_type", "async", ["self"], binding_name="return_type_async", binding_qualname="Type.return_type_async", binding_module=__name__)
-
-
 __all__ = [
     "Parameter",
-    "Type",
 ]

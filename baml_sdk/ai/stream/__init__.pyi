@@ -21,9 +21,9 @@
 
 from __future__ import annotations
 
-from baml_bridge import BamlStream as Stream
+from ..._invocation_types import BamlStream as Stream
 
-from baml_bridge import BamlStream as _BamlStream
+from ..._invocation_types import BamlStream as _BamlStream
 
 import typing
 import typing_extensions
@@ -32,9 +32,13 @@ import pydantic
 if typing.TYPE_CHECKING:
     from ... import ai
     from ... import baml
+    from ... import vendor
     from ...baml import UNSET as UNSET
 
+from ..._invocation_types import BamlOptions as _BamlOptions
 
+
+E = typing.TypeVar("E")
 T = typing.TypeVar("T")
 
 
@@ -44,13 +48,13 @@ class SseEvent(pydantic.BaseModel):
     id: typing.Optional[str] = None
 
 
-def decode_sse_batch(batch: str) -> typing.List[SseEvent]:
+def decode_sse_batch(batch: str, *, _baml: _BamlOptions | None = None) -> typing.List[SseEvent]:
     """One `SseStream.next()` batch -> the raw SSE events it contains. Provider
     decoders parse each event's `data` payload with their own envelope classes.
 
     Raises:
         DecodeError, ParseError"""
-async def decode_sse_batch_async(batch: str) -> typing.List[SseEvent]:
+async def decode_sse_batch_async(batch: str, *, _baml: _BamlOptions | None = None) -> typing.List[SseEvent]:
     """One `SseStream.next()` batch -> the raw SSE events it contains. Provider
     decoders parse each event's `data` payload with their own envelope classes.
 
@@ -64,11 +68,15 @@ class TextDelta(pydantic.BaseModel):
 
 class TurnMeta(pydantic.BaseModel):
     stop_reason: typing.Optional[ai.content.StopReason] = None
-    input_tokens: typing.Optional[int] = None
-    output_tokens: typing.Optional[int] = None
+    usage: typing.Optional[ai.events.Usage] = None
+    resolved_model: typing.Optional[str] = None
 
 
 class TurnDone(pydantic.BaseModel):
+    ...
+
+
+class ContentSeen(pydantic.BaseModel):
     ...
 
 
@@ -86,18 +94,24 @@ class TurnStream(pydantic.BaseModel):
     field_pcursor: int = pydantic.Field(alias="_pcursor")
     field_text: str = pydantic.Field(alias="_text")
     field_stop_reason: typing.Optional[ai.content.StopReason] = pydantic.Field(default=None, alias="_stop_reason")
-    field_input_tokens: typing.Optional[int] = pydantic.Field(default=None, alias="_input_tokens")
-    field_output_tokens: typing.Optional[int] = pydantic.Field(default=None, alias="_output_tokens")
+    field_usage: typing.Optional[ai.events.Usage] = pydantic.Field(default=None, alias="_usage")
     field_done: bool = pydantic.Field(alias="_done")
     field_require_terminal: typing.Optional[str] = pydantic.Field(default=None, alias="_require_terminal")
     field_saw_terminal: bool = pydantic.Field(alias="_saw_terminal")
-    field_calls: typing.List[ai.events.LLMCall] = pydantic.Field(alias="_calls")
-    field_wire_call: typing.Optional[ai.events.LLMCall] = pydantic.Field(default=None, alias="_wire_call")
+    field_wire_call: typing.Optional[ai.events.ModelCall] = pydantic.Field(default=None, alias="_wire_call")
+    field_requested_model: typing.Optional[str] = pydantic.Field(default=None, alias="_requested_model")
+    field_resolved_model: typing.Optional[str] = pydantic.Field(default=None, alias="_resolved_model")
+    field_child_turns: typing.List[ai.ModelTurn] = pydantic.Field(alias="_child_turns")
+    field_settled: typing.Optional[ai.ModelTurn] = pydantic.Field(default=None, alias="_settled")
     field_call_started: typing.Optional[baml.time.Instant] = pydantic.Field(default=None, alias="_call_started")
     field_ttft_from: typing.Optional[baml.time.Instant] = pydantic.Field(default=None, alias="_ttft_from")
+    field_first_token_timeout: typing.Optional[baml.time.Duration] = pydantic.Field(default=None, alias="_first_token_timeout")
+    field_stream_token_timeout: typing.Optional[baml.time.Duration] = pydantic.Field(default=None, alias="_stream_token_timeout")
+    field_content_deltas: int = pydantic.Field(alias="_content_deltas")
+    field_token_waited: baml.time.Duration = pydantic.Field(alias="_token_waited")
     field_capture_sse: bool = pydantic.Field(alias="_capture_sse")
     @staticmethod
-    def from_sse(sse: baml.http.SseStream, decode: typing.Callable[[str], typing.List[Event]], *, require_terminal: typing.Union[str, None, UNSET] = None) -> TurnStream:
+    def from_sse(sse: baml.http.SseStream, decode: typing.Callable[[str], typing.List[Event]], *, require_terminal: typing.Union[str, None, UNSET] = None, timeout_options: typing.Union[ai.LlmTimeoutOptions, None, UNSET] = None, dispatched: typing.Union[baml.time.Instant, None, UNSET] = None, _baml: _BamlOptions | None = None) -> TurnStream:
         """A turn stream over a live SSE connection. `decode` receives the raw
         batch string from `sse.next()` (a JSON array of SseEvent objects; see
         decode_sse_batch) and yields the events it contains.
@@ -108,9 +122,23 @@ class TurnStream(pydantic.BaseModel):
         stream then throws `ai.errors.NetworkFailure` if the connection ends
         before that event arrives, rather than reporting the truncated text as a
         completed turn. Leave it null (the default) only for a protocol whose
-        sole end-of-turn signal IS the socket closing."""
+        sole end-of-turn signal IS the socket closing.
+
+        `timeout_options` supplies the two token deadlines, which this stream enforces:
+        `next()` throws `baml.errors.Timeout` with `timeout_type`
+        `"first_token_timeout"` when no non-empty content delta arrives in
+        time, and `"stream_token_timeout"` when the gap between two of them is
+        too long. Content is a non-empty `TextDelta` or a `ContentSeen`.
+        `dispatched` is when the request attempt was sent (before connecting),
+        which is where the first-token clock starts; it defaults to now. If the
+        first-token deadline has already passed, the stream is closed and this
+        throws that `Timeout`. `timeout_options.timeout` and `timeout_options.connect_timeout`
+        are the transport's and are not read here.
+
+        Raises:
+            Timeout"""
     @staticmethod
-    async def from_sse_async(sse: baml.http.SseStream, decode: typing.Callable[[str], typing.List[Event]], *, require_terminal: typing.Union[str, None, UNSET] = None) -> TurnStream:
+    async def from_sse_async(sse: baml.http.SseStream, decode: typing.Callable[[str], typing.List[Event]], *, require_terminal: typing.Union[str, None, UNSET] = None, timeout_options: typing.Union[ai.LlmTimeoutOptions, None, UNSET] = None, dispatched: typing.Union[baml.time.Instant, None, UNSET] = None, _baml: _BamlOptions | None = None) -> TurnStream:
         """A turn stream over a live SSE connection. `decode` receives the raw
         batch string from `sse.next()` (a JSON array of SseEvent objects; see
         decode_sse_batch) and yields the events it contains.
@@ -121,50 +149,106 @@ class TurnStream(pydantic.BaseModel):
         stream then throws `ai.errors.NetworkFailure` if the connection ends
         before that event arrives, rather than reporting the truncated text as a
         completed turn. Leave it null (the default) only for a protocol whose
-        sole end-of-turn signal IS the socket closing."""
+        sole end-of-turn signal IS the socket closing.
+
+        `timeout_options` supplies the two token deadlines, which this stream enforces:
+        `next()` throws `baml.errors.Timeout` with `timeout_type`
+        `"first_token_timeout"` when no non-empty content delta arrives in
+        time, and `"stream_token_timeout"` when the gap between two of them is
+        too long. Content is a non-empty `TextDelta` or a `ContentSeen`.
+        `dispatched` is when the request attempt was sent (before connecting),
+        which is where the first-token clock starts; it defaults to now. If the
+        first-token deadline has already passed, the stream is closed and this
+        throws that `Timeout`. `timeout_options.timeout` and `timeout_options.connect_timeout`
+        are the transport's and are not read here.
+
+        Raises:
+            Timeout"""
     @staticmethod
-    def from_chunks(chunks: typing.List[str]) -> TurnStream:
+    def from_chunks(chunks: typing.List[str], *, _baml: _BamlOptions | None = None) -> TurnStream:
         """A turn stream fed from literal delta chunks — the scripted counterpart
         of a live stream, for tests. There is no wire to be cut, so a scripted
         stream is never strict: the turn completes as StopReason.Complete after
         the last chunk."""
     @staticmethod
-    async def from_chunks_async(chunks: typing.List[str]) -> TurnStream:
+    async def from_chunks_async(chunks: typing.List[str], *, _baml: _BamlOptions | None = None) -> TurnStream:
         """A turn stream fed from literal delta chunks — the scripted counterpart
         of a live stream, for tests. There is no wire to be cut, so a scripted
         stream is never strict: the turn completes as StopReason.Complete after
         the last chunk."""
     @staticmethod
-    def from_event_source(next_event: EventSource) -> TurnStream:
+    def from_event_source(next_event: EventSource, *, call: typing.Union[ai.events.ModelCall, None, UNSET] = None, _baml: _BamlOptions | None = None) -> TurnStream:
         """A stream backed by one normalized-event callback. Reliability clients
         use this to relay a chosen member's deltas and final metadata while
         retaining TurnStream's ordinary accumulation and termination behavior.
         The source itself owns any retry/fallback policy; once it returns a
-        TextDelta, that delta is immediately visible to the caller."""
+        TextDelta, that delta is immediately visible to the caller.
+
+        `call` records the model call behind the source, when there is one: it
+        is the turn's call, and the token counts the source's `TurnMeta`
+        events carry are its usage. A relay that makes no call itself leaves
+        it null."""
     @staticmethod
-    async def from_event_source_async(next_event: EventSource) -> TurnStream:
+    async def from_event_source_async(next_event: EventSource, *, call: typing.Union[ai.events.ModelCall, None, UNSET] = None, _baml: _BamlOptions | None = None) -> TurnStream:
         """A stream backed by one normalized-event callback. Reliability clients
         use this to relay a chosen member's deltas and final metadata while
         retaining TurnStream's ordinary accumulation and termination behavior.
         The source itself owns any retry/fallback policy; once it returns a
-        TextDelta, that delta is immediately visible to the caller."""
-    def _stamp_first_delta_(self) -> None:
+        TextDelta, that delta is immediately visible to the caller.
+
+        `call` records the model call behind the source, when there is one: it
+        is the turn's call, and the token counts the source's `TurnMeta`
+        events carry are its usage. A relay that makes no call itself leaves
+        it null."""
+    def _stamp_first_delta_(self, *, _baml: _BamlOptions | None = None) -> None:
         """(internal) Stamp time-to-first-token on this stream's wire record, once."""
-    async def _stamp_first_delta__async(self) -> None:
+    async def _stamp_first_delta__async(self, *, _baml: _BamlOptions | None = None) -> None:
         """(internal) Stamp time-to-first-token on this stream's wire record, once."""
-    def _capture_batch_(self, batch: str) -> None:
+    def _saw_content_(self, *, _baml: _BamlOptions | None = None) -> None:
+        """(internal) A non-empty content delta was delivered: the first-token
+        deadline is met, and the stream-token clock starts over."""
+    async def _saw_content__async(self, *, _baml: _BamlOptions | None = None) -> None:
+        """(internal) A non-empty content delta was delivered: the first-token
+        deadline is met, and the stream-token clock starts over."""
+    def _pull_(self, sse: baml.http.SseStream, *, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
+        """(internal) One wire pull, bounded by whichever token deadline is
+        running: `first_token_timeout` until the first content delta, then
+        `stream_token_timeout`. The clock only runs here, while waiting on the
+        provider. A batch with no content in it does not reset it, so the next
+        pull gets what is left of the same budget.
+
+        The transport's own `Timeout` (the request's end-to-end limit) is
+        carried out of the timed body as a value so it is never mistaken for
+        the token deadline, then rethrown unchanged.
+
+        Raises:
+            Io, Timeout"""
+    async def _pull__async(self, sse: baml.http.SseStream, *, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
+        """(internal) One wire pull, bounded by whichever token deadline is
+        running: `first_token_timeout` until the first content delta, then
+        `stream_token_timeout`. The clock only runs here, while waiting on the
+        provider. A batch with no content in it does not reset it, so the next
+        pull gets what is left of the same budget.
+
+        The transport's own `Timeout` (the request's end-to-end limit) is
+        carried out of the timed body as a value so it is never mistaken for
+        the token deadline, then rethrown unchanged.
+
+        Raises:
+            Io, Timeout"""
+    def _capture_batch_(self, batch: str, *, _baml: _BamlOptions | None = None) -> None:
         """(internal) Append a raw SSE batch to the wire record when capture is on. Telemetry
         must never fail the stream, so a malformed batch is skipped."""
-    async def _capture_batch__async(self, batch: str) -> None:
+    async def _capture_batch__async(self, batch: str, *, _baml: _BamlOptions | None = None) -> None:
         """(internal) Append a raw SSE batch to the wire record when capture is on. Telemetry
         must never fail the stream, so a malformed batch is skipped."""
-    def _finish_(self) -> None:
+    def _finish_(self, *, _baml: _BamlOptions | None = None) -> None:
         """(internal) Marks the turn over and releases the SSE connection
         behind it, if this stream has one."""
-    async def _finish__async(self) -> None:
+    async def _finish__async(self, *, _baml: _BamlOptions | None = None) -> None:
         """(internal) Marks the turn over and releases the SSE connection
         behind it, if this stream has one."""
-    def _check_terminal_(self) -> None:
+    def _check_terminal_(self, *, _baml: _BamlOptions | None = None) -> None:
         """(internal) The strict-termination check: a no-op unless this stream required an
         explicit terminal event and the stream ended without one, in which case
         the truncated turn is reported as the transport failure it is instead of
@@ -172,7 +256,7 @@ class TurnStream(pydantic.BaseModel):
 
         Raises:
             NetworkFailure"""
-    async def _check_terminal__async(self) -> None:
+    async def _check_terminal__async(self, *, _baml: _BamlOptions | None = None) -> None:
         """(internal) The strict-termination check: a no-op unless this stream required an
         explicit terminal event and the stream ended without one, in which case
         the truncated turn is reported as the transport failure it is instead of
@@ -180,7 +264,7 @@ class TurnStream(pydantic.BaseModel):
 
         Raises:
             NetworkFailure"""
-    def next(self) -> typing.Union[typing.List[str], Done]:
+    def next(self, *, _baml: _BamlOptions | None = None) -> typing.Union[typing.List[str], Done]:
         """All READY text deltas, or Done when the turn is over. Metadata events
         are folded silently; calling next() after Done keeps returning Done.
 
@@ -196,8 +280,8 @@ class TurnStream(pydantic.BaseModel):
         equivalent of the legacy engine's latest-snapshot watch channel.
 
         Raises:
-            Io, Timeout, UnknownError, CompilationError"""
-    async def next_async(self) -> typing.Union[typing.List[str], Done]:
+            CompilationError, Io, Timeout, UnknownError"""
+    async def next_async(self, *, _baml: _BamlOptions | None = None) -> typing.Union[typing.List[str], Done]:
         """All READY text deltas, or Done when the turn is over. Metadata events
         are folded silently; calling next() after Done keeps returning Done.
 
@@ -213,8 +297,8 @@ class TurnStream(pydantic.BaseModel):
         equivalent of the legacy engine's latest-snapshot watch channel.
 
         Raises:
-            Io, Timeout, UnknownError, CompilationError"""
-    def final_turn(self) -> ai.ModelTurn:
+            CompilationError, Io, Timeout, UnknownError"""
+    def final_turn(self, *, _baml: _BamlOptions | None = None) -> ai.ModelTurn:
         """Drain the stream and return the completed turn. Safe to call at any
         point (including after Done); calling twice returns an equal turn.
 
@@ -224,8 +308,8 @@ class TurnStream(pydantic.BaseModel):
         truncated stream into a `StopReason.Complete` answer.
 
         Raises:
-            Io, Timeout, UnknownError, CompilationError"""
-    async def final_turn_async(self) -> ai.ModelTurn:
+            CompilationError, Io, Timeout, UnknownError"""
+    async def final_turn_async(self, *, _baml: _BamlOptions | None = None) -> ai.ModelTurn:
         """Drain the stream and return the completed turn. Safe to call at any
         point (including after Done); calling twice returns an equal turn.
 
@@ -235,10 +319,70 @@ class TurnStream(pydantic.BaseModel):
         truncated stream into a `StopReason.Complete` answer.
 
         Raises:
-            Io, Timeout, UnknownError, CompilationError"""
+            CompilationError, Io, Timeout, UnknownError"""
+    def _settled_turn_(self, *, _baml: _BamlOptions | None = None) -> ai.ModelTurn:
+        """(internal) The turn, settled once: when the stream finishes, or here when
+        it ended by another route."""
+    async def _settled_turn__async(self, *, _baml: _BamlOptions | None = None) -> ai.ModelTurn:
+        """(internal) The turn, settled once: when the stream finishes, or here when
+        it ended by another route."""
+    def _settle_(self, *, _baml: _BamlOptions | None = None) -> ai.ModelTurn:
+        """(internal) Fold the stream into its turn. Runs exactly once per stream
+        (`_settled_turn`): telemetry charges the usage of the turn's own calls
+        when it returns, as it does for `ai.Client.invoke`."""
+    async def _settle__async(self, *, _baml: _BamlOptions | None = None) -> ai.ModelTurn:
+        """(internal) Fold the stream into its turn. Runs exactly once per stream
+        (`_settled_turn`): telemetry charges the usage of the turn's own calls
+        when it returns, as it does for `ai.Client.invoke`."""
 
 
-def from_spec(spec: ai.FunctionSpec[T], *, client: typing.Union[typing.Any, None, UNSET] = None, on_event: typing.Union[typing.Callable[[ai.events.Event], None], None, UNSET] = None, _types: dict[str, typing.Any] | None = None) -> _BamlStream[typing.Union[T, Done], T, T]:
+def _overlay_usage(base: typing.Optional[ai.events.Usage], next: ai.events.Usage, *, _baml: _BamlOptions | None = None) -> ai.events.Usage:
+    """(internal) `base` with every count `next` reports replaced: a provider
+    reports its counts across several events, the latest value of each winning."""
+async def _overlay_usage_async(base: typing.Optional[ai.events.Usage], next: ai.events.Usage, *, _baml: _BamlOptions | None = None) -> ai.events.Usage:
+    """(internal) `base` with every count `next` reports replaced: a provider
+    reports its counts across several events, the latest value of each winning."""
+
+
+def _token_limit(limit: typing.Optional[baml.time.Duration], *, _baml: _BamlOptions | None = None) -> typing.Optional[baml.time.Duration]:
+    """(internal) A configured token deadline, or null when there is none: a zero
+    or negative duration means no limit."""
+async def _token_limit_async(limit: typing.Optional[baml.time.Duration], *, _baml: _BamlOptions | None = None) -> typing.Optional[baml.time.Duration]:
+    """(internal) A configured token deadline, or null when there is none: a zero
+    or negative duration means no limit."""
+
+
+def _token_timeout_error(limit: baml.time.Duration, timeout_type: str, *, _baml: _BamlOptions | None = None) -> baml.errors.Timeout:
+    """(internal) The error for an elapsed token deadline. `timeout_type` is the
+    `LlmTimeoutOptions` field that set it."""
+async def _token_timeout_error_async(limit: baml.time.Duration, timeout_type: str, *, _baml: _BamlOptions | None = None) -> baml.errors.Timeout:
+    """(internal) The error for an elapsed token deadline. `timeout_type` is the
+    `LlmTimeoutOptions` field that set it."""
+
+
+class _StreamValue(pydantic.BaseModel, typing.Generic[T]):
+    value: T
+
+
+class _StreamError(pydantic.BaseModel):
+    error: typing.Union[ai.errors.InvokeError, vendor.trace.SpanError, baml.panics.Panic]
+
+
+def _in_context(body: typing.Callable[[], T], *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> T:
+    """(internal) Run `body`; its `$trace` layers a context over the current one."""
+async def _in_context_async(body: typing.Callable[[], T], *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> T:
+    """(internal) Run `body`; its `$trace` layers a context over the current one."""
+
+
+def _context_patch(caller: vendor.trace.Context, *, _baml: _BamlOptions | None = None) -> vendor.trace.Options:
+    """(internal) A patch that layers `caller`'s context over the span's, so work a
+    stream does for a step keeps the context that step was called in."""
+async def _context_patch_async(caller: vendor.trace.Context, *, _baml: _BamlOptions | None = None) -> vendor.trace.Options:
+    """(internal) A patch that layers `caller`'s context over the span's, so work a
+    stream does for a step keeps the context that step was called in."""
+
+
+def from_spec(spec: ai.FunctionSpec[T], *, client: typing.Union[typing.Any, None, UNSET] = None, on_event: typing.Union[typing.Callable[[ai.events.Event], None], None, UNSET] = None, _types: dict[str, typing.Any] | None = None, _baml: _BamlOptions | None = None) -> _BamlStream[typing.Union[T, Done], T, T]:
     """One-turn streaming over a spec: render the spec's prompt exactly as the
     default runner's first turn would, require a streaming-capable client, and
     return the typed partial stream. The compiler-private `Fn@stream` entry
@@ -252,8 +396,8 @@ def from_spec(spec: ai.FunctionSpec[T], *, client: typing.Union[typing.Any, None
     stream).
 
     Raises:
-        InvalidArgument, Timeout, UnknownError, CompilationError"""
-async def from_spec_async(spec: ai.FunctionSpec[T], *, client: typing.Union[typing.Any, None, UNSET] = None, on_event: typing.Union[typing.Callable[[ai.events.Event], None], None, UNSET] = None, _types: dict[str, typing.Any] | None = None) -> _BamlStream[typing.Union[T, Done], T, T]:
+        CompilationError, SpanError, InvalidArgument, Timeout, UnknownError"""
+async def from_spec_async(spec: ai.FunctionSpec[T], *, client: typing.Union[typing.Any, None, UNSET] = None, on_event: typing.Union[typing.Callable[[ai.events.Event], None], None, UNSET] = None, _types: dict[str, typing.Any] | None = None, _baml: _BamlOptions | None = None) -> _BamlStream[typing.Union[T, Done], T, T]:
     """One-turn streaming over a spec: render the spec's prompt exactly as the
     default runner's first turn would, require a streaming-capable client, and
     return the typed partial stream. The compiler-private `Fn@stream` entry
@@ -267,10 +411,10 @@ async def from_spec_async(spec: ai.FunctionSpec[T], *, client: typing.Union[typi
     stream).
 
     Raises:
-        InvalidArgument, Timeout, UnknownError, CompilationError"""
+        CompilationError, SpanError, InvalidArgument, Timeout, UnknownError"""
 
 
-Event: typing.TypeAlias = typing.Union[TextDelta, TurnMeta, TurnDone]
+Event: typing.TypeAlias = typing.Union[TextDelta, ContentSeen, TurnMeta, TurnDone]
 
 
 EventSource: typing.TypeAlias = typing.Callable[[], typing.Union[Event, Done]]
@@ -283,6 +427,7 @@ __all__ = [
     "TextDelta",
     "TurnMeta",
     "TurnDone",
+    "ContentSeen",
     "Done",
     "TurnStream",
     "Stream",

@@ -25,6 +25,9 @@ import typing
 import typing_extensions
 import pydantic
 
+if typing.TYPE_CHECKING:
+    from ... import baml
+
 from baml_bridge import (
     BamlPyHandle as _BamlPyHandle,
     define_function as _define_function,
@@ -61,22 +64,54 @@ class _NoYield(pydantic.BaseModel):
 
 
 _new_parse_cache       = _define_function("baml.sap._new_parse_cache", "sync",  [], binding_name="_new_parse_cache", binding_qualname="_new_parse_cache", binding_module=__name__, type_params=["T"])
+_new_parse_cache.__doc__ = """(internal) Builds a parse cache for `T`, or throws `ParseError` for a `T`
+the parser cannot model.
+
+A free function rather than a `_ParseCache` static method: a *static*
+method's class type args have no receiver to ride in on, and the call path
+derives them from the receiver's type — so a static method would be given
+operand slots the call site never fills. Instance methods on a generic
+class (`_parse_final`, `_parse_partial`) are threaded correctly.
+
+Raises:
+    ParseError"""
 _new_parse_cache_async = _define_function("baml.sap._new_parse_cache", "async", [], binding_name="_new_parse_cache_async", binding_qualname="_new_parse_cache_async", binding_module=__name__, type_params=["T"])
+_new_parse_cache_async.__doc__ = """(internal) Builds a parse cache for `T`, or throws `ParseError` for a `T`
+the parser cannot model.
+
+A free function rather than a `_ParseCache` static method: a *static*
+method's class type args have no receiver to ride in on, and the call path
+derives them from the receiver's type — so a static method would be given
+operand slots the call site never fills. Instance methods on a generic
+class (`_parse_final`, `_parse_partial`) are threaded correctly.
+
+Raises:
+    ParseError"""
 
 
 parse       = _define_function("baml.sap.parse", "sync",  ["text"], binding_name="parse", binding_qualname="parse", binding_module=__name__, type_params=["T"])
 parse.__doc__ = """Parse an LLM's raw text output into `T` with Schema-Aligned Parsing.
 
+A union member with no JSON form or no values is never the result:
+`parse<uint8array | string>` reads a string.
+
 # Throws
-- `baml.errors.ParseError` if parsing fails.
+- `baml.errors.ParseError` if parsing fails, or if the parser cannot
+  model `T`: `unknown`, or a type with no JSON form or no values, such as
+  `uint8array`, `never`, or a class that requires one.
 
 Raises:
     ParseError"""
 parse_async = _define_function("baml.sap.parse", "async", ["text"], binding_name="parse_async", binding_qualname="parse_async", binding_module=__name__, type_params=["T"])
 parse_async.__doc__ = """Parse an LLM's raw text output into `T` with Schema-Aligned Parsing.
 
+A union member with no JSON form or no values is never the result:
+`parse<uint8array | string>` reads a string.
+
 # Throws
-- `baml.errors.ParseError` if parsing fails.
+- `baml.errors.ParseError` if parsing fails, or if the parser cannot
+  model `T`: `unknown`, or a type with no JSON form or no values, such as
+  `uint8array`, `never`, or a class that requires one.
 
 Raises:
     ParseError"""
@@ -100,9 +135,59 @@ Raises:
     ParseError"""
 
 
+coerce       = _define_function("baml.sap.coerce", "sync",  ["value"], binding_name="coerce", binding_qualname="coerce", binding_module=__name__, type_params=["T"])
+coerce.__doc__ = """Coerce an already-parsed JSON value into `T`: Schema-Aligned Parsing
+without its text stage.
+
+`parse` first finds and repairs the JSON in a model's text, then aligns it
+to `T`. A value that arrives parsed, such as the arguments of a tool call,
+needs only the second step. The alignment is the same: fields and variants
+are read under the names the output format shows, and a `@skip` field is
+not read.
+
+A union member with no JSON form or no values is dropped:
+`coerce<uint8array | string>` reads a string, and an optional field of
+such a type is only `null`.
+
+# Throws
+- `baml.errors.ParseError` if `value` does not align to `T`, or if the
+  parser cannot model `T`: `unknown`, a type with no JSON form or no
+  values, such as `uint8array`, `never` or a function, a type that
+  requires one of those, and a class with a `@skip` field whose type has
+  no value to fill in.
+
+Raises:
+    ParseError"""
+coerce_async = _define_function("baml.sap.coerce", "async", ["value"], binding_name="coerce_async", binding_qualname="coerce_async", binding_module=__name__, type_params=["T"])
+coerce_async.__doc__ = """Coerce an already-parsed JSON value into `T`: Schema-Aligned Parsing
+without its text stage.
+
+`parse` first finds and repairs the JSON in a model's text, then aligns it
+to `T`. A value that arrives parsed, such as the arguments of a tool call,
+needs only the second step. The alignment is the same: fields and variants
+are read under the names the output format shows, and a `@skip` field is
+not read.
+
+A union member with no JSON form or no values is dropped:
+`coerce<uint8array | string>` reads a string, and an optional field of
+such a type is only `null`.
+
+# Throws
+- `baml.errors.ParseError` if `value` does not align to `T`, or if the
+  parser cannot model `T`: `unknown`, a type with no JSON form or no
+  values, such as `uint8array`, `never` or a function, a type that
+  requires one of those, and a class with a `@skip` field whose type has
+  no value to fill in.
+
+Raises:
+    ParseError"""
+
+
 __all__ = [
     "parse",
     "parse_async",
     "parse_type",
     "parse_type_async",
+    "coerce",
+    "coerce_async",
 ]

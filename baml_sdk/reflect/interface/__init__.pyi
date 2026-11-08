@@ -28,47 +28,37 @@ import pydantic
 if typing.TYPE_CHECKING:
     from ...baml import UNSET as UNSET
 
+from ..._invocation_types import BamlOptions as _BamlOptions
+
 from baml_bridge import BamlPyHandle as _BamlPyHandle
-
-
-I = typing.TypeVar("I")
-
-
-class Type(pydantic.BaseModel):
-    field_ty: typing.Any = pydantic.Field(alias="_ty")
-    def implemented_by(self, other: typing.Any) -> bool:
-        """Whether `other` nominally implements this interface.
-
-        The mirror of `reflect.Type.implements`, asked from the interface's
-        side. `false` when `other` is not a class."""
-    async def implemented_by_async(self, other: typing.Any) -> bool:
-        """Whether `other` nominally implements this interface.
-
-        The mirror of `reflect.Type.implements`, asked from the interface's
-        side. `false` when `other` is not a class."""
 
 
 class Implementation(pydantic.BaseModel):
     field_handle: _BamlPyHandle = pydantic.Field(alias="_handle")
-    def field(self, interface_field: str, *, class_field: typing.Union[str, None, UNSET] = None) -> Implementation:
-        """Raises:
-            CompilationError"""
-    async def field_async(self, interface_field: str, *, class_field: typing.Union[str, None, UNSET] = None) -> Implementation:
-        """Raises:
-            CompilationError"""
+    def field(self, interface_field: str, *, class_field: typing.Union[str, None, UNSET] = None, _baml: _BamlOptions | None = None) -> Implementation:
+        """Links `interface_field` to the class field that satisfies it,
+        defaulting to the field of the same name.
 
+        # Throws
 
-def implementation(*, _types: dict[str, typing.Any]) -> Implementation:
-    """Raises:
-        CompilationError"""
-async def implementation_async(*, _types: dict[str, typing.Any]) -> Implementation:
-    """Raises:
-        CompilationError"""
+        - `reflect.errors.CompilationError` if the interface declares no such
+          field, or the link is not well typed.
+
+        Raises:
+            CompilationError"""
+    async def field_async(self, interface_field: str, *, class_field: typing.Union[str, None, UNSET] = None, _baml: _BamlOptions | None = None) -> Implementation:
+        """Links `interface_field` to the class field that satisfies it,
+        defaulting to the field of the same name.
+
+        # Throws
+
+        - `reflect.errors.CompilationError` if the interface declares no such
+          field, or the link is not well typed.
+
+        Raises:
+            CompilationError"""
 
 
 __all__ = [
-    "Type",
     "Implementation",
-    "implementation",
-    "implementation_async",
 ]

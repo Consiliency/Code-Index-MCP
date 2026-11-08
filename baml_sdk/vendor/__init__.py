@@ -25,16 +25,22 @@ _LAZY_CHILDREN = frozenset({
     "anthropic",
     "assert_",
     "aws",
-    "boundary",
     "claude_code",
     "google",
     "openai",
     "testing",
+    "trace",
     "typesafeai",
     "vercel",
 })
 
 def __getattr__(name):
+    if name == "experimental" and __name__ == "baml_sdk":
+        import importlib
+        return importlib.import_module(".experimental", __name__)
+    if name == "trace" and __name__ == "baml_sdk":
+        import importlib
+        return importlib.import_module(".vendor.trace", __name__)
     if name in _LAZY_CHILDREN:
         import importlib
         return importlib.import_module(f".{name}", __name__)

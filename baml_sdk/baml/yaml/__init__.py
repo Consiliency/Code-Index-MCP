@@ -50,16 +50,56 @@ class ParseError(pydantic.BaseModel):
 
 
 parse       = _define_function("baml.yaml.parse", "sync",  ["s"], binding_name="parse", binding_qualname="parse", binding_module=__name__)
-parse.__doc__ = """Raises:
+parse.__doc__ = """Parses a single YAML document into JSON-compatible BAML values.
+
+YAML features outside `baml.json.json` are rejected rather than converted
+lossily. The accepted values are null, bool, int, finite float, string,
+sequences, and mappings with string keys. `baml.json.parse` reads an
+integer outside the BAML `int` range as a `bigint`; an out-of-range YAML
+integer is rejected instead.
+
+The input is a YAML *stream*, and this reads exactly one document from it.
+An empty stream is not malformed and parses to `null`. A second document —
+a `---` separator with content after it — is an error rather than a
+silently discarded remainder.
+
+# Throws
+
+- `baml.yaml.ParseError` if `s` is not well-formed YAML, if the stream
+  holds more than one document, if a mapping key is not a string, if a node
+  carries an explicit tag, if an integer falls outside the BAML `int`
+  range, or if a float is not finite.
+
+Raises:
     ParseError"""
 parse_async = _define_function("baml.yaml.parse", "async", ["s"], binding_name="parse_async", binding_qualname="parse_async", binding_module=__name__)
-parse_async.__doc__ = """Raises:
+parse_async.__doc__ = """Parses a single YAML document into JSON-compatible BAML values.
+
+YAML features outside `baml.json.json` are rejected rather than converted
+lossily. The accepted values are null, bool, int, finite float, string,
+sequences, and mappings with string keys. `baml.json.parse` reads an
+integer outside the BAML `int` range as a `bigint`; an out-of-range YAML
+integer is rejected instead.
+
+The input is a YAML *stream*, and this reads exactly one document from it.
+An empty stream is not malformed and parses to `null`. A second document —
+a `---` separator with content after it — is an error rather than a
+silently discarded remainder.
+
+# Throws
+
+- `baml.yaml.ParseError` if `s` is not well-formed YAML, if the stream
+  holds more than one document, if a mapping key is not a string, if a node
+  carries an explicit tag, if an integer falls outside the BAML `int`
+  range, or if a float is not finite.
+
+Raises:
     ParseError"""
 
 
-deserialize       = _define_function("baml.yaml.deserialize", "sync",  ["s"], binding_name="deserialize", binding_qualname="deserialize", binding_module=__name__, type_params=["T"])
-deserialize.__doc__ = """Parses YAML text and decodes it into `T`, honoring `baml.FromJson`
-overrides. The YAML counterpart of `baml.json.deserialize<T>`.
+decode       = _define_function("baml.yaml.decode", "sync",  ["s"], binding_name="decode", binding_qualname="decode", binding_module=__name__, type_params=["T"])
+decode.__doc__ = """Parses YAML text and decodes it into `T`, honoring `baml.FromJson`
+overrides. The YAML counterpart of `baml.json.decode<T>`.
 
 `parse` lands in `baml.json.json` first, so the decode rules are exactly
 `baml.json`'s — see `baml.json.to<T>`.
@@ -73,9 +113,9 @@ overrides. The YAML counterpart of `baml.json.deserialize<T>`.
 
 Raises:
     ParseError, DecodeError"""
-deserialize_async = _define_function("baml.yaml.deserialize", "async", ["s"], binding_name="deserialize_async", binding_qualname="deserialize_async", binding_module=__name__, type_params=["T"])
-deserialize_async.__doc__ = """Parses YAML text and decodes it into `T`, honoring `baml.FromJson`
-overrides. The YAML counterpart of `baml.json.deserialize<T>`.
+decode_async = _define_function("baml.yaml.decode", "async", ["s"], binding_name="decode_async", binding_qualname="decode_async", binding_module=__name__, type_params=["T"])
+decode_async.__doc__ = """Parses YAML text and decodes it into `T`, honoring `baml.FromJson`
+overrides. The YAML counterpart of `baml.json.decode<T>`.
 
 `parse` lands in `baml.json.json` first, so the decode rules are exactly
 `baml.json`'s — see `baml.json.to<T>`.
@@ -95,6 +135,6 @@ __all__ = [
     "ParseError",
     "parse",
     "parse_async",
-    "deserialize",
-    "deserialize_async",
+    "decode",
+    "decode_async",
 ]

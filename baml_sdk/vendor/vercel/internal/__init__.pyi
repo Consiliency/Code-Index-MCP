@@ -31,6 +31,8 @@ if typing.TYPE_CHECKING:
     from .... import vendor
     from ....baml import UNSET as UNSET
 
+from ...._invocation_types import BamlOptions as _BamlOptions
+
 
 class GwImagesRequest(pydantic.BaseModel):
     prompt: str
@@ -74,61 +76,57 @@ class GwImagesResponse(pydantic.BaseModel):
     usage: typing.Optional[GwImagesUsage] = None
 
 
-def _gw_images_client_id(c: vendor.vercel.AiGatewayImageClient) -> str:
-    """(internal) The client's canonical id, shared by `ai.Client.id` and the error paths."""
-async def _gw_images_client_id_async(c: vendor.vercel.AiGatewayImageClient) -> str:
-    """(internal) The client's canonical id, shared by `ai.Client.id` and the error paths."""
-
-
-def _gw_images_drop_nulls(value: baml.json.json) -> baml.json.json:
-    """(internal) Drop every null-valued key, recursively: a typed request class serializes its
+def _gw_images_drop_nulls(value: baml.json.json, *, _baml: _BamlOptions | None = None) -> baml.json.json:
+    """(internal) The client's canonical id, shared by `ai.Client.id` and the error paths.
+    (internal) Drop every null-valued key, recursively: a typed request class serializes its
     unset options as explicit nulls, and the wire wants them absent."""
-async def _gw_images_drop_nulls_async(value: baml.json.json) -> baml.json.json:
-    """(internal) Drop every null-valued key, recursively: a typed request class serializes its
+async def _gw_images_drop_nulls_async(value: baml.json.json, *, _baml: _BamlOptions | None = None) -> baml.json.json:
+    """(internal) The client's canonical id, shared by `ai.Client.id` and the error paths.
+    (internal) Drop every null-valued key, recursively: a typed request class serializes its
     unset options as explicit nulls, and the wire wants them absent."""
 
 
-def _gw_images_media_rejected(kind: str) -> ai.errors.InvalidRequest: ...
-async def _gw_images_media_rejected_async(kind: str) -> ai.errors.InvalidRequest: ...
+def _gw_images_media_rejected(kind: str, *, _baml: _BamlOptions | None = None) -> ai.errors.InvalidRequest: ...
+async def _gw_images_media_rejected_async(kind: str, *, _baml: _BamlOptions | None = None) -> ai.errors.InvalidRequest: ...
 
 
-def _gw_images_file(media: ai.MediaPart, *, preview: typing.Union[bool, UNSET] = False) -> GwImagesFile:
+def _gw_images_file(media: ai.MediaPart, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> GwImagesFile:
     """(internal) One image prompt part as a `files[]` element. Media is NOT fetched here: the
     protocol takes a `{type:"url"}` reference directly, so a remote image is
     handed to the gateway as a link and only local/base64/`data:` sources are
     inlined.
 
     Raises:
-        InvalidArgument, Io, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
-async def _gw_images_file_async(media: ai.MediaPart, *, preview: typing.Union[bool, UNSET] = False) -> GwImagesFile:
+        InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+async def _gw_images_file_async(media: ai.MediaPart, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> GwImagesFile:
     """(internal) One image prompt part as a `files[]` element. Media is NOT fetched here: the
     protocol takes a `{type:"url"}` reference directly, so a remote image is
     handed to the gateway as a link and only local/base64/`data:` sources are
     inlined.
 
     Raises:
-        InvalidArgument, Io, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+        InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
 
 
-def _gw_images_collect(blocks: typing.List[ai.content.Block], parts: typing.List[str], files: typing.List[GwImagesFile], *, preview: typing.Union[bool, UNSET] = False) -> None:
+def _gw_images_collect(blocks: typing.List[ai.content.Block], parts: typing.List[str], files: typing.List[GwImagesFile], *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> None:
     """(internal) Collect a turn into the endpoint's two inputs: text blocks trimmed into
     `parts` (blanks dropped), image blocks into `files` — how this endpoint
     does image editing / variations (image-model protocol v4) — at every
     position. The other media kinds have no representation and are rejected.
 
     Raises:
-        InvalidArgument, Io, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
-async def _gw_images_collect_async(blocks: typing.List[ai.content.Block], parts: typing.List[str], files: typing.List[GwImagesFile], *, preview: typing.Union[bool, UNSET] = False) -> None:
+        InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+async def _gw_images_collect_async(blocks: typing.List[ai.content.Block], parts: typing.List[str], files: typing.List[GwImagesFile], *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> None:
     """(internal) Collect a turn into the endpoint's two inputs: text blocks trimmed into
     `parts` (blanks dropped), image blocks into `files` — how this endpoint
     does image editing / variations (image-model protocol v4) — at every
     position. The other media kinds have no representation and are rejected.
 
     Raises:
-        InvalidArgument, Io, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+        InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
 
 
-def _gw_images_input(prompt: ai.Prompt, journal: ai.Journal, *, preview: typing.Union[bool, UNSET] = False) -> GwImagesInput:
+def _gw_images_input(prompt: ai.Prompt, journal: ai.Journal, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> GwImagesInput:
     """(internal) The rendered prompt lowered to the endpoint's two inputs.
 
     Text: every text part, trimmed, blanks dropped, joined with a blank line —
@@ -136,8 +134,8 @@ def _gw_images_input(prompt: ai.Prompt, journal: ai.Journal, *, preview: typing.
     a re-ask still reaches the model.
 
     Raises:
-        InvalidArgument, Io, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
-async def _gw_images_input_async(prompt: ai.Prompt, journal: ai.Journal, *, preview: typing.Union[bool, UNSET] = False) -> GwImagesInput:
+        InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+async def _gw_images_input_async(prompt: ai.Prompt, journal: ai.Journal, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> GwImagesInput:
     """(internal) The rendered prompt lowered to the endpoint's two inputs.
 
     Text: every text part, trimmed, blanks dropped, joined with a blank line —
@@ -145,31 +143,31 @@ async def _gw_images_input_async(prompt: ai.Prompt, journal: ai.Journal, *, prev
     a re-ask still reaches the model.
 
     Raises:
-        InvalidArgument, Io, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+        InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
 
 
-def _gw_images_trim_slash(url: str) -> str: ...
-async def _gw_images_trim_slash_async(url: str) -> str: ...
+def _gw_images_trim_slash(url: str, *, _baml: _BamlOptions | None = None) -> str: ...
+async def _gw_images_trim_slash_async(url: str, *, _baml: _BamlOptions | None = None) -> str: ...
 
 
-def _gw_images_escape_query(raw: str) -> str:
+def _gw_images_escape_query(raw: str, *, _baml: _BamlOptions | None = None) -> str:
     """(internal) Percent-escape the characters that would otherwise change a URL's structure."""
-async def _gw_images_escape_query_async(raw: str) -> str:
+async def _gw_images_escape_query_async(raw: str, *, _baml: _BamlOptions | None = None) -> str:
     """(internal) Percent-escape the characters that would otherwise change a URL's structure."""
 
 
-def _gw_images_with_query(url: str, params: typing.Optional[typing.Dict[str, str]]) -> str: ...
-async def _gw_images_with_query_async(url: str, params: typing.Optional[typing.Dict[str, str]]) -> str: ...
+def _gw_images_with_query(url: str, params: typing.Optional[typing.Dict[str, str]], *, _baml: _BamlOptions | None = None) -> str: ...
+async def _gw_images_with_query_async(url: str, params: typing.Optional[typing.Dict[str, str]], *, _baml: _BamlOptions | None = None) -> str: ...
 
 
-def _gw_images_headers(c: vendor.vercel.AiGatewayImageClient, *, preview: typing.Union[bool, UNSET] = False) -> typing.Dict[str, str]:
+def _gw_images_headers(c: vendor.vercel.AiGatewayImageClient, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> typing.Dict[str, str]:
     """(internal) Gateway protocol headers, then the user's `headers` (lowercased), then auth —
     `authorization` + `ai-gateway-auth-method` are applied last so a passthrough
     header cannot silently unset the credential.
 
     Raises:
         Io, ParseError, InvalidRequest"""
-async def _gw_images_headers_async(c: vendor.vercel.AiGatewayImageClient, *, preview: typing.Union[bool, UNSET] = False) -> typing.Dict[str, str]:
+async def _gw_images_headers_async(c: vendor.vercel.AiGatewayImageClient, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> typing.Dict[str, str]:
     """(internal) Gateway protocol headers, then the user's `headers` (lowercased), then auth —
     `authorization` + `ai-gateway-auth-method` are applied last so a passthrough
     header cannot silently unset the credential.
@@ -178,35 +176,35 @@ async def _gw_images_headers_async(c: vendor.vercel.AiGatewayImageClient, *, pre
         Io, ParseError, InvalidRequest"""
 
 
-def gateway_images_render(c: vendor.vercel.AiGatewayImageClient, input: ai.ModelTurnInput, *, preview: typing.Union[bool, UNSET] = False) -> baml.http.Request:
+def gateway_images_render(c: vendor.vercel.AiGatewayImageClient, input: ai.ModelTurnInput, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> baml.http.Request:
     """ai.ModelTurnInput -> one gateway image-model request.
 
     Raises:
         InvalidArgument, Io, ParseError, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
-async def gateway_images_render_async(c: vendor.vercel.AiGatewayImageClient, input: ai.ModelTurnInput, *, preview: typing.Union[bool, UNSET] = False) -> baml.http.Request:
+async def gateway_images_render_async(c: vendor.vercel.AiGatewayImageClient, input: ai.ModelTurnInput, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> baml.http.Request:
     """ai.ModelTurnInput -> one gateway image-model request.
 
     Raises:
         InvalidArgument, Io, ParseError, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
 
 
-def _gw_images_find_output_format(value: typing.Optional[baml.json.json]) -> typing.Optional[str]:
+def _gw_images_find_output_format(value: typing.Optional[baml.json.json], *, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
     """(internal) The first `outputFormat` anywhere in a JSON blob. Gateway providers nest it
     under their own name (`providerOptions.blackForestLabs.outputFormat`), and
     the response echoes provider settings back under `providerMetadata`, so the
     search is structural rather than path-based."""
-async def _gw_images_find_output_format_async(value: typing.Optional[baml.json.json]) -> typing.Optional[str]:
+async def _gw_images_find_output_format_async(value: typing.Optional[baml.json.json], *, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
     """(internal) The first `outputFormat` anywhere in a JSON blob. Gateway providers nest it
     under their own name (`providerOptions.blackForestLabs.outputFormat`), and
     the response echoes provider settings back under `providerMetadata`, so the
     search is structural rather than path-based."""
 
 
-def _gw_images_mime(format: typing.Optional[str]) -> str: ...
-async def _gw_images_mime_async(format: typing.Optional[str]) -> str: ...
+def _gw_images_mime(format: typing.Optional[str], *, _baml: _BamlOptions | None = None) -> str: ...
+async def _gw_images_mime_async(format: typing.Optional[str], *, _baml: _BamlOptions | None = None) -> str: ...
 
 
-def _gw_images_value(encoded: str, fallback_mime: str) -> baml.media.Image:
+def _gw_images_value(encoded: str, fallback_mime: str, *, _baml: _BamlOptions | None = None) -> baml.media.Image:
     """(internal) One `images[]` element as an image value. Raw base64 is the documented shape;
     a `data:<mime>;base64,` payload carries its own MIME type and wins. A `data:`
     URL in any OTHER encoding (percent-escaped bytes) is a parse failure, not
@@ -214,8 +212,8 @@ def _gw_images_value(encoded: str, fallback_mime: str) -> baml.media.Image:
     bytes that are not the image.
 
     Raises:
-        ParseFailed"""
-async def _gw_images_value_async(encoded: str, fallback_mime: str) -> baml.media.Image:
+        InvalidResponse"""
+async def _gw_images_value_async(encoded: str, fallback_mime: str, *, _baml: _BamlOptions | None = None) -> baml.media.Image:
     """(internal) One `images[]` element as an image value. Raw base64 is the documented shape;
     a `data:<mime>;base64,` payload carries its own MIME type and wins. A `data:`
     URL in any OTHER encoding (percent-escaped bytes) is a parse failure, not
@@ -223,20 +221,20 @@ async def _gw_images_value_async(encoded: str, fallback_mime: str) -> baml.media
     bytes that are not the image.
 
     Raises:
-        ParseFailed"""
+        InvalidResponse"""
 
 
-def gateway_images_warning_text(warning: GwImagesWarning) -> str:
+def gateway_images_warning_text(warning: GwImagesWarning, *, _baml: _BamlOptions | None = None) -> str:
     """One `warnings[]` entry as a log line. Every variant of the protocol's warning
     union names either a `feature`/`setting` or a free-text `message`, so this
     renders whichever the provider sent."""
-async def gateway_images_warning_text_async(warning: GwImagesWarning) -> str:
+async def gateway_images_warning_text_async(warning: GwImagesWarning, *, _baml: _BamlOptions | None = None) -> str:
     """One `warnings[]` entry as a log line. Every variant of the protocol's warning
     union names either a `feature`/`setting` or a free-text `message`, so this
     renders whichever the provider sent."""
 
 
-def gateway_images_parse(c: vendor.vercel.AiGatewayImageClient, resp: GwImagesResponse) -> ai.ModelTurn:
+def gateway_images_parse(c: vendor.vercel.AiGatewayImageClient, resp: GwImagesResponse, *, _baml: _BamlOptions | None = None) -> ai.ModelTurn:
     """One decoded response -> one model turn of media blocks. The endpoint reports
     no finish reason, so the stop reason is always Complete (sys_llm's
     `FinishReason::Stop`); `usage` is carried through when the provider sent it
@@ -244,8 +242,8 @@ def gateway_images_parse(c: vendor.vercel.AiGatewayImageClient, resp: GwImagesRe
     ignored — are logged, since nothing else in the turn records them.
 
     Raises:
-        ParseFailed"""
-async def gateway_images_parse_async(c: vendor.vercel.AiGatewayImageClient, resp: GwImagesResponse) -> ai.ModelTurn:
+        SerializationError, InvalidResponse"""
+async def gateway_images_parse_async(c: vendor.vercel.AiGatewayImageClient, resp: GwImagesResponse, *, _baml: _BamlOptions | None = None) -> ai.ModelTurn:
     """One decoded response -> one model turn of media blocks. The endpoint reports
     no finish reason, so the stop reason is always Complete (sys_llm's
     `FinishReason::Stop`); `usage` is carried through when the provider sent it
@@ -253,16 +251,22 @@ async def gateway_images_parse_async(c: vendor.vercel.AiGatewayImageClient, resp
     ignored — are logged, since nothing else in the turn records them.
 
     Raises:
-        ParseFailed"""
+        SerializationError, InvalidResponse"""
 
 
-def gateway_images_invoke(c: vendor.vercel.AiGatewayImageClient, input: ai.ModelTurnInput) -> ai.ModelTurn:
+def gateway_images_usage(resp: GwImagesResponse, *, _baml: _BamlOptions | None = None) -> typing.Optional[ai.events.Usage]:
+    """One decoded response's usage, null when it reported none."""
+async def gateway_images_usage_async(resp: GwImagesResponse, *, _baml: _BamlOptions | None = None) -> typing.Optional[ai.events.Usage]:
+    """One decoded response's usage, null when it reported none."""
+
+
+def gateway_images_invoke(c: vendor.vercel.AiGatewayImageClient, input: ai.ModelTurnInput, *, _baml: _BamlOptions | None = None) -> ai.ModelTurn:
     """The one internal entry point: render, send, normalize — one model turn. The
     endpoint does not stream, so there is no streaming counterpart.
 
     Raises:
         InvalidArgument, Io, ParseError, Timeout, SerializationError"""
-async def gateway_images_invoke_async(c: vendor.vercel.AiGatewayImageClient, input: ai.ModelTurnInput) -> ai.ModelTurn:
+async def gateway_images_invoke_async(c: vendor.vercel.AiGatewayImageClient, input: ai.ModelTurnInput, *, _baml: _BamlOptions | None = None) -> ai.ModelTurn:
     """The one internal entry point: render, send, normalize — one model turn. The
     endpoint does not stream, so there is no streaming counterpart.
 
@@ -283,6 +287,8 @@ __all__ = [
     "gateway_images_warning_text_async",
     "gateway_images_parse",
     "gateway_images_parse_async",
+    "gateway_images_usage",
+    "gateway_images_usage_async",
     "gateway_images_invoke",
     "gateway_images_invoke_async",
 ]

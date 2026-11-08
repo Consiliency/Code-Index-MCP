@@ -72,10 +72,10 @@ reject_async = _define_function("typesafeai.internal.reject", "async", ["detail"
 
 options       = _define_function("typesafeai.internal.options", "sync",  ["ty"], binding_name="options", binding_qualname="options", binding_module=__name__)
 options.__doc__ = """Raises:
-    InvalidArgument, DecodeError, ParseError, InvalidRequest"""
+    InvalidArgument, DecodeError, ParseError, SerializationError, InvalidRequest"""
 options_async = _define_function("typesafeai.internal.options", "async", ["ty"], binding_name="options_async", binding_qualname="options_async", binding_module=__name__)
 options_async.__doc__ = """Raises:
-    InvalidArgument, DecodeError, ParseError, InvalidRequest"""
+    InvalidArgument, DecodeError, ParseError, SerializationError, InvalidRequest"""
 
 
 accepts_null       = _define_function("typesafeai.internal.accepts_null", "sync",  ["ty"], binding_name="accepts_null", binding_qualname="accepts_null", binding_module=__name__)
@@ -84,10 +84,10 @@ accepts_null_async = _define_function("typesafeai.internal.accepts_null", "async
 
 collect       = _define_function("typesafeai.internal.collect", "sync",  ["ty", "ids", "labels", "description", "aliased", "prefix", "ancestors"], binding_name="collect", binding_qualname="collect", binding_module=__name__)
 collect.__doc__ = """Raises:
-    InvalidArgument, DecodeError, ParseError, InvalidRequest"""
+    InvalidArgument, DecodeError, ParseError, SerializationError, InvalidRequest"""
 collect_async = _define_function("typesafeai.internal.collect", "async", ["ty", "ids", "labels", "description", "aliased", "prefix", "ancestors"], binding_name="collect_async", binding_qualname="collect_async", binding_module=__name__)
 collect_async.__doc__ = """Raises:
-    InvalidArgument, DecodeError, ParseError, InvalidRequest"""
+    InvalidArgument, DecodeError, ParseError, SerializationError, InvalidRequest"""
 
 
 text_blocks       = _define_function("typesafeai.internal.text_blocks", "sync",  ["blocks"], binding_name="text_blocks", binding_qualname="text_blocks", binding_module=__name__)
@@ -100,18 +100,18 @@ text_blocks_async.__doc__ = """Raises:
 
 plan       = _define_function("typesafeai.internal.plan", "sync",  ["input"], binding_name="plan", binding_qualname="plan", binding_module=__name__)
 plan.__doc__ = """Raises:
-    InvalidArgument, DecodeError, ParseError, InvalidRequest, PromptRenderError"""
+    InvalidArgument, DecodeError, ParseError, SerializationError, InvalidRequest, PromptRenderError"""
 plan_async = _define_function("typesafeai.internal.plan", "async", ["input"], binding_name="plan_async", binding_qualname="plan_async", binding_module=__name__)
 plan_async.__doc__ = """Raises:
-    InvalidArgument, DecodeError, ParseError, InvalidRequest, PromptRenderError"""
+    InvalidArgument, DecodeError, ParseError, SerializationError, InvalidRequest, PromptRenderError"""
 
 
 request       = _define_function("typesafeai.internal.request", "sync",  ["c", "input", "p", "preview"], binding_name="request", binding_qualname="request", binding_module=__name__)
 request.__doc__ = """Raises:
-    Io, ParseError, InvalidRequest"""
+    Io, ParseError, SerializationError, InvalidRequest"""
 request_async = _define_function("typesafeai.internal.request", "async", ["c", "input", "p", "preview"], binding_name="request_async", binding_qualname="request_async", binding_module=__name__)
 request_async.__doc__ = """Raises:
-    Io, ParseError, InvalidRequest"""
+    Io, ParseError, SerializationError, InvalidRequest"""
 
 
 class Answer(pydantic.BaseModel):
@@ -159,10 +159,10 @@ decode_async.__doc__ = """Raises:
 
 assemble       = _define_function("typesafeai.internal.assemble", "sync",  ["ty", "path", "values"], binding_name="assemble", binding_qualname="assemble", binding_module=__name__)
 assemble.__doc__ = """Raises:
-    DecodeError, ParseError, SerializationError, ParseFailed"""
+    DecodeError, ParseError, SerializationError"""
 assemble_async = _define_function("typesafeai.internal.assemble", "async", ["ty", "path", "values"], binding_name="assemble_async", binding_qualname="assemble_async", binding_module=__name__)
 assemble_async.__doc__ = """Raises:
-    DecodeError, ParseError, SerializationError, ParseFailed"""
+    DecodeError, ParseError, SerializationError"""
 
 
 invoke       = _define_function("typesafeai.internal.invoke", "sync",  ["c", "input"], binding_name="invoke", binding_qualname="invoke", binding_module=__name__)

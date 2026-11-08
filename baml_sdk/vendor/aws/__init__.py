@@ -26,6 +26,12 @@ _LAZY_CHILDREN = frozenset({
 })
 
 def __getattr__(name):
+    if name == "experimental" and __name__ == "baml_sdk":
+        import importlib
+        return importlib.import_module(".experimental", __name__)
+    if name == "trace" and __name__ == "baml_sdk":
+        import importlib
+        return importlib.import_module(".vendor.trace", __name__)
     if name in _LAZY_CHILDREN:
         import importlib
         return importlib.import_module(f".{name}", __name__)
@@ -96,8 +102,8 @@ class BedrockClient(pydantic.BaseModel):
             only when `model` names one of those families. Other families still get
             the result text, which carries the tool's error message.
         cache_system_prompt: Append a `cachePoint` after the system content, making the system
-            prompt reusable across calls. Per-message checkpoints come from the
-            `cache_point` key of `ai.PromptMessage.metadata` instead.
+            prompt reusable across calls. A checkpoint anywhere else is written in
+            the prompt, as `${cache()}`.
         cache_tools: Append a `cachePoint` after the tool list, making the tool definitions
             reusable across calls.
         additional_model_request_fields: `additionalModelRequestFields`: model-specific parameters Converse has
@@ -112,9 +118,10 @@ class BedrockClient(pydantic.BaseModel):
             the signature. Names are lowercased; a name the client already sets is
             replaced, not duplicated.
         query_params: Extra query parameters, appended (and percent-encoded) BEFORE signing.
-        capture_wire: Record request/response bodies on the LLMCall wire records delivered
+        capture_wire: Record request/response bodies on the ModelCall wire records delivered
             through on_event. Status, headers, and timing are always recorded; this
             flag only gates the bodies.
+        timeout
     """
     model_config = pydantic.ConfigDict(
         arbitrary_types_allowed=True,
@@ -140,8 +147,9 @@ class BedrockClient(pydantic.BaseModel):
     headers: typing.Optional[typing.Dict[str, str]] = None
     query_params: typing.Optional[typing.Dict[str, str]] = None
     capture_wire: bool
-    new       = staticmethod(_define_function("aws.BedrockClient.new", "sync",  ["model"], ["region", "profile", "access_key_id", "secret_access_key", "session_token", "endpoint_url", "max_tokens", "temperature", "top_p", "stop_sequences", "tool_choice", "cache_system_prompt", "cache_tools", "additional_model_request_fields", "request_body", "headers", "query_params", "capture_wire"], binding_name="new", binding_qualname="BedrockClient.new", binding_module=__name__))
-    new_async = staticmethod(_define_function("aws.BedrockClient.new", "async", ["model"], ["region", "profile", "access_key_id", "secret_access_key", "session_token", "endpoint_url", "max_tokens", "temperature", "top_p", "stop_sequences", "tool_choice", "cache_system_prompt", "cache_tools", "additional_model_request_fields", "request_body", "headers", "query_params", "capture_wire"], binding_name="new_async", binding_qualname="BedrockClient.new_async", binding_module=__name__))
+    timeout: typing.Union[baml.time.Duration, ai.LlmTimeoutOptions, None] = None
+    new       = staticmethod(_define_function("aws.BedrockClient.new", "sync",  ["model"], ["region", "profile", "access_key_id", "secret_access_key", "session_token", "endpoint_url", "max_tokens", "temperature", "top_p", "stop_sequences", "tool_choice", "cache_system_prompt", "cache_tools", "additional_model_request_fields", "request_body", "headers", "query_params", "capture_wire", "timeout"], binding_name="new", binding_qualname="BedrockClient.new", binding_module=__name__))
+    new_async = staticmethod(_define_function("aws.BedrockClient.new", "async", ["model"], ["region", "profile", "access_key_id", "secret_access_key", "session_token", "endpoint_url", "max_tokens", "temperature", "top_p", "stop_sequences", "tool_choice", "cache_system_prompt", "cache_tools", "additional_model_request_fields", "request_body", "headers", "query_params", "capture_wire", "timeout"], binding_name="new_async", binding_qualname="BedrockClient.new_async", binding_module=__name__))
     resolved_endpoint_url       = _define_function("aws.BedrockClient.resolved_endpoint_url", "sync",  ["self"], binding_name="resolved_endpoint_url", binding_qualname="BedrockClient.resolved_endpoint_url", binding_module=__name__)
     resolved_endpoint_url_async = _define_function("aws.BedrockClient.resolved_endpoint_url", "async", ["self"], binding_name="resolved_endpoint_url_async", binding_qualname="BedrockClient.resolved_endpoint_url_async", binding_module=__name__)
 

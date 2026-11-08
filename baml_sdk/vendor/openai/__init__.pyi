@@ -33,6 +33,8 @@ if typing.TYPE_CHECKING:
     from ... import vendor
     from ...baml import UNSET as UNSET
 
+from ..._invocation_types import BamlOptions as _BamlOptions
+
 
 class AzureClient(pydantic.BaseModel):
     model: str
@@ -51,51 +53,43 @@ class AzureClient(pydantic.BaseModel):
     stop: typing.Optional[typing.List[str]] = None
     seed: typing.Optional[int] = None
     capture_wire: bool
+    timeout: typing.Union[baml.time.Duration, ai.LlmTimeoutOptions, None] = None
     @staticmethod
-    def new(model: str, *, resource_name: typing.Union[str, None, UNSET] = None, deployment_id: typing.Union[str, None, UNSET] = None, api_version: typing.Union[str, None, UNSET] = "2024-10-21", base_url: typing.Union[ai.Credential, None, UNSET] = None, api_key: typing.Union[ai.Credential, None, UNSET] = None, request_body: typing.Union[baml.json.json, None, UNSET] = None, headers: typing.Union[typing.Dict[str, str], None, UNSET] = None, query_params: typing.Union[typing.Dict[str, str], None, UNSET] = None, temperature: typing.Union[float, None, UNSET] = None, max_tokens: typing.Union[int, None, UNSET] = None, max_completion_tokens: typing.Union[int, None, UNSET] = None, top_p: typing.Union[float, None, UNSET] = None, stop: typing.Union[typing.List[str], None, UNSET] = None, seed: typing.Union[int, None, UNSET] = None, capture_wire: typing.Union[bool, UNSET] = True) -> AzureClient:
+    def new(model: str, *, resource_name: typing.Union[str, None, UNSET] = None, deployment_id: typing.Union[str, None, UNSET] = None, api_version: typing.Union[str, None, UNSET] = "2024-10-21", base_url: typing.Union[ai.Credential, None, UNSET] = None, api_key: typing.Union[ai.Credential, None, UNSET] = None, request_body: typing.Union[baml.json.json, None, UNSET] = None, headers: typing.Union[typing.Dict[str, str], None, UNSET] = None, query_params: typing.Union[typing.Dict[str, str], None, UNSET] = None, temperature: typing.Union[float, None, UNSET] = None, max_tokens: typing.Union[int, None, UNSET] = None, max_completion_tokens: typing.Union[int, None, UNSET] = None, top_p: typing.Union[float, None, UNSET] = None, stop: typing.Union[typing.List[str], None, UNSET] = None, seed: typing.Union[int, None, UNSET] = None, capture_wire: typing.Union[bool, UNSET] = True, timeout: typing.Union[baml.time.Duration, ai.LlmTimeoutOptions, None, UNSET] = None, _baml: _BamlOptions | None = None) -> AzureClient:
         """Creates a client. Construction reads no environment variable, so
         declaring one is always safe; credentials and endpoints resolve when a
         request is built."""
     @staticmethod
-    async def new_async(model: str, *, resource_name: typing.Union[str, None, UNSET] = None, deployment_id: typing.Union[str, None, UNSET] = None, api_version: typing.Union[str, None, UNSET] = "2024-10-21", base_url: typing.Union[ai.Credential, None, UNSET] = None, api_key: typing.Union[ai.Credential, None, UNSET] = None, request_body: typing.Union[baml.json.json, None, UNSET] = None, headers: typing.Union[typing.Dict[str, str], None, UNSET] = None, query_params: typing.Union[typing.Dict[str, str], None, UNSET] = None, temperature: typing.Union[float, None, UNSET] = None, max_tokens: typing.Union[int, None, UNSET] = None, max_completion_tokens: typing.Union[int, None, UNSET] = None, top_p: typing.Union[float, None, UNSET] = None, stop: typing.Union[typing.List[str], None, UNSET] = None, seed: typing.Union[int, None, UNSET] = None, capture_wire: typing.Union[bool, UNSET] = True) -> AzureClient:
+    async def new_async(model: str, *, resource_name: typing.Union[str, None, UNSET] = None, deployment_id: typing.Union[str, None, UNSET] = None, api_version: typing.Union[str, None, UNSET] = "2024-10-21", base_url: typing.Union[ai.Credential, None, UNSET] = None, api_key: typing.Union[ai.Credential, None, UNSET] = None, request_body: typing.Union[baml.json.json, None, UNSET] = None, headers: typing.Union[typing.Dict[str, str], None, UNSET] = None, query_params: typing.Union[typing.Dict[str, str], None, UNSET] = None, temperature: typing.Union[float, None, UNSET] = None, max_tokens: typing.Union[int, None, UNSET] = None, max_completion_tokens: typing.Union[int, None, UNSET] = None, top_p: typing.Union[float, None, UNSET] = None, stop: typing.Union[typing.List[str], None, UNSET] = None, seed: typing.Union[int, None, UNSET] = None, capture_wire: typing.Union[bool, UNSET] = True, timeout: typing.Union[baml.time.Duration, ai.LlmTimeoutOptions, None, UNSET] = None, _baml: _BamlOptions | None = None) -> AzureClient:
         """Creates a client. Construction reads no environment variable, so
         declaring one is always safe; credentials and endpoints resolve when a
         request is built."""
-    def resolved_api_key(self) -> typing.Optional[str]:
+    def resolved_api_key(self, *, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
         """The request-time credential: the explicit value, else
         `AZURE_OPENAI_API_KEY`. Azure sends it in an `api-key` header rather
         than as a bearer token.
 
         Raises:
             Io, ParseError"""
-    async def resolved_api_key_async(self) -> typing.Optional[str]:
+    async def resolved_api_key_async(self, *, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
         """The request-time credential: the explicit value, else
         `AZURE_OPENAI_API_KEY`. Azure sends it in an `api-key` header rather
         than as a bearer token.
 
         Raises:
             Io, ParseError"""
-    def resolved_deployment_id(self) -> str:
-        """The deployment segment: the caller's `deployment_id`, else the model."""
-    async def resolved_deployment_id_async(self) -> str:
-        """The deployment segment: the caller's `deployment_id`, else the model."""
-    def resolved_base_url(self) -> str:
+    def resolved_base_url(self, *, _baml: _BamlOptions | None = None) -> str:
         """The deployment base this client posts to, resolved in the order Azure
         users actually configure things:
 
           1. an explicit `base_url` (a literal or an `env.NAME` ref), used
              verbatim — it already names the deployment;
-          2. `resource_name`, which builds
+          2. `deployment_id` with `resource_name`, which builds
              `https://{resource}.openai.azure.com/openai/deployments/{deployment}`;
-          3. `AZURE_OPENAI_ENDPOINT` — the variable the official Azure OpenAI
-             SDKs read — treated as the resource ORIGIN and given the same
-             `/openai/deployments/{deployment}` path as rung 2.
-
-        Rung 3 is what makes the `"azure/<model>"` shorthand viable. The
-        shorthand can only supply a model, and every other provider's shorthand
-        works off ambient credentials; without an endpoint fallback this client
-        could never send. With `deployment_id` defaulting to `model`, ambient
-        `AZURE_OPENAI_ENDPOINT` + `AZURE_OPENAI_API_KEY` is a complete config.
+          3. `deployment_id` with `AZURE_OPENAI_ENDPOINT` — the variable the
+             official Azure OpenAI SDKs read — treated as the resource ORIGIN
+             and given the same `/openai/deployments/{deployment}` path as
+             rung 2.
 
         The engine reports the mutually-exclusive shapes at compile time with
         per-key spans; a BAML constructor can only report at request time, so
@@ -103,23 +97,18 @@ class AzureClient(pydantic.BaseModel):
 
         Raises:
             Io, ParseError, InvalidRequest"""
-    async def resolved_base_url_async(self) -> str:
+    async def resolved_base_url_async(self, *, _baml: _BamlOptions | None = None) -> str:
         """The deployment base this client posts to, resolved in the order Azure
         users actually configure things:
 
           1. an explicit `base_url` (a literal or an `env.NAME` ref), used
              verbatim — it already names the deployment;
-          2. `resource_name`, which builds
+          2. `deployment_id` with `resource_name`, which builds
              `https://{resource}.openai.azure.com/openai/deployments/{deployment}`;
-          3. `AZURE_OPENAI_ENDPOINT` — the variable the official Azure OpenAI
-             SDKs read — treated as the resource ORIGIN and given the same
-             `/openai/deployments/{deployment}` path as rung 2.
-
-        Rung 3 is what makes the `"azure/<model>"` shorthand viable. The
-        shorthand can only supply a model, and every other provider's shorthand
-        works off ambient credentials; without an endpoint fallback this client
-        could never send. With `deployment_id` defaulting to `model`, ambient
-        `AZURE_OPENAI_ENDPOINT` + `AZURE_OPENAI_API_KEY` is a complete config.
+          3. `deployment_id` with `AZURE_OPENAI_ENDPOINT` — the variable the
+             official Azure OpenAI SDKs read — treated as the resource ORIGIN
+             and given the same `/openai/deployments/{deployment}` path as
+             rung 2.
 
         The engine reports the mutually-exclusive shapes at compile time with
         per-key spans; a BAML constructor can only report at request time, so
@@ -127,19 +116,19 @@ class AzureClient(pydantic.BaseModel):
 
         Raises:
             Io, ParseError, InvalidRequest"""
-    def compat(self) -> vendor.openai.internal.ChatCompat:
+    def compat(self, *, _baml: _BamlOptions | None = None) -> vendor.openai.internal.ChatCompat:
         """The provider record: everything the shared chat core needs to know
         about this endpoint.
 
         Raises:
             Io, ParseError, InvalidRequest"""
-    async def compat_async(self) -> vendor.openai.internal.ChatCompat:
+    async def compat_async(self, *, _baml: _BamlOptions | None = None) -> vendor.openai.internal.ChatCompat:
         """The provider record: everything the shared chat core needs to know
         about this endpoint.
 
         Raises:
             Io, ParseError, InvalidRequest"""
-    def params(self, *, preview: typing.Union[bool, UNSET] = False) -> vendor.openai.internal.ChatParams:
+    def params(self, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> vendor.openai.internal.ChatParams:
         """The per-request parameters handed to the shared chat core.
 
         # Parameters
@@ -149,7 +138,7 @@ class AzureClient(pydantic.BaseModel):
 
         Raises:
             Io, ParseError"""
-    async def params_async(self, *, preview: typing.Union[bool, UNSET] = False) -> vendor.openai.internal.ChatParams:
+    async def params_async(self, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> vendor.openai.internal.ChatParams:
         """The per-request parameters handed to the shared chat core.
 
         # Parameters
@@ -165,8 +154,7 @@ class ChatClient(pydantic.BaseModel):
     model: str
     api_key: typing.Optional[ai.Credential] = None
     base_url: typing.Optional[ai.Credential] = None
-    request_timeout_ms: typing.Optional[int] = None
-    time_to_first_token_timeout_ms: typing.Optional[int] = None
+    timeout: typing.Union[baml.time.Duration, ai.LlmTimeoutOptions, None] = None
     request_body: typing.Optional[baml.json.json] = None
     headers: typing.Optional[typing.Dict[str, str]] = None
     query_params: typing.Optional[typing.Dict[str, str]] = None
@@ -177,17 +165,32 @@ class ChatClient(pydantic.BaseModel):
     stop: typing.Optional[typing.List[str]] = None
     seed: typing.Optional[int] = None
     capture_wire: bool
+    structured_output: bool
     @staticmethod
-    def new(*, model: typing.Union[str, UNSET] = "gpt-4o-mini", api_key: typing.Union[ai.Credential, None, UNSET] = None, base_url: typing.Union[ai.Credential, None, UNSET] = None, request_timeout_ms: typing.Union[int, None, UNSET] = None, time_to_first_token_timeout_ms: typing.Union[int, None, UNSET] = None, request_body: typing.Union[baml.json.json, None, UNSET] = None, headers: typing.Union[typing.Dict[str, str], None, UNSET] = None, query_params: typing.Union[typing.Dict[str, str], None, UNSET] = None, temperature: typing.Union[float, None, UNSET] = None, max_tokens: typing.Union[int, None, UNSET] = None, max_completion_tokens: typing.Union[int, None, UNSET] = None, top_p: typing.Union[float, None, UNSET] = None, stop: typing.Union[typing.List[str], None, UNSET] = None, seed: typing.Union[int, None, UNSET] = None, capture_wire: typing.Union[bool, UNSET] = True) -> ChatClient:
+    def new(*, model: typing.Union[str, UNSET] = "gpt-4o-mini", api_key: typing.Union[ai.Credential, None, UNSET] = None, base_url: typing.Union[ai.Credential, None, UNSET] = None, timeout: typing.Union[baml.time.Duration, ai.LlmTimeoutOptions, None, UNSET] = None, request_body: typing.Union[baml.json.json, None, UNSET] = None, headers: typing.Union[typing.Dict[str, str], None, UNSET] = None, query_params: typing.Union[typing.Dict[str, str], None, UNSET] = None, temperature: typing.Union[float, None, UNSET] = None, max_tokens: typing.Union[int, None, UNSET] = None, max_completion_tokens: typing.Union[int, None, UNSET] = None, top_p: typing.Union[float, None, UNSET] = None, stop: typing.Union[typing.List[str], None, UNSET] = None, seed: typing.Union[int, None, UNSET] = None, capture_wire: typing.Union[bool, UNSET] = True, structured_output: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> ChatClient:
         """Creates a client. Construction reads no environment variable, so
         declaring one is always safe; credentials and endpoints resolve when a
-        request is built."""
+        request is built.
+
+        # Parameters
+
+        - `structured_output`: send OpenAI Structured Outputs and read the
+          answer strictly (see the field of the same name). The model sees
+          the output type's schema, documentation included, so a prompt need
+          not include `${ctx.output_format()}`."""
     @staticmethod
-    async def new_async(*, model: typing.Union[str, UNSET] = "gpt-4o-mini", api_key: typing.Union[ai.Credential, None, UNSET] = None, base_url: typing.Union[ai.Credential, None, UNSET] = None, request_timeout_ms: typing.Union[int, None, UNSET] = None, time_to_first_token_timeout_ms: typing.Union[int, None, UNSET] = None, request_body: typing.Union[baml.json.json, None, UNSET] = None, headers: typing.Union[typing.Dict[str, str], None, UNSET] = None, query_params: typing.Union[typing.Dict[str, str], None, UNSET] = None, temperature: typing.Union[float, None, UNSET] = None, max_tokens: typing.Union[int, None, UNSET] = None, max_completion_tokens: typing.Union[int, None, UNSET] = None, top_p: typing.Union[float, None, UNSET] = None, stop: typing.Union[typing.List[str], None, UNSET] = None, seed: typing.Union[int, None, UNSET] = None, capture_wire: typing.Union[bool, UNSET] = True) -> ChatClient:
+    async def new_async(*, model: typing.Union[str, UNSET] = "gpt-4o-mini", api_key: typing.Union[ai.Credential, None, UNSET] = None, base_url: typing.Union[ai.Credential, None, UNSET] = None, timeout: typing.Union[baml.time.Duration, ai.LlmTimeoutOptions, None, UNSET] = None, request_body: typing.Union[baml.json.json, None, UNSET] = None, headers: typing.Union[typing.Dict[str, str], None, UNSET] = None, query_params: typing.Union[typing.Dict[str, str], None, UNSET] = None, temperature: typing.Union[float, None, UNSET] = None, max_tokens: typing.Union[int, None, UNSET] = None, max_completion_tokens: typing.Union[int, None, UNSET] = None, top_p: typing.Union[float, None, UNSET] = None, stop: typing.Union[typing.List[str], None, UNSET] = None, seed: typing.Union[int, None, UNSET] = None, capture_wire: typing.Union[bool, UNSET] = True, structured_output: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> ChatClient:
         """Creates a client. Construction reads no environment variable, so
         declaring one is always safe; credentials and endpoints resolve when a
-        request is built."""
-    def resolved_api_key(self) -> typing.Optional[str]:
+        request is built.
+
+        # Parameters
+
+        - `structured_output`: send OpenAI Structured Outputs and read the
+          answer strictly (see the field of the same name). The model sees
+          the output type's schema, documentation included, so a prompt need
+          not include `${ctx.output_format()}`."""
+    def resolved_api_key(self, *, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
         """The request-time credential: the explicit value (a literal, or the value
         of the variable an `env.NAME` ref points at), else the provider's
         canonical variable. Null is reported as a configuration error when the
@@ -195,7 +198,7 @@ class ChatClient(pydantic.BaseModel):
 
         Raises:
             Io, ParseError"""
-    async def resolved_api_key_async(self) -> typing.Optional[str]:
+    async def resolved_api_key_async(self, *, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
         """The request-time credential: the explicit value (a literal, or the value
         of the variable an `env.NAME` ref points at), else the provider's
         canonical variable. Null is reported as a configuration error when the
@@ -203,17 +206,17 @@ class ChatClient(pydantic.BaseModel):
 
         Raises:
             Io, ParseError"""
-    def resolved_base_url(self) -> str:
+    def resolved_base_url(self, *, _baml: _BamlOptions | None = None) -> str:
         """The request-time base URL, or the provider default.
 
         Raises:
             Io, ParseError"""
-    async def resolved_base_url_async(self) -> str:
+    async def resolved_base_url_async(self, *, _baml: _BamlOptions | None = None) -> str:
         """The request-time base URL, or the provider default.
 
         Raises:
             Io, ParseError"""
-    def compat(self) -> vendor.openai.internal.ChatCompat:
+    def compat(self, *, _baml: _BamlOptions | None = None) -> vendor.openai.internal.ChatCompat:
         """The provider record: everything the shared core needs to know about this
         endpoint. Only `stream_options` distinguishes first-party OpenAI from a
         bare compatible server.
@@ -222,7 +225,7 @@ class ChatClient(pydantic.BaseModel):
 
         Raises:
             Io, ParseError"""
-    async def compat_async(self) -> vendor.openai.internal.ChatCompat:
+    async def compat_async(self, *, _baml: _BamlOptions | None = None) -> vendor.openai.internal.ChatCompat:
         """The provider record: everything the shared core needs to know about this
         endpoint. Only `stream_options` distinguishes first-party OpenAI from a
         bare compatible server.
@@ -231,7 +234,7 @@ class ChatClient(pydantic.BaseModel):
 
         Raises:
             Io, ParseError"""
-    def params(self, *, preview: typing.Union[bool, UNSET] = False) -> vendor.openai.internal.ChatParams:
+    def params(self, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> vendor.openai.internal.ChatParams:
         """The per-request parameters handed to the shared chat core.
 
         # Parameters
@@ -241,7 +244,7 @@ class ChatClient(pydantic.BaseModel):
 
         Raises:
             Io, ParseError"""
-    async def params_async(self, *, preview: typing.Union[bool, UNSET] = False) -> vendor.openai.internal.ChatParams:
+    async def params_async(self, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> vendor.openai.internal.ChatParams:
         """The per-request parameters handed to the shared chat core.
 
         # Parameters
@@ -251,14 +254,29 @@ class ChatClient(pydantic.BaseModel):
 
         Raises:
             Io, ParseError"""
+
+
+class DecisionsClient(pydantic.BaseModel):
+    model: str
+    api_key: typing.Optional[ai.Credential] = None
+    base_url: typing.Optional[ai.Credential] = None
+    timeout: typing.Union[baml.time.Duration, ai.LlmTimeoutOptions, None] = None
+    capture_wire: bool
+    @staticmethod
+    def new(*, model: typing.Union[str, UNSET] = "gpt-6-luna", api_key: typing.Union[ai.Credential, None, UNSET] = UNSET, base_url: typing.Union[ai.Credential, None, UNSET] = "https://api.openai.com/v1", timeout: typing.Union[baml.time.Duration, ai.LlmTimeoutOptions, None, UNSET] = None, capture_wire: typing.Union[bool, UNSET] = True, _baml: _BamlOptions | None = None) -> DecisionsClient:
+        """Construction is pure. Credentials resolve when invoking, using
+        OPENAI_API_KEY unless an explicit credential is provided."""
+    @staticmethod
+    async def new_async(*, model: typing.Union[str, UNSET] = "gpt-6-luna", api_key: typing.Union[ai.Credential, None, UNSET] = UNSET, base_url: typing.Union[ai.Credential, None, UNSET] = "https://api.openai.com/v1", timeout: typing.Union[baml.time.Duration, ai.LlmTimeoutOptions, None, UNSET] = None, capture_wire: typing.Union[bool, UNSET] = True, _baml: _BamlOptions | None = None) -> DecisionsClient:
+        """Construction is pure. Credentials resolve when invoking, using
+        OPENAI_API_KEY unless an explicit credential is provided."""
 
 
 class GenericClient(pydantic.BaseModel):
     model: str
     base_url: typing.Optional[ai.Credential] = None
     api_key: typing.Optional[ai.Credential] = None
-    request_timeout_ms: typing.Optional[int] = None
-    time_to_first_token_timeout_ms: typing.Optional[int] = None
+    timeout: typing.Union[baml.time.Duration, ai.LlmTimeoutOptions, None] = None
     request_body: typing.Optional[baml.json.json] = None
     headers: typing.Optional[typing.Dict[str, str]] = None
     query_params: typing.Optional[typing.Dict[str, str]] = None
@@ -269,28 +287,28 @@ class GenericClient(pydantic.BaseModel):
     seed: typing.Optional[int] = None
     capture_wire: bool
     @staticmethod
-    def new(model: str, *, base_url: typing.Union[ai.Credential, None, UNSET] = None, api_key: typing.Union[ai.Credential, None, UNSET] = None, request_timeout_ms: typing.Union[int, None, UNSET] = None, time_to_first_token_timeout_ms: typing.Union[int, None, UNSET] = None, request_body: typing.Union[baml.json.json, None, UNSET] = None, headers: typing.Union[typing.Dict[str, str], None, UNSET] = None, query_params: typing.Union[typing.Dict[str, str], None, UNSET] = None, temperature: typing.Union[float, None, UNSET] = None, max_tokens: typing.Union[int, None, UNSET] = None, top_p: typing.Union[float, None, UNSET] = None, stop: typing.Union[typing.List[str], None, UNSET] = None, seed: typing.Union[int, None, UNSET] = None, capture_wire: typing.Union[bool, UNSET] = True) -> GenericClient:
+    def new(model: str, *, base_url: typing.Union[ai.Credential, None, UNSET] = None, api_key: typing.Union[ai.Credential, None, UNSET] = None, timeout: typing.Union[baml.time.Duration, ai.LlmTimeoutOptions, None, UNSET] = None, request_body: typing.Union[baml.json.json, None, UNSET] = None, headers: typing.Union[typing.Dict[str, str], None, UNSET] = None, query_params: typing.Union[typing.Dict[str, str], None, UNSET] = None, temperature: typing.Union[float, None, UNSET] = None, max_tokens: typing.Union[int, None, UNSET] = None, top_p: typing.Union[float, None, UNSET] = None, stop: typing.Union[typing.List[str], None, UNSET] = None, seed: typing.Union[int, None, UNSET] = None, capture_wire: typing.Union[bool, UNSET] = True, _baml: _BamlOptions | None = None) -> GenericClient:
         """Creates a client. Construction reads no environment variable, so
         declaring one is always safe; credentials and endpoints resolve when a
         request is built."""
     @staticmethod
-    async def new_async(model: str, *, base_url: typing.Union[ai.Credential, None, UNSET] = None, api_key: typing.Union[ai.Credential, None, UNSET] = None, request_timeout_ms: typing.Union[int, None, UNSET] = None, time_to_first_token_timeout_ms: typing.Union[int, None, UNSET] = None, request_body: typing.Union[baml.json.json, None, UNSET] = None, headers: typing.Union[typing.Dict[str, str], None, UNSET] = None, query_params: typing.Union[typing.Dict[str, str], None, UNSET] = None, temperature: typing.Union[float, None, UNSET] = None, max_tokens: typing.Union[int, None, UNSET] = None, top_p: typing.Union[float, None, UNSET] = None, stop: typing.Union[typing.List[str], None, UNSET] = None, seed: typing.Union[int, None, UNSET] = None, capture_wire: typing.Union[bool, UNSET] = True) -> GenericClient:
+    async def new_async(model: str, *, base_url: typing.Union[ai.Credential, None, UNSET] = None, api_key: typing.Union[ai.Credential, None, UNSET] = None, timeout: typing.Union[baml.time.Duration, ai.LlmTimeoutOptions, None, UNSET] = None, request_body: typing.Union[baml.json.json, None, UNSET] = None, headers: typing.Union[typing.Dict[str, str], None, UNSET] = None, query_params: typing.Union[typing.Dict[str, str], None, UNSET] = None, temperature: typing.Union[float, None, UNSET] = None, max_tokens: typing.Union[int, None, UNSET] = None, top_p: typing.Union[float, None, UNSET] = None, stop: typing.Union[typing.List[str], None, UNSET] = None, seed: typing.Union[int, None, UNSET] = None, capture_wire: typing.Union[bool, UNSET] = True, _baml: _BamlOptions | None = None) -> GenericClient:
         """Creates a client. Construction reads no environment variable, so
         declaring one is always safe; credentials and endpoints resolve when a
         request is built."""
-    def resolved_api_key(self) -> typing.Optional[str]:
+    def resolved_api_key(self, *, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
         """No canonical variable: an unauthenticated request is the normal case for
         a self-hosted server, so a missing key is not an error here.
 
         Raises:
             Io, ParseError"""
-    async def resolved_api_key_async(self) -> typing.Optional[str]:
+    async def resolved_api_key_async(self, *, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
         """No canonical variable: an unauthenticated request is the normal case for
         a self-hosted server, so a missing key is not an error here.
 
         Raises:
             Io, ParseError"""
-    def resolved_base_url(self) -> str:
+    def resolved_base_url(self, *, _baml: _BamlOptions | None = None) -> str:
         """Throws `ai.errors.InvalidRequest` when no base_url resolves. A
         `base_url = env.NAME` naming an UNSET variable resolves to null and lands
         here too, so it reports the same clear configuration error rather than a
@@ -298,7 +316,7 @@ class GenericClient(pydantic.BaseModel):
 
         Raises:
             Io, ParseError, InvalidRequest"""
-    async def resolved_base_url_async(self) -> str:
+    async def resolved_base_url_async(self, *, _baml: _BamlOptions | None = None) -> str:
         """Throws `ai.errors.InvalidRequest` when no base_url resolves. A
         `base_url = env.NAME` naming an UNSET variable resolves to null and lands
         here too, so it reports the same clear configuration error rather than a
@@ -306,19 +324,19 @@ class GenericClient(pydantic.BaseModel):
 
         Raises:
             Io, ParseError, InvalidRequest"""
-    def compat(self) -> vendor.openai.internal.ChatCompat:
+    def compat(self, *, _baml: _BamlOptions | None = None) -> vendor.openai.internal.ChatCompat:
         """The provider record: everything the shared chat core needs to know
         about this endpoint.
 
         Raises:
             Io, ParseError, InvalidRequest"""
-    async def compat_async(self) -> vendor.openai.internal.ChatCompat:
+    async def compat_async(self, *, _baml: _BamlOptions | None = None) -> vendor.openai.internal.ChatCompat:
         """The provider record: everything the shared chat core needs to know
         about this endpoint.
 
         Raises:
             Io, ParseError, InvalidRequest"""
-    def params(self, *, preview: typing.Union[bool, UNSET] = False) -> vendor.openai.internal.ChatParams:
+    def params(self, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> vendor.openai.internal.ChatParams:
         """The per-request parameters handed to the shared chat core.
 
         # Parameters
@@ -328,7 +346,7 @@ class GenericClient(pydantic.BaseModel):
 
         Raises:
             Io, ParseError"""
-    async def params_async(self, *, preview: typing.Union[bool, UNSET] = False) -> vendor.openai.internal.ChatParams:
+    async def params_async(self, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> vendor.openai.internal.ChatParams:
         """The per-request parameters handed to the shared chat core.
 
         # Parameters
@@ -358,17 +376,18 @@ class ImageClient(pydantic.BaseModel):
     headers: typing.Optional[typing.Dict[str, str]] = None
     query_params: typing.Optional[typing.Dict[str, str]] = None
     capture_wire: bool
+    timeout: typing.Union[baml.time.Duration, ai.LlmTimeoutOptions, None] = None
     @staticmethod
-    def new(*, model: typing.Union[str, UNSET] = "gpt-image-1", api_key: typing.Union[ai.Credential, None, UNSET] = None, base_url: typing.Union[ai.Credential, None, UNSET] = None, n: typing.Union[int, None, UNSET] = None, size: typing.Union[str, None, UNSET] = None, quality: typing.Union[str, None, UNSET] = None, background: typing.Union[str, None, UNSET] = None, output_format: typing.Union[str, None, UNSET] = None, output_compression: typing.Union[int, None, UNSET] = None, moderation: typing.Union[str, None, UNSET] = None, style: typing.Union[str, None, UNSET] = None, user: typing.Union[str, None, UNSET] = None, response_format: typing.Union[str, None, UNSET] = None, request_body: typing.Union[baml.json.json, None, UNSET] = None, headers: typing.Union[typing.Dict[str, str], None, UNSET] = None, query_params: typing.Union[typing.Dict[str, str], None, UNSET] = None, capture_wire: typing.Union[bool, UNSET] = True) -> ImageClient:
+    def new(*, model: typing.Union[str, UNSET] = "gpt-image-1", api_key: typing.Union[ai.Credential, None, UNSET] = None, base_url: typing.Union[ai.Credential, None, UNSET] = None, n: typing.Union[int, None, UNSET] = None, size: typing.Union[str, None, UNSET] = None, quality: typing.Union[str, None, UNSET] = None, background: typing.Union[str, None, UNSET] = None, output_format: typing.Union[str, None, UNSET] = None, output_compression: typing.Union[int, None, UNSET] = None, moderation: typing.Union[str, None, UNSET] = None, style: typing.Union[str, None, UNSET] = None, user: typing.Union[str, None, UNSET] = None, response_format: typing.Union[str, None, UNSET] = None, request_body: typing.Union[baml.json.json, None, UNSET] = None, headers: typing.Union[typing.Dict[str, str], None, UNSET] = None, query_params: typing.Union[typing.Dict[str, str], None, UNSET] = None, capture_wire: typing.Union[bool, UNSET] = True, timeout: typing.Union[baml.time.Duration, ai.LlmTimeoutOptions, None, UNSET] = None, _baml: _BamlOptions | None = None) -> ImageClient:
         """Creates a client. Construction reads no environment variable, so
         declaring one is always safe; credentials and endpoints resolve when a
         request is built."""
     @staticmethod
-    async def new_async(*, model: typing.Union[str, UNSET] = "gpt-image-1", api_key: typing.Union[ai.Credential, None, UNSET] = None, base_url: typing.Union[ai.Credential, None, UNSET] = None, n: typing.Union[int, None, UNSET] = None, size: typing.Union[str, None, UNSET] = None, quality: typing.Union[str, None, UNSET] = None, background: typing.Union[str, None, UNSET] = None, output_format: typing.Union[str, None, UNSET] = None, output_compression: typing.Union[int, None, UNSET] = None, moderation: typing.Union[str, None, UNSET] = None, style: typing.Union[str, None, UNSET] = None, user: typing.Union[str, None, UNSET] = None, response_format: typing.Union[str, None, UNSET] = None, request_body: typing.Union[baml.json.json, None, UNSET] = None, headers: typing.Union[typing.Dict[str, str], None, UNSET] = None, query_params: typing.Union[typing.Dict[str, str], None, UNSET] = None, capture_wire: typing.Union[bool, UNSET] = True) -> ImageClient:
+    async def new_async(*, model: typing.Union[str, UNSET] = "gpt-image-1", api_key: typing.Union[ai.Credential, None, UNSET] = None, base_url: typing.Union[ai.Credential, None, UNSET] = None, n: typing.Union[int, None, UNSET] = None, size: typing.Union[str, None, UNSET] = None, quality: typing.Union[str, None, UNSET] = None, background: typing.Union[str, None, UNSET] = None, output_format: typing.Union[str, None, UNSET] = None, output_compression: typing.Union[int, None, UNSET] = None, moderation: typing.Union[str, None, UNSET] = None, style: typing.Union[str, None, UNSET] = None, user: typing.Union[str, None, UNSET] = None, response_format: typing.Union[str, None, UNSET] = None, request_body: typing.Union[baml.json.json, None, UNSET] = None, headers: typing.Union[typing.Dict[str, str], None, UNSET] = None, query_params: typing.Union[typing.Dict[str, str], None, UNSET] = None, capture_wire: typing.Union[bool, UNSET] = True, timeout: typing.Union[baml.time.Duration, ai.LlmTimeoutOptions, None, UNSET] = None, _baml: _BamlOptions | None = None) -> ImageClient:
         """Creates a client. Construction reads no environment variable, so
         declaring one is always safe; credentials and endpoints resolve when a
         request is built."""
-    def resolved_api_key(self) -> str:
+    def resolved_api_key(self, *, _baml: _BamlOptions | None = None) -> str:
         """The request-time credential: an explicit value, else the provider's
         canonical one. A missing credential is a catchable
         ai.errors.InvalidRequest rather than a panic, so the caller's
@@ -376,7 +395,7 @@ class ImageClient(pydantic.BaseModel):
 
         Raises:
             Io, ParseError, InvalidRequest"""
-    async def resolved_api_key_async(self) -> str:
+    async def resolved_api_key_async(self, *, _baml: _BamlOptions | None = None) -> str:
         """The request-time credential: an explicit value, else the provider's
         canonical one. A missing credential is a catchable
         ai.errors.InvalidRequest rather than a panic, so the caller's
@@ -384,12 +403,12 @@ class ImageClient(pydantic.BaseModel):
 
         Raises:
             Io, ParseError, InvalidRequest"""
-    def resolved_base_url(self) -> typing.Optional[str]:
+    def resolved_base_url(self, *, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
         """The request-time base URL, or null for the provider default.
 
         Raises:
             Io, ParseError"""
-    async def resolved_base_url_async(self) -> typing.Optional[str]:
+    async def resolved_base_url_async(self, *, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
         """The request-time base URL, or null for the provider default.
 
         Raises:
@@ -409,53 +428,54 @@ class OllamaClient(pydantic.BaseModel):
     stop: typing.Optional[typing.List[str]] = None
     seed: typing.Optional[int] = None
     capture_wire: bool
+    timeout: typing.Union[baml.time.Duration, ai.LlmTimeoutOptions, None] = None
     @staticmethod
-    def new(model: str, *, base_url: typing.Union[ai.Credential, None, UNSET] = None, api_key: typing.Union[ai.Credential, None, UNSET] = None, request_body: typing.Union[baml.json.json, None, UNSET] = None, headers: typing.Union[typing.Dict[str, str], None, UNSET] = None, query_params: typing.Union[typing.Dict[str, str], None, UNSET] = None, temperature: typing.Union[float, None, UNSET] = None, max_tokens: typing.Union[int, None, UNSET] = None, top_p: typing.Union[float, None, UNSET] = None, stop: typing.Union[typing.List[str], None, UNSET] = None, seed: typing.Union[int, None, UNSET] = None, capture_wire: typing.Union[bool, UNSET] = True) -> OllamaClient:
+    def new(model: str, *, base_url: typing.Union[ai.Credential, None, UNSET] = None, api_key: typing.Union[ai.Credential, None, UNSET] = None, request_body: typing.Union[baml.json.json, None, UNSET] = None, headers: typing.Union[typing.Dict[str, str], None, UNSET] = None, query_params: typing.Union[typing.Dict[str, str], None, UNSET] = None, temperature: typing.Union[float, None, UNSET] = None, max_tokens: typing.Union[int, None, UNSET] = None, top_p: typing.Union[float, None, UNSET] = None, stop: typing.Union[typing.List[str], None, UNSET] = None, seed: typing.Union[int, None, UNSET] = None, capture_wire: typing.Union[bool, UNSET] = True, timeout: typing.Union[baml.time.Duration, ai.LlmTimeoutOptions, None, UNSET] = None, _baml: _BamlOptions | None = None) -> OllamaClient:
         """Creates a client. Construction reads no environment variable, so
         declaring one is always safe; credentials and endpoints resolve when a
         request is built."""
     @staticmethod
-    async def new_async(model: str, *, base_url: typing.Union[ai.Credential, None, UNSET] = None, api_key: typing.Union[ai.Credential, None, UNSET] = None, request_body: typing.Union[baml.json.json, None, UNSET] = None, headers: typing.Union[typing.Dict[str, str], None, UNSET] = None, query_params: typing.Union[typing.Dict[str, str], None, UNSET] = None, temperature: typing.Union[float, None, UNSET] = None, max_tokens: typing.Union[int, None, UNSET] = None, top_p: typing.Union[float, None, UNSET] = None, stop: typing.Union[typing.List[str], None, UNSET] = None, seed: typing.Union[int, None, UNSET] = None, capture_wire: typing.Union[bool, UNSET] = True) -> OllamaClient:
+    async def new_async(model: str, *, base_url: typing.Union[ai.Credential, None, UNSET] = None, api_key: typing.Union[ai.Credential, None, UNSET] = None, request_body: typing.Union[baml.json.json, None, UNSET] = None, headers: typing.Union[typing.Dict[str, str], None, UNSET] = None, query_params: typing.Union[typing.Dict[str, str], None, UNSET] = None, temperature: typing.Union[float, None, UNSET] = None, max_tokens: typing.Union[int, None, UNSET] = None, top_p: typing.Union[float, None, UNSET] = None, stop: typing.Union[typing.List[str], None, UNSET] = None, seed: typing.Union[int, None, UNSET] = None, capture_wire: typing.Union[bool, UNSET] = True, timeout: typing.Union[baml.time.Duration, ai.LlmTimeoutOptions, None, UNSET] = None, _baml: _BamlOptions | None = None) -> OllamaClient:
         """Creates a client. Construction reads no environment variable, so
         declaring one is always safe; credentials and endpoints resolve when a
         request is built."""
-    def resolved_api_key(self) -> typing.Optional[str]:
+    def resolved_api_key(self, *, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
         """The request-time credential, if one is configured. Ollama requires
         none, so `null` is the ordinary case and no auth header is sent.
 
         Raises:
             Io, ParseError"""
-    async def resolved_api_key_async(self) -> typing.Optional[str]:
+    async def resolved_api_key_async(self, *, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
         """The request-time credential, if one is configured. Ollama requires
         none, so `null` is the ordinary case and no auth header is sent.
 
         Raises:
             Io, ParseError"""
-    def resolved_base_url(self) -> str:
+    def resolved_base_url(self, *, _baml: _BamlOptions | None = None) -> str:
         """The request-time base URL, or `http://localhost:11434/v1`. The `/v1`
         is load-bearing: Ollama serves the OpenAI-compatible API only there.
 
         Raises:
             Io, ParseError"""
-    async def resolved_base_url_async(self) -> str:
+    async def resolved_base_url_async(self, *, _baml: _BamlOptions | None = None) -> str:
         """The request-time base URL, or `http://localhost:11434/v1`. The `/v1`
         is load-bearing: Ollama serves the OpenAI-compatible API only there.
 
         Raises:
             Io, ParseError"""
-    def compat(self) -> vendor.openai.internal.ChatCompat:
+    def compat(self, *, _baml: _BamlOptions | None = None) -> vendor.openai.internal.ChatCompat:
         """The provider record: everything the shared chat core needs to know
         about this endpoint.
 
         Raises:
             Io, ParseError"""
-    async def compat_async(self) -> vendor.openai.internal.ChatCompat:
+    async def compat_async(self, *, _baml: _BamlOptions | None = None) -> vendor.openai.internal.ChatCompat:
         """The provider record: everything the shared chat core needs to know
         about this endpoint.
 
         Raises:
             Io, ParseError"""
-    def params(self, *, preview: typing.Union[bool, UNSET] = False) -> vendor.openai.internal.ChatParams:
+    def params(self, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> vendor.openai.internal.ChatParams:
         """The per-request parameters handed to the shared chat core.
 
         # Parameters
@@ -465,7 +485,7 @@ class OllamaClient(pydantic.BaseModel):
 
         Raises:
             Io, ParseError"""
-    async def params_async(self, *, preview: typing.Union[bool, UNSET] = False) -> vendor.openai.internal.ChatParams:
+    async def params_async(self, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> vendor.openai.internal.ChatParams:
         """The per-request parameters handed to the shared chat core.
 
         # Parameters
@@ -490,53 +510,54 @@ class OpenRouterClient(pydantic.BaseModel):
     stop: typing.Optional[typing.List[str]] = None
     seed: typing.Optional[int] = None
     capture_wire: bool
+    timeout: typing.Union[baml.time.Duration, ai.LlmTimeoutOptions, None] = None
     @staticmethod
-    def new(model: str, *, api_key: typing.Union[ai.Credential, None, UNSET] = None, base_url: typing.Union[ai.Credential, None, UNSET] = None, request_body: typing.Union[baml.json.json, None, UNSET] = None, headers: typing.Union[typing.Dict[str, str], None, UNSET] = None, query_params: typing.Union[typing.Dict[str, str], None, UNSET] = None, temperature: typing.Union[float, None, UNSET] = None, max_tokens: typing.Union[int, None, UNSET] = None, top_p: typing.Union[float, None, UNSET] = None, stop: typing.Union[typing.List[str], None, UNSET] = None, seed: typing.Union[int, None, UNSET] = None, capture_wire: typing.Union[bool, UNSET] = True) -> OpenRouterClient:
+    def new(model: str, *, api_key: typing.Union[ai.Credential, None, UNSET] = None, base_url: typing.Union[ai.Credential, None, UNSET] = None, request_body: typing.Union[baml.json.json, None, UNSET] = None, headers: typing.Union[typing.Dict[str, str], None, UNSET] = None, query_params: typing.Union[typing.Dict[str, str], None, UNSET] = None, temperature: typing.Union[float, None, UNSET] = None, max_tokens: typing.Union[int, None, UNSET] = None, top_p: typing.Union[float, None, UNSET] = None, stop: typing.Union[typing.List[str], None, UNSET] = None, seed: typing.Union[int, None, UNSET] = None, capture_wire: typing.Union[bool, UNSET] = True, timeout: typing.Union[baml.time.Duration, ai.LlmTimeoutOptions, None, UNSET] = None, _baml: _BamlOptions | None = None) -> OpenRouterClient:
         """Creates a client. Construction reads no environment variable, so
         declaring one is always safe; credentials and endpoints resolve when a
         request is built."""
     @staticmethod
-    async def new_async(model: str, *, api_key: typing.Union[ai.Credential, None, UNSET] = None, base_url: typing.Union[ai.Credential, None, UNSET] = None, request_body: typing.Union[baml.json.json, None, UNSET] = None, headers: typing.Union[typing.Dict[str, str], None, UNSET] = None, query_params: typing.Union[typing.Dict[str, str], None, UNSET] = None, temperature: typing.Union[float, None, UNSET] = None, max_tokens: typing.Union[int, None, UNSET] = None, top_p: typing.Union[float, None, UNSET] = None, stop: typing.Union[typing.List[str], None, UNSET] = None, seed: typing.Union[int, None, UNSET] = None, capture_wire: typing.Union[bool, UNSET] = True) -> OpenRouterClient:
+    async def new_async(model: str, *, api_key: typing.Union[ai.Credential, None, UNSET] = None, base_url: typing.Union[ai.Credential, None, UNSET] = None, request_body: typing.Union[baml.json.json, None, UNSET] = None, headers: typing.Union[typing.Dict[str, str], None, UNSET] = None, query_params: typing.Union[typing.Dict[str, str], None, UNSET] = None, temperature: typing.Union[float, None, UNSET] = None, max_tokens: typing.Union[int, None, UNSET] = None, top_p: typing.Union[float, None, UNSET] = None, stop: typing.Union[typing.List[str], None, UNSET] = None, seed: typing.Union[int, None, UNSET] = None, capture_wire: typing.Union[bool, UNSET] = True, timeout: typing.Union[baml.time.Duration, ai.LlmTimeoutOptions, None, UNSET] = None, _baml: _BamlOptions | None = None) -> OpenRouterClient:
         """Creates a client. Construction reads no environment variable, so
         declaring one is always safe; credentials and endpoints resolve when a
         request is built."""
-    def resolved_api_key(self) -> typing.Optional[str]:
+    def resolved_api_key(self, *, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
         """The request-time credential: the explicit value, else
         `OPENROUTER_API_KEY`. Null is reported as a configuration error when
         the request is built.
 
         Raises:
             Io, ParseError"""
-    async def resolved_api_key_async(self) -> typing.Optional[str]:
+    async def resolved_api_key_async(self, *, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
         """The request-time credential: the explicit value, else
         `OPENROUTER_API_KEY`. Null is reported as a configuration error when
         the request is built.
 
         Raises:
             Io, ParseError"""
-    def resolved_base_url(self) -> str:
+    def resolved_base_url(self, *, _baml: _BamlOptions | None = None) -> str:
         """The request-time base URL, or `https://openrouter.ai/api/v1`.
 
         Raises:
             Io, ParseError"""
-    async def resolved_base_url_async(self) -> str:
+    async def resolved_base_url_async(self, *, _baml: _BamlOptions | None = None) -> str:
         """The request-time base URL, or `https://openrouter.ai/api/v1`.
 
         Raises:
             Io, ParseError"""
-    def compat(self) -> vendor.openai.internal.ChatCompat:
+    def compat(self, *, _baml: _BamlOptions | None = None) -> vendor.openai.internal.ChatCompat:
         """The provider record: everything the shared chat core needs to know
         about this endpoint.
 
         Raises:
             Io, ParseError"""
-    async def compat_async(self) -> vendor.openai.internal.ChatCompat:
+    async def compat_async(self, *, _baml: _BamlOptions | None = None) -> vendor.openai.internal.ChatCompat:
         """The provider record: everything the shared chat core needs to know
         about this endpoint.
 
         Raises:
             Io, ParseError"""
-    def params(self, *, preview: typing.Union[bool, UNSET] = False) -> vendor.openai.internal.ChatParams:
+    def params(self, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> vendor.openai.internal.ChatParams:
         """The per-request parameters handed to the shared chat core.
 
         # Parameters
@@ -546,7 +567,7 @@ class OpenRouterClient(pydantic.BaseModel):
 
         Raises:
             Io, ParseError"""
-    async def params_async(self, *, preview: typing.Union[bool, UNSET] = False) -> vendor.openai.internal.ChatParams:
+    async def params_async(self, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> vendor.openai.internal.ChatParams:
         """The per-request parameters handed to the shared chat core.
 
         # Parameters
@@ -562,8 +583,7 @@ class ResponsesClient(pydantic.BaseModel):
     model: str
     api_key: typing.Optional[ai.Credential] = None
     base_url: typing.Optional[ai.Credential] = None
-    request_timeout_ms: typing.Optional[int] = None
-    time_to_first_token_timeout_ms: typing.Optional[int] = None
+    timeout: typing.Union[baml.time.Duration, ai.LlmTimeoutOptions, None] = None
     temperature: typing.Optional[float] = None
     top_p: typing.Optional[float] = None
     max_output_tokens: typing.Optional[int] = None
@@ -576,17 +596,32 @@ class ResponsesClient(pydantic.BaseModel):
     headers: typing.Optional[typing.Dict[str, str]] = None
     query_params: typing.Optional[typing.Dict[str, str]] = None
     capture_wire: bool
+    structured_output: bool
     @staticmethod
-    def new(*, model: typing.Union[str, UNSET] = "gpt-4o-mini", api_key: typing.Union[ai.Credential, None, UNSET] = None, base_url: typing.Union[ai.Credential, None, UNSET] = None, request_timeout_ms: typing.Union[int, None, UNSET] = None, time_to_first_token_timeout_ms: typing.Union[int, None, UNSET] = None, temperature: typing.Union[float, None, UNSET] = None, top_p: typing.Union[float, None, UNSET] = None, max_output_tokens: typing.Union[int, None, UNSET] = None, reasoning_effort: typing.Union[str, None, UNSET] = None, reasoning_summary: typing.Union[str, None, UNSET] = None, verbosity: typing.Union[str, None, UNSET] = None, parallel_tool_calls: typing.Union[bool, None, UNSET] = None, store: typing.Union[bool, UNSET] = False, request_body: typing.Union[baml.json.json, None, UNSET] = None, headers: typing.Union[typing.Dict[str, str], None, UNSET] = None, query_params: typing.Union[typing.Dict[str, str], None, UNSET] = None, capture_wire: typing.Union[bool, UNSET] = True) -> ResponsesClient:
+    def new(*, model: typing.Union[str, UNSET] = "gpt-4o-mini", api_key: typing.Union[ai.Credential, None, UNSET] = None, base_url: typing.Union[ai.Credential, None, UNSET] = None, timeout: typing.Union[baml.time.Duration, ai.LlmTimeoutOptions, None, UNSET] = None, temperature: typing.Union[float, None, UNSET] = None, top_p: typing.Union[float, None, UNSET] = None, max_output_tokens: typing.Union[int, None, UNSET] = None, reasoning_effort: typing.Union[str, None, UNSET] = None, reasoning_summary: typing.Union[str, None, UNSET] = None, verbosity: typing.Union[str, None, UNSET] = None, parallel_tool_calls: typing.Union[bool, None, UNSET] = None, store: typing.Union[bool, UNSET] = False, request_body: typing.Union[baml.json.json, None, UNSET] = None, headers: typing.Union[typing.Dict[str, str], None, UNSET] = None, query_params: typing.Union[typing.Dict[str, str], None, UNSET] = None, capture_wire: typing.Union[bool, UNSET] = True, structured_output: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> ResponsesClient:
         """Creates a client. Construction reads no environment variable, so
         declaring one is always safe; credentials and endpoints resolve when a
-        request is built."""
+        request is built.
+
+        # Parameters
+
+        - `structured_output`: send OpenAI Structured Outputs and read the
+          answer strictly (see the field of the same name). The model sees
+          the output type's schema, documentation included, so a prompt need
+          not include `${ctx.output_format()}`."""
     @staticmethod
-    async def new_async(*, model: typing.Union[str, UNSET] = "gpt-4o-mini", api_key: typing.Union[ai.Credential, None, UNSET] = None, base_url: typing.Union[ai.Credential, None, UNSET] = None, request_timeout_ms: typing.Union[int, None, UNSET] = None, time_to_first_token_timeout_ms: typing.Union[int, None, UNSET] = None, temperature: typing.Union[float, None, UNSET] = None, top_p: typing.Union[float, None, UNSET] = None, max_output_tokens: typing.Union[int, None, UNSET] = None, reasoning_effort: typing.Union[str, None, UNSET] = None, reasoning_summary: typing.Union[str, None, UNSET] = None, verbosity: typing.Union[str, None, UNSET] = None, parallel_tool_calls: typing.Union[bool, None, UNSET] = None, store: typing.Union[bool, UNSET] = False, request_body: typing.Union[baml.json.json, None, UNSET] = None, headers: typing.Union[typing.Dict[str, str], None, UNSET] = None, query_params: typing.Union[typing.Dict[str, str], None, UNSET] = None, capture_wire: typing.Union[bool, UNSET] = True) -> ResponsesClient:
+    async def new_async(*, model: typing.Union[str, UNSET] = "gpt-4o-mini", api_key: typing.Union[ai.Credential, None, UNSET] = None, base_url: typing.Union[ai.Credential, None, UNSET] = None, timeout: typing.Union[baml.time.Duration, ai.LlmTimeoutOptions, None, UNSET] = None, temperature: typing.Union[float, None, UNSET] = None, top_p: typing.Union[float, None, UNSET] = None, max_output_tokens: typing.Union[int, None, UNSET] = None, reasoning_effort: typing.Union[str, None, UNSET] = None, reasoning_summary: typing.Union[str, None, UNSET] = None, verbosity: typing.Union[str, None, UNSET] = None, parallel_tool_calls: typing.Union[bool, None, UNSET] = None, store: typing.Union[bool, UNSET] = False, request_body: typing.Union[baml.json.json, None, UNSET] = None, headers: typing.Union[typing.Dict[str, str], None, UNSET] = None, query_params: typing.Union[typing.Dict[str, str], None, UNSET] = None, capture_wire: typing.Union[bool, UNSET] = True, structured_output: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> ResponsesClient:
         """Creates a client. Construction reads no environment variable, so
         declaring one is always safe; credentials and endpoints resolve when a
-        request is built."""
-    def resolved_api_key(self) -> str:
+        request is built.
+
+        # Parameters
+
+        - `structured_output`: send OpenAI Structured Outputs and read the
+          answer strictly (see the field of the same name). The model sees
+          the output type's schema, documentation included, so a prompt need
+          not include `${ctx.output_format()}`."""
+    def resolved_api_key(self, *, _baml: _BamlOptions | None = None) -> str:
         """The request-time credential: an explicit value (a literal, or the value
         of the variable an `env.NAME` ref points at), else the provider's
         canonical one. Nothing here runs before the request.
@@ -598,7 +633,7 @@ class ResponsesClient(pydantic.BaseModel):
 
         Raises:
             Io, ParseError, InvalidRequest"""
-    async def resolved_api_key_async(self) -> str:
+    async def resolved_api_key_async(self, *, _baml: _BamlOptions | None = None) -> str:
         """The request-time credential: an explicit value (a literal, or the value
         of the variable an `env.NAME` ref points at), else the provider's
         canonical one. Nothing here runs before the request.
@@ -610,12 +645,12 @@ class ResponsesClient(pydantic.BaseModel):
 
         Raises:
             Io, ParseError, InvalidRequest"""
-    def resolved_base_url(self) -> typing.Optional[str]:
+    def resolved_base_url(self, *, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
         """The request-time base URL, or null for the provider default.
 
         Raises:
             Io, ParseError"""
-    async def resolved_base_url_async(self) -> typing.Optional[str]:
+    async def resolved_base_url_async(self, *, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
         """The request-time base URL, or null for the provider default.
 
         Raises:
@@ -625,6 +660,7 @@ class ResponsesClient(pydantic.BaseModel):
 __all__ = [
     "AzureClient",
     "ChatClient",
+    "DecisionsClient",
     "GenericClient",
     "ImageClient",
     "OllamaClient",

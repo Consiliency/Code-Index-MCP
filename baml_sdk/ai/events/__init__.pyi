@@ -30,8 +30,17 @@ if typing.TYPE_CHECKING:
     from ... import baml
     from ...baml import UNSET as UNSET
 
+from ..._invocation_types import BamlOptions as _BamlOptions
+
+from baml_bridge import BamlPyHandle as _BamlPyHandle
+
 
 E = typing.TypeVar("E")
+
+class _BamlReturned1(typing.Protocol):
+    def _to_pyhandle(self) -> _BamlPyHandle: ...
+    def __call__(self, arg0: Event, *, _baml: _BamlOptions | None = None) -> None: ...
+    async def call_async(self, arg0: Event, *, _baml: _BamlOptions | None = None) -> None: ...
 
 
 class RunStarted(pydantic.BaseModel):
@@ -43,28 +52,29 @@ class UserMessage(pydantic.BaseModel):
     content: typing.List[ai.content.Block]
     metadata: typing.Dict[str, baml.json.json]
     @staticmethod
-    def new(text: str) -> UserMessage: ...
+    def new(text: str, *, _baml: _BamlOptions | None = None) -> UserMessage: ...
     @staticmethod
-    async def new_async(text: str) -> UserMessage: ...
+    async def new_async(text: str, *, _baml: _BamlOptions | None = None) -> UserMessage: ...
     @staticmethod
-    def of(items: typing.List[typing.Union[str, baml.media.Image, baml.media.Audio, baml.media.Video, baml.media.Pdf, ai.content.Text, ai.content.Media]], *, metadata: typing.Union[typing.Dict[str, baml.json.json], UNSET] = {}) -> UserMessage:
+    def of(items: typing.List[typing.Union[str, baml.media.Image, baml.media.Audio, baml.media.Video, baml.media.Pdf, ai.content.Text, ai.content.Media]], *, metadata: typing.Union[typing.Dict[str, baml.json.json], UNSET] = {}, _baml: _BamlOptions | None = None) -> UserMessage:
         """A turn from ordinary values: text, the `image` / `audio` / `video` /
-        `pdf` primitives, or blocks already built (see `root.content.blocks`)."""
+        `pdf` primitives, or blocks already built (see `ai.content.blocks`)."""
     @staticmethod
-    async def of_async(items: typing.List[typing.Union[str, baml.media.Image, baml.media.Audio, baml.media.Video, baml.media.Pdf, ai.content.Text, ai.content.Media]], *, metadata: typing.Union[typing.Dict[str, baml.json.json], UNSET] = {}) -> UserMessage:
+    async def of_async(items: typing.List[typing.Union[str, baml.media.Image, baml.media.Audio, baml.media.Video, baml.media.Pdf, ai.content.Text, ai.content.Media]], *, metadata: typing.Union[typing.Dict[str, baml.json.json], UNSET] = {}, _baml: _BamlOptions | None = None) -> UserMessage:
         """A turn from ordinary values: text, the `image` / `audio` / `video` /
-        `pdf` primitives, or blocks already built (see `root.content.blocks`)."""
-    def text(self) -> str:
+        `pdf` primitives, or blocks already built (see `ai.content.blocks`)."""
+    def text(self, *, _baml: _BamlOptions | None = None) -> str:
         """The `Text` blocks joined; a media block contributes a `[image]`-style
         placeholder."""
-    async def text_async(self) -> str:
+    async def text_async(self, *, _baml: _BamlOptions | None = None) -> str:
         """The `Text` blocks joined; a media block contributes a `[image]`-style
         placeholder."""
 
 
 class AssistantMessage(pydantic.BaseModel):
     content: typing.List[ai.content.ModelBlock]
-    client_id: str
+    resolved_model: typing.Optional[ModelKey] = None
+    requested_model: typing.Optional[str] = None
 
 
 class ToolRequested(pydantic.BaseModel):
@@ -77,23 +87,23 @@ class ToolCompleted(pydantic.BaseModel):
     id: str
     content: typing.List[ai.content.Block]
     @staticmethod
-    def new(id: str, output: str) -> ToolCompleted:
+    def new(id: str, output: str, *, _baml: _BamlOptions | None = None) -> ToolCompleted:
         """`output` is the tool's result serialized as JSON text."""
     @staticmethod
-    async def new_async(id: str, output: str) -> ToolCompleted:
+    async def new_async(id: str, output: str, *, _baml: _BamlOptions | None = None) -> ToolCompleted:
         """`output` is the tool's result serialized as JSON text."""
     @staticmethod
-    def of(id: str, items: typing.List[typing.Union[str, baml.media.Image, baml.media.Audio, baml.media.Video, baml.media.Pdf, ai.content.Text, ai.content.Media]]) -> ToolCompleted:
+    def of(id: str, items: typing.List[typing.Union[str, baml.media.Image, baml.media.Audio, baml.media.Video, baml.media.Pdf, ai.content.Text, ai.content.Media]], *, _baml: _BamlOptions | None = None) -> ToolCompleted:
         """A result from ordinary values: text, the `image` / `audio` / `video` /
-        `pdf` primitives, or blocks already built (see `root.content.blocks`)."""
+        `pdf` primitives, or blocks already built (see `ai.content.blocks`)."""
     @staticmethod
-    async def of_async(id: str, items: typing.List[typing.Union[str, baml.media.Image, baml.media.Audio, baml.media.Video, baml.media.Pdf, ai.content.Text, ai.content.Media]]) -> ToolCompleted:
+    async def of_async(id: str, items: typing.List[typing.Union[str, baml.media.Image, baml.media.Audio, baml.media.Video, baml.media.Pdf, ai.content.Text, ai.content.Media]], *, _baml: _BamlOptions | None = None) -> ToolCompleted:
         """A result from ordinary values: text, the `image` / `audio` / `video` /
-        `pdf` primitives, or blocks already built (see `root.content.blocks`)."""
-    def text(self) -> str:
+        `pdf` primitives, or blocks already built (see `ai.content.blocks`)."""
+    def text(self, *, _baml: _BamlOptions | None = None) -> str:
         """The `Text` blocks joined — the tool's text output; a media block
         contributes a `[image]`-style placeholder."""
-    async def text_async(self) -> str:
+    async def text_async(self, *, _baml: _BamlOptions | None = None) -> str:
         """The `Text` blocks joined — the tool's text output; a media block
         contributes a `[image]`-style placeholder."""
 
@@ -104,10 +114,54 @@ class ToolFailed(pydantic.BaseModel):
 
 
 class Usage(pydantic.BaseModel):
-    input_tokens: int
-    output_tokens: int
+    input_tokens: typing.Optional[int] = None
+    output_tokens: typing.Optional[int] = None
     cached_input_tokens: typing.Optional[int] = None
     reasoning_tokens: typing.Optional[int] = None
+    cache_write_input_tokens: typing.Optional[int] = None
+    uncached_input_tokens: typing.Optional[int] = None
+
+
+class ModelKey(pydantic.BaseModel):
+    provider: str
+    model: typing.Optional[str] = None
+
+
+class ModelUsage(pydantic.BaseModel):
+    resolved_model: ModelKey
+    usage: Usage
+
+
+def call_usage(calls: typing.List[ModelCall], *, _baml: _BamlOptions | None = None) -> typing.List[ModelUsage]:
+    """The usage `calls` reported, summed per model, in the order models first
+    appear. A turn's total is `call_usage(turn.all_calls())`."""
+async def call_usage_async(calls: typing.List[ModelCall], *, _baml: _BamlOptions | None = None) -> typing.List[ModelUsage]:
+    """The usage `calls` reported, summed per model, in the order models first
+    appear. A turn's total is `call_usage(turn.all_calls())`."""
+
+
+def usage_for(usage: typing.List[ModelUsage], model: ModelKey, *, _baml: _BamlOptions | None = None) -> typing.Optional[Usage]:
+    """The usage `usage` lists for `model`, or null when it lists none."""
+async def usage_for_async(usage: typing.List[ModelUsage], model: ModelKey, *, _baml: _BamlOptions | None = None) -> typing.Optional[Usage]:
+    """The usage `usage` lists for `model`, or null when it lists none."""
+
+
+def merge_usage(into: typing.List[ModelUsage], from_: typing.List[ModelUsage], *, _baml: _BamlOptions | None = None) -> None:
+    """Add every entry of `from` into `into`, summing the counts of a model both
+    list. A nullable count stays null only when both sides are null. `into`
+    keeps one entry per model, in the order models first appear."""
+async def merge_usage_async(into: typing.List[ModelUsage], from_: typing.List[ModelUsage], *, _baml: _BamlOptions | None = None) -> None:
+    """Add every entry of `from` into `into`, summing the counts of a model both
+    list. A nullable count stays null only when both sides are null. `into`
+    keeps one entry per model, in the order models first appear."""
+
+
+def _sum_usage(a: Usage, b: Usage, *, _baml: _BamlOptions | None = None) -> Usage: ...
+async def _sum_usage_async(a: Usage, b: Usage, *, _baml: _BamlOptions | None = None) -> Usage: ...
+
+
+def _sum_count(a: typing.Optional[int], b: typing.Optional[int], *, _baml: _BamlOptions | None = None) -> typing.Optional[int]: ...
+async def _sum_count_async(a: typing.Optional[int], b: typing.Optional[int], *, _baml: _BamlOptions | None = None) -> typing.Optional[int]: ...
 
 
 class FinalProduced(pydantic.BaseModel):
@@ -115,9 +169,9 @@ class FinalProduced(pydantic.BaseModel):
 
 
 class Timing(pydantic.BaseModel):
-    start_time_utc_ms: typing.Optional[int] = None
-    duration_ms: typing.Optional[int] = None
-    ttft_ms: typing.Optional[int] = None
+    start_time: typing.Optional[baml.time.Instant] = None
+    duration: typing.Optional[baml.time.Duration] = None
+    ttft: typing.Optional[baml.time.Duration] = None
 
 
 class HttpResponse(pydantic.BaseModel):
@@ -132,30 +186,28 @@ class SseEventRecord(pydantic.BaseModel):
     id: typing.Optional[str] = None
 
 
-class LLMCall(pydantic.BaseModel):
-    client_name: str
-    provider: str
+class ModelCall(pydantic.BaseModel):
+    resolved_model: ModelKey
+    usage: typing.Optional[Usage] = None
     timing: Timing
     http_request: typing.Optional[baml.http.Request] = None
     http_response: typing.Optional[HttpResponse] = None
-    usage: typing.Optional[Usage] = None
-    selected: bool
     sse_responses: typing.Optional[typing.List[SseEventRecord]] = None
 
 
-def guard(listener: typing.Optional[typing.Callable[[Event], None]], *, _types: dict[str, typing.Any]) -> typing.Optional[typing.Callable[[Event], None]]:
+def guard(listener: typing.Optional[typing.Callable[[Event], None]], *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> typing.Optional[_BamlReturned1]:
     """Wrap a listener so a listener error can never fail or alter a run.
     A null listener stays null; callers `if let` and skip emission entirely.
     `E` accepts fallible listeners (host callables included); the wrapper
     swallows whatever they throw, hence the `throws never` on the returned type."""
-async def guard_async(listener: typing.Optional[typing.Callable[[Event], None]], *, _types: dict[str, typing.Any]) -> typing.Optional[typing.Callable[[Event], None]]:
+async def guard_async(listener: typing.Optional[typing.Callable[[Event], None]], *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> typing.Optional[_BamlReturned1]:
     """Wrap a listener so a listener error can never fail or alter a run.
     A null listener stays null; callers `if let` and skip emission entirely.
     `E` accepts fallible listeners (host callables included); the wrapper
     swallows whatever they throw, hence the `throws never` on the returned type."""
 
 
-Event: typing.TypeAlias = typing.Union[RunStarted, UserMessage, AssistantMessage, ToolRequested, ToolCompleted, ToolFailed, Usage, LLMCall, FinalProduced]
+Event: typing.TypeAlias = typing.Union[RunStarted, UserMessage, AssistantMessage, ToolRequested, ToolCompleted, ToolFailed, ModelCall, FinalProduced]
 
 
 __all__ = [
@@ -166,11 +218,19 @@ __all__ = [
     "ToolCompleted",
     "ToolFailed",
     "Usage",
+    "ModelKey",
+    "ModelUsage",
+    "call_usage",
+    "call_usage_async",
+    "usage_for",
+    "usage_for_async",
+    "merge_usage",
+    "merge_usage_async",
     "FinalProduced",
     "Timing",
     "HttpResponse",
     "SseEventRecord",
-    "LLMCall",
+    "ModelCall",
     "guard",
     "guard_async",
     "Event",

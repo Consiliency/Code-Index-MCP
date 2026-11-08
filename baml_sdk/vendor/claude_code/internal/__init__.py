@@ -83,18 +83,32 @@ Raises:
     SerializationError"""
 
 
+_write_prompt       = _define_function("claude_code.internal._write_prompt", "sync",  ["p", "prompt"], binding_name="_write_prompt", binding_qualname="_write_prompt", binding_module=__name__)
+_write_prompt.__doc__ = """(internal) Write the whole prompt to the CLI's stdin, then close it so the
+CLI sees EOF.
+
+Raises:
+    Io"""
+_write_prompt_async = _define_function("claude_code.internal._write_prompt", "async", ["p", "prompt"], binding_name="_write_prompt_async", binding_qualname="_write_prompt_async", binding_module=__name__)
+_write_prompt_async.__doc__ = """(internal) Write the whole prompt to the CLI's stdin, then close it so the
+CLI sees EOF.
+
+Raises:
+    Io"""
+
+
 _read_result       = _define_function("claude_code.internal._read_result", "sync",  ["p"], binding_name="_read_result", binding_qualname="_read_result", binding_module=__name__)
 _read_result.__doc__ = """(internal) Consume the live JSONL stream: log every event as it arrives, return the
 terminal result event.
 
 Raises:
-    ParseFailed"""
+    InvalidResponse"""
 _read_result_async = _define_function("claude_code.internal._read_result", "async", ["p"], binding_name="_read_result_async", binding_qualname="_read_result_async", binding_module=__name__)
 _read_result_async.__doc__ = """(internal) Consume the live JSONL stream: log every event as it arrives, return the
 terminal result event.
 
 Raises:
-    ParseFailed"""
+    InvalidResponse"""
 
 
 _preview       = _define_function("claude_code.internal._preview", "sync",  ["text"], binding_name="_preview", binding_qualname="_preview", binding_module=__name__)
@@ -129,12 +143,88 @@ invoke       = _define_function("claude_code.internal.invoke", "sync",  ["c", "i
 invoke.__doc__ = """One model turn = one CLI run: assemble the prompt, exec, normalize.
 
 Raises:
-    Timeout, Unsupported, DecodeError, SerializationError, InvalidRequest, NetworkFailure, ParseFailed, PromptRenderError, Refused"""
+    InvalidArgument, Timeout, Unsupported, DecodeError, SerializationError, InvalidRequest, InvalidResponse, NetworkFailure, ParseFailed, PromptRenderError, ProviderError"""
 invoke_async = _define_function("claude_code.internal.invoke", "async", ["c", "input"], binding_name="invoke_async", binding_qualname="invoke_async", binding_module=__name__)
 invoke_async.__doc__ = """One model turn = one CLI run: assemble the prompt, exec, normalize.
 
 Raises:
-    Timeout, Unsupported, DecodeError, SerializationError, InvalidRequest, NetworkFailure, ParseFailed, PromptRenderError, Refused"""
+    InvalidArgument, Timeout, Unsupported, DecodeError, SerializationError, InvalidRequest, InvalidResponse, NetworkFailure, ParseFailed, PromptRenderError, ProviderError"""
+
+
+stdin_message       = _define_function("claude_code.internal.stdin_message", "sync",  ["prompt", "suffix"], binding_name="stdin_message", binding_qualname="stdin_message", binding_module=__name__)
+stdin_message.__doc__ = """(internal) One CLI run's whole prompt as the single stream-json user
+message the CLI reads on stdin (`--input-format stream-json`), newline
+terminated. Every prompt takes this path, text-only or not: argv cannot
+carry media (`text()` folds each media part to a placeholder the model
+never sees), Linux caps one argument at 128 KiB and macOS the whole argv
+at 1 MiB, and an argv prompt that starts with `-` parses as an option.
+Exactly one message: the CLI runs one turn, and emits one result, per
+stdin message. `suffix` is the text the client appends after the prompt:
+the folded journal and the tool protocol.
+
+Raises:
+    InvalidArgument, Timeout, SerializationError, InvalidRequest, NetworkFailure"""
+stdin_message_async = _define_function("claude_code.internal.stdin_message", "async", ["prompt", "suffix"], binding_name="stdin_message_async", binding_qualname="stdin_message_async", binding_module=__name__)
+stdin_message_async.__doc__ = """(internal) One CLI run's whole prompt as the single stream-json user
+message the CLI reads on stdin (`--input-format stream-json`), newline
+terminated. Every prompt takes this path, text-only or not: argv cannot
+carry media (`text()` folds each media part to a placeholder the model
+never sees), Linux caps one argument at 128 KiB and macOS the whole argv
+at 1 MiB, and an argv prompt that starts with `-` parses as an option.
+Exactly one message: the CLI runs one turn, and emits one result, per
+stdin message. `suffix` is the text the client appends after the prompt:
+the folded journal and the tool protocol.
+
+Raises:
+    InvalidArgument, Timeout, SerializationError, InvalidRequest, NetworkFailure"""
+
+
+content_blocks       = _define_function("claude_code.internal.content_blocks", "sync",  ["prompt", "suffix"], binding_name="content_blocks", binding_qualname="content_blocks", binding_module=__name__)
+content_blocks.__doc__ = """(internal) The prompt as Messages API content blocks, then `suffix`. The
+text reads exactly as `prompt.text()` renders it (a `[role]` header per
+message, a blank line between messages); each media part lowers in place
+of its placeholder. Cache delimiters drop: the CLI manages its own cache.
+
+Raises:
+    InvalidArgument, Timeout, InvalidRequest, NetworkFailure"""
+content_blocks_async = _define_function("claude_code.internal.content_blocks", "async", ["prompt", "suffix"], binding_name="content_blocks_async", binding_qualname="content_blocks_async", binding_module=__name__)
+content_blocks_async.__doc__ = """(internal) The prompt as Messages API content blocks, then `suffix`. The
+text reads exactly as `prompt.text()` renders it (a `[role]` header per
+message, a blank line between messages); each media part lowers in place
+of its placeholder. Cache delimiters drop: the CLI manages its own cache.
+
+Raises:
+    InvalidArgument, Timeout, InvalidRequest, NetworkFailure"""
+
+
+_push_text       = _define_function("claude_code.internal._push_text", "sync",  ["blocks", "text"], binding_name="_push_text", binding_qualname="_push_text", binding_module=__name__)
+_push_text_async = _define_function("claude_code.internal._push_text", "async", ["blocks", "text"], binding_name="_push_text_async", binding_qualname="_push_text_async", binding_module=__name__)
+
+
+_media_block       = _define_function("claude_code.internal._media_block", "sync",  ["media"], binding_name="_media_block", binding_qualname="_media_block", binding_module=__name__)
+_media_block.__doc__ = """(internal) One media part as a content block, shaped as the Messages API
+takes it: a URL source passes through, anything else is base64. The CLI
+has no audio or video input, so those are a typed error, never a silent
+placeholder.
+
+Raises:
+    InvalidArgument, Timeout, InvalidRequest, NetworkFailure"""
+_media_block_async = _define_function("claude_code.internal._media_block", "async", ["media"], binding_name="_media_block_async", binding_qualname="_media_block_async", binding_module=__name__)
+_media_block_async.__doc__ = """(internal) One media part as a content block, shaped as the Messages API
+takes it: a URL source passes through, anything else is base64. The CLI
+has no audio or video input, so those are a typed error, never a silent
+placeholder.
+
+Raises:
+    InvalidArgument, Timeout, InvalidRequest, NetworkFailure"""
+
+
+_supported_image_mime       = _define_function("claude_code.internal._supported_image_mime", "sync",  ["mime"], binding_name="_supported_image_mime", binding_qualname="_supported_image_mime", binding_module=__name__)
+_supported_image_mime_async = _define_function("claude_code.internal._supported_image_mime", "async", ["mime"], binding_name="_supported_image_mime_async", binding_qualname="_supported_image_mime_async", binding_module=__name__)
+
+
+_reject       = _define_function("claude_code.internal._reject", "sync",  ["detail"], binding_name="_reject", binding_qualname="_reject", binding_module=__name__)
+_reject_async = _define_function("claude_code.internal._reject", "async", ["detail"], binding_name="_reject_async", binding_qualname="_reject_async", binding_module=__name__)
 
 
 __all__ = [
@@ -150,4 +240,8 @@ __all__ = [
     "allowed_mcp_tools_async",
     "invoke",
     "invoke_async",
+    "stdin_message",
+    "stdin_message_async",
+    "content_blocks",
+    "content_blocks_async",
 ]

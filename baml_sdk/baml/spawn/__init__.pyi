@@ -28,79 +28,166 @@ import pydantic
 if typing.TYPE_CHECKING:
     from ...baml import UNSET as UNSET
 
+from ..._invocation_types import BamlOptions as _BamlOptions
+
 from baml_bridge import BamlPyHandle as _BamlPyHandle
 
 
+ApplyError = typing.TypeVar("ApplyError")
 E = typing.TypeVar("E")
+Error = typing.TypeVar("Error")
+Output = typing.TypeVar("Output")
 T = typing.TypeVar("T")
-
-
-class Params(pydantic.BaseModel, typing.Generic[T, E]):
-    body: typing.Callable[[], T]
-    name: typing.Optional[str] = None
-    group: typing.Optional[TaskGroup] = None
-    cancel: typing.Optional[CancelToken] = None
-    detach: bool
-
-
-class TaskGroup(pydantic.BaseModel):
-    field_handle: _BamlPyHandle = pydantic.Field(alias="_handle")
-    @staticmethod
-    def new(limit: int, *, name: typing.Union[str, None, UNSET] = None) -> TaskGroup: ...
-    @staticmethod
-    async def new_async(limit: int, *, name: typing.Union[str, None, UNSET] = None) -> TaskGroup: ...
-    def cancel(self, *, pending: typing.Union[bool, None, UNSET] = True, active: typing.Union[bool, None, UNSET] = True) -> int: ...
-    async def cancel_async(self, *, pending: typing.Union[bool, None, UNSET] = True, active: typing.Union[bool, None, UNSET] = True) -> int: ...
-    def set_limit(self, limit: int) -> None: ...
-    async def set_limit_async(self, limit: int) -> None: ...
-    def limit(self) -> int: ...
-    async def limit_async(self) -> int: ...
-    def name(self) -> typing.Optional[str]: ...
-    async def name_async(self) -> typing.Optional[str]: ...
-    def active_count(self) -> int: ...
-    async def active_count_async(self) -> int: ...
-    def queued_count(self) -> int: ...
-    async def queued_count_async(self) -> int: ...
 
 
 class CancelToken(pydantic.BaseModel):
     field_handle: _BamlPyHandle = pydantic.Field(alias="_handle")
     @staticmethod
-    def new() -> CancelToken: ...
+    def new(*, _baml: _BamlOptions | None = None) -> CancelToken:
+        """Create a fresh, un-cancelled token."""
     @staticmethod
-    async def new_async() -> CancelToken: ...
+    async def new_async(*, _baml: _BamlOptions | None = None) -> CancelToken:
+        """Create a fresh, un-cancelled token."""
     @staticmethod
-    def any(tokens: typing.List[CancelToken]) -> CancelToken: ...
+    def any(tokens: typing.List[CancelToken], *, _baml: _BamlOptions | None = None) -> CancelToken:
+        """A new token that fires when ANY of `tokens` fires. Cancelling the
+        returned token does not propagate back to the inputs (one-directional),
+        so token composition cannot form cycles."""
     @staticmethod
-    async def any_async(tokens: typing.List[CancelToken]) -> CancelToken: ...
-    def cancel(self) -> int: ...
-    async def cancel_async(self) -> int: ...
-    def is_cancelled(self) -> bool: ...
-    async def is_cancelled_async(self) -> bool: ...
+    async def any_async(tokens: typing.List[CancelToken], *, _baml: _BamlOptions | None = None) -> CancelToken:
+        """A new token that fires when ANY of `tokens` fires. Cancelling the
+        returned token does not propagate back to the inputs (one-directional),
+        so token composition cannot form cycles."""
+    def cancel(self, *, _baml: _BamlOptions | None = None) -> int:
+        """Request cancellation. Returns `1` if this call transitioned the token
+        from un-cancelled to cancelled, `0` if it was already cancelled."""
+    async def cancel_async(self, *, _baml: _BamlOptions | None = None) -> int:
+        """Request cancellation. Returns `1` if this call transitioned the token
+        from un-cancelled to cancelled, `0` if it was already cancelled."""
+    def is_cancelled(self, *, _baml: _BamlOptions | None = None) -> bool:
+        """`true` if this token has been cancelled."""
+    async def is_cancelled_async(self, *, _baml: _BamlOptions | None = None) -> bool:
+        """`true` if this token has been cancelled."""
 
 
-def options(*, group: typing.Union[TaskGroup, None, UNSET] = None, cancel: typing.Union[CancelToken, None, UNSET] = None, detach: typing.Union[bool, None, UNSET] = None, _types: dict[str, typing.Any]) -> typing.Callable[[Params[T, E]], Params[T, E]]:
-    """The built-in config transformer for a `spawn ... with` clause: sets the
-    provided fields, leaves everything else (including `body`) untouched, so
-    types are unchanged. `cancel` links a cancel token into the spawn's
-    effective token; `detach = true` opts the spawn out of the parent→child
-    cancel cascade and routes its unhandled errors to the root task instead
-    of the spawner; `group` enrolls the spawn in a `TaskGroup`, so it parks
-    until the group admits it (FIFO)."""
-async def options_async(*, group: typing.Union[TaskGroup, None, UNSET] = None, cancel: typing.Union[CancelToken, None, UNSET] = None, detach: typing.Union[bool, None, UNSET] = None, _types: dict[str, typing.Any]) -> typing.Callable[[Params[T, E]], Params[T, E]]:
-    """The built-in config transformer for a `spawn ... with` clause: sets the
-    provided fields, leaves everything else (including `body`) untouched, so
-    types are unchanged. `cancel` links a cancel token into the spawn's
-    effective token; `detach = true` opts the spawn out of the parent→child
-    cancel cascade and routes its unhandled errors to the root task instead
-    of the spawner; `group` enrolls the spawn in a `TaskGroup`, so it parks
-    until the group admits it (FIFO)."""
+class Plan(pydantic.BaseModel, typing.Generic[T, E]):
+    body: typing.Callable[[], T]
+    name: typing.Optional[str] = None
+    limits: typing.List[Limit]
+    cancel_tokens: typing.List[CancelToken]
+    root: bool
+    @staticmethod
+    def new(body: typing.Callable[[], T], *, name: typing.Union[str, None, UNSET] = None, _baml: _BamlOptions | None = None) -> Plan[T, E]:
+        """A plan that runs `body`, with nothing added to it."""
+    @staticmethod
+    async def new_async(body: typing.Callable[[], T], *, name: typing.Union[str, None, UNSET] = None, _baml: _BamlOptions | None = None) -> Plan[T, E]:
+        """A plan that runs `body`, with nothing added to it."""
+    def wrap(self, wrapper: typing.Callable[[typing.Callable[[], T]], Output], *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> Plan[Output, Error]:
+        """Returns this plan with a new body: `wrapper`, called with the old one.
+
+        # Examples
+
+        ```baml
+        plan.wrap((body: () -> int throws E) -> int throws E { body() * 2 })
+        ```"""
+    async def wrap_async(self, wrapper: typing.Callable[[typing.Callable[[], T]], Output], *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> Plan[Output, Error]:
+        """Returns this plan with a new body: `wrapper`, called with the old one.
+
+        # Examples
+
+        ```baml
+        plan.wrap((body: () -> int throws E) -> int throws E { body() * 2 })
+        ```"""
+    def with_(self, modifier: typing.Any, *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> Plan[Output, Error]:
+        """Returns this plan transformed by `modifier`.
+
+        # Throws
+
+        Whatever `modifier.apply` throws."""
+    async def with__async(self, modifier: typing.Any, *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> Plan[Output, Error]:
+        """Returns this plan transformed by `modifier`.
+
+        # Throws
+
+        Whatever `modifier.apply` throws."""
+
+
+class Limit(pydantic.BaseModel):
+    field_handle: _BamlPyHandle = pydantic.Field(alias="_handle")
+    @staticmethod
+    def new(capacity: int, *, _baml: _BamlOptions | None = None) -> Limit:
+        """Creates a limit that admits `capacity` tasks at a time.
+
+        # Throws
+
+        `InvalidArgument` if `capacity` is not positive.
+
+        Raises:
+            InvalidArgument"""
+    @staticmethod
+    async def new_async(capacity: int, *, _baml: _BamlOptions | None = None) -> Limit:
+        """Creates a limit that admits `capacity` tasks at a time.
+
+        # Throws
+
+        `InvalidArgument` if `capacity` is not positive.
+
+        Raises:
+            InvalidArgument"""
+    def capacity(self, *, _baml: _BamlOptions | None = None) -> int:
+        """How many tasks this limit admits at a time."""
+    async def capacity_async(self, *, _baml: _BamlOptions | None = None) -> int:
+        """How many tasks this limit admits at a time."""
+    def active_count(self, *, _baml: _BamlOptions | None = None) -> int:
+        """How many tasks hold a slot right now."""
+    async def active_count_async(self, *, _baml: _BamlOptions | None = None) -> int:
+        """How many tasks hold a slot right now."""
+    def queued_count(self, *, _baml: _BamlOptions | None = None) -> int:
+        """How many tasks are waiting for a slot right now."""
+    async def queued_count_async(self, *, _baml: _BamlOptions | None = None) -> int:
+        """How many tasks are waiting for a slot right now."""
+
+
+class Root(pydantic.BaseModel):
+    @staticmethod
+    def new(*, _baml: _BamlOptions | None = None) -> Root:
+        """Creates a `Root`."""
+    @staticmethod
+    async def new_async(*, _baml: _BamlOptions | None = None) -> Root:
+        """Creates a `Root`."""
+
+
+def __spawn(plan: Plan[T, E], *, _types: dict[str, typing.Any] | None = None, _baml: _BamlOptions | None = None) -> typing.Any:
+    """(internal) The terminal a `spawn` expression compiles to, once its
+    modifiers have been applied. Not a way to start a task: write
+    `spawn ... { }`.
+
+    Starts `plan` and returns the new task's future. Never throws."""
+async def __spawn_async(plan: Plan[T, E], *, _types: dict[str, typing.Any] | None = None, _baml: _BamlOptions | None = None) -> typing.Any:
+    """(internal) The terminal a `spawn` expression compiles to, once its
+    modifiers have been applied. Not a way to start a task: write
+    `spawn ... { }`.
+
+    Starts `plan` and returns the new task's future. Never throws."""
 
 
 __all__ = [
-    "Params",
-    "TaskGroup",
     "CancelToken",
-    "options",
-    "options_async",
+    "Plan",
+    "Limit",
+    "Root",
 ]
+
+class Modifier:
+    __baml_interface_fqn__: str
+
+    def __new__(cls, *args: typing.Any, **kwargs: typing.Any) -> typing.NoReturn: ...
+
+    @classmethod
+    def __class_getitem__(cls, args: typing.Any) -> typing.Any: ...
+
+
+try:
+    __all__.extend(["Modifier"])
+except NameError:
+    __all__ = ["Modifier"]

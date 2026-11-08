@@ -34,6 +34,12 @@ _LAZY_CHILDREN = frozenset({
 })
 
 def __getattr__(name):
+    if name == "experimental" and __name__ == "baml_sdk":
+        import importlib
+        return importlib.import_module(".experimental", __name__)
+    if name == "trace" and __name__ == "baml_sdk":
+        import importlib
+        return importlib.import_module(".vendor.trace", __name__)
     if name in _LAZY_CHILDREN:
         import importlib
         return importlib.import_module(f".{name}", __name__)
@@ -63,9 +69,6 @@ Credential: typing.TypeAlias = typing.Union[str, baml.env.Ref]
 MediaPart: typing.TypeAlias = typing.Union[baml.media.Image, baml.media.Audio, baml.media.Video, baml.media.Pdf]
 
 
-PromptPart: typing.TypeAlias = typing.Union[str, MediaPart]
-
-
 class OutputFormat(pydantic.BaseModel):
     """
     Opaque handle to a prebuilt output-format schema. This supports the
@@ -87,7 +90,8 @@ class Role(pydantic.BaseModel):
 
     Attributes:
         name
-        metadata: Provider-specific per-message metadata such as cache control.
+        metadata: Free-form per-message data, wired via `ai.PromptMessage.metadata`:
+            `${role("system", metadata = { "source": "kb" })}`.
     """
     model_config = pydantic.ConfigDict(
         arbitrary_types_allowed=True,
@@ -95,7 +99,7 @@ class Role(pydantic.BaseModel):
         populate_by_name=True,
     )
     name: str
-    metadata: typing.Dict[str, typing.Any]
+    metadata: typing.Dict[str, baml.json.json]
 
 
 class ContextClient(pydantic.BaseModel):
@@ -152,7 +156,35 @@ class RunResult(pydantic.BaseModel, typing.Generic[Out]):
     )
     value: Out
     journal: Journal
-    usage: ai.events.Usage
+    usage: typing.List[ai.events.ModelUsage]
+
+
+class _Delivered(pydantic.BaseModel):
+    """
+    (internal) How far `on_event` has read a journal: the count of entries it was
+    given. One count for a run, so each event is delivered one time.
+    """
+    model_config = pydantic.ConfigDict(
+        arbitrary_types_allowed=True,
+        extra="ignore",
+        populate_by_name=True,
+    )
+    count: int
+
+
+class _AcceptedTurn(pydantic.BaseModel):
+    """
+    (internal) A turn `Agent._attempt_turn` accepted. When parsing its terminal
+    text is what accepted it, `text_output` holds that parse, so `Agent.run`
+    does not parse the same text a second time.
+    """
+    model_config = pydantic.ConfigDict(
+        arbitrary_types_allowed=True,
+        extra="ignore",
+        populate_by_name=True,
+    )
+    turn: ModelTurn
+    text_output: typing.Optional[ParsedOutput] = None
 
 
 class Agent(pydantic.BaseModel):
@@ -165,6 +197,13 @@ class Agent(pydantic.BaseModel):
     The class itself is not generic: none of its configuration involves the
     output type. `Out` lives on `run`, where it is inferred from the spec
     argument, so no call site needs to name it.
+
+    `on_event` gets every event of the run's journal, in journal order, one
+    time each. A run that ends with an error has delivered everything it
+    recorded before the error leaves `run`: the reply that did not parse (and
+    every repair attempt before it), the turn the model cut short, the refusal,
+    the tool failure. No event stands for the failure itself: a good run ends
+    with `FinalProduced`, a failed one with the error.
     """
     model_config = pydantic.ConfigDict(
         arbitrary_types_allowed=True,
@@ -186,12 +225,52 @@ class Agent(pydantic.BaseModel):
     _has_media_output__async = _define_function("ai.Agent._has_media_output", "async", ["self", "turn"], binding_name="_has_media_output__async", binding_qualname="Agent._has_media_output__async", binding_module=__name__, type_params=["Out"])
     _media_value_       = _define_function("ai.Agent._media_value", "sync",  ["self", "turn", "provider"], binding_name="_media_value_", binding_qualname="Agent._media_value_", binding_module=__name__, type_params=["Out"])
     _media_value__async = _define_function("ai.Agent._media_value", "async", ["self", "turn", "provider"], binding_name="_media_value__async", binding_qualname="Agent._media_value__async", binding_module=__name__, type_params=["Out"])
-    _parses_       = _define_function("ai.Agent._parses", "sync",  ["self", "turn", "candidate"], binding_name="_parses_", binding_qualname="Agent._parses_", binding_module=__name__, type_params=["Out"])
-    _parses__async = _define_function("ai.Agent._parses", "async", ["self", "turn", "candidate"], binding_name="_parses__async", binding_qualname="Agent._parses__async", binding_module=__name__, type_params=["Out"])
+    _fits_without_text_       = _define_function("ai.Agent._fits_without_text", "sync",  ["self", "turn"], binding_name="_fits_without_text_", binding_qualname="Agent._fits_without_text_", binding_module=__name__, type_params=["Out"])
+    _fits_without_text__async = _define_function("ai.Agent._fits_without_text", "async", ["self", "turn"], binding_name="_fits_without_text__async", binding_qualname="Agent._fits_without_text__async", binding_module=__name__, type_params=["Out"])
+    _parse_text_       = _define_function("ai.Agent._parse_text", "sync",  ["self", "candidate"], binding_name="_parse_text_", binding_qualname="Agent._parse_text_", binding_module=__name__, type_params=["Out"])
+    _parse_text__async = _define_function("ai.Agent._parse_text", "async", ["self", "candidate"], binding_name="_parse_text__async", binding_qualname="Agent._parse_text__async", binding_module=__name__, type_params=["Out"])
     _attempt_turn_       = _define_function("ai.Agent._attempt_turn", "sync",  ["self", "c", "spec", "j", "total", "attempts_left"], binding_name="_attempt_turn_", binding_qualname="Agent._attempt_turn_", binding_module=__name__, type_params=["Out"])
     _attempt_turn__async = _define_function("ai.Agent._attempt_turn", "async", ["self", "c", "spec", "j", "total", "attempts_left"], binding_name="_attempt_turn__async", binding_qualname="Agent._attempt_turn__async", binding_module=__name__, type_params=["Out"])
-    _emit_from_       = _define_function("ai.Agent._emit_from", "sync",  ["self", "j", "seen"], binding_name="_emit_from_", binding_qualname="Agent._emit_from_", binding_module=__name__)
-    _emit_from__async = _define_function("ai.Agent._emit_from", "async", ["self", "j", "seen"], binding_name="_emit_from__async", binding_qualname="Agent._emit_from__async", binding_module=__name__)
+    _deliver_       = _define_function("ai.Agent._deliver", "sync",  ["self", "j", "delivered"], binding_name="_deliver_", binding_qualname="Agent._deliver_", binding_module=__name__)
+    _deliver__async = _define_function("ai.Agent._deliver", "async", ["self", "j", "delivered"], binding_name="_deliver__async", binding_qualname="Agent._deliver__async", binding_module=__name__)
+    _run_steps_       = _define_function("ai.Agent._run_steps", "sync",  ["self", "selected", "spec", "j", "delivered", "schema_attempts"], binding_name="_run_steps_", binding_qualname="Agent._run_steps_", binding_module=__name__, type_params=["Out"])
+    _run_steps__async = _define_function("ai.Agent._run_steps", "async", ["self", "selected", "spec", "j", "delivered", "schema_attempts"], binding_name="_run_steps__async", binding_qualname="Agent._run_steps__async", binding_module=__name__, type_params=["Out"])
+
+
+class CacheDelimiter(pydantic.BaseModel):
+    """
+    A position in a prompt: everything before it is the prefix a provider may
+    cache. `${cache()}` in an LLM function's `prompt:` puts one where it is
+    written. A client that has a cache marker on its wire sends one there;
+    every other client drops the delimiter and sends the prompt as if it were
+    not there.
+
+    `${cache()}` leaves `args` null, and the client that sends the request
+    fills in its own `default_cache_args()`: the marker its wire takes, or
+    nothing when its model would reject one. So one `${cache()}` is right on
+    every client, including each member of a fallback.
+
+    `${cache(args)}` sets `args`, which rides along untouched and is sent
+    exactly as written. It is the provider's own cache object, so it is written
+    for one provider's wire:
+
+        ${cache({ "type": "default", "ttl": "1h" })}   // aws.BedrockClient: a `cachePoint` block
+        ${cache({ "type": "ephemeral", "ttl": "1h" })} // anthropic.Client: `cache_control` on the block before
+        ${cache({ "mode": "explicit" })}               // openai.ChatClient, openai.ResponsesClient:
+                                                       // `prompt_cache_breakpoint` on the part before
+
+    `${cache(null)}` is `${cache()}`. To mark a position on some calls only,
+    put the `${cache()}` inside an `${if (...)}`.
+
+    Outside an LLM function's `prompt:` there is no bare `cache`; interpolate
+    the value itself, `${ai.CacheDelimiter { args: null }}`.
+    """
+    model_config = pydantic.ConfigDict(
+        arbitrary_types_allowed=True,
+        extra="ignore",
+        populate_by_name=True,
+    )
+    args: baml.json.json = None
 
 
 class PromptMessage(pydantic.BaseModel):
@@ -201,13 +280,14 @@ class PromptMessage(pydantic.BaseModel):
     Attributes:
         role: The chat role, e.g. "system", "user", or "assistant". Empty for
             role-less content.
-        content: The message's rendered text. Media parts use a readable placeholder.
+        content: The message's rendered text. Media parts use a readable placeholder;
+            a cache delimiter contributes nothing.
         parts: Ordered structural content. Provider clients use this instead of the
             readable `content` projection so media survives prompt rendering.
-        metadata: Per-message provider directives, carried verbatim from the
-            `ai.Role.metadata` of the `${role(...)}` marker that opened
-            this message — Anthropic `cache_control`, for example. Empty when the
-            message carried none.
+        metadata: Free-form per-message data, carried verbatim from the
+            `ai.Role.metadata` of the `${role(...)}` marker that opened this
+            message. Empty when the message carried none. The built-in clients do
+            not read it.
     """
     model_config = pydantic.ConfigDict(
         arbitrary_types_allowed=True,
@@ -242,6 +322,53 @@ prompt       = _define_function("ai.prompt", "sync",  ["body"], binding_name="pr
 prompt_async = _define_function("ai.prompt", "async", ["body"], binding_name="prompt_async", binding_qualname="prompt_async", binding_module=__name__)
 
 
+class LlmTimeoutOptions(pydantic.BaseModel):
+    """
+    The four deadlines of one LLM request attempt. Each retry or fallback
+    attempt starts its own clocks.
+
+    A zero or negative `Duration` means no limit, on any field.
+
+    ```baml
+    let client = openai.ChatClient.new(
+        model = "gpt-4o-mini",
+        timeout = ai.LlmTimeoutOptions {
+            timeout: baml.time.Duration.from_seconds(120),
+            connect_timeout: baml.time.Duration.from_seconds(10),
+            first_token_timeout: baml.time.Duration.from_seconds(30),
+            stream_token_timeout: baml.time.Duration.from_seconds(10),
+        },
+    );
+    ```
+
+    Attributes:
+        timeout: End-to-end total for one attempt, connecting included. Forwarded to the
+            underlying `baml.http.send` / `baml.http.send_sse`. `null` is 5 minutes.
+        connect_timeout: Limit on establishing the connection. `null` is 10 seconds.
+        first_token_timeout: Streaming only: limit on receiving the first non-empty content delta
+            (text, reasoning or tool input). Starts when the request attempt is
+            dispatched, so it includes connecting, sending the request and waiting
+            for response headers. Keep-alives, response metadata and empty deltas
+            do not end it. `null` is not enforced.
+        stream_token_timeout: Streaming only: limit on the time between non-empty content deltas.
+            Starts once the first non-empty content delta has arrived, and only
+            another one resets it. `null` is not enforced.
+    """
+    model_config = pydantic.ConfigDict(
+        arbitrary_types_allowed=True,
+        extra="ignore",
+        populate_by_name=True,
+    )
+    timeout: typing.Optional[baml.time.Duration] = None
+    connect_timeout: typing.Optional[baml.time.Duration] = None
+    first_token_timeout: typing.Optional[baml.time.Duration] = None
+    stream_token_timeout: typing.Optional[baml.time.Duration] = None
+    _resolve_       = staticmethod(_define_function("ai.LlmTimeoutOptions._resolve", "sync",  ["timeout"], binding_name="_resolve_", binding_qualname="LlmTimeoutOptions._resolve_", binding_module=__name__))
+    _resolve__async = staticmethod(_define_function("ai.LlmTimeoutOptions._resolve", "async", ["timeout"], binding_name="_resolve__async", binding_qualname="LlmTimeoutOptions._resolve__async", binding_module=__name__))
+    _apply_       = _define_function("ai.LlmTimeoutOptions._apply", "sync",  ["self", "request"], binding_name="_apply_", binding_qualname="LlmTimeoutOptions._apply_", binding_module=__name__)
+    _apply__async = _define_function("ai.LlmTimeoutOptions._apply", "async", ["self", "request"], binding_name="_apply__async", binding_qualname="LlmTimeoutOptions._apply__async", binding_module=__name__)
+
+
 class ModelTurnInput(pydantic.BaseModel):
     model_config = pydantic.ConfigDict(
         arbitrary_types_allowed=True,
@@ -268,6 +395,11 @@ class ParsedOutput(pydantic.BaseModel):
 
 
 class ModelTurn(pydantic.BaseModel):
+    """
+    One attempt at a turn. A client returns one that succeeded; a wrapper's
+    `child_turns` also hold the attempts that failed (`error` set, no content,
+    `stop_reason` Failed).
+    """
     model_config = pydantic.ConfigDict(
         arbitrary_types_allowed=True,
         extra="ignore",
@@ -276,8 +408,13 @@ class ModelTurn(pydantic.BaseModel):
     parsed_output: typing.Optional[ParsedOutput] = None
     content: typing.List[ai.content.ModelBlock]
     stop_reason: ai.content.StopReason
-    usage: typing.Optional[ai.events.Usage] = None
-    calls: typing.List[ai.events.LLMCall]
+    resolved_model: typing.Optional[ai.events.ModelKey] = None
+    requested_model: typing.Optional[str] = None
+    calls: typing.List[ai.events.ModelCall]
+    child_turns: typing.List[ModelTurn]
+    error: typing.Union[typing.Any, baml.errors.Timeout, None] = None
+    all_calls       = _define_function("ai.ModelTurn.all_calls", "sync",  ["self"], binding_name="all_calls", binding_qualname="ModelTurn.all_calls", binding_module=__name__)
+    all_calls_async = _define_function("ai.ModelTurn.all_calls", "async", ["self"], binding_name="all_calls_async", binding_qualname="ModelTurn.all_calls_async", binding_module=__name__)
     terminal_text       = _define_function("ai.ModelTurn.terminal_text", "sync",  ["self"], binding_name="terminal_text", binding_qualname="ModelTurn.terminal_text", binding_module=__name__)
     terminal_text_async = _define_function("ai.ModelTurn.terminal_text", "async", ["self"], binding_name="terminal_text_async", binding_qualname="ModelTurn.terminal_text_async", binding_module=__name__)
     media       = _define_function("ai.ModelTurn.media", "sync",  ["self"], binding_name="media", binding_qualname="ModelTurn.media", binding_module=__name__)
@@ -289,10 +426,12 @@ class ModelTurn(pydantic.BaseModel):
 Selector: typing.TypeAlias = ai.clients.Selector
 
 
+PromptPart: typing.TypeAlias = typing.Union[str, MediaPart, CacheDelimiter]
+
+
 __all__ = [
     "Credential",
     "MediaPart",
-    "PromptPart",
     "OutputFormat",
     "Role",
     "ContextClient",
@@ -300,15 +439,18 @@ __all__ = [
     "Journal",
     "RunResult",
     "Agent",
+    "CacheDelimiter",
     "PromptMessage",
     "Prompt",
     "prompt",
     "prompt_async",
     "FunctionSpec",
+    "LlmTimeoutOptions",
     "ModelTurnInput",
     "ParsedOutput",
     "ModelTurn",
     "Selector",
+    "PromptPart",
 ]
 
 class Client:

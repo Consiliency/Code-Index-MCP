@@ -218,6 +218,49 @@ tiers above are unchanged by the upgrade.
   hosted Linux CI. That is CI evidence, not installed-runtime acceptance on
   those versions.
 
+## Summarization runtime (BAML)
+
+Chunk summarization calls its LLM through the generated `baml_sdk` and the
+`baml-bridge` 0.23.0 runtime. Summarization prompts contain the indexed
+repository's source code.
+
+**Run recording and Boundary upload are off by default.** baml-bridge 0.21+
+records every call under `BAML_HOME` (default `~/.baml/btel`). When
+`BOUNDARY_API_KEY` is set or a saved `baml auth login` exists, it also uploads
+the recordings to Boundary's cloud (`api.prod.bcs.boundaryml.com`).
+`scripts/generate_baml_sdk.py` bakes `off` into the generated SDK as its own
+default, so the default holds no matter which code imports `baml_sdk` first.
+
+| `MCP_BAML_TELEMETRY` | Effect |
+|---|---|
+| unset, blank or whitespace (for example compose's `${MCP_BAML_TELEMETRY:-}`) | off |
+| `off`, `false`, `0`, or any unrecognized value | off |
+| `true` | keeps the default, which is off |
+| `low`, `medium` or `high` | records at that level (opt-in) |
+
+- Only `MCP_BAML_TELEMETRY` is honored. Upstream's `BAML_TELEMETRY` variable is
+  ignored by this SDK, so `BAML_TELEMETRY=off` neither disables nor enables
+  anything.
+- The level is read once, when `baml_sdk` is first imported. Restart the
+  process to change it.
+- Opting in uploads recordings, which include prompts containing source code,
+  to Boundary whenever `BOUNDARY_API_KEY` or a saved Boundary login is present.
+  To keep them local, set `BOUNDARY_API_KEY=local`. Before opting in, consider
+  adding `[bridge] http_bodies = false` to `baml.toml` and regenerating, so
+  recordings omit request and response bodies.
+
+**LLM call timeouts.** Since baml-bridge 0.21, each LLM call has a 5 minute total
+timeout and a 10 second connect timeout; 0.20.1 had no limit. Repository-scope
+summarization also applies its own per-call timeout (`call_timeout_s`, default
+three times `timeout_s`, at least 15 seconds). The single-file
+`summarize_file_chunks` path has no such limit. There, a provider that accepts
+the connection but never answers can cost up to 5 minutes for the batch call,
+then up to 5 minutes for each chunk in the per-chunk fallback.
+
+**SDK API.** `FunctionSpec.client_id()` became `requested_model()`, which returns
+the bare model name (`gpt-oss-120b`, not `openai-generic/gpt-oss-120b`).
+Production summaries record the configured model name and are unaffected.
+
 ## V13 Verification Boundary
 
 Published tiers above are unchanged. The `>=3.12` package requirement and
@@ -232,8 +275,10 @@ registered Git indexing, real SDK queries/refusals and a second STDIO session.
 The container smoke exercises the configured non-root HTTP startup and mounted
 Git fixture, not only health. A failing node blocks distribution acceptance;
 actual results belong in `docs/validation/v13/DIST.json`, not this description.
-BAML generation and runtime are pinned together at 0.20.1; regeneration is
+BAML generation and runtime are pinned together at 0.23.0; regeneration is
 offline and does not call the inference client declared in the source contract.
+BAML run recording (local `BAML_HOME` files and Boundary upload) is off by
+default on every path; see "Summarization runtime (BAML)" for the opt-in.
 V13 has historical accepted DIST, STATE, SAFETY, DATA and PILOT receipts bound
 to their recorded source commits, not to subsequent PREP repairs. The historical
 PILOT proves its independently installed candidate through PMCP 2.7.3, MCP

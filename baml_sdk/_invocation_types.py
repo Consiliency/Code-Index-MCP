@@ -21,27 +21,14 @@
 
 from __future__ import annotations
 
-import typing
-import typing_extensions
-import pydantic
+from typing import TYPE_CHECKING, TypedDict
+
+if TYPE_CHECKING:
+    from .vendor import trace
+    from .baml.spawn import CancelToken
 
 
-def new(types: typing.List[typing.Any]) -> Type:
-    """Raises:
-        CompilationError"""
-async def new_async(types: typing.List[typing.Any]) -> Type:
-    """Raises:
-        CompilationError"""
-
-
-class Type(pydantic.BaseModel):
-    field_ty: typing.Any = pydantic.Field(alias="_ty")
-    def member_types(self) -> typing.List[typing.Any]: ...
-    async def member_types_async(self) -> typing.List[typing.Any]: ...
-
-
-__all__ = [
-    "new",
-    "new_async",
-    "Type",
-]
+class BamlOptions(TypedDict, total=False):
+    trace: trace.Options | trace.ReservedSpan | None
+    cancel: CancelToken | None
+    timeout_ms: int | None

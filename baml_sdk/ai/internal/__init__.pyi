@@ -31,8 +31,17 @@ if typing.TYPE_CHECKING:
     from ... import baml
     from ...baml import UNSET as UNSET
 
+from ..._invocation_types import BamlOptions as _BamlOptions
 
-def _gcp_access_token(credentials_json: typing.Optional[str], scope: str) -> str:
+from baml_bridge import BamlPyHandle as _BamlPyHandle
+
+class _BamlReturned1(typing.Protocol):
+    def _to_pyhandle(self) -> _BamlPyHandle: ...
+    def __call__(self, arg0: typing.Dict[str, typing.Any], *, _baml: _BamlOptions | None = None) -> str: ...
+    async def call_async(self, arg0: typing.Dict[str, typing.Any], *, _baml: _BamlOptions | None = None) -> str: ...
+
+
+def _gcp_access_token(credentials_json: typing.Optional[str], scope: str, *, _baml: _BamlOptions | None = None) -> str:
     """(internal) Mints a Google Cloud OAuth2 access token for `scope`, returning the bare
     token (the caller builds the `Bearer` header).
 
@@ -49,7 +58,7 @@ def _gcp_access_token(credentials_json: typing.Optional[str], scope: str) -> str
 
     Raises:
         Io, AccessError"""
-async def _gcp_access_token_async(credentials_json: typing.Optional[str], scope: str) -> str:
+async def _gcp_access_token_async(credentials_json: typing.Optional[str], scope: str, *, _baml: _BamlOptions | None = None) -> str:
     """(internal) Mints a Google Cloud OAuth2 access token for `scope`, returning the bare
     token (the caller builds the `Bearer` header).
 
@@ -68,7 +77,7 @@ async def _gcp_access_token_async(credentials_json: typing.Optional[str], scope:
         Io, AccessError"""
 
 
-def _gcp_project_id(credentials_json: typing.Optional[str]) -> typing.Optional[str]:
+def _gcp_project_id(credentials_json: typing.Optional[str], *, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
     """(internal) Resolves the Google Cloud project id from `credentials_json`
     when it carries one, else from the google-auth chain
     (`GOOGLE_CLOUD_PROJECT` / `GCLOUD_PROJECT`, the ADC and gcloud config
@@ -81,7 +90,7 @@ def _gcp_project_id(credentials_json: typing.Optional[str]) -> typing.Optional[s
 
     The project id, or `null` when it is not discoverable — the caller decides
     whether that is fatal."""
-async def _gcp_project_id_async(credentials_json: typing.Optional[str]) -> typing.Optional[str]:
+async def _gcp_project_id_async(credentials_json: typing.Optional[str], *, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
     """(internal) Resolves the Google Cloud project id from `credentials_json`
     when it carries one, else from the google-auth chain
     (`GOOGLE_CLOUD_PROJECT` / `GCLOUD_PROJECT`, the ADC and gcloud config
@@ -96,7 +105,7 @@ async def _gcp_project_id_async(credentials_json: typing.Optional[str]) -> typin
     whether that is fatal."""
 
 
-def _gcp_quota_project_id(credentials_json: typing.Optional[str]) -> typing.Optional[str]:
+def _gcp_quota_project_id(credentials_json: typing.Optional[str], *, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
     """(internal) Resolves the quota/billing project for the
     `x-goog-user-project` header, matching google-auth's `Credentials.apply`:
     `GOOGLE_CLOUD_QUOTA_PROJECT` always wins, then the credential document's
@@ -107,7 +116,7 @@ def _gcp_quota_project_id(credentials_json: typing.Optional[str]) -> typing.Opti
     # Returns
 
     The quota project id, or `null` when it is not discoverable."""
-async def _gcp_quota_project_id_async(credentials_json: typing.Optional[str]) -> typing.Optional[str]:
+async def _gcp_quota_project_id_async(credentials_json: typing.Optional[str], *, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
     """(internal) Resolves the quota/billing project for the
     `x-goog-user-project` header, matching google-auth's `Credentials.apply`:
     `GOOGLE_CLOUD_QUOTA_PROJECT` always wins, then the credential document's
@@ -120,7 +129,7 @@ async def _gcp_quota_project_id_async(credentials_json: typing.Optional[str]) ->
     The quota project id, or `null` when it is not discoverable."""
 
 
-def _aws_sign_request(request: baml.http.Request, service: str, region: typing.Optional[str], profile: typing.Optional[str], access_key_id: typing.Optional[str], secret_access_key: typing.Optional[str], session_token: typing.Optional[str]) -> baml.http.Request:
+def _aws_sign_request(request: baml.http.Request, service: str, region: typing.Optional[str], profile: typing.Optional[str], access_key_id: typing.Optional[str], secret_access_key: typing.Optional[str], session_token: typing.Optional[str], *, _baml: _BamlOptions | None = None) -> baml.http.Request:
     """(internal) SigV4-signs `request` for `service` and returns it with the signature
     headers applied (`authorization`, `x-amz-date`, and `x-amz-security-token`
     for session credentials).
@@ -136,7 +145,7 @@ def _aws_sign_request(request: baml.http.Request, service: str, region: typing.O
 
     Raises:
         Io, AccessError"""
-async def _aws_sign_request_async(request: baml.http.Request, service: str, region: typing.Optional[str], profile: typing.Optional[str], access_key_id: typing.Optional[str], secret_access_key: typing.Optional[str], session_token: typing.Optional[str]) -> baml.http.Request:
+async def _aws_sign_request_async(request: baml.http.Request, service: str, region: typing.Optional[str], profile: typing.Optional[str], access_key_id: typing.Optional[str], secret_access_key: typing.Optional[str], session_token: typing.Optional[str], *, _baml: _BamlOptions | None = None) -> baml.http.Request:
     """(internal) SigV4-signs `request` for `service` and returns it with the signature
     headers applied (`authorization`, `x-amz-date`, and `x-amz-security-token`
     for session credentials).
@@ -154,7 +163,7 @@ async def _aws_sign_request_async(request: baml.http.Request, service: str, regi
         Io, AccessError"""
 
 
-def _aws_resolve_region(region: typing.Optional[str], profile: typing.Optional[str]) -> typing.Optional[str]:
+def _aws_resolve_region(region: typing.Optional[str], profile: typing.Optional[str], *, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
     """(internal) Resolves the AWS region: `region` when set, else `AWS_REGION`,
     `AWS_DEFAULT_REGION`, or the active profile's `region` key.
 
@@ -163,7 +172,7 @@ def _aws_resolve_region(region: typing.Optional[str], profile: typing.Optional[s
     # Returns
 
     The region, or `null` when it is not discoverable."""
-async def _aws_resolve_region_async(region: typing.Optional[str], profile: typing.Optional[str]) -> typing.Optional[str]:
+async def _aws_resolve_region_async(region: typing.Optional[str], profile: typing.Optional[str], *, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
     """(internal) Resolves the AWS region: `region` when set, else `AWS_REGION`,
     `AWS_DEFAULT_REGION`, or the active profile's `region` key.
 
@@ -174,65 +183,107 @@ async def _aws_resolve_region_async(region: typing.Optional[str], profile: typin
     The region, or `null` when it is not discoverable."""
 
 
-def _from_shorthand(shorthand: str, providers: typing.Callable[[str, str], typing.Optional[typing.Any]], prefixes: typing.List[str]) -> typing.Any:
+def _from_shorthand(shorthand: str, providers: typing.Callable[[str, str], typing.Optional[typing.Any]], prefixes: typing.List[str], *, _baml: _BamlOptions | None = None) -> typing.Any:
     """(internal) Construct the client a `"provider/model"` shorthand names.
 
     `providers` maps a prefix and model to the constructed client, or `null`
     for an unknown prefix, and `prefixes` lists every prefix it knows (for
     error messages). This package cannot build either: every provider package
-    implements `root.Client`, so `ai` sits below them in the package graph. The
+    implements `ai.Client`, so `ai` sits below them in the package graph. The
     compiler synthesizes both from its own provider table (the same one a
     literal `client "provider/model"` lowers through) at each
-    `root.clients.resolve` call.
+    `ai.clients.resolve` call.
 
     Raises:
         InvalidRequest"""
-async def _from_shorthand_async(shorthand: str, providers: typing.Callable[[str, str], typing.Optional[typing.Any]], prefixes: typing.List[str]) -> typing.Any:
+async def _from_shorthand_async(shorthand: str, providers: typing.Callable[[str, str], typing.Optional[typing.Any]], prefixes: typing.List[str], *, _baml: _BamlOptions | None = None) -> typing.Any:
     """(internal) Construct the client a `"provider/model"` shorthand names.
 
     `providers` maps a prefix and model to the constructed client, or `null`
     for an unknown prefix, and `prefixes` lists every prefix it knows (for
     error messages). This package cannot build either: every provider package
-    implements `root.Client`, so `ai` sits below them in the package graph. The
+    implements `ai.Client`, so `ai` sits below them in the package graph. The
     compiler synthesizes both from its own provider table (the same one a
     literal `client "provider/model"` lowers through) at each
-    `root.clients.resolve` call.
+    `ai.clients.resolve` call.
 
     Raises:
         InvalidRequest"""
 
 
-def _schema_for_signature(handler: typing.Any) -> typing.Dict[str, typing.Any]:
+def _schema_for_signature(handler: typing.Any, *, _baml: _BamlOptions | None = None) -> typing.Dict[str, typing.Any]:
     """(internal) One JSON Schema object for a function's parameters, derived from the
-    signature: every parameter typed via baml.json.schema.
+    signature: every parameter typed via baml.json.schema, under the aliased
+    names `baml.sap.coerce` reads the arguments by (`ai.tools._typed_arguments`).
+
+    An `unknown` parameter receives its argument as the model sent it, which is
+    parsed JSON (`ai.tools._typed_arguments`), so its schema is that of
+    `baml.json.json`. `baml.json.schema` rejects `unknown` itself: everywhere
+    else, `unknown` holds values no schema describes.
+
+    `baml.json.schema` puts the classes and aliases a type reaches in `$defs`
+    at the root of the schema it returns, and its `$ref`s point there
+    (`#/$defs/Name`). A parameter's schema is a property of this object, so
+    its `$defs` move to this object's root, where those `$ref`s resolve. A
+    parameter scopes its definitions and references, because distinct types
+    reached by different parameters can have the same display name.
 
     Raises:
-        Unsupported"""
-async def _schema_for_signature_async(handler: typing.Any) -> typing.Dict[str, typing.Any]:
+        Unsupported, DecodeError"""
+async def _schema_for_signature_async(handler: typing.Any, *, _baml: _BamlOptions | None = None) -> typing.Dict[str, typing.Any]:
     """(internal) One JSON Schema object for a function's parameters, derived from the
-    signature: every parameter typed via baml.json.schema.
+    signature: every parameter typed via baml.json.schema, under the aliased
+    names `baml.sap.coerce` reads the arguments by (`ai.tools._typed_arguments`).
+
+    An `unknown` parameter receives its argument as the model sent it, which is
+    parsed JSON (`ai.tools._typed_arguments`), so its schema is that of
+    `baml.json.json`. `baml.json.schema` rejects `unknown` itself: everywhere
+    else, `unknown` holds values no schema describes.
+
+    `baml.json.schema` puts the classes and aliases a type reaches in `$defs`
+    at the root of the schema it returns, and its `$ref`s point there
+    (`#/$defs/Name`). A parameter's schema is a property of this object, so
+    its `$defs` move to this object's root, where those `$ref`s resolve. A
+    parameter scopes its definitions and references, because distinct types
+    reached by different parameters can have the same display name.
 
     Raises:
-        Unsupported"""
+        Unsupported, DecodeError"""
+
+
+def _scope_schema_refs(schema: baml.json.json, prefix: str, *, _baml: _BamlOptions | None = None) -> baml.json.json:
+    """Rebase local definition references, including recursive references inside
+    definitions. Other strings, such as descriptions and literal values, stay
+    unchanged. Existing reference tokens are already JSON Pointer escaped."""
+async def _scope_schema_refs_async(schema: baml.json.json, prefix: str, *, _baml: _BamlOptions | None = None) -> baml.json.json:
+    """Rebase local definition references, including recursive references inside
+    definitions. Other strings, such as descriptions and literal values, stay
+    unchanged. Existing reference tokens are already JSON Pointer escaped."""
 
 
 class SpecCtx(pydantic.BaseModel):
     field_output_format: ai.OutputFormat = pydantic.Field(alias="_output_format")
-    def output_format(self, *, prefix: typing.Union[str, OutputFormatDefault, None, UNSET] = UNSET, or_splitter: typing.Union[str, OutputFormatDefault, UNSET] = UNSET, enum_value_prefix: typing.Union[str, OutputFormatDefault, None, UNSET] = UNSET, hoisted_class_prefix: typing.Union[str, OutputFormatDefault, None, UNSET] = UNSET, always_hoist_enums: typing.Union[bool, OutputFormatDefault, UNSET] = UNSET, quote_class_fields: typing.Union[bool, OutputFormatDefault, UNSET] = UNSET, hoist_classes: typing.Union[bool, typing.Literal["auto"], typing.List[str], OutputFormatDefault, UNSET] = UNSET, map_style: typing.Union[typing.Literal["angle"], typing.Literal["object"], OutputFormatDefault, UNSET] = UNSET, render_null_as: typing.Union[str, OutputFormatDefault, None, UNSET] = UNSET) -> str: ...
-    async def output_format_async(self, *, prefix: typing.Union[str, OutputFormatDefault, None, UNSET] = UNSET, or_splitter: typing.Union[str, OutputFormatDefault, UNSET] = UNSET, enum_value_prefix: typing.Union[str, OutputFormatDefault, None, UNSET] = UNSET, hoisted_class_prefix: typing.Union[str, OutputFormatDefault, None, UNSET] = UNSET, always_hoist_enums: typing.Union[bool, OutputFormatDefault, UNSET] = UNSET, quote_class_fields: typing.Union[bool, OutputFormatDefault, UNSET] = UNSET, hoist_classes: typing.Union[bool, typing.Literal["auto"], typing.List[str], OutputFormatDefault, UNSET] = UNSET, map_style: typing.Union[typing.Literal["angle"], typing.Literal["object"], OutputFormatDefault, UNSET] = UNSET, render_null_as: typing.Union[str, OutputFormatDefault, None, UNSET] = UNSET) -> str: ...
+    def output_format(self, *, prefix: typing.Union[str, OutputFormatDefault, None, UNSET] = UNSET, or_splitter: typing.Union[str, OutputFormatDefault, UNSET] = UNSET, enum_value_prefix: typing.Union[str, OutputFormatDefault, None, UNSET] = UNSET, hoisted_class_prefix: typing.Union[str, OutputFormatDefault, None, UNSET] = UNSET, always_hoist_enums: typing.Union[bool, OutputFormatDefault, UNSET] = UNSET, quote_class_fields: typing.Union[bool, OutputFormatDefault, UNSET] = UNSET, hoist_classes: typing.Union[bool, typing.Literal["auto"], typing.List[str], OutputFormatDefault, UNSET] = UNSET, map_style: typing.Union[typing.Literal["angle"], typing.Literal["object"], OutputFormatDefault, UNSET] = UNSET, render_null_as: typing.Union[str, OutputFormatDefault, None, UNSET] = UNSET, _baml: _BamlOptions | None = None) -> str: ...
+    async def output_format_async(self, *, prefix: typing.Union[str, OutputFormatDefault, None, UNSET] = UNSET, or_splitter: typing.Union[str, OutputFormatDefault, UNSET] = UNSET, enum_value_prefix: typing.Union[str, OutputFormatDefault, None, UNSET] = UNSET, hoisted_class_prefix: typing.Union[str, OutputFormatDefault, None, UNSET] = UNSET, always_hoist_enums: typing.Union[bool, OutputFormatDefault, UNSET] = UNSET, quote_class_fields: typing.Union[bool, OutputFormatDefault, UNSET] = UNSET, hoist_classes: typing.Union[bool, typing.Literal["auto"], typing.List[str], OutputFormatDefault, UNSET] = UNSET, map_style: typing.Union[typing.Literal["angle"], typing.Literal["object"], OutputFormatDefault, UNSET] = UNSET, render_null_as: typing.Union[str, OutputFormatDefault, None, UNSET] = UNSET, _baml: _BamlOptions | None = None) -> str: ...
 
 
-def assemble_prompt(parts: typing.List[str], values: typing.List[typing.Any]) -> ai.Prompt: ...
-async def assemble_prompt_async(parts: typing.List[str], values: typing.List[typing.Any]) -> ai.Prompt: ...
+def assemble_prompt(parts: typing.List[str], values: typing.List[typing.Any], *, _baml: _BamlOptions | None = None) -> ai.Prompt:
+    """Assemble a structural `ai.Prompt` from a tagged template's flattened
+    `parts` and `values`. `ai.Role` values start new messages; media
+    remains structural until a provider lowers the prompt."""
+async def assemble_prompt_async(parts: typing.List[str], values: typing.List[typing.Any], *, _baml: _BamlOptions | None = None) -> ai.Prompt:
+    """Assemble a structural `ai.Prompt` from a tagged template's flattened
+    `parts` and `values`. `ai.Role` values start new messages; media
+    remains structural until a provider lowers the prompt."""
 
 
-def assemble_llm_prompt(parts: typing.List[str], values: typing.List[typing.Any]) -> ai.Prompt:
+def assemble_llm_prompt(parts: typing.List[str], values: typing.List[typing.Any], *, _baml: _BamlOptions | None = None) -> ai.Prompt:
     """Assemble a compiler-generated LLM prompt while preserving the legacy
     default for wholly role-less prompts and implicit leading content before a
     later explicit role. Standalone `ai.prompt` remains role-less when its
     author does not opt into roles; this compatibility rule applies only to
     declarative `prompt:` bodies."""
-async def assemble_llm_prompt_async(parts: typing.List[str], values: typing.List[typing.Any]) -> ai.Prompt:
+async def assemble_llm_prompt_async(parts: typing.List[str], values: typing.List[typing.Any], *, _baml: _BamlOptions | None = None) -> ai.Prompt:
     """Assemble a compiler-generated LLM prompt while preserving the legacy
     default for wholly role-less prompts and implicit leading content before a
     later explicit role. Standalone `ai.prompt` remains role-less when its
@@ -240,31 +291,61 @@ async def assemble_llm_prompt_async(parts: typing.List[str], values: typing.List
     declarative `prompt:` bodies."""
 
 
-def _header(headers: typing.Dict[str, str], lower: str, canonical: str) -> typing.Optional[str]:
+def total_input_tokens(uncached: typing.Optional[int], cached: typing.Optional[int], cache_write: typing.Optional[int], *, _baml: _BamlOptions | None = None) -> typing.Optional[int]:
+    """All input tokens, for a provider whose own input count (`uncached`)
+    excludes cache reads and writes: null when it reported no input count."""
+async def total_input_tokens_async(uncached: typing.Optional[int], cached: typing.Optional[int], cache_write: typing.Optional[int], *, _baml: _BamlOptions | None = None) -> typing.Optional[int]:
+    """All input tokens, for a provider whose own input count (`uncached`)
+    excludes cache reads and writes: null when it reported no input count."""
+
+
+def uncached_input_tokens(total: typing.Optional[int], cached: typing.Optional[int], *, cache_write: typing.Union[int, None, UNSET] = None, _baml: _BamlOptions | None = None) -> typing.Optional[int]:
+    """Input tokens billed at the full rate, for a provider whose `total` counts
+    the cached share (and, where it reports them, the cache writes) too: null
+    when it reported no total, never below zero."""
+async def uncached_input_tokens_async(total: typing.Optional[int], cached: typing.Optional[int], *, cache_write: typing.Union[int, None, UNSET] = None, _baml: _BamlOptions | None = None) -> typing.Optional[int]:
+    """Input tokens billed at the full rate, for a provider whose `total` counts
+    the cached share (and, where it reports them, the cache writes) too: null
+    when it reported no total, never below zero."""
+
+
+def with_own_call(turn: ai.ModelTurn, call: ai.events.ModelCall, usage: typing.Optional[ai.events.Usage], requested_model: typing.Optional[str], resolved_model: typing.Optional[str], *, _baml: _BamlOptions | None = None) -> ai.ModelTurn:
+    """A client's turn from one model call of its own: `call`, which reported
+    `usage` and answered as `resolved_model` (null when the response names no
+    model). The client asked for `requested_model` (null when unknown).
+    Streams finish through this too."""
+async def with_own_call_async(turn: ai.ModelTurn, call: ai.events.ModelCall, usage: typing.Optional[ai.events.Usage], requested_model: typing.Optional[str], resolved_model: typing.Optional[str], *, _baml: _BamlOptions | None = None) -> ai.ModelTurn:
+    """A client's turn from one model call of its own: `call`, which reported
+    `usage` and answered as `resolved_model` (null when the response names no
+    model). The client asked for `requested_model` (null when unknown).
+    Streams finish through this too."""
+
+
+def _header(headers: typing.Dict[str, str], lower: str, canonical: str, *, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
     """(internal) One header by name, tolerating the two casings a response map can carry:
     the HTTP layer lowercases response header names, but a hand-built map (a
     mock, a re-wrapped error) may keep the wire's canonical casing."""
-async def _header_async(headers: typing.Dict[str, str], lower: str, canonical: str) -> typing.Optional[str]:
+async def _header_async(headers: typing.Dict[str, str], lower: str, canonical: str, *, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
     """(internal) One header by name, tolerating the two casings a response map can carry:
     the HTTP layer lowercases response header names, but a hand-built map (a
     mock, a re-wrapped error) may keep the wire's canonical casing."""
 
 
-def _int_header(headers: typing.Dict[str, str], lower: str, canonical: str) -> typing.Optional[int]:
+def _int_header(headers: typing.Dict[str, str], lower: str, canonical: str, *, _baml: _BamlOptions | None = None) -> typing.Optional[int]:
     """(internal) A non-negative integer header value, or null when it is absent, blank, or
     not an integer (`Retry-After` may also be an HTTP-date, which is not parsed)."""
-async def _int_header_async(headers: typing.Dict[str, str], lower: str, canonical: str) -> typing.Optional[int]:
+async def _int_header_async(headers: typing.Dict[str, str], lower: str, canonical: str, *, _baml: _BamlOptions | None = None) -> typing.Optional[int]:
     """(internal) A non-negative integer header value, or null when it is absent, blank, or
     not an integer (`Retry-After` may also be an HTTP-date, which is not parsed)."""
 
 
-def _retry_after_ms(headers: typing.Optional[typing.Dict[str, str]]) -> typing.Optional[int]:
+def _retry_after_ms(headers: typing.Optional[typing.Dict[str, str]], *, _baml: _BamlOptions | None = None) -> typing.Optional[int]:
     """(internal) How long the provider asked us to wait, in milliseconds, from the response
     headers of a 429. `retry-after-ms` (OpenAI/Anthropic rate-limit headers) wins
     over `Retry-After` delta-seconds (RFC 9110); an HTTP-date `Retry-After` and a
     missing header both yield null, which is the caller's cue to use its own
     backoff."""
-async def _retry_after_ms_async(headers: typing.Optional[typing.Dict[str, str]]) -> typing.Optional[int]:
+async def _retry_after_ms_async(headers: typing.Optional[typing.Dict[str, str]], *, _baml: _BamlOptions | None = None) -> typing.Optional[int]:
     """(internal) How long the provider asked us to wait, in milliseconds, from the response
     headers of a 429. `retry-after-ms` (OpenAI/Anthropic rate-limit headers) wins
     over `Retry-After` delta-seconds (RFC 9110); an HTTP-date `Retry-After` and a
@@ -272,25 +353,25 @@ async def _retry_after_ms_async(headers: typing.Optional[typing.Dict[str, str]])
     backoff."""
 
 
-def _proxy(conn: ai.mcp.Connection, name: str) -> typing.Callable[[typing.Dict[str, typing.Any]], str]:
+def _proxy(conn: ai.mcp.Connection, name: str, *, _baml: _BamlOptions | None = None) -> _BamlReturned1:
     """(internal) A tools/call proxy bound to one tool name. A helper function rather than
     an inline closure in the tools() loop: a closure in a loop captures the
     loop variable's slot, so every tool would proxy the last catalog entry;
     a parameter is a fresh binding per call."""
-async def _proxy_async(conn: ai.mcp.Connection, name: str) -> typing.Callable[[typing.Dict[str, typing.Any]], str]:
+async def _proxy_async(conn: ai.mcp.Connection, name: str, *, _baml: _BamlOptions | None = None) -> _BamlReturned1:
     """(internal) A tools/call proxy bound to one tool name. A helper function rather than
     an inline closure in the tools() loop: a closure in a loop captures the
     loop variable's slot, so every tool would proxy the last catalog entry;
     a parameter is a fresh binding per call."""
 
 
-def _media_shape(t: typing.Any) -> str:
+def _media_shape(t: typing.Any, *, _baml: _BamlOptions | None = None) -> str:
     """(internal) Classify a declared output type as `"<form>:<kind>"`, or `""` when it holds
     no media and the ordinary SAP path applies. `type` values only compare
     structurally (there is no reflection into a type's shape), so the supported
     shapes are enumerated. The nullable list/union forms behave exactly like
     their non-null counterparts once decoded, so they share a form."""
-async def _media_shape_async(t: typing.Any) -> str:
+async def _media_shape_async(t: typing.Any, *, _baml: _BamlOptions | None = None) -> str:
     """(internal) Classify a declared output type as `"<form>:<kind>"`, or `""` when it holds
     no media and the ordinary SAP path applies. `type` values only compare
     structurally (there is no reflection into a type's shape), so the supported
@@ -298,40 +379,40 @@ async def _media_shape_async(t: typing.Any) -> str:
     their non-null counterparts once decoded, so they share a form."""
 
 
-def _media_envelope(m: ai.content.Media) -> baml.json.json:
+def _media_envelope(m: ai.content.Media, *, _baml: _BamlOptions | None = None) -> baml.json.json:
     """(internal) A media block's payload as its BEP-038 `{kind, source, value, mime}`
-    envelope — the form `baml.json.from_json<Out>` decodes media back from.
+    envelope — the form `baml.json.to<Out>` decodes media back from.
 
     Raises:
         UnknownError"""
-async def _media_envelope_async(m: ai.content.Media) -> baml.json.json:
+async def _media_envelope_async(m: ai.content.Media, *, _baml: _BamlOptions | None = None) -> baml.json.json:
     """(internal) A media block's payload as its BEP-038 `{kind, source, value, mime}`
-    envelope — the form `baml.json.from_json<Out>` decodes media back from.
+    envelope — the form `baml.json.to<Out>` decodes media back from.
 
     Raises:
         UnknownError"""
 
 
-def _media_of_kind(turn: ai.ModelTurn, kind: str) -> typing.List[baml.json.json]:
+def _media_of_kind(turn: ai.ModelTurn, kind: str, *, _baml: _BamlOptions | None = None) -> typing.List[baml.json.json]:
     """(internal) The turn's media payloads of `kind`, in order (sys_llm's `media_parts`).
 
     Raises:
         UnknownError"""
-async def _media_of_kind_async(turn: ai.ModelTurn, kind: str) -> typing.List[baml.json.json]:
+async def _media_of_kind_async(turn: ai.ModelTurn, kind: str, *, _baml: _BamlOptions | None = None) -> typing.List[baml.json.json]:
     """(internal) The turn's media payloads of `kind`, in order (sys_llm's `media_parts`).
 
     Raises:
         UnknownError"""
 
 
-def _media_mixed_parts(turn: ai.ModelTurn) -> typing.List[baml.json.json]:
+def _media_mixed_parts(turn: ai.ModelTurn, *, _baml: _BamlOptions | None = None) -> typing.List[baml.json.json]:
     """(internal) The turn's non-blank text and image payloads, in document order
     (sys_llm's `mixed_text_image_parts`). Blank text is dropped, as are
     reasoning and tool-use blocks, which were never output parts.
 
     Raises:
         UnknownError"""
-async def _media_mixed_parts_async(turn: ai.ModelTurn) -> typing.List[baml.json.json]:
+async def _media_mixed_parts_async(turn: ai.ModelTurn, *, _baml: _BamlOptions | None = None) -> typing.List[baml.json.json]:
     """(internal) The turn's non-blank text and image payloads, in document order
     (sys_llm's `mixed_text_image_parts`). Blank text is dropped, as are
     reasoning and tool-use blocks, which were never output parts.
@@ -340,21 +421,21 @@ async def _media_mixed_parts_async(turn: ai.ModelTurn) -> typing.List[baml.json.
         UnknownError"""
 
 
-def _media_all_text(items: typing.List[baml.json.json]) -> bool: ...
-async def _media_all_text_async(items: typing.List[baml.json.json]) -> bool: ...
+def _media_all_text(items: typing.List[baml.json.json], *, _baml: _BamlOptions | None = None) -> bool: ...
+async def _media_all_text_async(items: typing.List[baml.json.json], *, _baml: _BamlOptions | None = None) -> bool: ...
 
 
-def _media_join_text(items: typing.List[baml.json.json]) -> baml.json.json: ...
-async def _media_join_text_async(items: typing.List[baml.json.json]) -> baml.json.json: ...
+def _media_join_text(items: typing.List[baml.json.json], *, _baml: _BamlOptions | None = None) -> baml.json.json: ...
+async def _media_join_text_async(items: typing.List[baml.json.json], *, _baml: _BamlOptions | None = None) -> baml.json.json: ...
 
 
-def _media_reject_mixed(turn: ai.ModelTurn, kind: str, provider: str) -> None:
+def _media_reject_mixed(turn: ai.ModelTurn, kind: str, provider: str, *, _baml: _BamlOptions | None = None) -> None:
     """(internal) sys_llm's `reject_mixed_media_only_output`: a media-only output type refuses
     to silently drop whatever else the model said.
 
     Raises:
         ParseFailed"""
-async def _media_reject_mixed_async(turn: ai.ModelTurn, kind: str, provider: str) -> None:
+async def _media_reject_mixed_async(turn: ai.ModelTurn, kind: str, provider: str, *, _baml: _BamlOptions | None = None) -> None:
     """(internal) sys_llm's `reject_mixed_media_only_output`: a media-only output type refuses
     to silently drop whatever else the model said.
 
@@ -362,41 +443,35 @@ async def _media_reject_mixed_async(turn: ai.ModelTurn, kind: str, provider: str
         ParseFailed"""
 
 
-def _media_mime_type(explicit: typing.Optional[str], source_value: str, kind: str) -> str: ...
-async def _media_mime_type_async(explicit: typing.Optional[str], source_value: str, kind: str) -> str: ...
-
-
-def _resolve_media_content(url: typing.Optional[str], file: typing.Optional[str], inline: str, mime: str, fetch_url: bool) -> ai.wire.ResolvedMedia:
+def _resolve_media_content(url: typing.Optional[str], inline: str, mime: str, fetch_url: bool, *, _baml: _BamlOptions | None = None) -> ai.wire.ResolvedMedia:
     """Raises:
-        InvalidArgument, Io, Timeout, NetworkFailure"""
-async def _resolve_media_content_async(url: typing.Optional[str], file: typing.Optional[str], inline: str, mime: str, fetch_url: bool) -> ai.wire.ResolvedMedia:
+        InvalidArgument, Timeout, NetworkFailure"""
+async def _resolve_media_content_async(url: typing.Optional[str], inline: str, mime: str, fetch_url: bool, *, _baml: _BamlOptions | None = None) -> ai.wire.ResolvedMedia:
     """Raises:
-        InvalidArgument, Io, Timeout, NetworkFailure"""
+        InvalidArgument, Timeout, NetworkFailure"""
 
 
-def _resolve_media_preview_content(url: typing.Optional[str], file: typing.Optional[str], inline: str, mime: str) -> ai.wire.ResolvedMedia:
-    """(internal) Preview-only counterpart to `_resolve_media_content`. The file branch is
-    rejected before opening anything, and ordinary URLs remain references rather
-    than being passed to `baml.http.fetch`.
+def _resolve_media_preview_content(url: typing.Optional[str], inline: str, mime: str, *, _baml: _BamlOptions | None = None) -> ai.wire.ResolvedMedia:
+    """(internal) Preview-only counterpart to `_resolve_media_content`. Ordinary URLs
+    remain references rather than being passed to `baml.http.fetch`.
 
     Raises:
         PreviewUnsupported"""
-async def _resolve_media_preview_content_async(url: typing.Optional[str], file: typing.Optional[str], inline: str, mime: str) -> ai.wire.ResolvedMedia:
-    """(internal) Preview-only counterpart to `_resolve_media_content`. The file branch is
-    rejected before opening anything, and ordinary URLs remain references rather
-    than being passed to `baml.http.fetch`.
+async def _resolve_media_preview_content_async(url: typing.Optional[str], inline: str, mime: str, *, _baml: _BamlOptions | None = None) -> ai.wire.ResolvedMedia:
+    """(internal) Preview-only counterpart to `_resolve_media_content`. Ordinary URLs
+    remain references rather than being passed to `baml.http.fetch`.
 
     Raises:
         PreviewUnsupported"""
 
 
-def validate_output_type(return_type: typing.Any) -> None:
+def validate_output_type(return_type: typing.Any, *, _baml: _BamlOptions | None = None) -> None:
     """Reject output types that cannot be represented faithfully at the shared
     LLM render boundary. Both prompt preview and execution call this guard.
 
     Raises:
         CompilationError"""
-async def validate_output_type_async(return_type: typing.Any) -> None:
+async def validate_output_type_async(return_type: typing.Any, *, _baml: _BamlOptions | None = None) -> None:
     """Reject output types that cannot be represented faithfully at the shared
     LLM render boundary. Both prompt preview and execution call this guard.
 
@@ -404,15 +479,39 @@ async def validate_output_type_async(return_type: typing.Any) -> None:
         CompilationError"""
 
 
-def render_output_format(return_type: typing.Any) -> str:
+def render_output_format(return_type: typing.Any, *, _baml: _BamlOptions | None = None) -> str:
     """Render a return type's schema with the default output-format options."""
-async def render_output_format_async(return_type: typing.Any) -> str:
+async def render_output_format_async(return_type: typing.Any, *, _baml: _BamlOptions | None = None) -> str:
     """Render a return type's schema with the default output-format options."""
 
 
-def build_output_format(return_type: typing.Any) -> OutputFormat:
+def reaches_media(t: typing.Any, *, _baml: _BamlOptions | None = None) -> bool:
+    """Whether a value of `t` can hold media anywhere a model's JSON answer fills:
+    in a union member, a list element, a map value, a class field that is not
+    `@skip`, or behind a recursive alias. A `@skip` field is not in the JSON, so
+    its value never comes from the model, and neither is a union member with
+    no JSON form, which `baml.json.schema` drops. A model returns the media it
+    generates as content of its own, never inside its text, so a client that
+    holds the answer to a JSON Schema rejects an output type that can.
+
+    Raises:
+        Unsupported"""
+async def reaches_media_async(t: typing.Any, *, _baml: _BamlOptions | None = None) -> bool:
+    """Whether a value of `t` can hold media anywhere a model's JSON answer fills:
+    in a union member, a list element, a map value, a class field that is not
+    `@skip`, or behind a recursive alias. A `@skip` field is not in the JSON, so
+    its value never comes from the model, and neither is a union member with
+    no JSON form, which `baml.json.schema` drops. A model returns the media it
+    generates as content of its own, never inside its text, so a client that
+    holds the answer to a JSON Schema rejects an output type that can.
+
+    Raises:
+        Unsupported"""
+
+
+def build_output_format(return_type: typing.Any, *, _baml: _BamlOptions | None = None) -> OutputFormat:
     """Build the output-format handle used by render contexts."""
-async def build_output_format_async(return_type: typing.Any) -> OutputFormat:
+async def build_output_format_async(return_type: typing.Any, *, _baml: _BamlOptions | None = None) -> OutputFormat:
     """Build the output-format handle used by render contexts."""
 
 
@@ -420,21 +519,35 @@ class OutputFormatDefault(str, enum.Enum):
     Auto = "Auto"
 
 
-def make_role(name: str) -> ai.Role:
+def make_role(name: str, *, metadata: typing.Union[typing.Dict[str, baml.json.json], UNSET] = {}, _baml: _BamlOptions | None = None) -> ai.Role:
     """Construct a typed role marker for structural prompt assembly.
-    The `${role(...)}` desugar in an LLM prompt body lowers to this call."""
-async def make_role_async(name: str) -> ai.Role:
+    The `${role(...)}` desugar in an LLM prompt body lowers to this call.
+
+    `metadata` is free-form per-message data, which reaches the client as
+    `ai.PromptMessage.metadata`. The built-in clients do not read it."""
+async def make_role_async(name: str, *, metadata: typing.Union[typing.Dict[str, baml.json.json], UNSET] = {}, _baml: _BamlOptions | None = None) -> ai.Role:
     """Construct a typed role marker for structural prompt assembly.
-    The `${role(...)}` desugar in an LLM prompt body lowers to this call."""
+    The `${role(...)}` desugar in an LLM prompt body lowers to this call.
+
+    `metadata` is free-form per-message data, which reaches the client as
+    `ai.PromptMessage.metadata`. The built-in clients do not read it."""
 
 
-def get_return_type(function_name: str) -> typing.Any:
+def make_cache(*, args: typing.Union[baml.json.json, UNSET] = None, _baml: _BamlOptions | None = None) -> ai.CacheDelimiter:
+    """Construct a cache delimiter for structural prompt assembly.
+    The `${cache(...)}` desugar in an LLM prompt body lowers to this call."""
+async def make_cache_async(*, args: typing.Union[baml.json.json, UNSET] = None, _baml: _BamlOptions | None = None) -> ai.CacheDelimiter:
+    """Construct a cache delimiter for structural prompt assembly.
+    The `${cache(...)}` desugar in an LLM prompt body lowers to this call."""
+
+
+def get_return_type(function_name: str, *, _baml: _BamlOptions | None = None) -> typing.Any:
     """Look up an LLM function's declared return type. Retained for type-reflection
     compatibility; the `ai.Agent` path uses lexical type arguments instead.
 
     Raises:
         InvalidArgument"""
-async def get_return_type_async(function_name: str) -> typing.Any:
+async def get_return_type_async(function_name: str, *, _baml: _BamlOptions | None = None) -> typing.Any:
     """Look up an LLM function's declared return type. Retained for type-reflection
     compatibility; the `ai.Agent` path uses lexical type arguments instead.
 
@@ -442,59 +555,59 @@ async def get_return_type_async(function_name: str) -> typing.Any:
         InvalidArgument"""
 
 
-def _configured(value: str) -> typing.Optional[str]:
+def _configured(value: str, *, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
     """(internal) A credential value, or `null` when it is blank (see `ai.wire.resolve_credential`)."""
-async def _configured_async(value: str) -> typing.Optional[str]:
+async def _configured_async(value: str, *, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
     """(internal) A credential value, or `null` when it is blank (see `ai.wire.resolve_credential`)."""
 
 
-def _redact_after(text: str, marker: str) -> str:
+def _redact_after(text: str, marker: str, *, _baml: _BamlOptions | None = None) -> str:
     """(internal) Replace the value that follows each `marker` with `REDACTED`, up to the first
     delimiter that can end a query value inside a rendered error string."""
-async def _redact_after_async(text: str, marker: str) -> str:
+async def _redact_after_async(text: str, marker: str, *, _baml: _BamlOptions | None = None) -> str:
     """(internal) Replace the value that follows each `marker` with `REDACTED`, up to the first
     delimiter that can end a query value inside a rendered error string."""
 
 
-def _redact_value_end(tail: str) -> int: ...
-async def _redact_value_end_async(tail: str) -> int: ...
+def _redact_value_end(tail: str, *, _baml: _BamlOptions | None = None) -> int: ...
+async def _redact_value_end_async(tail: str, *, _baml: _BamlOptions | None = None) -> int: ...
 
 
-def _merge_json(base: baml.json.json, patch: baml.json.json) -> baml.json.json:
+def _merge_json(base: baml.json.json, patch: baml.json.json, *, _baml: _BamlOptions | None = None) -> baml.json.json:
     """(internal) Recursive merge of one patch value into one base value. Public entry point
     is `ai.wire.merge_request_body`; this is the arm that recurses on objects."""
-async def _merge_json_async(base: baml.json.json, patch: baml.json.json) -> baml.json.json:
+async def _merge_json_async(base: baml.json.json, patch: baml.json.json, *, _baml: _BamlOptions | None = None) -> baml.json.json:
     """(internal) Recursive merge of one patch value into one base value. Public entry point
     is `ai.wire.merge_request_body`; this is the arm that recurses on objects."""
 
 
-def _wire_blocks(content: typing.List[ai.content.ModelBlock], keep_reasoning: bool) -> typing.List[ai.content.ModelBlock]:
+def _wire_blocks(content: typing.List[ai.content.ModelBlock], keep_reasoning: bool, *, _baml: _BamlOptions | None = None) -> typing.List[ai.content.ModelBlock]:
     """(internal) The blocks of one assistant turn that can still go on the wire.
     Reasoning survives only for the client that produced it; empty and
     whitespace-only text blocks are dropped (Anthropic rejects them outright,
     and no provider needs them)."""
-async def _wire_blocks_async(content: typing.List[ai.content.ModelBlock], keep_reasoning: bool) -> typing.List[ai.content.ModelBlock]:
+async def _wire_blocks_async(content: typing.List[ai.content.ModelBlock], keep_reasoning: bool, *, _baml: _BamlOptions | None = None) -> typing.List[ai.content.ModelBlock]:
     """(internal) The blocks of one assistant turn that can still go on the wire.
     Reasoning survives only for the client that produced it; empty and
     whitespace-only text blocks are dropped (Anthropic rejects them outright,
     and no provider needs them)."""
 
 
-def _flush_orphaned_calls(out: typing.List[ai.events.Event], pending: typing.List[str]) -> None:
+def _flush_orphaned_calls(out: typing.List[ai.events.Event], pending: typing.List[str], *, _baml: _BamlOptions | None = None) -> None:
     """(internal) Close every tool call still awaiting a result, in request order, and reset
     the pending list. `out` and `pending` are mutated in place. The repair is a
     FAILED result rather than a successful empty one: the model must be able to
     tell that the call did not run."""
-async def _flush_orphaned_calls_async(out: typing.List[ai.events.Event], pending: typing.List[str]) -> None:
+async def _flush_orphaned_calls_async(out: typing.List[ai.events.Event], pending: typing.List[str], *, _baml: _BamlOptions | None = None) -> None:
     """(internal) Close every tool call still awaiting a result, in request order, and reset
     the pending list. `out` and `pending` are mutated in place. The repair is a
     FAILED result rather than a successful empty one: the model must be able to
     tell that the call did not run."""
 
 
-def _resolve_pending_call(pending: typing.List[str], id: str) -> None:
+def _resolve_pending_call(pending: typing.List[str], id: str, *, _baml: _BamlOptions | None = None) -> None:
     """(internal) Mark one tool call answered."""
-async def _resolve_pending_call_async(pending: typing.List[str], id: str) -> None:
+async def _resolve_pending_call_async(pending: typing.List[str], id: str, *, _baml: _BamlOptions | None = None) -> None:
     """(internal) Mark one tool call answered."""
 
 
@@ -507,15 +620,25 @@ __all__ = [
     "assemble_prompt_async",
     "assemble_llm_prompt",
     "assemble_llm_prompt_async",
+    "total_input_tokens",
+    "total_input_tokens_async",
+    "uncached_input_tokens",
+    "uncached_input_tokens_async",
+    "with_own_call",
+    "with_own_call_async",
     "validate_output_type",
     "validate_output_type_async",
     "render_output_format",
     "render_output_format_async",
+    "reaches_media",
+    "reaches_media_async",
     "build_output_format",
     "build_output_format_async",
     "OutputFormatDefault",
     "make_role",
     "make_role_async",
+    "make_cache",
+    "make_cache_async",
     "get_return_type",
     "get_return_type_async",
     "OutputFormat",

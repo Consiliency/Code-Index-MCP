@@ -1,9 +1,18 @@
 [package]
 name = "code-index-mcp"
 
-# Generate with BAML v1 0.20.1 to match the baml-bridge pin in pyproject.toml.
+# Generate with BAML v1 0.23.0 to match the baml-bridge pin in pyproject.toml.
 # Run scripts/generate_baml_sdk.py with that toolchain on PATH.
 [generator.python]
 output_type = "python/pydantic"
 output_dir = "."
 naming_convention = "preserve-case"
+
+# baml-bridge 0.21+ records every BAML call under BAML_HOME (~/.baml/btel) and
+# uploads recordings to Boundary when a key or saved login is present; 0.20.1
+# recorded nothing. Summarization prompts carry source code. The generated SDK
+# reads its recording level (off|low|medium|high) only from MCP_BAML_TELEMETRY;
+# ambient BAML_TELEMETRY is ignored. scripts/generate_baml_sdk.py bakes "off"
+# as the level used when MCP_BAML_TELEMETRY is unset or blank.
+[bridge.env_var_names]
+BAML_TELEMETRY = "MCP_BAML_TELEMETRY"

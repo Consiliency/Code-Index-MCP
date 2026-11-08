@@ -102,8 +102,8 @@ class PromptRenderError(pydantic.BaseModel):
 class PreviewUnsupported(pydantic.BaseModel):
     """
     A request preview cannot represent this input without performing the I/O
-    that the preview API explicitly forbids (for example, reading a local media
-    file or downloading a URL for a provider that has no URL wire form).
+    that the preview API explicitly forbids (for example, downloading a URL
+    for a provider that has no URL wire form).
     """
     model_config = pydantic.ConfigDict(
         arbitrary_types_allowed=True,
@@ -126,6 +126,11 @@ class Refused(pydantic.BaseModel):
 
 
 class ParseFailed(pydantic.BaseModel):
+    """
+    The model's output does not fit the requested output schema.
+    `raw_output` is the model output; `message` preserves the parser diagnostic
+    when available. Malformed provider envelopes raise InvalidResponse instead.
+    """
     model_config = pydantic.ConfigDict(
         arbitrary_types_allowed=True,
         extra="ignore",
@@ -133,6 +138,42 @@ class ParseFailed(pydantic.BaseModel):
     )
     provider: str
     raw_output: str
+    message: typing.Optional[str] = None
+
+
+class InvalidResponse(pydantic.BaseModel):
+    """
+    A provider response or event does not conform to its wire format.
+    This is distinct from model output that fails the requested output schema.
+    """
+    model_config = pydantic.ConfigDict(
+        arbitrary_types_allowed=True,
+        extra="ignore",
+        populate_by_name=True,
+    )
+    provider: str
+    message: str
+    raw_body: typing.Optional[str] = None
+    status_code: typing.Optional[int] = None
+
+
+class ProviderError(pydantic.BaseModel):
+    """
+    The provider explicitly reported a failure in a valid response or event.
+    Native error metadata is retained without inventing an HTTP status for an
+    in-band error. Retry policy can distinguish transient from permanent errors.
+    """
+    model_config = pydantic.ConfigDict(
+        arbitrary_types_allowed=True,
+        extra="ignore",
+        populate_by_name=True,
+    )
+    provider: str
+    message: str
+    error_type: typing.Optional[str] = None
+    error_code: typing.Optional[str] = None
+    raw_body: typing.Optional[str] = None
+    status_code: typing.Optional[int] = None
 
 
 class FinishReasonError(pydantic.BaseModel):
@@ -198,7 +239,7 @@ class StreamingUnsupported(pydantic.BaseModel):
         extra="ignore",
         populate_by_name=True,
     )
-    client_id: str
+    requested_model: str
 
 
 classify_http       = _define_function("ai.errors.classify_http", "sync",  ["provider", "status_code", "body"], ["headers"], binding_name="classify_http", binding_qualname="classify_http", binding_module=__name__)
@@ -208,7 +249,7 @@ classify_http_async = _define_function("ai.errors.classify_http", "async", ["pro
 InvokeError: typing.TypeAlias = typing.Union[typing.Any, baml.errors.Timeout, baml.errors.UnknownError, reflect.errors.CompilationError]
 
 
-RaisedInClient: typing.TypeAlias = typing.Union[InvokeError, baml.errors.InvalidArgument, baml.errors.Io, baml.errors.ParseError, baml.json.SerializationError, baml.json.ParseError, baml.json.DecodeError, baml.errors.AccessError, baml.errors.Unsupported]
+RaisedInClient: typing.TypeAlias = typing.Union[InvokeError, baml.errors.InvalidArgument, reflect.errors.InvalidArgument, baml.errors.Io, baml.errors.ParseError, baml.json.SerializationError, baml.json.ParseError, baml.json.DecodeError, baml.errors.AccessError, baml.errors.Unsupported]
 
 
 __all__ = [
@@ -224,6 +265,8 @@ __all__ = [
     "PreviewUnsupported",
     "Refused",
     "ParseFailed",
+    "InvalidResponse",
+    "ProviderError",
     "FinishReasonError",
     "StepBudgetExceeded",
     "ToolFailedError",

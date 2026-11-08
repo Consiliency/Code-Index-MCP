@@ -23,16 +23,11 @@ from __future__ import annotations
 
 from baml_bridge.reflect import Type as Type
 
-from . import array
 from . import class_
 from . import enum
 from . import errors
 from . import function
 from . import interface
-from . import literal
-from . import map
-from . import primitive
-from . import union
 
 import typing
 import typing_extensions
@@ -42,11 +37,335 @@ if typing.TYPE_CHECKING:
     from .. import reflect
     from ..baml import UNSET as UNSET
 
+from .._invocation_types import BamlOptions as _BamlOptions
+
+from baml_bridge import BamlPyHandle as _BamlPyHandle
+
 
 E = typing.TypeVar("E")
 F = typing.TypeVar("F")
+I = typing.TypeVar("I")
 R = typing.TypeVar("R")
 T = typing.TypeVar("T")
+
+class _BamlReturned1(typing.Protocol):
+    def _to_pyhandle(self) -> _BamlPyHandle: ...
+    def __call__(self, *, _baml: _BamlOptions | None = None) -> None: ...
+    async def call_async(self, *, _baml: _BamlOptions | None = None) -> None: ...
+
+
+class Class(pydantic.BaseModel):
+    field_ty: typing.Any = pydantic.Field(alias="_ty")
+    @staticmethod
+    def new(name: str, fields: typing.Dict[str, typing.Union[typing.Any, WithMeta[typing.Any]]], *, implementations: typing.Union[typing.List[reflect.interface.Implementation], UNSET] = [], _baml: _BamlOptions | None = None) -> Class:
+        """Construct a closed runtime class. Map iteration order is definition order.
+
+        Raises:
+            CompilationError"""
+    @staticmethod
+    async def new_async(name: str, fields: typing.Dict[str, typing.Union[typing.Any, WithMeta[typing.Any]]], *, implementations: typing.Union[typing.List[reflect.interface.Implementation], UNSET] = [], _baml: _BamlOptions | None = None) -> Class:
+        """Construct a closed runtime class. Map iteration order is definition order.
+
+        Raises:
+            CompilationError"""
+    @staticmethod
+    def _new_(name: str, fields: typing.Dict[str, typing.Union[typing.Any, WithMeta[typing.Any]]], implementations: typing.List[reflect.interface.Implementation], *, _baml: _BamlOptions | None = None) -> Class:
+        """(internal) Internal native backing `new`; all arguments have been
+        materialized and every field type is a `type` value.
+
+        Raises:
+            CompilationError"""
+    @staticmethod
+    async def _new__async(name: str, fields: typing.Dict[str, typing.Union[typing.Any, WithMeta[typing.Any]]], implementations: typing.List[reflect.interface.Implementation], *, _baml: _BamlOptions | None = None) -> Class:
+        """(internal) Internal native backing `new`; all arguments have been
+        materialized and every field type is a `type` value.
+
+        Raises:
+            CompilationError"""
+    @staticmethod
+    def extends(name: str, fields: typing.Dict[str, typing.Union[typing.Any, WithMeta[typing.Any]]], *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> Class:
+        """Construct a closed runtime class that implements the interface `I`.
+
+        The class declares every field of `I` and of the interfaces `I`
+        requires, transitively, followed by `fields`. A required interface's
+        fields come before the fields of the interface that requires it, and
+        required interfaces are visited in the order their `requires` clause
+        lists them, so for `interface FooBar requires HasA, HasB { c: int }`
+        the class declares `a`, `b`, `c`, then `fields`. An interface reached
+        through two paths contributes its fields once, at their first position.
+        Each interface field keeps its doc comment.
+
+        The class implements `I` and every interface in its `requires` closure,
+        each interface field satisfied by the class field of the same name.
+        Interface default methods apply to the class as usual.
+
+        # Throws
+
+        - `reflect.errors.CompilationError` if `I` is not an interface, if an
+          interface in the closure has a method without a default body, if
+          `fields` names a field an interface already declares, or if two
+          interfaces declare the same field with different types.
+
+        Raises:
+            CompilationError"""
+    @staticmethod
+    async def extends_async(name: str, fields: typing.Dict[str, typing.Union[typing.Any, WithMeta[typing.Any]]], *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> Class:
+        """Construct a closed runtime class that implements the interface `I`.
+
+        The class declares every field of `I` and of the interfaces `I`
+        requires, transitively, followed by `fields`. A required interface's
+        fields come before the fields of the interface that requires it, and
+        required interfaces are visited in the order their `requires` clause
+        lists them, so for `interface FooBar requires HasA, HasB { c: int }`
+        the class declares `a`, `b`, `c`, then `fields`. An interface reached
+        through two paths contributes its fields once, at their first position.
+        Each interface field keeps its doc comment.
+
+        The class implements `I` and every interface in its `requires` closure,
+        each interface field satisfied by the class field of the same name.
+        Interface default methods apply to the class as usual.
+
+        # Throws
+
+        - `reflect.errors.CompilationError` if `I` is not an interface, if an
+          interface in the closure has a method without a default body, if
+          `fields` names a field an interface already declares, or if two
+          interfaces declare the same field with different types.
+
+        Raises:
+            CompilationError"""
+    @staticmethod
+    def _extends_(name: str, fields: typing.Dict[str, typing.Union[typing.Any, WithMeta[typing.Any]]], *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> Class:
+        """(internal) Internal native backing `extends`; every field type is a
+        `type` value.
+
+        Raises:
+            CompilationError"""
+    @staticmethod
+    async def _extends__async(name: str, fields: typing.Dict[str, typing.Union[typing.Any, WithMeta[typing.Any]]], *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> Class:
+        """(internal) Internal native backing `extends`; every field type is a
+        `type` value.
+
+        Raises:
+            CompilationError"""
+    @staticmethod
+    def builder(name: str, *, _baml: _BamlOptions | None = None) -> reflect.class_.Builder:
+        """Start an incrementally-defined runtime class. Builders are required when
+        one or more fields recursively refer to the class being defined."""
+    @staticmethod
+    async def builder_async(name: str, *, _baml: _BamlOptions | None = None) -> reflect.class_.Builder:
+        """Start an incrementally-defined runtime class. Builders are required when
+        one or more fields recursively refer to the class being defined."""
+    @staticmethod
+    def get_field(value: typing.Any, name: str, *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> T:
+        """Assert-read a named field from a runtime-shaped class instance.
+
+        Raises:
+            CompilationError"""
+    @staticmethod
+    async def get_field_async(value: typing.Any, name: str, *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> T:
+        """Assert-read a named field from a runtime-shaped class instance.
+
+        Raises:
+            CompilationError"""
+    def fields(self, *, _baml: _BamlOptions | None = None) -> typing.List[reflect.class_.Field]:
+        """The class's fields, in declaration order. Ownerless: these describe
+        the type, so `Field.value` on them returns `null`."""
+    async def fields_async(self, *, _baml: _BamlOptions | None = None) -> typing.List[reflect.class_.Field]:
+        """The class's fields, in declaration order. Ownerless: these describe
+        the type, so `Field.value` on them returns `null`."""
+    def metadata(self, *, _baml: _BamlOptions | None = None) -> Meta:
+        """The class declaration's own schema metadata."""
+    async def metadata_async(self, *, _baml: _BamlOptions | None = None) -> Meta:
+        """The class declaration's own schema metadata."""
+    def name(self, *, _baml: _BamlOptions | None = None) -> str:
+        """The class's name, rendered like `to_string`: `Runtime`,
+        `shape.Inner`, `Box<int>`."""
+    async def name_async(self, *, _baml: _BamlOptions | None = None) -> str:
+        """The class's name, rendered like `to_string`: `Runtime`,
+        `shape.Inner`, `Box<int>`."""
+
+
+class Enum(pydantic.BaseModel):
+    field_ty: typing.Any = pydantic.Field(alias="_ty")
+    @staticmethod
+    def value(name: str, *, alias: typing.Union[str, None, UNSET] = None, description: typing.Union[str, None, UNSET] = None, docstring: typing.Union[str, None, UNSET] = None, other: typing.Union[typing.Dict[str, str], None, UNSET] = None, _baml: _BamlOptions | None = None) -> reflect.enum.Value:
+        """Construct one enum row with optional schema metadata."""
+    @staticmethod
+    async def value_async(name: str, *, alias: typing.Union[str, None, UNSET] = None, description: typing.Union[str, None, UNSET] = None, docstring: typing.Union[str, None, UNSET] = None, other: typing.Union[typing.Dict[str, str], None, UNSET] = None, _baml: _BamlOptions | None = None) -> reflect.enum.Value:
+        """Construct one enum row with optional schema metadata."""
+    @staticmethod
+    def new(name: str, values: typing.List[typing.Union[str, reflect.enum.Value]], *, _baml: _BamlOptions | None = None) -> Enum:
+        """Mint a fresh runtime enum definition. Every evaluation has distinct type
+        identity even when its name and rows are byte-identical.
+
+        Raises:
+            CompilationError"""
+    @staticmethod
+    async def new_async(name: str, values: typing.List[typing.Union[str, reflect.enum.Value]], *, _baml: _BamlOptions | None = None) -> Enum:
+        """Mint a fresh runtime enum definition. Every evaluation has distinct type
+        identity even when its name and rows are byte-identical.
+
+        Raises:
+            CompilationError"""
+    @staticmethod
+    def get_value(value: typing.Any, *, _baml: _BamlOptions | None = None) -> str:
+        """Recover the source variant name from a runtime or static enum value.
+
+        # Throws
+        - `reflect.errors.InvalidArgument` if `value` is not an enum value. The
+          parameter is `unknown` by design — the check is a runtime one, so a
+          caller that passes a non-enum gets an error value rather than a panic.
+
+        Raises:
+            InvalidArgument"""
+    @staticmethod
+    async def get_value_async(value: typing.Any, *, _baml: _BamlOptions | None = None) -> str:
+        """Recover the source variant name from a runtime or static enum value.
+
+        # Throws
+        - `reflect.errors.InvalidArgument` if `value` is not an enum value. The
+          parameter is `unknown` by design — the check is a runtime one, so a
+          caller that passes a non-enum gets an error value rather than a panic.
+
+        Raises:
+            InvalidArgument"""
+    def values(self, *, _baml: _BamlOptions | None = None) -> typing.List[reflect.enum.Value]:
+        """The enum's variants, in declaration order."""
+    async def values_async(self, *, _baml: _BamlOptions | None = None) -> typing.List[reflect.enum.Value]:
+        """The enum's variants, in declaration order."""
+    def metadata(self, *, _baml: _BamlOptions | None = None) -> Meta:
+        """The enum declaration's own schema metadata."""
+    async def metadata_async(self, *, _baml: _BamlOptions | None = None) -> Meta:
+        """The enum declaration's own schema metadata."""
+    def name(self, *, _baml: _BamlOptions | None = None) -> str:
+        """The enum's name, rendered like `to_string`: `Color`, `shape.Kind`."""
+    async def name_async(self, *, _baml: _BamlOptions | None = None) -> str:
+        """The enum's name, rendered like `to_string`: `Color`, `shape.Kind`."""
+
+
+class Union(pydantic.BaseModel):
+    field_ty: typing.Any = pydantic.Field(alias="_ty")
+    @staticmethod
+    def new(types: typing.List[typing.Any], *, _baml: _BamlOptions | None = None) -> Union:
+        """Constructs the canonical union of `types`.
+
+        # Throws
+
+        - `reflect.errors.CompilationError` if the members cannot form a union.
+
+        Raises:
+            CompilationError"""
+    @staticmethod
+    async def new_async(types: typing.List[typing.Any], *, _baml: _BamlOptions | None = None) -> Union:
+        """Constructs the canonical union of `types`.
+
+        # Throws
+
+        - `reflect.errors.CompilationError` if the members cannot form a union.
+
+        Raises:
+            CompilationError"""
+    @staticmethod
+    def _new_(types: typing.List[typing.Any], *, _baml: _BamlOptions | None = None) -> Union:
+        """(internal) Internal native backing `new`; every member is a `type`
+        value.
+
+        Raises:
+            CompilationError"""
+    @staticmethod
+    async def _new__async(types: typing.List[typing.Any], *, _baml: _BamlOptions | None = None) -> Union:
+        """(internal) Internal native backing `new`; every member is a `type`
+        value.
+
+        Raises:
+            CompilationError"""
+    def member_types(self, *, _baml: _BamlOptions | None = None) -> typing.List[typing.Any]:
+        """The union's members, in canonical order."""
+    async def member_types_async(self, *, _baml: _BamlOptions | None = None) -> typing.List[typing.Any]:
+        """The union's members, in canonical order."""
+
+
+class Literal(pydantic.BaseModel):
+    field_ty: typing.Any = pydantic.Field(alias="_ty")
+    @staticmethod
+    def new(value: typing.Union[str, int, int, bool], *, _baml: _BamlOptions | None = None) -> Literal:
+        """Constructs the literal type matching exactly a string, int, bigint, or bool value."""
+    @staticmethod
+    async def new_async(value: typing.Union[str, int, int, bool], *, _baml: _BamlOptions | None = None) -> Literal:
+        """Constructs the literal type matching exactly a string, int, bigint, or bool value."""
+    def value(self, *, _baml: _BamlOptions | None = None) -> typing.Any:
+        """Returns the string, int, bigint, bool, or enum variant represented by this literal type.
+        The return type is unknown because enum variants can belong to any enum.
+        This API cannot return class values today."""
+    async def value_async(self, *, _baml: _BamlOptions | None = None) -> typing.Any:
+        """Returns the string, int, bigint, bool, or enum variant represented by this literal type.
+        The return type is unknown because enum variants can belong to any enum.
+        This API cannot return class values today."""
+
+
+class Array(pydantic.BaseModel):
+    field_ty: typing.Any = pydantic.Field(alias="_ty")
+    def element_type(self, *, _baml: _BamlOptions | None = None) -> typing.Any:
+        """The type of the array's elements."""
+    async def element_type_async(self, *, _baml: _BamlOptions | None = None) -> typing.Any:
+        """The type of the array's elements."""
+
+
+class Map(pydantic.BaseModel):
+    field_ty: typing.Any = pydantic.Field(alias="_ty")
+    @staticmethod
+    def new(key: typing.Any, value: typing.Any, *, _baml: _BamlOptions | None = None) -> Map:
+        """Constructs the map type `map<key, value>`."""
+    @staticmethod
+    async def new_async(key: typing.Any, value: typing.Any, *, _baml: _BamlOptions | None = None) -> Map:
+        """Constructs the map type `map<key, value>`."""
+    @staticmethod
+    def _new_(key: typing.Any, value: typing.Any, *, _baml: _BamlOptions | None = None) -> Map:
+        """(internal) Internal native backing `new`; both types are `type` values."""
+    @staticmethod
+    async def _new__async(key: typing.Any, value: typing.Any, *, _baml: _BamlOptions | None = None) -> Map:
+        """(internal) Internal native backing `new`; both types are `type` values."""
+    def key_type(self, *, _baml: _BamlOptions | None = None) -> typing.Any:
+        """The type of the map's keys."""
+    async def key_type_async(self, *, _baml: _BamlOptions | None = None) -> typing.Any:
+        """The type of the map's keys."""
+    def value_type(self, *, _baml: _BamlOptions | None = None) -> typing.Any:
+        """The type of the map's values."""
+    async def value_type_async(self, *, _baml: _BamlOptions | None = None) -> typing.Any:
+        """The type of the map's values."""
+
+
+class Interface(pydantic.BaseModel):
+    field_ty: typing.Any = pydantic.Field(alias="_ty")
+    @staticmethod
+    def implementation(*, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> reflect.interface.Implementation:
+        """Start a structural witness for a static interface.
+
+        Raises:
+            CompilationError"""
+    @staticmethod
+    async def implementation_async(*, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> reflect.interface.Implementation:
+        """Start a structural witness for a static interface.
+
+        Raises:
+            CompilationError"""
+
+
+class Primitive(pydantic.BaseModel):
+    field_ty: typing.Any = pydantic.Field(alias="_ty")
+
+
+class Function(pydantic.BaseModel):
+    field_ty: typing.Any = pydantic.Field(alias="_ty")
+    def params(self, *, _baml: _BamlOptions | None = None) -> typing.List[reflect.function.Parameter]:
+        """The function's parameters, in declaration order."""
+    async def params_async(self, *, _baml: _BamlOptions | None = None) -> typing.List[reflect.function.Parameter]:
+        """The function's parameters, in declaration order."""
+    def return_type(self, *, _baml: _BamlOptions | None = None) -> typing.Any:
+        """The function's return type."""
+    async def return_type_async(self, *, _baml: _BamlOptions | None = None) -> typing.Any:
+        """The function's return type."""
 
 
 class Arg(pydantic.BaseModel):
@@ -109,6 +428,28 @@ class Diagnostic(pydantic.BaseModel):
     related_info: typing.List[DiagnosticRelatedInfo]
 
 
+def _as_types(types: typing.List[typing.Any], *, _baml: _BamlOptions | None = None) -> typing.List[typing.Any]:
+    """(internal) `types` with each view replaced by the `type` value it views.
+
+    Every API that takes a `TypeView` converts it in BAML before it reaches a
+    native, so a class of the caller's own that implements `TypeView` runs
+    its own `as_type()`, and the native only ever receives `type` values."""
+async def _as_types_async(types: typing.List[typing.Any], *, _baml: _BamlOptions | None = None) -> typing.List[typing.Any]:
+    """(internal) `types` with each view replaced by the `type` value it views.
+
+    Every API that takes a `TypeView` converts it in BAML before it reaches a
+    native, so a class of the caller's own that implements `TypeView` runs
+    its own `as_type()`, and the native only ever receives `type` values."""
+
+
+def _as_field_rows(fields: typing.Dict[str, typing.Union[typing.Any, WithMeta[typing.Any]]], *, _baml: _BamlOptions | None = None) -> typing.Dict[str, typing.Union[typing.Any, WithMeta[typing.Any]]]:
+    """(internal) Class field rows with each view replaced by the `type` value it
+    views, and each `WithMeta` row kept as is; see `_as_types`."""
+async def _as_field_rows_async(fields: typing.Dict[str, typing.Union[typing.Any, WithMeta[typing.Any]]], *, _baml: _BamlOptions | None = None) -> typing.Dict[str, typing.Union[typing.Any, WithMeta[typing.Any]]]:
+    """(internal) Class field rows with each view replaced by the `type` value it
+    views, and each `WithMeta` row kept as is; see `_as_types`."""
+
+
 class Signature(pydantic.BaseModel):
     name: typing.Optional[str] = None
     args: typing.List[Arg]
@@ -131,7 +472,7 @@ class CompileArtifact(pydantic.BaseModel):
 class Package(pydantic.BaseModel):
     field_inner: typing.Any = pydantic.Field(alias="_inner")
     @staticmethod
-    def compile(files: typing.Dict[str, str], *, packages: typing.Union[typing.Dict[str, Package], UNSET] = {}) -> Package:
+    def compile(files: typing.Dict[str, str], *, packages: typing.Union[typing.Dict[str, Package], UNSET] = {}, _baml: _BamlOptions | None = None) -> Package:
         """Compiles `files` into an isolated package, resolving its dependencies
         against `packages`.
 
@@ -147,7 +488,7 @@ class Package(pydantic.BaseModel):
         - anything the package's top-level initialization throws, which is why
           the clause is `unknown`."""
     @staticmethod
-    async def compile_async(files: typing.Dict[str, str], *, packages: typing.Union[typing.Dict[str, Package], UNSET] = {}) -> Package:
+    async def compile_async(files: typing.Dict[str, str], *, packages: typing.Union[typing.Dict[str, Package], UNSET] = {}, _baml: _BamlOptions | None = None) -> Package:
         """Compiles `files` into an isolated package, resolving its dependencies
         against `packages`.
 
@@ -163,65 +504,277 @@ class Package(pydantic.BaseModel):
         - anything the package's top-level initialization throws, which is why
           the clause is `unknown`."""
     @staticmethod
-    def _compile_(files: typing.Dict[str, str], packages: typing.Dict[str, Package]) -> CompileArtifact:
+    def _compile_(files: typing.Dict[str, str], packages: typing.Dict[str, Package], *, _baml: _BamlOptions | None = None) -> CompileArtifact:
         """Raises:
             CompilationError"""
     @staticmethod
-    async def _compile__async(files: typing.Dict[str, str], packages: typing.Dict[str, Package]) -> CompileArtifact:
+    async def _compile__async(files: typing.Dict[str, str], packages: typing.Dict[str, Package], *, _baml: _BamlOptions | None = None) -> CompileArtifact:
         """Raises:
             CompilationError"""
     @staticmethod
-    def _finish_(artifact: CompileArtifact, packages: typing.Dict[str, Package]) -> Package: ...
+    def _finish_(artifact: CompileArtifact, packages: typing.Dict[str, Package], *, _baml: _BamlOptions | None = None) -> Package: ...
     @staticmethod
-    async def _finish__async(artifact: CompileArtifact, packages: typing.Dict[str, Package]) -> Package: ...
-    def get_class(self, name: str) -> typing.Optional[reflect.class_.Type]: ...
-    async def get_class_async(self, name: str) -> typing.Optional[reflect.class_.Type]: ...
-    def get_enum(self, name: str) -> typing.Optional[reflect.enum.Type]: ...
-    async def get_enum_async(self, name: str) -> typing.Optional[reflect.enum.Type]: ...
-    def get_interface(self, name: str) -> typing.Optional[reflect.interface.Type]: ...
-    async def get_interface_async(self, name: str) -> typing.Optional[reflect.interface.Type]: ...
-    def with_types(self, types: typing.Dict[str, typing.Union[typing.Any, typing.Any]]) -> Package:
-        """Raises:
+    async def _finish__async(artifact: CompileArtifact, packages: typing.Dict[str, Package], *, _baml: _BamlOptions | None = None) -> Package: ...
+    def get_class(self, name: str, *, _baml: _BamlOptions | None = None) -> Class:
+        """The exported class called `name`. A name the package exports as some
+        other kind of declaration is a miss. `find_class` returns `null`
+        instead of throwing.
+
+        # Throws
+
+        - `reflect.errors.NotFound` if the package exports no class called
+          `name`.
+
+        Raises:
+            NotFound"""
+    async def get_class_async(self, name: str, *, _baml: _BamlOptions | None = None) -> Class:
+        """The exported class called `name`. A name the package exports as some
+        other kind of declaration is a miss. `find_class` returns `null`
+        instead of throwing.
+
+        # Throws
+
+        - `reflect.errors.NotFound` if the package exports no class called
+          `name`.
+
+        Raises:
+            NotFound"""
+    def find_class(self, name: str, *, _baml: _BamlOptions | None = None) -> typing.Optional[Class]:
+        """The exported class called `name`, or `null` if the package exports
+        none."""
+    async def find_class_async(self, name: str, *, _baml: _BamlOptions | None = None) -> typing.Optional[Class]:
+        """The exported class called `name`, or `null` if the package exports
+        none."""
+    def get_enum(self, name: str, *, _baml: _BamlOptions | None = None) -> Enum:
+        """The exported enum called `name`. A name the package exports as some
+        other kind of declaration is a miss. `find_enum` returns `null` instead
+        of throwing.
+
+        # Throws
+
+        - `reflect.errors.NotFound` if the package exports no enum called
+          `name`.
+
+        Raises:
+            NotFound"""
+    async def get_enum_async(self, name: str, *, _baml: _BamlOptions | None = None) -> Enum:
+        """The exported enum called `name`. A name the package exports as some
+        other kind of declaration is a miss. `find_enum` returns `null` instead
+        of throwing.
+
+        # Throws
+
+        - `reflect.errors.NotFound` if the package exports no enum called
+          `name`.
+
+        Raises:
+            NotFound"""
+    def find_enum(self, name: str, *, _baml: _BamlOptions | None = None) -> typing.Optional[Enum]:
+        """The exported enum called `name`, or `null` if the package exports none."""
+    async def find_enum_async(self, name: str, *, _baml: _BamlOptions | None = None) -> typing.Optional[Enum]:
+        """The exported enum called `name`, or `null` if the package exports none."""
+    def get_interface(self, name: str, *, _baml: _BamlOptions | None = None) -> Interface:
+        """The exported interface called `name`. A name the package exports as
+        some other kind of declaration is a miss. `find_interface` returns
+        `null` instead of throwing.
+
+        # Throws
+
+        - `reflect.errors.NotFound` if the package exports no interface called
+          `name`.
+
+        Raises:
+            NotFound"""
+    async def get_interface_async(self, name: str, *, _baml: _BamlOptions | None = None) -> Interface:
+        """The exported interface called `name`. A name the package exports as
+        some other kind of declaration is a miss. `find_interface` returns
+        `null` instead of throwing.
+
+        # Throws
+
+        - `reflect.errors.NotFound` if the package exports no interface called
+          `name`.
+
+        Raises:
+            NotFound"""
+    def find_interface(self, name: str, *, _baml: _BamlOptions | None = None) -> typing.Optional[Interface]:
+        """The exported interface called `name`, or `null` if the package exports
+        none."""
+    async def find_interface_async(self, name: str, *, _baml: _BamlOptions | None = None) -> typing.Optional[Interface]:
+        """The exported interface called `name`, or `null` if the package exports
+        none."""
+    def with_types(self, types: typing.Dict[str, typing.Any], *, _baml: _BamlOptions | None = None) -> Package:
+        """A package that exports everything this one does, plus `types` under
+        the given names, for a later `Package.compile` to mount: a bare class,
+        enum, interface, or alias declaration is re-exported under its name
+        (the same declaration, so a consumer that mounts both packages sees
+        one type), any other type is declared as an alias, and every
+        declaration a mounted type reaches is exported under its own name. A
+        name this package already exports is refused.
+
+        Raises:
             CompilationError"""
-    async def with_types_async(self, types: typing.Dict[str, typing.Union[typing.Any, typing.Any]]) -> Package:
-        """Raises:
+    async def with_types_async(self, types: typing.Dict[str, typing.Any], *, _baml: _BamlOptions | None = None) -> Package:
+        """A package that exports everything this one does, plus `types` under
+        the given names, for a later `Package.compile` to mount: a bare class,
+        enum, interface, or alias declaration is re-exported under its name
+        (the same declaration, so a consumer that mounts both packages sees
+        one type), any other type is declared as an alias, and every
+        declaration a mounted type reaches is exported under its own name. A
+        name this package already exports is refused.
+
+        Raises:
             CompilationError"""
-    def get_function(self, name: str, *, _types: dict[str, typing.Any]) -> typing.Optional[F]:
+    def _with_types_(self, types: typing.Dict[str, typing.Any], *, _baml: _BamlOptions | None = None) -> Package:
+        """(internal) Internal native backing `with_types`; every type is a `type`
+        value.
+
+        Raises:
+            CompilationError"""
+    async def _with_types__async(self, types: typing.Dict[str, typing.Any], *, _baml: _BamlOptions | None = None) -> Package:
+        """(internal) Internal native backing `with_types`; every type is a `type`
+        value.
+
+        Raises:
+            CompilationError"""
+    def get_function(self, name: str, *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> F:
         """Extract an exported function through an ordinary function-type contract.
+        `find_function` returns `null` for a missing name instead of throwing.
 
         A lookup by name has nowhere to put type arguments, so an unspecialized
         generic function is refused here.
 
+        # Throws
+
+        - `reflect.errors.NotFound` if the package exports no function called
+          `name`.
+        - `reflect.errors.CompilationError` if the function exists but is not
+          an `F`, or is an unspecialized generic.
+
         Raises:
-            CompilationError"""
-    async def get_function_async(self, name: str, *, _types: dict[str, typing.Any]) -> typing.Optional[F]:
+            NotFound, CompilationError"""
+    async def get_function_async(self, name: str, *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> F:
         """Extract an exported function through an ordinary function-type contract.
+        `find_function` returns `null` for a missing name instead of throwing.
 
         A lookup by name has nowhere to put type arguments, so an unspecialized
         generic function is refused here.
 
+        # Throws
+
+        - `reflect.errors.NotFound` if the package exports no function called
+          `name`.
+        - `reflect.errors.CompilationError` if the function exists but is not
+          an `F`, or is an unspecialized generic.
+
+        Raises:
+            NotFound, CompilationError"""
+    def find_function(self, name: str, *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> typing.Optional[F]:
+        """Extract an exported function through an ordinary function-type
+        contract, or `null` if the package exports no function called `name`.
+
+        # Throws
+
+        - `reflect.errors.CompilationError` if the function exists but is not
+          an `F`, or is an unspecialized generic.
+
         Raises:
             CompilationError"""
-    def classes(self) -> typing.Dict[str, reflect.class_.Type]: ...
-    async def classes_async(self) -> typing.Dict[str, reflect.class_.Type]: ...
-    def enums(self) -> typing.Dict[str, reflect.enum.Type]: ...
-    async def enums_async(self) -> typing.Dict[str, reflect.enum.Type]: ...
-    def interfaces(self) -> typing.Dict[str, reflect.interface.Type]: ...
-    async def interfaces_async(self) -> typing.Dict[str, reflect.interface.Type]: ...
-    def functions(self) -> typing.Dict[str, reflect.function.Type]:
+    async def find_function_async(self, name: str, *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> typing.Optional[F]:
+        """Extract an exported function through an ordinary function-type
+        contract, or `null` if the package exports no function called `name`.
+
+        # Throws
+
+        - `reflect.errors.CompilationError` if the function exists but is not
+          an `F`, or is an unspecialized generic.
+
+        Raises:
+            CompilationError"""
+    def classes(self, *, _baml: _BamlOptions | None = None) -> typing.Dict[str, Class]:
+        """Exported class types, keyed by package-local name."""
+    async def classes_async(self, *, _baml: _BamlOptions | None = None) -> typing.Dict[str, Class]:
+        """Exported class types, keyed by package-local name."""
+    def enums(self, *, _baml: _BamlOptions | None = None) -> typing.Dict[str, Enum]:
+        """Exported enum types, keyed by package-local name."""
+    async def enums_async(self, *, _baml: _BamlOptions | None = None) -> typing.Dict[str, Enum]:
+        """Exported enum types, keyed by package-local name."""
+    def interfaces(self, *, _baml: _BamlOptions | None = None) -> typing.Dict[str, Interface]:
+        """Exported interface types, keyed by package-local name."""
+    async def interfaces_async(self, *, _baml: _BamlOptions | None = None) -> typing.Dict[str, Interface]:
+        """Exported interface types, keyed by package-local name."""
+    def functions(self, *, _baml: _BamlOptions | None = None) -> typing.Dict[str, Function]:
         """Exported free-function signatures, keyed by package-local name."""
-    async def functions_async(self) -> typing.Dict[str, reflect.function.Type]:
+    async def functions_async(self, *, _baml: _BamlOptions | None = None) -> typing.Dict[str, Function]:
         """Exported free-function signatures, keyed by package-local name."""
-    def tests(self) -> typing.Dict[str, typing.Callable[[], None]]: ...
-    async def tests_async(self) -> typing.Dict[str, typing.Callable[[], None]]: ...
-    def diagnostics(self) -> typing.List[Diagnostic]: ...
-    async def diagnostics_async(self) -> typing.List[Diagnostic]: ...
+    def globals(self, *, _baml: _BamlOptions | None = None) -> typing.Dict[str, typing.Any]:
+        """Global variables and `client` declarations, keyed by package-local
+        name, with their current values. Each value is the global itself,
+        shared with every reader: changing its contents is visible everywhere."""
+    async def globals_async(self, *, _baml: _BamlOptions | None = None) -> typing.Dict[str, typing.Any]:
+        """Global variables and `client` declarations, keyed by package-local
+        name, with their current values. Each value is the global itself,
+        shared with every reader: changing its contents is visible everywhere."""
+    def get_global(self, name: str, *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> T:
+        """The value of the global variable or `client` declaration called
+        `name`, as `T`. `find_global` returns `null` for a missing name instead
+        of throwing.
+
+        # Throws
+
+        - `reflect.errors.NotFound` if the package has no global called `name`.
+        - `reflect.errors.TypeMismatch` if the global's value is not a `T`.
+
+        Raises:
+            NotFound, TypeMismatch"""
+    async def get_global_async(self, name: str, *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> T:
+        """The value of the global variable or `client` declaration called
+        `name`, as `T`. `find_global` returns `null` for a missing name instead
+        of throwing.
+
+        # Throws
+
+        - `reflect.errors.NotFound` if the package has no global called `name`.
+        - `reflect.errors.TypeMismatch` if the global's value is not a `T`.
+
+        Raises:
+            NotFound, TypeMismatch"""
+    def find_global(self, name: str, *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> typing.Optional[T]:
+        """The value of the global called `name` as `T`, or `null` if the package
+        has none. With a nullable `T`, a global holding `null` also reads as
+        `null`; use `get_global` to tell the two apart.
+
+        # Throws
+
+        - `reflect.errors.TypeMismatch` if the global's value is not a `T`.
+
+        Raises:
+            TypeMismatch"""
+    async def find_global_async(self, name: str, *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> typing.Optional[T]:
+        """The value of the global called `name` as `T`, or `null` if the package
+        has none. With a nullable `T`, a global holding `null` also reads as
+        `null`; use `get_global` to tell the two apart.
+
+        # Throws
+
+        - `reflect.errors.TypeMismatch` if the global's value is not a `T`.
+
+        Raises:
+            TypeMismatch"""
+    def tests(self, *, _baml: _BamlOptions | None = None) -> typing.Dict[str, _BamlReturned1]:
+        """Bundled tests as directly invocable zero-argument callables."""
+    async def tests_async(self, *, _baml: _BamlOptions | None = None) -> typing.Dict[str, _BamlReturned1]:
+        """Bundled tests as directly invocable zero-argument callables."""
+    def diagnostics(self, *, _baml: _BamlOptions | None = None) -> typing.List[Diagnostic]:
+        """Diagnostics produced while compiling this package."""
+    async def diagnostics_async(self, *, _baml: _BamlOptions | None = None) -> typing.List[Diagnostic]:
+        """Diagnostics produced while compiling this package."""
 
 
 class Session(pydantic.BaseModel):
     field_inner: typing.Any = pydantic.Field(alias="_inner")
     @staticmethod
-    def new(*, packages: typing.Union[typing.Dict[str, Package], UNSET] = {}) -> Session:
+    def new(*, packages: typing.Union[typing.Dict[str, Package], UNSET] = {}, _baml: _BamlOptions | None = None) -> Session:
         """Opens a session whose dependency aliases are fixed to `packages`.
 
         # Throws
@@ -231,7 +784,7 @@ class Session(pydantic.BaseModel):
         Raises:
             CompilationError"""
     @staticmethod
-    async def new_async(*, packages: typing.Union[typing.Dict[str, Package], UNSET] = {}) -> Session:
+    async def new_async(*, packages: typing.Union[typing.Dict[str, Package], UNSET] = {}, _baml: _BamlOptions | None = None) -> Session:
         """Opens a session whose dependency aliases are fixed to `packages`.
 
         # Throws
@@ -241,14 +794,14 @@ class Session(pydantic.BaseModel):
         Raises:
             CompilationError"""
     @staticmethod
-    def _new_(packages: typing.Dict[str, Package]) -> Session:
+    def _new_(packages: typing.Dict[str, Package], *, _baml: _BamlOptions | None = None) -> Session:
         """Raises:
             CompilationError"""
     @staticmethod
-    async def _new__async(packages: typing.Dict[str, Package]) -> Session:
+    async def _new__async(packages: typing.Dict[str, Package], *, _baml: _BamlOptions | None = None) -> Session:
         """Raises:
             CompilationError"""
-    def eval(self, source: str, *, _types: dict[str, typing.Any]) -> T:
+    def eval(self, source: str, *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> T:
         """Compiles and runs `source` against this session, returning its value
         as `T`.
 
@@ -264,7 +817,7 @@ class Session(pydantic.BaseModel):
 
         Raises:
             CompilationError, EvaluationError, SessionBusy"""
-    async def eval_async(self, source: str, *, _types: dict[str, typing.Any]) -> T:
+    async def eval_async(self, source: str, *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> T:
         """Compiles and runs `source` against this session, returning its value
         as `T`.
 
@@ -280,38 +833,89 @@ class Session(pydantic.BaseModel):
 
         Raises:
             CompilationError, EvaluationError, SessionBusy"""
-    def _compile_(self, source: str, *, _types: dict[str, typing.Any]) -> CompileArtifact:
+    def _compile_(self, source: str, *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> CompileArtifact:
         """Raises:
             CompilationError, SessionBusy"""
-    async def _compile__async(self, source: str, *, _types: dict[str, typing.Any]) -> CompileArtifact:
+    async def _compile__async(self, source: str, *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> CompileArtifact:
         """Raises:
             CompilationError, SessionBusy"""
-    def _finish_(self, artifact: CompileArtifact, *, _types: dict[str, typing.Any]) -> T: ...
-    async def _finish__async(self, artifact: CompileArtifact, *, _types: dict[str, typing.Any]) -> T: ...
-    def diagnostics(self) -> typing.List[Diagnostic]: ...
-    async def diagnostics_async(self) -> typing.List[Diagnostic]: ...
+    def _finish_(self, artifact: CompileArtifact, *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> T: ...
+    async def _finish__async(self, artifact: CompileArtifact, *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> T: ...
+    def diagnostics(self, *, _baml: _BamlOptions | None = None) -> typing.List[Diagnostic]:
+        """Diagnostics from this session's most recent `eval`."""
+    async def diagnostics_async(self, *, _baml: _BamlOptions | None = None) -> typing.List[Diagnostic]:
+        """Diagnostics from this session's most recent `eval`."""
 
 
-def _render_cause(value: typing.Any) -> str: ...
-async def _render_cause_async(value: typing.Any) -> str: ...
+def _render_cause(value: typing.Any, *, _baml: _BamlOptions | None = None) -> str:
+    """(internal) Structural error rendering for `Session.eval` that keeps `reflect` a root
+    package. This is the dependency-free counterpart of `string.from`: its VM
+    implementation shares the same renderer without importing `baml`."""
+async def _render_cause_async(value: typing.Any, *, _baml: _BamlOptions | None = None) -> str:
+    """(internal) Structural error rendering for `Session.eval` that keeps `reflect` a root
+    package. This is the dependency-free counterpart of `string.from`: its VM
+    implementation shares the same renderer without importing `baml`."""
 
 
-def signature(f: typing.Any) -> Signature: ...
-async def signature_async(f: typing.Any) -> Signature: ...
+def signature(f: typing.Any, *, _baml: _BamlOptions | None = None) -> Signature:
+    """Returns the runtime signature of `f`.
+
+    Usage:
+      let sig = reflect.signature(f)
+      sig.returns.to_string()"""
+async def signature_async(f: typing.Any, *, _baml: _BamlOptions | None = None) -> Signature:
+    """Returns the runtime signature of `f`.
+
+    Usage:
+      let sig = reflect.signature(f)
+      sig.returns.to_string()"""
 
 
-def call_any(f: typing.Any, args: typing.Dict[str, typing.Any], *, _types: dict[str, typing.Any]) -> R:
-    """Raises:
+def call_any(f: typing.Any, args: typing.Dict[str, typing.Any], *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> R:
+    """Calls `f` with `args`, every argument keyed by parameter name (a nameless
+    positional is addressed by its `$argN` placeholder), checked at runtime
+    against `f`'s signature: a missing required parameter, a key naming no
+    parameter, or a value that does not fit its parameter's type throws
+    `InvalidArgumentError`. The returned value is checked against `R` at the
+    same boundary (except when `R` is `unknown`). An absent optional fires the
+    callee's own default. `R` and `E` are `f`'s `Returns`/`Throws` pins, so a
+    pinned `AnyFunction<Returns = json, Throws = ToolError>` yields typed
+    results and an exhaustive catch; a bare `AnyFunction` returns `unknown`
+    and throws `unknown` (which covers `InvalidArgumentError` and
+    `reflect.errors.CompilationError`).
+
+    Raises:
         InvalidArgumentError, CompilationError"""
-async def call_any_async(f: typing.Any, args: typing.Dict[str, typing.Any], *, _types: dict[str, typing.Any]) -> R:
-    """Raises:
+async def call_any_async(f: typing.Any, args: typing.Dict[str, typing.Any], *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> R:
+    """Calls `f` with `args`, every argument keyed by parameter name (a nameless
+    positional is addressed by its `$argN` placeholder), checked at runtime
+    against `f`'s signature: a missing required parameter, a key naming no
+    parameter, or a value that does not fit its parameter's type throws
+    `InvalidArgumentError`. The returned value is checked against `R` at the
+    same boundary (except when `R` is `unknown`). An absent optional fires the
+    callee's own default. `R` and `E` are `f`'s `Returns`/`Throws` pins, so a
+    pinned `AnyFunction<Returns = json, Throws = ToolError>` yields typed
+    results and an exhaustive catch; a bare `AnyFunction` returns `unknown`
+    and throws `unknown` (which covers `InvalidArgumentError` and
+    `reflect.errors.CompilationError`).
+
+    Raises:
         InvalidArgumentError, CompilationError"""
 
 
-TypeKind: typing.TypeAlias = typing.Union[reflect.class_.Type, reflect.enum.Type, reflect.union.Type, reflect.literal.Type, reflect.array.Type, reflect.map.Type, reflect.interface.Type, reflect.primitive.Type, reflect.function.Type]
+TypeKind: typing.TypeAlias = typing.Union[Class, Enum, Union, Literal, Array, Map, Interface, Primitive, Function]
 
 
 __all__ = [
+    "Class",
+    "Enum",
+    "Union",
+    "Literal",
+    "Array",
+    "Map",
+    "Interface",
+    "Primitive",
+    "Function",
     "Arg",
     "Meta",
     "WithMeta",

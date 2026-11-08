@@ -24,8 +24,10 @@ from __future__ import annotations
 import typing
 import typing_extensions
 
+from ..._invocation_types import BamlOptions as _BamlOptions
 
-def input(prompt: typing.Optional[str]) -> str:
+
+def input(prompt: typing.Optional[str], *, _baml: _BamlOptions | None = None) -> str:
     """Reads a line of text from stdin. If `prompt` is provided, it is printed first (without a newline).
 
     The trailing newline is stripped; end-of-input reads as `""`.
@@ -41,7 +43,7 @@ def input(prompt: typing.Optional[str]) -> str:
 
     Raises:
         Io"""
-async def input_async(prompt: typing.Optional[str]) -> str:
+async def input_async(prompt: typing.Optional[str], *, _baml: _BamlOptions | None = None) -> str:
     """Reads a line of text from stdin. If `prompt` is provided, it is printed first (without a newline).
 
     The trailing newline is stripped; end-of-input reads as `""`.
@@ -59,14 +61,14 @@ async def input_async(prompt: typing.Optional[str]) -> str:
         Io"""
 
 
-def print(s: str) -> None:
+def print(s: str, *, _baml: _BamlOptions | None = None) -> None:
     """Write `s` to stdout with no trailing newline. Flushes immediately so the
     bytes are visible before the next sysop or await suspends the thread.
 
     # Panics
 
     - `baml.panics.HostUnavailable` if stdout cannot be written"""
-async def print_async(s: str) -> None:
+async def print_async(s: str, *, _baml: _BamlOptions | None = None) -> None:
     """Write `s` to stdout with no trailing newline. Flushes immediately so the
     bytes are visible before the next sysop or await suspends the thread.
 
@@ -75,13 +77,13 @@ async def print_async(s: str) -> None:
     - `baml.panics.HostUnavailable` if stdout cannot be written"""
 
 
-def println(s: str) -> None:
+def println(s: str, *, _baml: _BamlOptions | None = None) -> None:
     """Write `s` to stdout followed by a newline.
 
     # Panics
 
     - `baml.panics.HostUnavailable` if stdout cannot be written"""
-async def println_async(s: str) -> None:
+async def println_async(s: str, *, _baml: _BamlOptions | None = None) -> None:
     """Write `s` to stdout followed by a newline.
 
     # Panics
@@ -89,13 +91,13 @@ async def println_async(s: str) -> None:
     - `baml.panics.HostUnavailable` if stdout cannot be written"""
 
 
-def eprint(s: str) -> None:
+def eprint(s: str, *, _baml: _BamlOptions | None = None) -> None:
     """Like `print` but writes to stderr.
 
     # Panics
 
     - `baml.panics.HostUnavailable` if stderr cannot be written"""
-async def eprint_async(s: str) -> None:
+async def eprint_async(s: str, *, _baml: _BamlOptions | None = None) -> None:
     """Like `print` but writes to stderr.
 
     # Panics
@@ -103,13 +105,13 @@ async def eprint_async(s: str) -> None:
     - `baml.panics.HostUnavailable` if stderr cannot be written"""
 
 
-def eprintln(s: str) -> None:
+def eprintln(s: str, *, _baml: _BamlOptions | None = None) -> None:
     """Like `println` but writes to stderr.
 
     # Panics
 
     - `baml.panics.HostUnavailable` if stderr cannot be written"""
-async def eprintln_async(s: str) -> None:
+async def eprintln_async(s: str, *, _baml: _BamlOptions | None = None) -> None:
     """Like `println` but writes to stderr.
 
     # Panics

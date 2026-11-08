@@ -26,6 +26,12 @@ _LAZY_CHILDREN = frozenset({
 })
 
 def __getattr__(name):
+    if name == "experimental" and __name__ == "baml_sdk":
+        import importlib
+        return importlib.import_module(".experimental", __name__)
+    if name == "trace" and __name__ == "baml_sdk":
+        import importlib
+        return importlib.import_module(".vendor.trace", __name__)
     if name in _LAZY_CHILDREN:
         import importlib
         return importlib.import_module(f".{name}", __name__)
@@ -58,7 +64,11 @@ class AzureClient(pydantic.BaseModel):
         through `request_body`). Passing `request_body = {"max_tokens": null}`
         removes it again — the merge runs after the default is applied.
 
-    Supply either `base_url` OR both `resource_name` and `deployment_id`.
+    Supply either `base_url`, which names the deployment in its path, OR
+    `deployment_id` (with `resource_name` or `AZURE_OPENAI_ENDPOINT`). There is
+    no `"azure/<model>"` shorthand: Azure serves only the deployments created on
+    a resource, under whatever names they were given, so a model name does not
+    identify one.
     """
     model_config = pydantic.ConfigDict(
         arbitrary_types_allowed=True,
@@ -81,12 +91,11 @@ class AzureClient(pydantic.BaseModel):
     stop: typing.Optional[typing.List[str]] = None
     seed: typing.Optional[int] = None
     capture_wire: bool
-    new       = staticmethod(_define_function("openai.AzureClient.new", "sync",  ["model"], ["resource_name", "deployment_id", "api_version", "base_url", "api_key", "request_body", "headers", "query_params", "temperature", "max_tokens", "max_completion_tokens", "top_p", "stop", "seed", "capture_wire"], binding_name="new", binding_qualname="AzureClient.new", binding_module=__name__))
-    new_async = staticmethod(_define_function("openai.AzureClient.new", "async", ["model"], ["resource_name", "deployment_id", "api_version", "base_url", "api_key", "request_body", "headers", "query_params", "temperature", "max_tokens", "max_completion_tokens", "top_p", "stop", "seed", "capture_wire"], binding_name="new_async", binding_qualname="AzureClient.new_async", binding_module=__name__))
+    timeout: typing.Union[baml.time.Duration, ai.LlmTimeoutOptions, None] = None
+    new       = staticmethod(_define_function("openai.AzureClient.new", "sync",  ["model"], ["resource_name", "deployment_id", "api_version", "base_url", "api_key", "request_body", "headers", "query_params", "temperature", "max_tokens", "max_completion_tokens", "top_p", "stop", "seed", "capture_wire", "timeout"], binding_name="new", binding_qualname="AzureClient.new", binding_module=__name__))
+    new_async = staticmethod(_define_function("openai.AzureClient.new", "async", ["model"], ["resource_name", "deployment_id", "api_version", "base_url", "api_key", "request_body", "headers", "query_params", "temperature", "max_tokens", "max_completion_tokens", "top_p", "stop", "seed", "capture_wire", "timeout"], binding_name="new_async", binding_qualname="AzureClient.new_async", binding_module=__name__))
     resolved_api_key       = _define_function("openai.AzureClient.resolved_api_key", "sync",  ["self"], binding_name="resolved_api_key", binding_qualname="AzureClient.resolved_api_key", binding_module=__name__)
     resolved_api_key_async = _define_function("openai.AzureClient.resolved_api_key", "async", ["self"], binding_name="resolved_api_key_async", binding_qualname="AzureClient.resolved_api_key_async", binding_module=__name__)
-    resolved_deployment_id       = _define_function("openai.AzureClient.resolved_deployment_id", "sync",  ["self"], binding_name="resolved_deployment_id", binding_qualname="AzureClient.resolved_deployment_id", binding_module=__name__)
-    resolved_deployment_id_async = _define_function("openai.AzureClient.resolved_deployment_id", "async", ["self"], binding_name="resolved_deployment_id_async", binding_qualname="AzureClient.resolved_deployment_id_async", binding_module=__name__)
     resolved_base_url       = _define_function("openai.AzureClient.resolved_base_url", "sync",  ["self"], binding_name="resolved_base_url", binding_qualname="AzureClient.resolved_base_url", binding_module=__name__)
     resolved_base_url_async = _define_function("openai.AzureClient.resolved_base_url", "async", ["self"], binding_name="resolved_base_url_async", binding_qualname="AzureClient.resolved_base_url_async", binding_module=__name__)
     compat       = _define_function("openai.AzureClient.compat", "sync",  ["self"], binding_name="compat", binding_qualname="AzureClient.compat", binding_module=__name__)
@@ -106,6 +115,34 @@ class ChatClient(pydantic.BaseModel):
     `openai.GenericClient`, `openai.OllamaClient`, `openai.OpenRouterClient` or
     `openai.AzureClient`, which are the same wire core with different compat
     flags (`openai/ns_internal/chat.baml`).
+
+    Attributes:
+        model
+        api_key
+        base_url
+        timeout
+        request_body
+        headers
+        query_params
+        temperature
+        max_tokens
+        max_completion_tokens
+        top_p
+        stop
+        seed
+        capture_wire
+        structured_output: Hold the model to the output type with OpenAI Structured Outputs: the
+            request carries a strict JSON Schema of the type as `response_format`,
+            and the answer is read strictly as JSON rather than parsed leniently.
+
+            The model sees that schema, with every `@description` and `///` on the
+            type's classes, fields and enum variants, so the prompt need not
+            include `${ctx.output_format()}`. A prompt that keeps it sends the
+            schema twice, which is harmless but costs tokens.
+
+            An output type strict mode cannot describe (a map, media, a type with
+            no JSON form) is rejected before the request is sent, and so is a call
+            that streams: streaming does not support it yet.
     """
     model_config = pydantic.ConfigDict(
         arbitrary_types_allowed=True,
@@ -115,8 +152,7 @@ class ChatClient(pydantic.BaseModel):
     model: str
     api_key: typing.Optional[ai.Credential] = None
     base_url: typing.Optional[ai.Credential] = None
-    request_timeout_ms: typing.Optional[int] = None
-    time_to_first_token_timeout_ms: typing.Optional[int] = None
+    timeout: typing.Union[baml.time.Duration, ai.LlmTimeoutOptions, None] = None
     request_body: typing.Optional[baml.json.json] = None
     headers: typing.Optional[typing.Dict[str, str]] = None
     query_params: typing.Optional[typing.Dict[str, str]] = None
@@ -127,8 +163,9 @@ class ChatClient(pydantic.BaseModel):
     stop: typing.Optional[typing.List[str]] = None
     seed: typing.Optional[int] = None
     capture_wire: bool
-    new       = staticmethod(_define_function("openai.ChatClient.new", "sync",  [], ["model", "api_key", "base_url", "request_timeout_ms", "time_to_first_token_timeout_ms", "request_body", "headers", "query_params", "temperature", "max_tokens", "max_completion_tokens", "top_p", "stop", "seed", "capture_wire"], binding_name="new", binding_qualname="ChatClient.new", binding_module=__name__))
-    new_async = staticmethod(_define_function("openai.ChatClient.new", "async", [], ["model", "api_key", "base_url", "request_timeout_ms", "time_to_first_token_timeout_ms", "request_body", "headers", "query_params", "temperature", "max_tokens", "max_completion_tokens", "top_p", "stop", "seed", "capture_wire"], binding_name="new_async", binding_qualname="ChatClient.new_async", binding_module=__name__))
+    structured_output: bool
+    new       = staticmethod(_define_function("openai.ChatClient.new", "sync",  [], ["model", "api_key", "base_url", "timeout", "request_body", "headers", "query_params", "temperature", "max_tokens", "max_completion_tokens", "top_p", "stop", "seed", "capture_wire", "structured_output"], binding_name="new", binding_qualname="ChatClient.new", binding_module=__name__))
+    new_async = staticmethod(_define_function("openai.ChatClient.new", "async", [], ["model", "api_key", "base_url", "timeout", "request_body", "headers", "query_params", "temperature", "max_tokens", "max_completion_tokens", "top_p", "stop", "seed", "capture_wire", "structured_output"], binding_name="new_async", binding_qualname="ChatClient.new_async", binding_module=__name__))
     resolved_api_key       = _define_function("openai.ChatClient.resolved_api_key", "sync",  ["self"], binding_name="resolved_api_key", binding_qualname="ChatClient.resolved_api_key", binding_module=__name__)
     resolved_api_key_async = _define_function("openai.ChatClient.resolved_api_key", "async", ["self"], binding_name="resolved_api_key_async", binding_qualname="ChatClient.resolved_api_key_async", binding_module=__name__)
     resolved_base_url       = _define_function("openai.ChatClient.resolved_base_url", "sync",  ["self"], binding_name="resolved_base_url", binding_qualname="ChatClient.resolved_base_url", binding_module=__name__)
@@ -137,6 +174,29 @@ class ChatClient(pydantic.BaseModel):
     compat_async = _define_function("openai.ChatClient.compat", "async", ["self"], binding_name="compat_async", binding_qualname="ChatClient.compat_async", binding_module=__name__)
     params       = _define_function("openai.ChatClient.params", "sync",  ["self"], ["preview"], binding_name="params", binding_qualname="ChatClient.params", binding_module=__name__)
     params_async = _define_function("openai.ChatClient.params", "async", ["self"], ["preview"], binding_name="params_async", binding_qualname="ChatClient.params_async", binding_module=__name__)
+
+
+class DecisionsClient(pydantic.BaseModel):
+    """
+    OpenAI Decisions (POST {base_url}/decisions), with TypeSafe-style outputs.
+    Bool outputs threshold a predicate at 0.5; float outputs retain its probability.
+    Enums and finite unions use Choice. Classes flatten into one question per leaf.
+    Use role("instructions") or @description for questions, and user content for
+    evidence. Text and images are supported; tools and streaming are not.
+    Float outputs are probabilities, not the API's ordered-rubric score type.
+    """
+    model_config = pydantic.ConfigDict(
+        arbitrary_types_allowed=True,
+        extra="ignore",
+        populate_by_name=True,
+    )
+    model: str
+    api_key: typing.Optional[ai.Credential] = None
+    base_url: typing.Optional[ai.Credential] = None
+    timeout: typing.Union[baml.time.Duration, ai.LlmTimeoutOptions, None] = None
+    capture_wire: bool
+    new       = staticmethod(_define_function("openai.DecisionsClient.new", "sync",  [], ["model", "api_key", "base_url", "timeout", "capture_wire"], binding_name="new", binding_qualname="DecisionsClient.new", binding_module=__name__))
+    new_async = staticmethod(_define_function("openai.DecisionsClient.new", "async", [], ["model", "api_key", "base_url", "timeout", "capture_wire"], binding_name="new_async", binding_qualname="DecisionsClient.new_async", binding_module=__name__))
 
 
 class GenericClient(pydantic.BaseModel):
@@ -162,8 +222,7 @@ class GenericClient(pydantic.BaseModel):
     model: str
     base_url: typing.Optional[ai.Credential] = None
     api_key: typing.Optional[ai.Credential] = None
-    request_timeout_ms: typing.Optional[int] = None
-    time_to_first_token_timeout_ms: typing.Optional[int] = None
+    timeout: typing.Union[baml.time.Duration, ai.LlmTimeoutOptions, None] = None
     request_body: typing.Optional[baml.json.json] = None
     headers: typing.Optional[typing.Dict[str, str]] = None
     query_params: typing.Optional[typing.Dict[str, str]] = None
@@ -173,8 +232,8 @@ class GenericClient(pydantic.BaseModel):
     stop: typing.Optional[typing.List[str]] = None
     seed: typing.Optional[int] = None
     capture_wire: bool
-    new       = staticmethod(_define_function("openai.GenericClient.new", "sync",  ["model"], ["base_url", "api_key", "request_timeout_ms", "time_to_first_token_timeout_ms", "request_body", "headers", "query_params", "temperature", "max_tokens", "top_p", "stop", "seed", "capture_wire"], binding_name="new", binding_qualname="GenericClient.new", binding_module=__name__))
-    new_async = staticmethod(_define_function("openai.GenericClient.new", "async", ["model"], ["base_url", "api_key", "request_timeout_ms", "time_to_first_token_timeout_ms", "request_body", "headers", "query_params", "temperature", "max_tokens", "top_p", "stop", "seed", "capture_wire"], binding_name="new_async", binding_qualname="GenericClient.new_async", binding_module=__name__))
+    new       = staticmethod(_define_function("openai.GenericClient.new", "sync",  ["model"], ["base_url", "api_key", "timeout", "request_body", "headers", "query_params", "temperature", "max_tokens", "top_p", "stop", "seed", "capture_wire"], binding_name="new", binding_qualname="GenericClient.new", binding_module=__name__))
+    new_async = staticmethod(_define_function("openai.GenericClient.new", "async", ["model"], ["base_url", "api_key", "timeout", "request_body", "headers", "query_params", "temperature", "max_tokens", "top_p", "stop", "seed", "capture_wire"], binding_name="new_async", binding_qualname="GenericClient.new_async", binding_module=__name__))
     resolved_api_key       = _define_function("openai.GenericClient.resolved_api_key", "sync",  ["self"], binding_name="resolved_api_key", binding_qualname="GenericClient.resolved_api_key", binding_module=__name__)
     resolved_api_key_async = _define_function("openai.GenericClient.resolved_api_key", "async", ["self"], binding_name="resolved_api_key_async", binding_qualname="GenericClient.resolved_api_key_async", binding_module=__name__)
     resolved_base_url       = _define_function("openai.GenericClient.resolved_base_url", "sync",  ["self"], binding_name="resolved_base_url", binding_qualname="GenericClient.resolved_base_url", binding_module=__name__)
@@ -224,8 +283,9 @@ class ImageClient(pydantic.BaseModel):
     headers: typing.Optional[typing.Dict[str, str]] = None
     query_params: typing.Optional[typing.Dict[str, str]] = None
     capture_wire: bool
-    new       = staticmethod(_define_function("openai.ImageClient.new", "sync",  [], ["model", "api_key", "base_url", "n", "size", "quality", "background", "output_format", "output_compression", "moderation", "style", "user", "response_format", "request_body", "headers", "query_params", "capture_wire"], binding_name="new", binding_qualname="ImageClient.new", binding_module=__name__))
-    new_async = staticmethod(_define_function("openai.ImageClient.new", "async", [], ["model", "api_key", "base_url", "n", "size", "quality", "background", "output_format", "output_compression", "moderation", "style", "user", "response_format", "request_body", "headers", "query_params", "capture_wire"], binding_name="new_async", binding_qualname="ImageClient.new_async", binding_module=__name__))
+    timeout: typing.Union[baml.time.Duration, ai.LlmTimeoutOptions, None] = None
+    new       = staticmethod(_define_function("openai.ImageClient.new", "sync",  [], ["model", "api_key", "base_url", "n", "size", "quality", "background", "output_format", "output_compression", "moderation", "style", "user", "response_format", "request_body", "headers", "query_params", "capture_wire", "timeout"], binding_name="new", binding_qualname="ImageClient.new", binding_module=__name__))
+    new_async = staticmethod(_define_function("openai.ImageClient.new", "async", [], ["model", "api_key", "base_url", "n", "size", "quality", "background", "output_format", "output_compression", "moderation", "style", "user", "response_format", "request_body", "headers", "query_params", "capture_wire", "timeout"], binding_name="new_async", binding_qualname="ImageClient.new_async", binding_module=__name__))
     resolved_api_key       = _define_function("openai.ImageClient.resolved_api_key", "sync",  ["self"], binding_name="resolved_api_key", binding_qualname="ImageClient.resolved_api_key", binding_module=__name__)
     resolved_api_key_async = _define_function("openai.ImageClient.resolved_api_key", "async", ["self"], binding_name="resolved_api_key_async", binding_qualname="ImageClient.resolved_api_key_async", binding_module=__name__)
     resolved_base_url       = _define_function("openai.ImageClient.resolved_base_url", "sync",  ["self"], binding_name="resolved_base_url", binding_qualname="ImageClient.resolved_base_url", binding_module=__name__)
@@ -266,8 +326,9 @@ class OllamaClient(pydantic.BaseModel):
     stop: typing.Optional[typing.List[str]] = None
     seed: typing.Optional[int] = None
     capture_wire: bool
-    new       = staticmethod(_define_function("openai.OllamaClient.new", "sync",  ["model"], ["base_url", "api_key", "request_body", "headers", "query_params", "temperature", "max_tokens", "top_p", "stop", "seed", "capture_wire"], binding_name="new", binding_qualname="OllamaClient.new", binding_module=__name__))
-    new_async = staticmethod(_define_function("openai.OllamaClient.new", "async", ["model"], ["base_url", "api_key", "request_body", "headers", "query_params", "temperature", "max_tokens", "top_p", "stop", "seed", "capture_wire"], binding_name="new_async", binding_qualname="OllamaClient.new_async", binding_module=__name__))
+    timeout: typing.Union[baml.time.Duration, ai.LlmTimeoutOptions, None] = None
+    new       = staticmethod(_define_function("openai.OllamaClient.new", "sync",  ["model"], ["base_url", "api_key", "request_body", "headers", "query_params", "temperature", "max_tokens", "top_p", "stop", "seed", "capture_wire", "timeout"], binding_name="new", binding_qualname="OllamaClient.new", binding_module=__name__))
+    new_async = staticmethod(_define_function("openai.OllamaClient.new", "async", ["model"], ["base_url", "api_key", "request_body", "headers", "query_params", "temperature", "max_tokens", "top_p", "stop", "seed", "capture_wire", "timeout"], binding_name="new_async", binding_qualname="OllamaClient.new_async", binding_module=__name__))
     resolved_api_key       = _define_function("openai.OllamaClient.resolved_api_key", "sync",  ["self"], binding_name="resolved_api_key", binding_qualname="OllamaClient.resolved_api_key", binding_module=__name__)
     resolved_api_key_async = _define_function("openai.OllamaClient.resolved_api_key", "async", ["self"], binding_name="resolved_api_key_async", binding_qualname="OllamaClient.resolved_api_key_async", binding_module=__name__)
     resolved_base_url       = _define_function("openai.OllamaClient.resolved_base_url", "sync",  ["self"], binding_name="resolved_base_url", binding_qualname="OllamaClient.resolved_base_url", binding_module=__name__)
@@ -310,8 +371,9 @@ class OpenRouterClient(pydantic.BaseModel):
     stop: typing.Optional[typing.List[str]] = None
     seed: typing.Optional[int] = None
     capture_wire: bool
-    new       = staticmethod(_define_function("openai.OpenRouterClient.new", "sync",  ["model"], ["api_key", "base_url", "request_body", "headers", "query_params", "temperature", "max_tokens", "top_p", "stop", "seed", "capture_wire"], binding_name="new", binding_qualname="OpenRouterClient.new", binding_module=__name__))
-    new_async = staticmethod(_define_function("openai.OpenRouterClient.new", "async", ["model"], ["api_key", "base_url", "request_body", "headers", "query_params", "temperature", "max_tokens", "top_p", "stop", "seed", "capture_wire"], binding_name="new_async", binding_qualname="OpenRouterClient.new_async", binding_module=__name__))
+    timeout: typing.Union[baml.time.Duration, ai.LlmTimeoutOptions, None] = None
+    new       = staticmethod(_define_function("openai.OpenRouterClient.new", "sync",  ["model"], ["api_key", "base_url", "request_body", "headers", "query_params", "temperature", "max_tokens", "top_p", "stop", "seed", "capture_wire", "timeout"], binding_name="new", binding_qualname="OpenRouterClient.new", binding_module=__name__))
+    new_async = staticmethod(_define_function("openai.OpenRouterClient.new", "async", ["model"], ["api_key", "base_url", "request_body", "headers", "query_params", "temperature", "max_tokens", "top_p", "stop", "seed", "capture_wire", "timeout"], binding_name="new_async", binding_qualname="OpenRouterClient.new_async", binding_module=__name__))
     resolved_api_key       = _define_function("openai.OpenRouterClient.resolved_api_key", "sync",  ["self"], binding_name="resolved_api_key", binding_qualname="OpenRouterClient.resolved_api_key", binding_module=__name__)
     resolved_api_key_async = _define_function("openai.OpenRouterClient.resolved_api_key", "async", ["self"], binding_name="resolved_api_key_async", binding_qualname="OpenRouterClient.resolved_api_key_async", binding_module=__name__)
     resolved_base_url       = _define_function("openai.OpenRouterClient.resolved_base_url", "sync",  ["self"], binding_name="resolved_base_url", binding_qualname="OpenRouterClient.resolved_base_url", binding_module=__name__)
@@ -337,9 +399,9 @@ class ResponsesClient(pydantic.BaseModel):
         request as the LAST step, `null` deletes a key), `headers` and
         `query_params`.
 
-    Structured output stays SAP-based: the schema rides in the prompt text and
-    `text.format` is deliberately never set. A caller who
-    wants native JSON-schema output sets it through `request_body`.
+    By default the output schema rides in the prompt text and the answer is
+    parsed with SAP. `structured_output` sends OpenAI Structured Outputs
+    instead (`text.format`), and reads the answer strictly.
 
     Deliberately not provided: the engine's `finish_reason_allow_list` and
     `finish_reason_deny_list`. There is no config surface for them here and
@@ -353,8 +415,7 @@ class ResponsesClient(pydantic.BaseModel):
         model
         api_key
         base_url
-        request_timeout_ms
-        time_to_first_token_timeout_ms
+        timeout
         temperature
         top_p
         max_output_tokens
@@ -369,6 +430,18 @@ class ResponsesClient(pydantic.BaseModel):
         headers: Extra request headers, applied (lowercased) before authorization.
         query_params: Extra URL query parameters, percent-encoded onto the endpoint.
         capture_wire
+        structured_output: Hold the model to the output type with OpenAI Structured Outputs: the
+            request carries a strict JSON Schema of the type as `text.format`, and
+            the answer is read strictly as JSON rather than parsed leniently.
+
+            The model sees that schema, with every `@description` and `///` on the
+            type's classes, fields and enum variants, so the prompt need not
+            include `${ctx.output_format()}`. A prompt that keeps it sends the
+            schema twice, which is harmless but costs tokens.
+
+            An output type strict mode cannot describe (a map, media, a type with
+            no JSON form) is rejected before the request is sent, and so is a call
+            that streams: streaming does not support it yet.
     """
     model_config = pydantic.ConfigDict(
         arbitrary_types_allowed=True,
@@ -378,8 +451,7 @@ class ResponsesClient(pydantic.BaseModel):
     model: str
     api_key: typing.Optional[ai.Credential] = None
     base_url: typing.Optional[ai.Credential] = None
-    request_timeout_ms: typing.Optional[int] = None
-    time_to_first_token_timeout_ms: typing.Optional[int] = None
+    timeout: typing.Union[baml.time.Duration, ai.LlmTimeoutOptions, None] = None
     temperature: typing.Optional[float] = None
     top_p: typing.Optional[float] = None
     max_output_tokens: typing.Optional[int] = None
@@ -392,8 +464,9 @@ class ResponsesClient(pydantic.BaseModel):
     headers: typing.Optional[typing.Dict[str, str]] = None
     query_params: typing.Optional[typing.Dict[str, str]] = None
     capture_wire: bool
-    new       = staticmethod(_define_function("openai.ResponsesClient.new", "sync",  [], ["model", "api_key", "base_url", "request_timeout_ms", "time_to_first_token_timeout_ms", "temperature", "top_p", "max_output_tokens", "reasoning_effort", "reasoning_summary", "verbosity", "parallel_tool_calls", "store", "request_body", "headers", "query_params", "capture_wire"], binding_name="new", binding_qualname="ResponsesClient.new", binding_module=__name__))
-    new_async = staticmethod(_define_function("openai.ResponsesClient.new", "async", [], ["model", "api_key", "base_url", "request_timeout_ms", "time_to_first_token_timeout_ms", "temperature", "top_p", "max_output_tokens", "reasoning_effort", "reasoning_summary", "verbosity", "parallel_tool_calls", "store", "request_body", "headers", "query_params", "capture_wire"], binding_name="new_async", binding_qualname="ResponsesClient.new_async", binding_module=__name__))
+    structured_output: bool
+    new       = staticmethod(_define_function("openai.ResponsesClient.new", "sync",  [], ["model", "api_key", "base_url", "timeout", "temperature", "top_p", "max_output_tokens", "reasoning_effort", "reasoning_summary", "verbosity", "parallel_tool_calls", "store", "request_body", "headers", "query_params", "capture_wire", "structured_output"], binding_name="new", binding_qualname="ResponsesClient.new", binding_module=__name__))
+    new_async = staticmethod(_define_function("openai.ResponsesClient.new", "async", [], ["model", "api_key", "base_url", "timeout", "temperature", "top_p", "max_output_tokens", "reasoning_effort", "reasoning_summary", "verbosity", "parallel_tool_calls", "store", "request_body", "headers", "query_params", "capture_wire", "structured_output"], binding_name="new_async", binding_qualname="ResponsesClient.new_async", binding_module=__name__))
     resolved_api_key       = _define_function("openai.ResponsesClient.resolved_api_key", "sync",  ["self"], binding_name="resolved_api_key", binding_qualname="ResponsesClient.resolved_api_key", binding_module=__name__)
     resolved_api_key_async = _define_function("openai.ResponsesClient.resolved_api_key", "async", ["self"], binding_name="resolved_api_key_async", binding_qualname="ResponsesClient.resolved_api_key_async", binding_module=__name__)
     resolved_base_url       = _define_function("openai.ResponsesClient.resolved_base_url", "sync",  ["self"], binding_name="resolved_base_url", binding_qualname="ResponsesClient.resolved_base_url", binding_module=__name__)
@@ -403,6 +476,7 @@ class ResponsesClient(pydantic.BaseModel):
 __all__ = [
     "AzureClient",
     "ChatClient",
+    "DecisionsClient",
     "GenericClient",
     "ImageClient",
     "OllamaClient",

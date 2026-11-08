@@ -31,8 +31,10 @@ if typing.TYPE_CHECKING:
     from .... import vendor
     from ....baml import UNSET as UNSET
 
+from ...._invocation_types import BamlOptions as _BamlOptions
 
-def gcp_access_token(credentials_json: typing.Optional[str], scope: str) -> str:
+
+def gcp_access_token(credentials_json: typing.Optional[str], scope: str, *, _baml: _BamlOptions | None = None) -> str:
     """Mints a Google Cloud OAuth2 access token for `scope`, returning the bare
     token (build `Bearer ${token}` yourself). Raises if no usable credential is
     found.
@@ -50,7 +52,7 @@ def gcp_access_token(credentials_json: typing.Optional[str], scope: str) -> str:
 
     Raises:
         AccessError, Io"""
-async def gcp_access_token_async(credentials_json: typing.Optional[str], scope: str) -> str:
+async def gcp_access_token_async(credentials_json: typing.Optional[str], scope: str, *, _baml: _BamlOptions | None = None) -> str:
     """Mints a Google Cloud OAuth2 access token for `scope`, returning the bare
     token (build `Bearer ${token}` yourself). Raises if no usable credential is
     found.
@@ -70,23 +72,23 @@ async def gcp_access_token_async(credentials_json: typing.Optional[str], scope: 
         AccessError, Io"""
 
 
-def gcp_project_id(credentials_json: typing.Optional[str]) -> typing.Optional[str]:
+def gcp_project_id(credentials_json: typing.Optional[str], *, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
     """Resolves the project id from `credentials_json` when it carries one, else
     from the google-auth chain (`GOOGLE_CLOUD_PROJECT` / `GCLOUD_PROJECT`, the
     ADC and gcloud config files, the GCE metadata server). `null` means "not
     discoverable" — the caller reports it."""
-async def gcp_project_id_async(credentials_json: typing.Optional[str]) -> typing.Optional[str]:
+async def gcp_project_id_async(credentials_json: typing.Optional[str], *, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
     """Resolves the project id from `credentials_json` when it carries one, else
     from the google-auth chain (`GOOGLE_CLOUD_PROJECT` / `GCLOUD_PROJECT`, the
     ADC and gcloud config files, the GCE metadata server). `null` means "not
     discoverable" — the caller reports it."""
 
 
-def gcp_quota_project_id(credentials_json: typing.Optional[str]) -> typing.Optional[str]:
+def gcp_quota_project_id(credentials_json: typing.Optional[str], *, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
     """Resolves the quota/billing project for the `x-goog-user-project` header,
     matching google-auth's `Credentials.apply`: `GOOGLE_CLOUD_QUOTA_PROJECT`
     always wins, then the credential document's `quota_project_id`."""
-async def gcp_quota_project_id_async(credentials_json: typing.Optional[str]) -> typing.Optional[str]:
+async def gcp_quota_project_id_async(credentials_json: typing.Optional[str], *, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
     """Resolves the quota/billing project for the `x-goog-user-project` header,
     matching google-auth's `Credentials.apply`: `GOOGLE_CLOUD_QUOTA_PROJECT`
     always wins, then the credential document's `quota_project_id`."""
@@ -121,31 +123,31 @@ class GmPart(pydantic.BaseModel):
     functionResponse: typing.Optional[GmFunctionResponse] = None
     thoughtSignature: typing.Optional[str] = None
     @staticmethod
-    def of_text(text: str) -> GmPart: ...
+    def of_text(text: str, *, _baml: _BamlOptions | None = None) -> GmPart: ...
     @staticmethod
-    async def of_text_async(text: str) -> GmPart: ...
+    async def of_text_async(text: str, *, _baml: _BamlOptions | None = None) -> GmPart: ...
     @staticmethod
-    def of_inline_data(data: GmInlineData) -> GmPart: ...
+    def of_inline_data(data: GmInlineData, *, _baml: _BamlOptions | None = None) -> GmPart: ...
     @staticmethod
-    async def of_inline_data_async(data: GmInlineData) -> GmPart: ...
+    async def of_inline_data_async(data: GmInlineData, *, _baml: _BamlOptions | None = None) -> GmPart: ...
     @staticmethod
-    def of_file_data(data: GmFileData) -> GmPart: ...
+    def of_file_data(data: GmFileData, *, _baml: _BamlOptions | None = None) -> GmPart: ...
     @staticmethod
-    async def of_file_data_async(data: GmFileData) -> GmPart: ...
+    async def of_file_data_async(data: GmFileData, *, _baml: _BamlOptions | None = None) -> GmPart: ...
     @staticmethod
-    def of_function_call(call: GmFunctionCall, signature: typing.Optional[str]) -> GmPart:
+    def of_function_call(call: GmFunctionCall, signature: typing.Optional[str], *, _baml: _BamlOptions | None = None) -> GmPart:
         """`signature` is the `thoughtSignature` Gemini issued alongside this call
         (null for a model that issues none, and for a call replayed from a
         journal written before it existed)."""
     @staticmethod
-    async def of_function_call_async(call: GmFunctionCall, signature: typing.Optional[str]) -> GmPart:
+    async def of_function_call_async(call: GmFunctionCall, signature: typing.Optional[str], *, _baml: _BamlOptions | None = None) -> GmPart:
         """`signature` is the `thoughtSignature` Gemini issued alongside this call
         (null for a model that issues none, and for a call replayed from a
         journal written before it existed)."""
     @staticmethod
-    def of_function_response(response: GmFunctionResponse) -> GmPart: ...
+    def of_function_response(response: GmFunctionResponse, *, _baml: _BamlOptions | None = None) -> GmPart: ...
     @staticmethod
-    async def of_function_response_async(response: GmFunctionResponse) -> GmPart: ...
+    async def of_function_response_async(response: GmFunctionResponse, *, _baml: _BamlOptions | None = None) -> GmPart: ...
 
 
 class GmContent(pydantic.BaseModel):
@@ -262,79 +264,79 @@ class GmResponse(pydantic.BaseModel):
     error: typing.Optional[GmError] = None
 
 
-def _gm_is_opaque_key(key: str) -> bool:
+def _gm_is_opaque_key(key: str, *, _baml: _BamlOptions | None = None) -> bool:
     """(internal) Keys whose values are documents supplied by the caller or by reflection, not
     wire fields we own: a `null` inside them is DATA (a JSON Schema default, a
     tool argument) and must survive."""
-async def _gm_is_opaque_key_async(key: str) -> bool:
+async def _gm_is_opaque_key_async(key: str, *, _baml: _BamlOptions | None = None) -> bool:
     """(internal) Keys whose values are documents supplied by the caller or by reflection, not
     wire fields we own: a `null` inside them is DATA (a JSON Schema default, a
     tool argument) and must survive."""
 
 
-def _gm_strip_nulls(value: baml.json.json, opaque: bool) -> baml.json.json:
+def _gm_strip_nulls(value: baml.json.json, opaque: bool, *, _baml: _BamlOptions | None = None) -> baml.json.json:
     """(internal) Drop every null-valued object entry, recursively — the BAML equivalent of
     serde's `skip_serializing_if = "Option::is_none"`. Array ELEMENTS are never
     dropped (a null element is a positional value), and `_gm_is_opaque_key`
     subtrees are copied verbatim."""
-async def _gm_strip_nulls_async(value: baml.json.json, opaque: bool) -> baml.json.json:
+async def _gm_strip_nulls_async(value: baml.json.json, opaque: bool, *, _baml: _BamlOptions | None = None) -> baml.json.json:
     """(internal) Drop every null-valued object entry, recursively — the BAML equivalent of
     serde's `skip_serializing_if = "Option::is_none"`. Array ELEMENTS are never
     dropped (a null element is a positional value), and `_gm_is_opaque_key`
     subtrees are copied verbatim."""
 
 
-def _gm_encode_query(value: str) -> str:
+def _gm_encode_query(value: str, *, _baml: _BamlOptions | None = None) -> str:
     """(internal) A query-string component. There is no percent-encoder in the stdlib, so this
     covers the characters that would otherwise change the URL's structure plus
     the ones that are simply illegal in a query. Values that need more than this
     (raw UTF-8, control characters) should be encoded by the caller."""
-async def _gm_encode_query_async(value: str) -> str:
+async def _gm_encode_query_async(value: str, *, _baml: _BamlOptions | None = None) -> str:
     """(internal) A query-string component. There is no percent-encoder in the stdlib, so this
     covers the characters that would otherwise change the URL's structure plus
     the ones that are simply illegal in a query. Values that need more than this
     (raw UTF-8, control characters) should be encoded by the caller."""
 
 
-def _gm_apply_query(url: str, params: typing.Optional[typing.Dict[str, str]]) -> str:
+def _gm_apply_query(url: str, params: typing.Optional[typing.Dict[str, str]], *, _baml: _BamlOptions | None = None) -> str:
     """(internal) Append `params` to `url`, respecting a query string the URL already has
     (`:streamGenerateContent?alt=sse`)."""
-async def _gm_apply_query_async(url: str, params: typing.Optional[typing.Dict[str, str]]) -> str:
+async def _gm_apply_query_async(url: str, params: typing.Optional[typing.Dict[str, str]], *, _baml: _BamlOptions | None = None) -> str:
     """(internal) Append `params` to `url`, respecting a query string the URL already has
     (`:streamGenerateContent?alt=sse`)."""
 
 
-def _gm_apply_headers(headers: typing.Dict[str, str], extra: typing.Optional[typing.Dict[str, str]]) -> typing.Dict[str, str]:
+def _gm_apply_headers(headers: typing.Dict[str, str], extra: typing.Optional[typing.Dict[str, str]], *, _baml: _BamlOptions | None = None) -> typing.Dict[str, str]:
     """(internal) Apply the caller's `headers` option over the provider defaults. Header names
     are lower-cased, matching what the HTTP layer does on the wire. Auth headers
     are set AFTER this, so a user header can never displace credentials."""
-async def _gm_apply_headers_async(headers: typing.Dict[str, str], extra: typing.Optional[typing.Dict[str, str]]) -> typing.Dict[str, str]:
+async def _gm_apply_headers_async(headers: typing.Dict[str, str], extra: typing.Optional[typing.Dict[str, str]], *, _baml: _BamlOptions | None = None) -> typing.Dict[str, str]:
     """(internal) Apply the caller's `headers` option over the provider defaults. Header names
     are lower-cased, matching what the HTTP layer does on the wire. Auth headers
     are set AFTER this, so a user header can never displace credentials."""
 
 
-def _gm_generation_config(temperature: typing.Optional[float], max_output_tokens: typing.Optional[int], top_p: typing.Optional[float], top_k: typing.Optional[int], stop_sequences: typing.Optional[typing.List[str]], response_modalities: typing.Optional[typing.List[str]]) -> typing.Optional[GmGenerationConfig]:
+def _gm_generation_config(temperature: typing.Optional[float], max_output_tokens: typing.Optional[int], top_p: typing.Optional[float], top_k: typing.Optional[int], stop_sequences: typing.Optional[typing.List[str]], response_modalities: typing.Optional[typing.List[str]], *, _baml: _BamlOptions | None = None) -> typing.Optional[GmGenerationConfig]:
     """(internal) The typed `generationConfig`, or null when the client set none of its
     fields — an empty object would still be a wire difference."""
-async def _gm_generation_config_async(temperature: typing.Optional[float], max_output_tokens: typing.Optional[int], top_p: typing.Optional[float], top_k: typing.Optional[int], stop_sequences: typing.Optional[typing.List[str]], response_modalities: typing.Optional[typing.List[str]]) -> typing.Optional[GmGenerationConfig]:
+async def _gm_generation_config_async(temperature: typing.Optional[float], max_output_tokens: typing.Optional[int], top_p: typing.Optional[float], top_k: typing.Optional[int], stop_sequences: typing.Optional[typing.List[str]], response_modalities: typing.Optional[typing.List[str]], *, _baml: _BamlOptions | None = None) -> typing.Optional[GmGenerationConfig]:
     """(internal) The typed `generationConfig`, or null when the client set none of its
     fields — an empty object would still be a wire difference."""
 
 
-def _gm_media_url(media: ai.MediaPart) -> typing.Optional[str]:
+def _gm_media_url(media: ai.MediaPart, *, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
     """(internal) The URL a media part was built from, if it was built from one at all."""
-async def _gm_media_url_async(media: ai.MediaPart) -> typing.Optional[str]:
+async def _gm_media_url_async(media: ai.MediaPart, *, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
     """(internal) The URL a media part was built from, if it was built from one at all."""
 
 
-def _gm_is_provider_uri(url: str) -> bool:
+def _gm_is_provider_uri(url: str, *, _baml: _BamlOptions | None = None) -> bool:
     """(internal) URLs the API resolves SERVER-SIDE and that must therefore never be fetched
     and inlined: `gs://` Cloud Storage objects (handled inside `resolve_media`
     itself), Files-API handles, and YouTube videos — a documented `fileData`
     input on both backends. Fetching a YouTube watch URL inlines the watch
     PAGE's HTML as base64 "video", which is garbage on the wire."""
-async def _gm_is_provider_uri_async(url: str) -> bool:
+async def _gm_is_provider_uri_async(url: str, *, _baml: _BamlOptions | None = None) -> bool:
     """(internal) URLs the API resolves SERVER-SIDE and that must therefore never be fetched
     and inlined: `gs://` Cloud Storage objects (handled inside `resolve_media`
     itself), Files-API handles, and YouTube videos — a documented `fileData`
@@ -342,17 +344,17 @@ async def _gm_is_provider_uri_async(url: str) -> bool:
     PAGE's HTML as base64 "video", which is garbage on the wire."""
 
 
-def _gm_mime_for_uri(url: str, mime: str) -> typing.Optional[str]:
+def _gm_mime_for_uri(url: str, mime: str, *, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
     """(internal) A `fileData` URI Gemini resolves by itself carries no MIME type we can know
     (a YouTube watch URL has no extension), so send none rather than the guess
     `resolve_media` derives from the URL's spelling."""
-async def _gm_mime_for_uri_async(url: str, mime: str) -> typing.Optional[str]:
+async def _gm_mime_for_uri_async(url: str, mime: str, *, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
     """(internal) A `fileData` URI Gemini resolves by itself carries no MIME type we can know
     (a YouTube watch URL has no extension), so send none rather than the guess
     `resolve_media` derives from the URL's spelling."""
 
 
-def _gm_media_part(media: ai.MediaPart, fetch_url: bool, *, preview: typing.Union[bool, UNSET] = False) -> GmPart:
+def _gm_media_part(media: ai.MediaPart, fetch_url: bool, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> GmPart:
     """(internal) One prompt media part -> `inlineData` (base64) or `fileData` (a URI the API
     resolves itself).
 
@@ -360,13 +362,13 @@ def _gm_media_part(media: ai.MediaPart, fetch_url: bool, *, preview: typing.Unio
     media defaults: the Gemini Developer API has no server-side URL fetch, so an
     http(s) URL is downloaded and inlined (`true`), while Vertex takes the URL
     through as `fileData.fileUri` (`false`) — which also keeps large media out
-    of the inline request-size cap. Local files always become base64 and
-    existing base64 is retained on both backends, and a `_gm_is_provider_uri`
+    of the inline request-size cap. Existing base64, which is what media built
+    from a file holds, is retained on both backends, and a `_gm_is_provider_uri`
     URL is passed through even when `fetch_url` is set.
 
     Raises:
-        InvalidArgument, Io, Timeout, NetworkFailure, PreviewUnsupported"""
-async def _gm_media_part_async(media: ai.MediaPart, fetch_url: bool, *, preview: typing.Union[bool, UNSET] = False) -> GmPart:
+        InvalidArgument, Timeout, NetworkFailure, PreviewUnsupported"""
+async def _gm_media_part_async(media: ai.MediaPart, fetch_url: bool, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> GmPart:
     """(internal) One prompt media part -> `inlineData` (base64) or `fileData` (a URI the API
     resolves itself).
 
@@ -374,15 +376,15 @@ async def _gm_media_part_async(media: ai.MediaPart, fetch_url: bool, *, preview:
     media defaults: the Gemini Developer API has no server-side URL fetch, so an
     http(s) URL is downloaded and inlined (`true`), while Vertex takes the URL
     through as `fileData.fileUri` (`false`) — which also keeps large media out
-    of the inline request-size cap. Local files always become base64 and
-    existing base64 is retained on both backends, and a `_gm_is_provider_uri`
+    of the inline request-size cap. Existing base64, which is what media built
+    from a file holds, is retained on both backends, and a `_gm_is_provider_uri`
     URL is passed through even when `fetch_url` is set.
 
     Raises:
-        InvalidArgument, Io, Timeout, NetworkFailure, PreviewUnsupported"""
+        InvalidArgument, Timeout, NetworkFailure, PreviewUnsupported"""
 
 
-def _lower_block(block: ai.content.Block, fetch_url: bool, *, preview: typing.Union[bool, UNSET] = False) -> GmPart:
+def _lower_block(block: ai.content.Block, fetch_url: bool, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> GmPart:
     """One content block -> one `Part`. Gemini takes every media kind at every
     position, so the table is all Accept and no position is passed:
 
@@ -396,8 +398,8 @@ def _lower_block(block: ai.content.Block, fetch_url: bool, *, preview: typing.Un
     go in `functionResponse.parts` (`lower_journal`).
 
     Raises:
-        InvalidArgument, Io, Timeout, NetworkFailure, PreviewUnsupported"""
-async def _lower_block_async(block: ai.content.Block, fetch_url: bool, *, preview: typing.Union[bool, UNSET] = False) -> GmPart:
+        InvalidArgument, Timeout, NetworkFailure, PreviewUnsupported"""
+async def _lower_block_async(block: ai.content.Block, fetch_url: bool, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> GmPart:
     """One content block -> one `Part`. Gemini takes every media kind at every
     position, so the table is all Accept and no position is passed:
 
@@ -411,15 +413,15 @@ async def _lower_block_async(block: ai.content.Block, fetch_url: bool, *, previe
     go in `functionResponse.parts` (`lower_journal`).
 
     Raises:
-        InvalidArgument, Io, Timeout, NetworkFailure, PreviewUnsupported"""
+        InvalidArgument, Timeout, NetworkFailure, PreviewUnsupported"""
 
 
-def _lower_blocks(blocks: typing.List[ai.content.Block], fetch_url: bool, *, preview: typing.Union[bool, UNSET] = False) -> typing.List[GmPart]:
+def _lower_blocks(blocks: typing.List[ai.content.Block], fetch_url: bool, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> typing.List[GmPart]:
     """Raises:
-        InvalidArgument, Io, Timeout, NetworkFailure, PreviewUnsupported"""
-async def _lower_blocks_async(blocks: typing.List[ai.content.Block], fetch_url: bool, *, preview: typing.Union[bool, UNSET] = False) -> typing.List[GmPart]:
+        InvalidArgument, Timeout, NetworkFailure, PreviewUnsupported"""
+async def _lower_blocks_async(blocks: typing.List[ai.content.Block], fetch_url: bool, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> typing.List[GmPart]:
     """Raises:
-        InvalidArgument, Io, Timeout, NetworkFailure, PreviewUnsupported"""
+        InvalidArgument, Timeout, NetworkFailure, PreviewUnsupported"""
 
 
 class Prompt(pydantic.BaseModel):
@@ -427,7 +429,7 @@ class Prompt(pydantic.BaseModel):
     contents: typing.List[GmContent]
 
 
-def lower_prompt(prompt: ai.Prompt, *, fetch_url: typing.Union[bool, UNSET] = True, preview: typing.Union[bool, UNSET] = False) -> Prompt:
+def lower_prompt(prompt: ai.Prompt, *, fetch_url: typing.Union[bool, UNSET] = True, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> Prompt:
     """Gemini spells assistant as `model` and carries system instructions outside
     `contents`. Role-less prompt content is an ordinary user turn.
 
@@ -436,8 +438,8 @@ def lower_prompt(prompt: ai.Prompt, *, fetch_url: typing.Union[bool, UNSET] = Tr
     builder and the shipped native behavior.
 
     Raises:
-        InvalidArgument, Io, Timeout, NetworkFailure, PreviewUnsupported"""
-async def lower_prompt_async(prompt: ai.Prompt, *, fetch_url: typing.Union[bool, UNSET] = True, preview: typing.Union[bool, UNSET] = False) -> Prompt:
+        InvalidArgument, Timeout, NetworkFailure, PreviewUnsupported"""
+async def lower_prompt_async(prompt: ai.Prompt, *, fetch_url: typing.Union[bool, UNSET] = True, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> Prompt:
     """Gemini spells assistant as `model` and carries system instructions outside
     `contents`. Role-less prompt content is an ordinary user turn.
 
@@ -446,10 +448,10 @@ async def lower_prompt_async(prompt: ai.Prompt, *, fetch_url: typing.Union[bool,
     builder and the shipped native behavior.
 
     Raises:
-        InvalidArgument, Io, Timeout, NetworkFailure, PreviewUnsupported"""
+        InvalidArgument, Timeout, NetworkFailure, PreviewUnsupported"""
 
 
-def _gm_sig_marker() -> str:
+def _gm_sig_marker(*, _baml: _BamlOptions | None = None) -> str:
     """(internal) ---------------------------------------------------------------------------
     Thought signatures (Gemini 3.x).
 
@@ -473,7 +475,7 @@ def _gm_sig_marker() -> str:
     Signatures are base64, which cannot contain `~`, so the marker is
     unambiguous; an id without it (another provider's journal, a journal written
     before this existed, a 2.x model) simply yields no signature."""
-async def _gm_sig_marker_async() -> str:
+async def _gm_sig_marker_async(*, _baml: _BamlOptions | None = None) -> str:
     """(internal) ---------------------------------------------------------------------------
     Thought signatures (Gemini 3.x).
 
@@ -499,17 +501,17 @@ async def _gm_sig_marker_async() -> str:
     before this existed, a 2.x model) simply yields no signature."""
 
 
-def _gm_encode_call_id(id: str, signature: typing.Optional[str]) -> str: ...
-async def _gm_encode_call_id_async(id: str, signature: typing.Optional[str]) -> str: ...
+def _gm_encode_call_id(id: str, signature: typing.Optional[str], *, _baml: _BamlOptions | None = None) -> str: ...
+async def _gm_encode_call_id_async(id: str, signature: typing.Optional[str], *, _baml: _BamlOptions | None = None) -> str: ...
 
 
-def _gm_call_id_signature(id: str) -> typing.Optional[str]:
+def _gm_call_id_signature(id: str, *, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
     """(internal) The `thoughtSignature` carried by a synthesized call id, if it carries one."""
-async def _gm_call_id_signature_async(id: str) -> typing.Optional[str]:
+async def _gm_call_id_signature_async(id: str, *, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
     """(internal) The `thoughtSignature` carried by a synthesized call id, if it carries one."""
 
 
-def lower_journal(j: ai.Journal, fetch_url: bool, *, preview: typing.Union[bool, UNSET] = False) -> typing.List[GmContent]:
+def lower_journal(j: ai.Journal, fetch_url: bool, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> typing.List[GmContent]:
     """ai.Journal -> generateContent `contents`. Only promptable events lower;
     ai.RunStarted, ai.ToolRequested, ai.Usage, and ai.FinalProduced are journal-only.
     Consecutive tool results merge into ONE user content of functionResponse
@@ -517,8 +519,8 @@ def lower_journal(j: ai.Journal, fetch_url: bool, *, preview: typing.Union[bool,
     correlates results by tool NAME, not id (`ai.wire.tool_name`).
 
     Raises:
-        InvalidArgument, Io, Timeout, NetworkFailure, PreviewUnsupported"""
-async def lower_journal_async(j: ai.Journal, fetch_url: bool, *, preview: typing.Union[bool, UNSET] = False) -> typing.List[GmContent]:
+        InvalidArgument, Timeout, NetworkFailure, PreviewUnsupported"""
+async def lower_journal_async(j: ai.Journal, fetch_url: bool, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> typing.List[GmContent]:
     """ai.Journal -> generateContent `contents`. Only promptable events lower;
     ai.RunStarted, ai.ToolRequested, ai.Usage, and ai.FinalProduced are journal-only.
     Consecutive tool results merge into ONE user content of functionResponse
@@ -526,10 +528,10 @@ async def lower_journal_async(j: ai.Journal, fetch_url: bool, *, preview: typing
     correlates results by tool NAME, not id (`ai.wire.tool_name`).
 
     Raises:
-        InvalidArgument, Io, Timeout, NetworkFailure, PreviewUnsupported"""
+        InvalidArgument, Timeout, NetworkFailure, PreviewUnsupported"""
 
 
-def gemini_build_body(input: ai.ModelTurnInput, client_id: str, generation_config: typing.Optional[GmGenerationConfig], safety_settings: typing.Optional[typing.List[vendor.google.SafetySetting]], request_body: typing.Optional[baml.json.json], *, fetch_url: typing.Union[bool, UNSET] = True, preview: typing.Union[bool, UNSET] = False) -> str:
+def gemini_build_body(input: ai.ModelTurnInput, provider: str, requested_model: str, generation_config: typing.Optional[GmGenerationConfig], safety_settings: typing.Optional[typing.List[vendor.google.SafetySetting]], request_body: typing.Optional[baml.json.json], *, fetch_url: typing.Union[bool, UNSET] = True, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> str:
     """ai.ModelTurnInput -> the serialized generateContent body.
 
     The last step is always `ai.wire.merge_request_body`, so `request_body`
@@ -540,8 +542,8 @@ def gemini_build_body(input: ai.ModelTurnInput, client_id: str, generation_confi
     Developer API inlines http(s) media, Vertex passes the URL through.
 
     Raises:
-        InvalidArgument, Io, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
-async def gemini_build_body_async(input: ai.ModelTurnInput, client_id: str, generation_config: typing.Optional[GmGenerationConfig], safety_settings: typing.Optional[typing.List[vendor.google.SafetySetting]], request_body: typing.Optional[baml.json.json], *, fetch_url: typing.Union[bool, UNSET] = True, preview: typing.Union[bool, UNSET] = False) -> str:
+        InvalidArgument, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
+async def gemini_build_body_async(input: ai.ModelTurnInput, provider: str, requested_model: str, generation_config: typing.Optional[GmGenerationConfig], safety_settings: typing.Optional[typing.List[vendor.google.SafetySetting]], request_body: typing.Optional[baml.json.json], *, fetch_url: typing.Union[bool, UNSET] = True, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> str:
     """ai.ModelTurnInput -> the serialized generateContent body.
 
     The last step is always `ai.wire.merge_request_body`, so `request_body`
@@ -552,42 +554,42 @@ async def gemini_build_body_async(input: ai.ModelTurnInput, client_id: str, gene
     Developer API inlines http(s) media, Vertex passes the URL through.
 
     Raises:
-        InvalidArgument, Io, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
+        InvalidArgument, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
 
 
-def gemini_method(stream: bool) -> str:
+def gemini_method(stream: bool, *, _baml: _BamlOptions | None = None) -> str:
     """The RPC verb for one call: `:generateContent`, or the SSE streaming variant."""
-async def gemini_method_async(stream: bool) -> str:
+async def gemini_method_async(stream: bool, *, _baml: _BamlOptions | None = None) -> str:
     """The RPC verb for one call: `:generateContent`, or the SSE streaming variant."""
 
 
-def _gm_output_media(mime: str, data: str) -> ai.content.Media:
+def _gm_output_media(mime: str, data: str, *, _baml: _BamlOptions | None = None) -> ai.content.Media:
     """(internal) One base64 payload from an `inlineData` response part -> a media block. The
     media kind follows the MIME type; `ai.content.Media.new` is the only
     supported way to build one (a primitive media value is not assignable to a
     baml.media.* field)."""
-async def _gm_output_media_async(mime: str, data: str) -> ai.content.Media:
+async def _gm_output_media_async(mime: str, data: str, *, _baml: _BamlOptions | None = None) -> ai.content.Media:
     """(internal) One base64 payload from an `inlineData` response part -> a media block. The
     media kind follows the MIME type; `ai.content.Media.new` is the only
     supported way to build one (a primitive media value is not assignable to a
     baml.media.* field)."""
 
 
-def _gm_is_blocked(finish: str) -> bool:
+def _gm_is_blocked(finish: str, *, _baml: _BamlOptions | None = None) -> bool:
     """(internal) The finish reasons that mean "the model refused / was blocked" rather than
     "the model finished". Everything else is Complete (an unknown reason must
     never masquerade as a refusal)."""
-async def _gm_is_blocked_async(finish: str) -> bool:
+async def _gm_is_blocked_async(finish: str, *, _baml: _BamlOptions | None = None) -> bool:
     """(internal) The finish reasons that mean "the model refused / was blocked" rather than
     "the model finished". Everything else is Complete (an unknown reason must
     never masquerade as a refusal)."""
 
 
-def _gm_usage(usage: typing.Optional[GmUsageMetadata]) -> typing.Optional[ai.events.Usage]: ...
-async def _gm_usage_async(usage: typing.Optional[GmUsageMetadata]) -> typing.Optional[ai.events.Usage]: ...
+def _gm_usage(usage: typing.Optional[GmUsageMetadata], *, _baml: _BamlOptions | None = None) -> typing.Optional[ai.events.Usage]: ...
+async def _gm_usage_async(usage: typing.Optional[GmUsageMetadata], *, _baml: _BamlOptions | None = None) -> typing.Optional[ai.events.Usage]: ...
 
 
-def parse(resp: GmResponse, seq: int, *, provider: typing.Union[str, UNSET] = "google") -> ai.ModelTurn:
+def parse(resp: GmResponse, seq: int, *, provider: typing.Union[str, UNSET] = "google", _baml: _BamlOptions | None = None) -> ai.ModelTurn:
     """One decoded response -> canonical content blocks and a stop reason.
     Gemini sends no call ids; synthesize `call_<seq>_<i>` from the journal
     position and the call's index within the turn (plus the `thoughtSignature`
@@ -599,8 +601,8 @@ def parse(resp: GmResponse, seq: int, *, provider: typing.Union[str, UNSET] = "g
     return "" as a success. `provider` names the backend in that failure.
 
     Raises:
-        SerializationError"""
-async def parse_async(resp: GmResponse, seq: int, *, provider: typing.Union[str, UNSET] = "google") -> ai.ModelTurn:
+        SerializationError, InvalidResponse, ProviderError"""
+async def parse_async(resp: GmResponse, seq: int, *, provider: typing.Union[str, UNSET] = "google", _baml: _BamlOptions | None = None) -> ai.ModelTurn:
     """One decoded response -> canonical content blocks and a stop reason.
     Gemini sends no call ids; synthesize `call_<seq>_<i>` from the journal
     position and the call's index within the turn (plus the `thoughtSignature`
@@ -612,31 +614,31 @@ async def parse_async(resp: GmResponse, seq: int, *, provider: typing.Union[str,
     return "" as a success. `provider` names the backend in that failure.
 
     Raises:
-        SerializationError"""
+        SerializationError, InvalidResponse, ProviderError"""
 
 
-def _gm_sse_failure(provider: str, error: typing.Any) -> typing.Any:
-    """(internal) `baml.http.fetch_sse` rejects a non-2xx response by throwing an
+def _gm_sse_failure(provider: str, error: typing.Any, *, _baml: _BamlOptions | None = None) -> typing.Any:
+    """(internal) `baml.http.send_sse` rejects a non-2xx response by throwing an
     `baml.errors.Io` whose message embeds the status and the body
     (sys_native/src/io_impls.rs). Recover that status so an SSE failure lands in
     the SAME taxonomy as a unary one: a 400 must NOT become a retry-safe
     NetworkFailure, or a Retry policy would replay an invalid request forever."""
-async def _gm_sse_failure_async(provider: str, error: typing.Any) -> typing.Any:
-    """(internal) `baml.http.fetch_sse` rejects a non-2xx response by throwing an
+async def _gm_sse_failure_async(provider: str, error: typing.Any, *, _baml: _BamlOptions | None = None) -> typing.Any:
+    """(internal) `baml.http.send_sse` rejects a non-2xx response by throwing an
     `baml.errors.Io` whose message embeds the status and the body
     (sys_native/src/io_impls.rs). Recover that status so an SSE failure lands in
     the SAME taxonomy as a unary one: a 400 must NOT become a retry-safe
     NetworkFailure, or a Retry policy would replay an invalid request forever."""
 
 
-def _gm_route_sse_open(provider: str, open: typing.Callable[[], baml.http.SseStream]) -> baml.http.SseStream:
+def _gm_route_sse_open(provider: str, open: typing.Callable[[], baml.http.SseStream], *, _baml: _BamlOptions | None = None) -> baml.http.SseStream:
     """(internal) Route failures from the shared Google / Vertex stream opener. Timeout and
     cancellation keep their typed control-flow meaning; only transport errors
     enter the provider failure taxonomy.
 
     Raises:
         Timeout"""
-async def _gm_route_sse_open_async(provider: str, open: typing.Callable[[], baml.http.SseStream]) -> baml.http.SseStream:
+async def _gm_route_sse_open_async(provider: str, open: typing.Callable[[], baml.http.SseStream], *, _baml: _BamlOptions | None = None) -> baml.http.SseStream:
     """(internal) Route failures from the shared Google / Vertex stream opener. Timeout and
     cancellation keep their typed control-flow meaning; only transport errors
     enter the provider failure taxonomy.
@@ -645,19 +647,19 @@ async def _gm_route_sse_open_async(provider: str, open: typing.Callable[[], baml
         Timeout"""
 
 
-def _gm_open_sse(req: baml.http.Request, provider: str, *, request_timeout_ms: typing.Union[int, None, UNSET] = None, time_to_first_token_timeout_ms: typing.Union[int, None, UNSET] = None) -> baml.http.SseStream:
+def _gm_open_sse(req: baml.http.Request, provider: str, *, _baml: _BamlOptions | None = None) -> baml.http.SseStream:
     """(internal) Open the SSE connection, classifying the failure precisely.
 
     Raises:
         Timeout"""
-async def _gm_open_sse_async(req: baml.http.Request, provider: str, *, request_timeout_ms: typing.Union[int, None, UNSET] = None, time_to_first_token_timeout_ms: typing.Union[int, None, UNSET] = None) -> baml.http.SseStream:
+async def _gm_open_sse_async(req: baml.http.Request, provider: str, *, _baml: _BamlOptions | None = None) -> baml.http.SseStream:
     """(internal) Open the SSE connection, classifying the failure precisely.
 
     Raises:
         Timeout"""
 
 
-def _gm_decode_batch(batch: str, provider: str) -> typing.List[ai.stream.Event]:
+def _gm_decode_batch(batch: str, provider: str, *, _baml: _BamlOptions | None = None) -> typing.List[ai.stream.Event]:
     """(internal) One SseStream batch -> provider-agnostic stream events.
 
     Wire shape: each SSE `data:` payload is a GmResponse fragment; text deltas
@@ -675,8 +677,8 @@ def _gm_decode_batch(batch: str, provider: str) -> typing.List[ai.stream.Event]:
     no caller can see.
 
     Raises:
-        DecodeError, ParseError"""
-async def _gm_decode_batch_async(batch: str, provider: str) -> typing.List[ai.stream.Event]:
+        DecodeError, ParseError, InvalidResponse, ProviderError"""
+async def _gm_decode_batch_async(batch: str, provider: str, *, _baml: _BamlOptions | None = None) -> typing.List[ai.stream.Event]:
     """(internal) One SseStream batch -> provider-agnostic stream events.
 
     Wire shape: each SSE `data:` payload is a GmResponse fragment; text deltas
@@ -694,28 +696,28 @@ async def _gm_decode_batch_async(batch: str, provider: str) -> typing.List[ai.st
     no caller can see.
 
     Raises:
-        DecodeError, ParseError"""
+        DecodeError, ParseError, InvalidResponse, ProviderError"""
 
 
-def render(c: vendor.google.GeminiClient, input: ai.ModelTurnInput) -> baml.http.Request:
+def render(c: vendor.google.GeminiClient, input: ai.ModelTurnInput, *, _baml: _BamlOptions | None = None) -> baml.http.Request:
     """ai.ModelTurnInput -> one generateContent request.
 
     Raises:
         InvalidArgument, Io, ParseError, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
-async def render_async(c: vendor.google.GeminiClient, input: ai.ModelTurnInput) -> baml.http.Request:
+async def render_async(c: vendor.google.GeminiClient, input: ai.ModelTurnInput, *, _baml: _BamlOptions | None = None) -> baml.http.Request:
     """ai.ModelTurnInput -> one generateContent request.
 
     Raises:
         InvalidArgument, Io, ParseError, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
 
 
-def preview(c: vendor.google.GeminiClient, input: ai.ModelTurnInput) -> baml.http.Request:
+def preview(c: vendor.google.GeminiClient, input: ai.ModelTurnInput, *, _baml: _BamlOptions | None = None) -> baml.http.Request:
     """The request one `render` would send. URL media unsupported by the Gemini
     Developer API is rejected before any download is attempted.
 
     Raises:
         InvalidArgument, Io, ParseError, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
-async def preview_async(c: vendor.google.GeminiClient, input: ai.ModelTurnInput) -> baml.http.Request:
+async def preview_async(c: vendor.google.GeminiClient, input: ai.ModelTurnInput, *, _baml: _BamlOptions | None = None) -> baml.http.Request:
     """The request one `render` would send. URL media unsupported by the Gemini
     Developer API is rejected before any download is attempted.
 
@@ -723,13 +725,13 @@ async def preview_async(c: vendor.google.GeminiClient, input: ai.ModelTurnInput)
         InvalidArgument, Io, ParseError, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
 
 
-def _request(c: vendor.google.GeminiClient, input: ai.ModelTurnInput, stream: bool, *, preview: typing.Union[bool, UNSET] = False) -> baml.http.Request:
+def _request(c: vendor.google.GeminiClient, input: ai.ModelTurnInput, stream: bool, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> baml.http.Request:
     """(internal) The shared request builder: identical body for both paths; streaming swaps
     the RPC verb for `:streamGenerateContent?alt=sse`.
 
     Raises:
         InvalidArgument, Io, ParseError, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
-async def _request_async(c: vendor.google.GeminiClient, input: ai.ModelTurnInput, stream: bool, *, preview: typing.Union[bool, UNSET] = False) -> baml.http.Request:
+async def _request_async(c: vendor.google.GeminiClient, input: ai.ModelTurnInput, stream: bool, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> baml.http.Request:
     """(internal) The shared request builder: identical body for both paths; streaming swaps
     the RPC verb for `:streamGenerateContent?alt=sse`.
 
@@ -737,33 +739,33 @@ async def _request_async(c: vendor.google.GeminiClient, input: ai.ModelTurnInput
         InvalidArgument, Io, ParseError, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
 
 
-def gemini_invoke(c: vendor.google.GeminiClient, input: ai.ModelTurnInput) -> ai.ModelTurn:
+def gemini_invoke(c: vendor.google.GeminiClient, input: ai.ModelTurnInput, *, _baml: _BamlOptions | None = None) -> ai.ModelTurn:
     """The one internal entry point: render, send, normalize — one model turn.
 
     Raises:
         InvalidArgument, Io, ParseError, Timeout, SerializationError"""
-async def gemini_invoke_async(c: vendor.google.GeminiClient, input: ai.ModelTurnInput) -> ai.ModelTurn:
+async def gemini_invoke_async(c: vendor.google.GeminiClient, input: ai.ModelTurnInput, *, _baml: _BamlOptions | None = None) -> ai.ModelTurn:
     """The one internal entry point: render, send, normalize — one model turn.
 
     Raises:
         InvalidArgument, Io, ParseError, Timeout, SerializationError"""
 
 
-def _decode_batch(batch: str) -> typing.List[ai.stream.Event]:
+def _decode_batch(batch: str, *, _baml: _BamlOptions | None = None) -> typing.List[ai.stream.Event]:
     """Raises:
-        DecodeError, ParseError"""
-async def _decode_batch_async(batch: str) -> typing.List[ai.stream.Event]:
+        DecodeError, ParseError, InvalidResponse, ProviderError"""
+async def _decode_batch_async(batch: str, *, _baml: _BamlOptions | None = None) -> typing.List[ai.stream.Event]:
     """Raises:
-        DecodeError, ParseError"""
+        DecodeError, ParseError, InvalidResponse, ProviderError"""
 
 
-def gemini_invoke_stream(c: vendor.google.GeminiClient, input: ai.ModelTurnInput) -> ai.stream.TurnStream:
+def gemini_invoke_stream(c: vendor.google.GeminiClient, input: ai.ModelTurnInput, *, _baml: _BamlOptions | None = None) -> ai.stream.TurnStream:
     """The streaming entry point: the same request body as `gemini_invoke` against
     the `:streamGenerateContent?alt=sse` verb, wrapped in an ai.TurnStream.
 
     Raises:
         InvalidArgument, Io, ParseError, Timeout, SerializationError"""
-async def gemini_invoke_stream_async(c: vendor.google.GeminiClient, input: ai.ModelTurnInput) -> ai.stream.TurnStream:
+async def gemini_invoke_stream_async(c: vendor.google.GeminiClient, input: ai.ModelTurnInput, *, _baml: _BamlOptions | None = None) -> ai.stream.TurnStream:
     """The streaming entry point: the same request body as `gemini_invoke` against
     the `:streamGenerateContent?alt=sse` verb, wrapped in an ai.TurnStream.
 
@@ -771,23 +773,23 @@ async def gemini_invoke_stream_async(c: vendor.google.GeminiClient, input: ai.Mo
         InvalidArgument, Io, ParseError, Timeout, SerializationError"""
 
 
-def _vertex_scope() -> str:
+def _vertex_scope(*, _baml: _BamlOptions | None = None) -> str:
     """(internal) The OAuth2 scope every Vertex call is minted for."""
-async def _vertex_scope_async() -> str:
+async def _vertex_scope_async(*, _baml: _BamlOptions | None = None) -> str:
     """(internal) The OAuth2 scope every Vertex call is minted for."""
 
 
-def _vertex_unwrap_json(document: str) -> str:
+def _vertex_unwrap_json(document: str, *, _baml: _BamlOptions | None = None) -> str:
     """(internal) `vercel env pull` and friends store a credential document as a JSON *string*
     (`"{\\"type\\": …}"`). Unwrap that one level so both spellings work; anything
     else is returned untouched."""
-async def _vertex_unwrap_json_async(document: str) -> str:
+async def _vertex_unwrap_json_async(document: str, *, _baml: _BamlOptions | None = None) -> str:
     """(internal) `vercel env pull` and friends store a credential document as a JSON *string*
     (`"{\\"type\\": …}"`). Unwrap that one level so both spellings work; anything
     else is returned untouched."""
 
 
-def _vertex_credentials(c: vendor.google.VertexClient) -> typing.Optional[str]:
+def _vertex_credentials(c: vendor.google.VertexClient, *, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
     """(internal) The credential document to authenticate with, or null to run the Rust
     Application Default Credentials chain (GOOGLE_APPLICATION_CREDENTIALS, the
     well-known ADC file, the gcloud config file, the GCE metadata server).
@@ -797,7 +799,7 @@ def _vertex_credentials(c: vendor.google.VertexClient) -> typing.Optional[str]:
 
     Raises:
         Io, ParseError, InvalidRequest"""
-async def _vertex_credentials_async(c: vendor.google.VertexClient) -> typing.Optional[str]:
+async def _vertex_credentials_async(c: vendor.google.VertexClient, *, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
     """(internal) The credential document to authenticate with, or null to run the Rust
     Application Default Credentials chain (GOOGLE_APPLICATION_CREDENTIALS, the
     well-known ADC file, the gcloud config file, the GCE metadata server).
@@ -809,14 +811,14 @@ async def _vertex_credentials_async(c: vendor.google.VertexClient) -> typing.Opt
         Io, ParseError, InvalidRequest"""
 
 
-def _vertex_express_key(c: vendor.google.VertexClient) -> typing.Optional[str]:
+def _vertex_express_key(c: vendor.google.VertexClient, *, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
     """(internal) Express mode: a Vertex API key, which replaces the whole OAuth2 flow with a
     `key` query parameter. Opt-in only — an ambient GOOGLE_API_KEY must never
     silently downgrade a project-scoped client.
 
     Raises:
         Io, ParseError"""
-async def _vertex_express_key_async(c: vendor.google.VertexClient) -> typing.Optional[str]:
+async def _vertex_express_key_async(c: vendor.google.VertexClient, *, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
     """(internal) Express mode: a Vertex API key, which replaces the whole OAuth2 flow with a
     `key` query parameter. Opt-in only — an ambient GOOGLE_API_KEY must never
     silently downgrade a project-scoped client.
@@ -825,33 +827,33 @@ async def _vertex_express_key_async(c: vendor.google.VertexClient) -> typing.Opt
         Io, ParseError"""
 
 
-def _vertex_key_in_query(c: vendor.google.VertexClient) -> bool:
+def _vertex_key_in_query(c: vendor.google.VertexClient, *, _baml: _BamlOptions | None = None) -> bool:
     """(internal) A `key` the caller put in `query_params` directly is express mode too (the
     spelling sys_llm and the old engine used)."""
-async def _vertex_key_in_query_async(c: vendor.google.VertexClient) -> bool:
+async def _vertex_key_in_query_async(c: vendor.google.VertexClient, *, _baml: _BamlOptions | None = None) -> bool:
     """(internal) A `key` the caller put in `query_params` directly is express mode too (the
     spelling sys_llm and the old engine used)."""
 
 
-def _vertex_has_configured_express_key(c: vendor.google.VertexClient) -> bool:
+def _vertex_has_configured_express_key(c: vendor.google.VertexClient, *, _baml: _BamlOptions | None = None) -> bool:
     """(internal) Preview only needs to know that a key was configured. Inspecting the
     Credential union avoids reading an env.Ref whose value may be absent or
     secret; the live request still resolves it normally."""
-async def _vertex_has_configured_express_key_async(c: vendor.google.VertexClient) -> bool:
+async def _vertex_has_configured_express_key_async(c: vendor.google.VertexClient, *, _baml: _BamlOptions | None = None) -> bool:
     """(internal) Preview only needs to know that a key was configured. Inspecting the
     Credential union avoids reading an env.Ref whose value may be absent or
     secret; the live request still resolves it normally."""
 
 
-def _vertex_is_express(c: vendor.google.VertexClient, *, preview: typing.Union[bool, UNSET] = False) -> bool:
+def _vertex_is_express(c: vendor.google.VertexClient, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> bool:
     """Raises:
         Io, ParseError"""
-async def _vertex_is_express_async(c: vendor.google.VertexClient, *, preview: typing.Union[bool, UNSET] = False) -> bool:
+async def _vertex_is_express_async(c: vendor.google.VertexClient, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> bool:
     """Raises:
         Io, ParseError"""
 
 
-def vertex_location(c: vendor.google.VertexClient) -> str:
+def vertex_location(c: vendor.google.VertexClient, *, _baml: _BamlOptions | None = None) -> str:
     """The region the request is routed to: the explicit option, else
     `GOOGLE_CLOUD_LOCATION` / `GOOGLE_CLOUD_REGION`, else the multi-region
     `global` endpoint (google-genai's default for the Vertex backend).
@@ -862,7 +864,7 @@ def vertex_location(c: vendor.google.VertexClient) -> str:
 
     Raises:
         Io, ParseError"""
-async def vertex_location_async(c: vendor.google.VertexClient) -> str:
+async def vertex_location_async(c: vendor.google.VertexClient, *, _baml: _BamlOptions | None = None) -> str:
     """The region the request is routed to: the explicit option, else
     `GOOGLE_CLOUD_LOCATION` / `GOOGLE_CLOUD_REGION`, else the multi-region
     `global` endpoint (google-genai's default for the Vertex backend).
@@ -875,7 +877,7 @@ async def vertex_location_async(c: vendor.google.VertexClient) -> str:
         Io, ParseError"""
 
 
-def vertex_project_id(c: vendor.google.VertexClient, *, preview: typing.Union[bool, UNSET] = False) -> typing.Optional[str]:
+def vertex_project_id(c: vendor.google.VertexClient, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
     """The project the request is billed to: the explicit option, else
     `GOOGLE_CLOUD_PROJECT` / `GCLOUD_PROJECT`, else whatever the credential
     document and the google-auth chain report. Null means "not discoverable".
@@ -891,7 +893,7 @@ def vertex_project_id(c: vendor.google.VertexClient, *, preview: typing.Union[bo
 
     Raises:
         Io, ParseError, InvalidRequest"""
-async def vertex_project_id_async(c: vendor.google.VertexClient, *, preview: typing.Union[bool, UNSET] = False) -> typing.Optional[str]:
+async def vertex_project_id_async(c: vendor.google.VertexClient, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
     """The project the request is billed to: the explicit option, else
     `GOOGLE_CLOUD_PROJECT` / `GCLOUD_PROJECT`, else whatever the credential
     document and the google-auth chain report. Null means "not discoverable".
@@ -909,25 +911,25 @@ async def vertex_project_id_async(c: vendor.google.VertexClient, *, preview: typ
         Io, ParseError, InvalidRequest"""
 
 
-def _vertex_publisher(c: vendor.google.VertexClient) -> str:
+def _vertex_publisher(c: vendor.google.VertexClient, *, _baml: _BamlOptions | None = None) -> str:
     """(internal) The publisher segment of the model path. Anthropic models are served by
     their own publisher with the Anthropic Messages wire format."""
-async def _vertex_publisher_async(c: vendor.google.VertexClient) -> str:
+async def _vertex_publisher_async(c: vendor.google.VertexClient, *, _baml: _BamlOptions | None = None) -> str:
     """(internal) The publisher segment of the model path. Anthropic models are served by
     their own publisher with the Anthropic Messages wire format."""
 
 
-def _vertex_is_multi_region(location: str) -> bool:
+def _vertex_is_multi_region(location: str, *, _baml: _BamlOptions | None = None) -> bool:
     """(internal) The multi-region (data-residency) endpoints. `us` and `eu` are not regions
     in the `{region}-aiplatform.googleapis.com` sense: they are served by
     `aiplatform.{us|eu}.rep.googleapis.com`."""
-async def _vertex_is_multi_region_async(location: str) -> bool:
+async def _vertex_is_multi_region_async(location: str, *, _baml: _BamlOptions | None = None) -> bool:
     """(internal) The multi-region (data-residency) endpoints. `us` and `eu` are not regions
     in the `{region}-aiplatform.googleapis.com` sense: they are served by
     `aiplatform.{us|eu}.rep.googleapis.com`."""
 
 
-def _vertex_models_base(c: vendor.google.VertexClient, *, preview: typing.Union[bool, UNSET] = False) -> str:
+def _vertex_models_base(c: vendor.google.VertexClient, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> str:
     """(internal) The `.../publishers/<publisher>/models` prefix a model name is appended to.
 
     An explicit base_url replaces the whole prefix (the caller owns the path),
@@ -935,7 +937,7 @@ def _vertex_models_base(c: vendor.google.VertexClient, *, preview: typing.Union[
 
     Raises:
         Io, ParseError, InvalidRequest"""
-async def _vertex_models_base_async(c: vendor.google.VertexClient, *, preview: typing.Union[bool, UNSET] = False) -> str:
+async def _vertex_models_base_async(c: vendor.google.VertexClient, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> str:
     """(internal) The `.../publishers/<publisher>/models` prefix a model name is appended to.
 
     An explicit base_url replaces the whole prefix (the caller owns the path),
@@ -945,27 +947,27 @@ async def _vertex_models_base_async(c: vendor.google.VertexClient, *, preview: t
         Io, ParseError, InvalidRequest"""
 
 
-def _vertex_method(c: vendor.google.VertexClient, stream: bool) -> str:
+def _vertex_method(c: vendor.google.VertexClient, stream: bool, *, _baml: _BamlOptions | None = None) -> str:
     """(internal) The method suffix: generateContent verbs for Gemini, rawPredict verbs for
     the Anthropic publisher."""
-async def _vertex_method_async(c: vendor.google.VertexClient, stream: bool) -> str:
+async def _vertex_method_async(c: vendor.google.VertexClient, stream: bool, *, _baml: _BamlOptions | None = None) -> str:
     """(internal) The method suffix: generateContent verbs for Gemini, rawPredict verbs for
     the Anthropic publisher."""
 
 
-def vertex_url(c: vendor.google.VertexClient, stream: bool, *, preview: typing.Union[bool, UNSET] = False) -> str:
+def vertex_url(c: vendor.google.VertexClient, stream: bool, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> str:
     """The full endpoint for one call, query parameters included.
 
     Raises:
         Io, ParseError, InvalidRequest"""
-async def vertex_url_async(c: vendor.google.VertexClient, stream: bool, *, preview: typing.Union[bool, UNSET] = False) -> str:
+async def vertex_url_async(c: vendor.google.VertexClient, stream: bool, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> str:
     """The full endpoint for one call, query parameters included.
 
     Raises:
         Io, ParseError, InvalidRequest"""
 
 
-def _vertex_anthropic_body(c: vendor.google.VertexClient, input: ai.ModelTurnInput, stream: bool, *, preview: typing.Union[bool, UNSET] = False) -> str:
+def _vertex_anthropic_body(c: vendor.google.VertexClient, input: ai.ModelTurnInput, stream: bool, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> str:
     """(internal) Claude on Vertex is served by `publishers/anthropic` through `:rawPredict`,
     whose body is the Anthropic Messages format rather than generateContent.
     The body is built by the anthropic package's lowering (kept factored from
@@ -977,8 +979,8 @@ def _vertex_anthropic_body(c: vendor.google.VertexClient, input: ai.ModelTurnInp
     after these fields.
 
     Raises:
-        InvalidArgument, Io, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
-async def _vertex_anthropic_body_async(c: vendor.google.VertexClient, input: ai.ModelTurnInput, stream: bool, *, preview: typing.Union[bool, UNSET] = False) -> str:
+        InvalidArgument, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
+async def _vertex_anthropic_body_async(c: vendor.google.VertexClient, input: ai.ModelTurnInput, stream: bool, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> str:
     """(internal) Claude on Vertex is served by `publishers/anthropic` through `:rawPredict`,
     whose body is the Anthropic Messages format rather than generateContent.
     The body is built by the anthropic package's lowering (kept factored from
@@ -990,28 +992,28 @@ async def _vertex_anthropic_body_async(c: vendor.google.VertexClient, input: ai.
     after these fields.
 
     Raises:
-        InvalidArgument, Io, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
+        InvalidArgument, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
 
 
-def vertex_render(c: vendor.google.VertexClient, input: ai.ModelTurnInput) -> baml.http.Request:
+def vertex_render(c: vendor.google.VertexClient, input: ai.ModelTurnInput, *, _baml: _BamlOptions | None = None) -> baml.http.Request:
     """ai.ModelTurnInput -> one Vertex generateContent request.
 
     Raises:
         InvalidArgument, Io, ParseError, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
-async def vertex_render_async(c: vendor.google.VertexClient, input: ai.ModelTurnInput) -> baml.http.Request:
+async def vertex_render_async(c: vendor.google.VertexClient, input: ai.ModelTurnInput, *, _baml: _BamlOptions | None = None) -> baml.http.Request:
     """ai.ModelTurnInput -> one Vertex generateContent request.
 
     Raises:
         InvalidArgument, Io, ParseError, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
 
 
-def vertex_preview(c: vendor.google.VertexClient, input: ai.ModelTurnInput) -> baml.http.Request:
+def vertex_preview(c: vendor.google.VertexClient, input: ai.ModelTurnInput, *, _baml: _BamlOptions | None = None) -> baml.http.Request:
     """The request one Vertex `render` would send. Preview skips ADC, credential
     file, and metadata-server access and uses a deterministic bearer marker.
 
     Raises:
         InvalidArgument, Io, ParseError, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
-async def vertex_preview_async(c: vendor.google.VertexClient, input: ai.ModelTurnInput) -> baml.http.Request:
+async def vertex_preview_async(c: vendor.google.VertexClient, input: ai.ModelTurnInput, *, _baml: _BamlOptions | None = None) -> baml.http.Request:
     """The request one Vertex `render` would send. Preview skips ADC, credential
     file, and metadata-server access and uses a deterministic bearer marker.
 
@@ -1019,13 +1021,13 @@ async def vertex_preview_async(c: vendor.google.VertexClient, input: ai.ModelTur
         InvalidArgument, Io, ParseError, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
 
 
-def _vertex_request(c: vendor.google.VertexClient, input: ai.ModelTurnInput, stream: bool, *, preview: typing.Union[bool, UNSET] = False) -> baml.http.Request:
+def _vertex_request(c: vendor.google.VertexClient, input: ai.ModelTurnInput, stream: bool, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> baml.http.Request:
     """(internal) The shared request builder: the Gemini body, the Vertex URL, and either a
     bearer token or an express key.
 
     Raises:
         InvalidArgument, Io, ParseError, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
-async def _vertex_request_async(c: vendor.google.VertexClient, input: ai.ModelTurnInput, stream: bool, *, preview: typing.Union[bool, UNSET] = False) -> baml.http.Request:
+async def _vertex_request_async(c: vendor.google.VertexClient, input: ai.ModelTurnInput, stream: bool, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> baml.http.Request:
     """(internal) The shared request builder: the Gemini body, the Vertex URL, and either a
     bearer token or an express key.
 
@@ -1033,13 +1035,13 @@ async def _vertex_request_async(c: vendor.google.VertexClient, input: ai.ModelTu
         InvalidArgument, Io, ParseError, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
 
 
-def vertex_invoke(c: vendor.google.VertexClient, input: ai.ModelTurnInput) -> ai.ModelTurn:
+def vertex_invoke(c: vendor.google.VertexClient, input: ai.ModelTurnInput, *, _baml: _BamlOptions | None = None) -> ai.ModelTurn:
     """The one internal entry point: render, send, normalize — one model turn.
     Claude models round-trip the Anthropic Messages format instead.
 
     Raises:
         InvalidArgument, Io, ParseError, Timeout, SerializationError"""
-async def vertex_invoke_async(c: vendor.google.VertexClient, input: ai.ModelTurnInput) -> ai.ModelTurn:
+async def vertex_invoke_async(c: vendor.google.VertexClient, input: ai.ModelTurnInput, *, _baml: _BamlOptions | None = None) -> ai.ModelTurn:
     """The one internal entry point: render, send, normalize — one model turn.
     Claude models round-trip the Anthropic Messages format instead.
 
@@ -1047,15 +1049,15 @@ async def vertex_invoke_async(c: vendor.google.VertexClient, input: ai.ModelTurn
         InvalidArgument, Io, ParseError, Timeout, SerializationError"""
 
 
-def _vertex_decode_batch(batch: str) -> typing.List[ai.stream.Event]:
+def _vertex_decode_batch(batch: str, *, _baml: _BamlOptions | None = None) -> typing.List[ai.stream.Event]:
     """Raises:
-        DecodeError, ParseError"""
-async def _vertex_decode_batch_async(batch: str) -> typing.List[ai.stream.Event]:
+        DecodeError, ParseError, InvalidResponse, ProviderError"""
+async def _vertex_decode_batch_async(batch: str, *, _baml: _BamlOptions | None = None) -> typing.List[ai.stream.Event]:
     """Raises:
-        DecodeError, ParseError"""
+        DecodeError, ParseError, InvalidResponse, ProviderError"""
 
 
-def vertex_invoke_stream(c: vendor.google.VertexClient, input: ai.ModelTurnInput) -> ai.stream.TurnStream:
+def vertex_invoke_stream(c: vendor.google.VertexClient, input: ai.ModelTurnInput, *, _baml: _BamlOptions | None = None) -> ai.stream.TurnStream:
     """The streaming entry point: the same request against
     `:streamGenerateContent?alt=sse` (Gemini) or `:streamRawPredict` (Claude,
     which streams Anthropic Messages SSE and reuses that decoder), wrapped in
@@ -1063,7 +1065,7 @@ def vertex_invoke_stream(c: vendor.google.VertexClient, input: ai.ModelTurnInput
 
     Raises:
         InvalidArgument, Io, ParseError, Timeout, SerializationError"""
-async def vertex_invoke_stream_async(c: vendor.google.VertexClient, input: ai.ModelTurnInput) -> ai.stream.TurnStream:
+async def vertex_invoke_stream_async(c: vendor.google.VertexClient, input: ai.ModelTurnInput, *, _baml: _BamlOptions | None = None) -> ai.stream.TurnStream:
     """The streaming entry point: the same request against
     `:streamGenerateContent?alt=sse` (Gemini) or `:streamRawPredict` (Claude,
     which streams Anthropic Messages SSE and reuses that decoder), wrapped in

@@ -54,7 +54,7 @@ dependencies = [
     "qdrant-client>=1.7.0",
     "numpy>=1.24.0",
     "psutil>=5.9.0",
-    "baml-bridge==0.20.1",
+    "baml-bridge==0.23.0",
 ]
 
 [project.optional-dependencies]

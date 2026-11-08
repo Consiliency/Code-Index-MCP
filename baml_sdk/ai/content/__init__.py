@@ -103,11 +103,19 @@ class StopReason(str, enum.Enum):
     """
     Why the model stopped. `ToolUse` means the turn ended with tool calls the
     runner must execute before the next turn.
+
+    Members:
+        Complete
+        ToolUse
+        MaxTokens
+        Refused
+        Failed: The attempt threw; see `ModelTurn.error`.
     """
     Complete = "Complete"
     ToolUse = "ToolUse"
     MaxTokens = "MaxTokens"
     Refused = "Refused"
+    Failed = "Failed"
 
 
 Block: typing.TypeAlias = typing.Union[Text, Media]

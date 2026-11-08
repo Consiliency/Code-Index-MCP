@@ -29,14 +29,16 @@ if typing.TYPE_CHECKING:
     from .... import baml
     from .... import vendor
 
+from ...._invocation_types import BamlOptions as _BamlOptions
 
-def transcript_text(j: ai.Journal) -> str:
+
+def transcript_text(j: ai.Journal, *, _baml: _BamlOptions | None = None) -> str:
     """The journal as labeled text. Claude Code's -p mode takes one prompt, so
     the conversation folds into it; the CLI's own session state is unused.
 
     Raises:
         SerializationError"""
-async def transcript_text_async(j: ai.Journal) -> str:
+async def transcript_text_async(j: ai.Journal, *, _baml: _BamlOptions | None = None) -> str:
     """The journal as labeled text. Claude Code's -p mode takes one prompt, so
     the conversation folds into it; the CLI's own session state is unused.
 
@@ -44,14 +46,14 @@ async def transcript_text_async(j: ai.Journal) -> str:
         SerializationError"""
 
 
-def envelope_schema(output_type: typing.Any) -> typing.Dict[str, typing.Any]:
+def envelope_schema(output_type: typing.Any, *, _baml: _BamlOptions | None = None) -> typing.Dict[str, typing.Any]:
     """{outcome: anyOf [T-schema, calls-schema]} — the constrained output that
     lets one CLI run return either the final result or BAML tool calls. T's
     $defs lift to the envelope root so its $refs stay valid.
 
     Raises:
         Unsupported, DecodeError, SerializationError"""
-async def envelope_schema_async(output_type: typing.Any) -> typing.Dict[str, typing.Any]:
+async def envelope_schema_async(output_type: typing.Any, *, _baml: _BamlOptions | None = None) -> typing.Dict[str, typing.Any]:
     """{outcome: anyOf [T-schema, calls-schema]} — the constrained output that
     lets one CLI run return either the final result or BAML tool calls. T's
     $defs lift to the envelope root so its $refs stay valid.
@@ -60,11 +62,11 @@ async def envelope_schema_async(output_type: typing.Any) -> typing.Dict[str, typ
         Unsupported, DecodeError, SerializationError"""
 
 
-def _type_schema(t: str) -> typing.Dict[str, typing.Any]: ...
-async def _type_schema_async(t: str) -> typing.Dict[str, typing.Any]: ...
+def _type_schema(t: str, *, _baml: _BamlOptions | None = None) -> typing.Dict[str, typing.Any]: ...
+async def _type_schema_async(t: str, *, _baml: _BamlOptions | None = None) -> typing.Dict[str, typing.Any]: ...
 
 
-def tool_protocol(tb: ai.tools.Toolbox) -> str:
+def tool_protocol(tb: ai.tools.Toolbox, *, _baml: _BamlOptions | None = None) -> str:
     """The envelope protocol, appended to the prompt when BAML tools are active.
     The guidance about never repeating a successful call is load-bearing:
     each invoke is a fresh CLI process, and the conversation text is the only
@@ -72,7 +74,7 @@ def tool_protocol(tb: ai.tools.Toolbox) -> str:
 
     Raises:
         SerializationError"""
-async def tool_protocol_async(tb: ai.tools.Toolbox) -> str:
+async def tool_protocol_async(tb: ai.tools.Toolbox, *, _baml: _BamlOptions | None = None) -> str:
     """The envelope protocol, appended to the prompt when BAML tools are active.
     The guidance about never repeating a successful call is load-bearing:
     each invoke is a fresh CLI process, and the conversation text is the only
@@ -82,38 +84,52 @@ async def tool_protocol_async(tb: ai.tools.Toolbox) -> str:
         SerializationError"""
 
 
-def _read_result(p: baml.sys.Process) -> baml.json.json:
+def _write_prompt(p: baml.sys.Process, prompt: str, *, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
+    """(internal) Write the whole prompt to the CLI's stdin, then close it so the
+    CLI sees EOF.
+
+    Raises:
+        Io"""
+async def _write_prompt_async(p: baml.sys.Process, prompt: str, *, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
+    """(internal) Write the whole prompt to the CLI's stdin, then close it so the
+    CLI sees EOF.
+
+    Raises:
+        Io"""
+
+
+def _read_result(p: baml.sys.Process, *, _baml: _BamlOptions | None = None) -> baml.json.json:
     """(internal) Consume the live JSONL stream: log every event as it arrives, return the
     terminal result event.
 
     Raises:
-        ParseFailed"""
-async def _read_result_async(p: baml.sys.Process) -> baml.json.json:
+        InvalidResponse"""
+async def _read_result_async(p: baml.sys.Process, *, _baml: _BamlOptions | None = None) -> baml.json.json:
     """(internal) Consume the live JSONL stream: log every event as it arrives, return the
     terminal result event.
 
     Raises:
-        ParseFailed"""
+        InvalidResponse"""
 
 
-def _preview(text: str) -> str: ...
-async def _preview_async(text: str) -> str: ...
+def _preview(text: str, *, _baml: _BamlOptions | None = None) -> str: ...
+async def _preview_async(text: str, *, _baml: _BamlOptions | None = None) -> str: ...
 
 
-def _log_cc_event(raw: baml.json.json) -> None:
+def _log_cc_event(raw: baml.json.json, *, _baml: _BamlOptions | None = None) -> None:
     """(internal) One log line per Claude Code JSONL event: the harness's own transcript."""
-async def _log_cc_event_async(raw: baml.json.json) -> None:
+async def _log_cc_event_async(raw: baml.json.json, *, _baml: _BamlOptions | None = None) -> None:
     """(internal) One log line per Claude Code JSONL event: the harness's own transcript."""
 
 
-def mcp_config_json(c: vendor.claude_code.ClaudeCodeClient) -> typing.Optional[str]:
+def mcp_config_json(c: vendor.claude_code.ClaudeCodeClient, *, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
     """The client's mcp_servers as one --mcp-config JSON string, or null when no
     server is attached. The map is read here, at render time, so a server
     added between turns rides the next turn's process.
 
     Raises:
         SerializationError"""
-async def mcp_config_json_async(c: vendor.claude_code.ClaudeCodeClient) -> typing.Optional[str]:
+async def mcp_config_json_async(c: vendor.claude_code.ClaudeCodeClient, *, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
     """The client's mcp_servers as one --mcp-config JSON string, or null when no
     server is attached. The map is read here, at render time, so a server
     added between turns rides the next turn's process.
@@ -122,24 +138,108 @@ async def mcp_config_json_async(c: vendor.claude_code.ClaudeCodeClient) -> typin
         SerializationError"""
 
 
-def allowed_mcp_tools(c: vendor.claude_code.ClaudeCodeClient) -> str:
+def allowed_mcp_tools(c: vendor.claude_code.ClaudeCodeClient, *, _baml: _BamlOptions | None = None) -> str:
     """One mcp__<name> entry per attached server: the --allowedTools value that
     permits every tool the server provides."""
-async def allowed_mcp_tools_async(c: vendor.claude_code.ClaudeCodeClient) -> str:
+async def allowed_mcp_tools_async(c: vendor.claude_code.ClaudeCodeClient, *, _baml: _BamlOptions | None = None) -> str:
     """One mcp__<name> entry per attached server: the --allowedTools value that
     permits every tool the server provides."""
 
 
-def invoke(c: vendor.claude_code.ClaudeCodeClient, input: ai.ModelTurnInput) -> ai.ModelTurn:
+def invoke(c: vendor.claude_code.ClaudeCodeClient, input: ai.ModelTurnInput, *, _baml: _BamlOptions | None = None) -> ai.ModelTurn:
     """One model turn = one CLI run: assemble the prompt, exec, normalize.
 
     Raises:
-        Timeout, Unsupported, DecodeError, SerializationError, InvalidRequest, NetworkFailure, ParseFailed, PromptRenderError, Refused"""
-async def invoke_async(c: vendor.claude_code.ClaudeCodeClient, input: ai.ModelTurnInput) -> ai.ModelTurn:
+        InvalidArgument, Timeout, Unsupported, DecodeError, SerializationError, InvalidRequest, InvalidResponse, NetworkFailure, ParseFailed, PromptRenderError, ProviderError"""
+async def invoke_async(c: vendor.claude_code.ClaudeCodeClient, input: ai.ModelTurnInput, *, _baml: _BamlOptions | None = None) -> ai.ModelTurn:
     """One model turn = one CLI run: assemble the prompt, exec, normalize.
 
     Raises:
-        Timeout, Unsupported, DecodeError, SerializationError, InvalidRequest, NetworkFailure, ParseFailed, PromptRenderError, Refused"""
+        InvalidArgument, Timeout, Unsupported, DecodeError, SerializationError, InvalidRequest, InvalidResponse, NetworkFailure, ParseFailed, PromptRenderError, ProviderError"""
+
+
+def stdin_message(prompt: ai.Prompt, suffix: str, *, _baml: _BamlOptions | None = None) -> str:
+    """(internal) One CLI run's whole prompt as the single stream-json user
+    message the CLI reads on stdin (`--input-format stream-json`), newline
+    terminated. Every prompt takes this path, text-only or not: argv cannot
+    carry media (`text()` folds each media part to a placeholder the model
+    never sees), Linux caps one argument at 128 KiB and macOS the whole argv
+    at 1 MiB, and an argv prompt that starts with `-` parses as an option.
+    Exactly one message: the CLI runs one turn, and emits one result, per
+    stdin message. `suffix` is the text the client appends after the prompt:
+    the folded journal and the tool protocol.
+
+    Raises:
+        InvalidArgument, Timeout, SerializationError, InvalidRequest, NetworkFailure"""
+async def stdin_message_async(prompt: ai.Prompt, suffix: str, *, _baml: _BamlOptions | None = None) -> str:
+    """(internal) One CLI run's whole prompt as the single stream-json user
+    message the CLI reads on stdin (`--input-format stream-json`), newline
+    terminated. Every prompt takes this path, text-only or not: argv cannot
+    carry media (`text()` folds each media part to a placeholder the model
+    never sees), Linux caps one argument at 128 KiB and macOS the whole argv
+    at 1 MiB, and an argv prompt that starts with `-` parses as an option.
+    Exactly one message: the CLI runs one turn, and emits one result, per
+    stdin message. `suffix` is the text the client appends after the prompt:
+    the folded journal and the tool protocol.
+
+    Raises:
+        InvalidArgument, Timeout, SerializationError, InvalidRequest, NetworkFailure"""
+
+
+def content_blocks(prompt: ai.Prompt, suffix: str, *, _baml: _BamlOptions | None = None) -> typing.List[baml.json.json]:
+    """(internal) The prompt as Messages API content blocks, then `suffix`. The
+    text reads exactly as `prompt.text()` renders it (a `[role]` header per
+    message, a blank line between messages); each media part lowers in place
+    of its placeholder. Cache delimiters drop: the CLI manages its own cache.
+
+    Raises:
+        InvalidArgument, Timeout, InvalidRequest, NetworkFailure"""
+async def content_blocks_async(prompt: ai.Prompt, suffix: str, *, _baml: _BamlOptions | None = None) -> typing.List[baml.json.json]:
+    """(internal) The prompt as Messages API content blocks, then `suffix`. The
+    text reads exactly as `prompt.text()` renders it (a `[role]` header per
+    message, a blank line between messages); each media part lowers in place
+    of its placeholder. Cache delimiters drop: the CLI manages its own cache.
+
+    Raises:
+        InvalidArgument, Timeout, InvalidRequest, NetworkFailure"""
+
+
+def _push_text(blocks: typing.List[baml.json.json], text: str, *, _baml: _BamlOptions | None = None) -> None:
+    """(internal) The API rejects empty and whitespace-only text blocks, and a
+    rendered prompt routinely produces them around media parts."""
+async def _push_text_async(blocks: typing.List[baml.json.json], text: str, *, _baml: _BamlOptions | None = None) -> None:
+    """(internal) The API rejects empty and whitespace-only text blocks, and a
+    rendered prompt routinely produces them around media parts."""
+
+
+def _media_block(media: ai.MediaPart, *, _baml: _BamlOptions | None = None) -> baml.json.json:
+    """(internal) One media part as a content block, shaped as the Messages API
+    takes it: a URL source passes through, anything else is base64. The CLI
+    has no audio or video input, so those are a typed error, never a silent
+    placeholder.
+
+    Raises:
+        InvalidArgument, Timeout, InvalidRequest, NetworkFailure"""
+async def _media_block_async(media: ai.MediaPart, *, _baml: _BamlOptions | None = None) -> baml.json.json:
+    """(internal) One media part as a content block, shaped as the Messages API
+    takes it: a URL source passes through, anything else is base64. The CLI
+    has no audio or video input, so those are a typed error, never a silent
+    placeholder.
+
+    Raises:
+        InvalidArgument, Timeout, InvalidRequest, NetworkFailure"""
+
+
+def _supported_image_mime(mime: str, *, _baml: _BamlOptions | None = None) -> bool:
+    """(internal) The four image media types the Messages API accepts on a
+    base64 source; anything else is a 400 once the CLI sends it."""
+async def _supported_image_mime_async(mime: str, *, _baml: _BamlOptions | None = None) -> bool:
+    """(internal) The four image media types the Messages API accepts on a
+    base64 source; anything else is a 400 once the CLI sends it."""
+
+
+def _reject(detail: str, *, _baml: _BamlOptions | None = None) -> ai.errors.InvalidRequest: ...
+async def _reject_async(detail: str, *, _baml: _BamlOptions | None = None) -> ai.errors.InvalidRequest: ...
 
 
 __all__ = [
@@ -155,4 +255,8 @@ __all__ = [
     "allowed_mcp_tools_async",
     "invoke",
     "invoke_async",
+    "stdin_message",
+    "stdin_message_async",
+    "content_blocks",
+    "content_blocks_async",
 ]

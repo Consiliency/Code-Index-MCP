@@ -380,15 +380,28 @@ def smoke_container(
         timeout=30,
     ).strip()
     print(json.dumps({"image": image_ref or IMAGE, "image_id": image_id}), flush=True)
+    # The BAML calls run in a child process with a blank MCP_BAML_TELEMETRY (the
+    # value compose's `${VAR:-}` produces) and no mcp_server import first, so
+    # the generated SDK's baked "off" default is what is exercised. The bridge
+    # writes recordings from native code, including at exit, so the parent
+    # checks the child's HOME afterwards. The socket patch only guards
+    # Python-level clients; it cannot see the bridge's native HTTP.
     baml_contract = r"""
+import os
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+calls = r'''
 from importlib.metadata import version
 import os
 from unittest.mock import patch
 
 from baml_sdk import ChunkInput, SummarizeChunkAlone_spec, SummarizeFileChunks_spec
 
-assert version("baml-bridge") == "0.20.1"
-os.environ["CEREBRAS_API_KEY"] = "dummy-offline"
+assert version("baml-bridge") == "0.23.0"
+assert os.environ["MCP_BAML_TELEMETRY"] == ""
 with patch("socket.socket.connect", side_effect=AssertionError("BAML smoke must stay offline")):
     batch = SummarizeFileChunks_spec(
         language="python",
@@ -416,6 +429,22 @@ with patch("socket.socket.connect", side_effect=AssertionError("BAML smoke must 
     )
     assert single.build_request().url == "https://api.cerebras.ai/v1/chat/completions"
     assert 'Set chunk_id to "alpha"' in single.prompt().messages()[1].content
+'''
+home = Path(tempfile.mkdtemp(prefix="baml-smoke-home-"))
+env = {
+    key: value
+    for key, value in os.environ.items()
+    if not key.startswith(("BAML_", "BOUNDARY_", "MCP_BAML_"))
+}
+env.update(
+    HOME=str(home),
+    BAML_HOME=str(home / ".baml"),
+    MCP_BAML_TELEMETRY="",
+    CEREBRAS_API_KEY="dummy-offline",
+)
+subprocess.run([sys.executable, "-c", calls], env=env, check=True, timeout=120)
+written = sorted(str(path) for path in home.rglob("*") if path.is_file())
+assert written == [], f"BAML recorded under HOME by default: {written}"
 """
     _run(["docker", "run", "--rm", image_id, "python", "-c", baml_contract])
     with tempfile.TemporaryDirectory(prefix="mcp-release-container-") as tmp:

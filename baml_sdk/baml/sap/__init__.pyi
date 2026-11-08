@@ -25,6 +25,11 @@ import typing
 import typing_extensions
 import pydantic
 
+if typing.TYPE_CHECKING:
+    from ... import baml
+
+from ..._invocation_types import BamlOptions as _BamlOptions
+
 from baml_bridge import BamlPyHandle as _BamlPyHandle
 
 
@@ -33,22 +38,22 @@ T = typing.TypeVar("T")
 
 class _ParseCache(pydantic.BaseModel, typing.Generic[T]):
     field_data: _BamlPyHandle = pydantic.Field(alias="_data")
-    def _parse_final_(self, json: str) -> T:
+    def _parse_final_(self, json: str, *, _baml: _BamlOptions | None = None) -> T:
         """(internal) Final SAP operation shared by streams and public SAP.
 
         Raises:
             LlmClient"""
-    async def _parse_final__async(self, json: str) -> T:
+    async def _parse_final__async(self, json: str, *, _baml: _BamlOptions | None = None) -> T:
         """(internal) Final SAP operation shared by streams and public SAP.
 
         Raises:
             LlmClient"""
-    def _parse_partial_(self, json: str) -> typing.Union[T, _NoYield]:
+    def _parse_partial_(self, json: str, *, _baml: _BamlOptions | None = None) -> typing.Union[T, _NoYield]:
         """(internal) Partial SAP operation used by `ai.stream.Stream`.
 
         Raises:
             LlmClient"""
-    async def _parse_partial__async(self, json: str) -> typing.Union[T, _NoYield]:
+    async def _parse_partial__async(self, json: str, *, _baml: _BamlOptions | None = None) -> typing.Union[T, _NoYield]:
         """(internal) Partial SAP operation used by `ai.stream.Stream`.
 
         Raises:
@@ -59,43 +64,61 @@ class _NoYield(pydantic.BaseModel):
     ...
 
 
-def _new_parse_cache(*, _types: dict[str, typing.Any]) -> _ParseCache[T]:
-    """(internal) Builds a parse cache for `T`.
+def _new_parse_cache(*, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> _ParseCache[T]:
+    """(internal) Builds a parse cache for `T`, or throws `ParseError` for a `T`
+    the parser cannot model.
 
     A free function rather than a `_ParseCache` static method: a *static*
     method's class type args have no receiver to ride in on, and the call path
     derives them from the receiver's type — so a static method would be given
     operand slots the call site never fills. Instance methods on a generic
-    class (`_parse_final`, `_parse_partial`) are threaded correctly."""
-async def _new_parse_cache_async(*, _types: dict[str, typing.Any]) -> _ParseCache[T]:
-    """(internal) Builds a parse cache for `T`.
+    class (`_parse_final`, `_parse_partial`) are threaded correctly.
+
+    Raises:
+        ParseError"""
+async def _new_parse_cache_async(*, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> _ParseCache[T]:
+    """(internal) Builds a parse cache for `T`, or throws `ParseError` for a `T`
+    the parser cannot model.
 
     A free function rather than a `_ParseCache` static method: a *static*
     method's class type args have no receiver to ride in on, and the call path
     derives them from the receiver's type — so a static method would be given
     operand slots the call site never fills. Instance methods on a generic
-    class (`_parse_final`, `_parse_partial`) are threaded correctly."""
-
-
-def parse(text: str, *, _types: dict[str, typing.Any]) -> T:
-    """Parse an LLM's raw text output into `T` with Schema-Aligned Parsing.
-
-    # Throws
-    - `baml.errors.ParseError` if parsing fails.
-
-    Raises:
-        ParseError"""
-async def parse_async(text: str, *, _types: dict[str, typing.Any]) -> T:
-    """Parse an LLM's raw text output into `T` with Schema-Aligned Parsing.
-
-    # Throws
-    - `baml.errors.ParseError` if parsing fails.
+    class (`_parse_final`, `_parse_partial`) are threaded correctly.
 
     Raises:
         ParseError"""
 
 
-def parse_type(t: typing.Any, text: str) -> typing.Any:
+def parse(text: str, *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> T:
+    """Parse an LLM's raw text output into `T` with Schema-Aligned Parsing.
+
+    A union member with no JSON form or no values is never the result:
+    `parse<uint8array | string>` reads a string.
+
+    # Throws
+    - `baml.errors.ParseError` if parsing fails, or if the parser cannot
+      model `T`: `unknown`, or a type with no JSON form or no values, such as
+      `uint8array`, `never`, or a class that requires one.
+
+    Raises:
+        ParseError"""
+async def parse_async(text: str, *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> T:
+    """Parse an LLM's raw text output into `T` with Schema-Aligned Parsing.
+
+    A union member with no JSON form or no values is never the result:
+    `parse<uint8array | string>` reads a string.
+
+    # Throws
+    - `baml.errors.ParseError` if parsing fails, or if the parser cannot
+      model `T`: `unknown`, or a type with no JSON form or no values, such as
+      `uint8array`, `never`, or a class that requires one.
+
+    Raises:
+        ParseError"""
+
+
+def parse_type(t: typing.Any, text: str, *, _baml: _BamlOptions | None = None) -> typing.Any:
     """Parse against a runtime `type` value when the schema is data rather than a
     lexical type parameter. Narrow the returned `unknown` at the call site.
 
@@ -103,11 +126,59 @@ def parse_type(t: typing.Any, text: str) -> typing.Any:
 
     Raises:
         ParseError"""
-async def parse_type_async(t: typing.Any, text: str) -> typing.Any:
+async def parse_type_async(t: typing.Any, text: str, *, _baml: _BamlOptions | None = None) -> typing.Any:
     """Parse against a runtime `type` value when the schema is data rather than a
     lexical type parameter. Narrow the returned `unknown` at the call site.
 
     It is generally recommended to use `baml.sap.parse` instead.
+
+    Raises:
+        ParseError"""
+
+
+def coerce(value: baml.json.json, *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> T:
+    """Coerce an already-parsed JSON value into `T`: Schema-Aligned Parsing
+    without its text stage.
+
+    `parse` first finds and repairs the JSON in a model's text, then aligns it
+    to `T`. A value that arrives parsed, such as the arguments of a tool call,
+    needs only the second step. The alignment is the same: fields and variants
+    are read under the names the output format shows, and a `@skip` field is
+    not read.
+
+    A union member with no JSON form or no values is dropped:
+    `coerce<uint8array | string>` reads a string, and an optional field of
+    such a type is only `null`.
+
+    # Throws
+    - `baml.errors.ParseError` if `value` does not align to `T`, or if the
+      parser cannot model `T`: `unknown`, a type with no JSON form or no
+      values, such as `uint8array`, `never` or a function, a type that
+      requires one of those, and a class with a `@skip` field whose type has
+      no value to fill in.
+
+    Raises:
+        ParseError"""
+async def coerce_async(value: baml.json.json, *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> T:
+    """Coerce an already-parsed JSON value into `T`: Schema-Aligned Parsing
+    without its text stage.
+
+    `parse` first finds and repairs the JSON in a model's text, then aligns it
+    to `T`. A value that arrives parsed, such as the arguments of a tool call,
+    needs only the second step. The alignment is the same: fields and variants
+    are read under the names the output format shows, and a `@skip` field is
+    not read.
+
+    A union member with no JSON form or no values is dropped:
+    `coerce<uint8array | string>` reads a string, and an optional field of
+    such a type is only `null`.
+
+    # Throws
+    - `baml.errors.ParseError` if `value` does not align to `T`, or if the
+      parser cannot model `T`: `unknown`, a type with no JSON form or no
+      values, such as `uint8array`, `never` or a function, a type that
+      requires one of those, and a class with a `@skip` field whose type has
+      no value to fill in.
 
     Raises:
         ParseError"""
@@ -118,4 +189,6 @@ __all__ = [
     "parse_async",
     "parse_type",
     "parse_type_async",
+    "coerce",
+    "coerce_async",
 ]

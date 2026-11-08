@@ -25,6 +25,11 @@ import typing
 import typing_extensions
 import pydantic
 
+if typing.TYPE_CHECKING:
+    from ... import baml
+
+from ..._invocation_types import BamlOptions as _BamlOptions
+
 from baml_bridge import BamlPyHandle as _BamlPyHandle
 
 
@@ -35,14 +40,14 @@ class Context(pydantic.BaseModel):
     error: typing.Any
     stack_trace: StackTrace
     cause: typing.Optional[Context] = None
-    def root_cause(self) -> Context:
+    def root_cause(self, *, _baml: _BamlOptions | None = None) -> Context:
         """The original error at the tail of the cause chain — walks `cause` to the
         deepest link. Returns `self` when nothing was superseded."""
-    async def root_cause_async(self) -> Context:
+    async def root_cause_async(self, *, _baml: _BamlOptions | None = None) -> Context:
         """The original error at the tail of the cause chain — walks `cause` to the
         deepest link. Returns `self` when nothing was superseded."""
-    def _to_string_impl_(self) -> str: ...
-    async def _to_string_impl__async(self) -> str: ...
+    def _to_string_impl_(self, *, _baml: _BamlOptions | None = None) -> str: ...
+    async def _to_string_impl__async(self, *, _baml: _BamlOptions | None = None) -> str: ...
 
 
 class InvalidArgument(pydantic.BaseModel):
@@ -59,7 +64,8 @@ class Io(pydantic.BaseModel):
 
 class Timeout(pydantic.BaseModel):
     message: str
-    duration_ms: typing.Optional[int] = None
+    duration: typing.Optional[baml.time.Duration] = None
+    timeout_type: str
 
 
 class Unsupported(pydantic.BaseModel):
@@ -106,33 +112,33 @@ class StackFrame(pydantic.BaseModel):
 
 class StackTrace(pydantic.BaseModel):
     frames: typing.List[StackFrame]
-    def _to_string_impl_(self) -> str: ...
-    async def _to_string_impl__async(self) -> str: ...
+    def _to_string_impl_(self, *, _baml: _BamlOptions | None = None) -> str: ...
+    async def _to_string_impl__async(self, *, _baml: _BamlOptions | None = None) -> str: ...
 
 
 class UnknownError(pydantic.BaseModel):
     data: typing.Any
     message: typing.List[str]
     @staticmethod
-    def from_(data: typing.Any, *, _types: dict[str, typing.Any]) -> typing.Union[T, UnknownError]:
+    def from_(data: typing.Any, *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> typing.Union[T, UnknownError]:
         """Preserve a known `T`, recover a wrapped `T`, pass an existing
         `UnknownError` through, or wrap an otherwise unknown value."""
     @staticmethod
-    async def from__async(data: typing.Any, *, _types: dict[str, typing.Any]) -> typing.Union[T, UnknownError]:
+    async def from__async(data: typing.Any, *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> typing.Union[T, UnknownError]:
         """Preserve a known `T`, recover a wrapped `T`, pass an existing
         `UnknownError` through, or wrap an otherwise unknown value."""
     @staticmethod
-    def with_message(data: typing.Any, message: str, *, _types: dict[str, typing.Any]) -> typing.Union[T, UnknownError]:
+    def with_message(data: typing.Any, message: str, *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> typing.Union[T, UnknownError]:
         """As with `from`, but append a breadcrumb while the value remains
         unknown."""
     @staticmethod
-    async def with_message_async(data: typing.Any, message: str, *, _types: dict[str, typing.Any]) -> typing.Union[T, UnknownError]:
+    async def with_message_async(data: typing.Any, message: str, *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> typing.Union[T, UnknownError]:
         """As with `from`, but append a breadcrumb while the value remains
         unknown."""
     @staticmethod
-    def _preserve_context_(source: typing.Any, target: typing.Any) -> None: ...
+    def _preserve_context_(source: typing.Any, target: typing.Any, *, _baml: _BamlOptions | None = None) -> None: ...
     @staticmethod
-    async def _preserve_context__async(source: typing.Any, target: typing.Any) -> None: ...
+    async def _preserve_context__async(source: typing.Any, target: typing.Any, *, _baml: _BamlOptions | None = None) -> None: ...
 
 
 __all__ = [

@@ -30,6 +30,8 @@ if typing.TYPE_CHECKING:
     from ... import baml
     from ...baml import UNSET as UNSET
 
+from ..._invocation_types import BamlOptions as _BamlOptions
+
 from baml_bridge import BamlPyHandle as _BamlPyHandle
 
 
@@ -117,7 +119,7 @@ class _Headers(pydantic.BaseModel):
 
 class Record(pydantic.BaseModel):
     field_handle: _BamlPyHandle = pydantic.Field(alias="_handle")
-    def get(self, column: str, *, _types: dict[str, typing.Any]) -> typing.Optional[T]:
+    def get(self, column: str, *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> typing.Optional[T]:
         """Converts the cell under header `column` to `T`.
 
         # Returns
@@ -135,7 +137,7 @@ class Record(pydantic.BaseModel):
 
         Raises:
             Error"""
-    async def get_async(self, column: str, *, _types: dict[str, typing.Any]) -> typing.Optional[T]:
+    async def get_async(self, column: str, *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> typing.Optional[T]:
         """Converts the cell under header `column` to `T`.
 
         # Returns
@@ -153,7 +155,7 @@ class Record(pydantic.BaseModel):
 
         Raises:
             Error"""
-    def get_at(self, index: int, *, _types: dict[str, typing.Any]) -> typing.Optional[T]:
+    def get_at(self, index: int, *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> typing.Optional[T]:
         """Converts the cell at `index` to `T`, positionally.
 
         Works with or without headers. An out-of-range or negative `index`
@@ -170,7 +172,7 @@ class Record(pydantic.BaseModel):
 
         Raises:
             Error"""
-    async def get_at_async(self, index: int, *, _types: dict[str, typing.Any]) -> typing.Optional[T]:
+    async def get_at_async(self, index: int, *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> typing.Optional[T]:
         """Converts the cell at `index` to `T`, positionally.
 
         Works with or without headers. An out-of-range or negative `index`
@@ -187,13 +189,31 @@ class Record(pydantic.BaseModel):
 
         Raises:
             Error"""
-    def fields(self) -> typing.List[str]: ...
-    async def fields_async(self) -> typing.List[str]: ...
-    def length(self) -> int: ...
-    async def length_async(self) -> int: ...
-    def position(self) -> Position: ...
-    async def position_async(self) -> Position: ...
-    def decode(self, *, _types: dict[str, typing.Any]) -> T:
+    def fields(self, *, _baml: _BamlOptions | None = None) -> typing.List[str]:
+        """All cells as raw text, verbatim.
+
+        Quoting has already been undone, and `trim` applied to the unquoted
+        cells it governs — quoting a cell preserves its whitespace.
+        `null_values` is *not* applied, so a null cell still reads as whatever
+        text spelled it. Padding and truncation under `ReaderOptions.ragged`
+        are reflected here, so the length matches `length()`."""
+    async def fields_async(self, *, _baml: _BamlOptions | None = None) -> typing.List[str]:
+        """All cells as raw text, verbatim.
+
+        Quoting has already been undone, and `trim` applied to the unquoted
+        cells it governs — quoting a cell preserves its whitespace.
+        `null_values` is *not* applied, so a null cell still reads as whatever
+        text spelled it. Padding and truncation under `ReaderOptions.ragged`
+        are reflected here, so the length matches `length()`."""
+    def length(self, *, _baml: _BamlOptions | None = None) -> int:
+        """Number of cells in this record."""
+    async def length_async(self, *, _baml: _BamlOptions | None = None) -> int:
+        """Number of cells in this record."""
+    def position(self, *, _baml: _BamlOptions | None = None) -> Position:
+        """The position of the start of this record in the source."""
+    async def position_async(self, *, _baml: _BamlOptions | None = None) -> Position:
+        """The position of the start of this record in the source."""
+    def decode(self, *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> T:
         """Applies the full typed-decode rules to this one record — useful for
         routing heterogeneous rows.
 
@@ -216,7 +236,7 @@ class Record(pydantic.BaseModel):
 
         Raises:
             Error"""
-    async def decode_async(self, *, _types: dict[str, typing.Any]) -> T:
+    async def decode_async(self, *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> T:
         """Applies the full typed-decode rules to this one record — useful for
         routing heterogeneous rows.
 
@@ -239,11 +259,33 @@ class Record(pydantic.BaseModel):
 
         Raises:
             Error"""
-    def to_map(self) -> typing.Dict[str, str]:
-        """Raises:
+    def to_map(self, *, _baml: _BamlOptions | None = None) -> typing.Dict[str, str]:
+        """The record as a header-name → cell-text map.
+
+        Keyed in header order, with cell text verbatim as in `fields()`. A
+        record shorter than the header contributes `""` for the missing
+        columns, and cells past the end of the header are dropped.
+
+        # Throws
+
+        - `Error { kind: Header }` when headers are unavailable or duplicated
+          — a duplicate name would silently lose a column.
+
+        Raises:
             Error"""
-    async def to_map_async(self) -> typing.Dict[str, str]:
-        """Raises:
+    async def to_map_async(self, *, _baml: _BamlOptions | None = None) -> typing.Dict[str, str]:
+        """The record as a header-name → cell-text map.
+
+        Keyed in header order, with cell text verbatim as in `fields()`. A
+        record shorter than the header contributes `""` for the missing
+        columns, and cells past the end of the header are dropped.
+
+        # Throws
+
+        - `Error { kind: Header }` when headers are unavailable or duplicated
+          — a duplicate name would silently lose a column.
+
+        Raises:
             Error"""
 
 
@@ -252,7 +294,7 @@ class Reader(pydantic.BaseModel):
     field_file: typing.Optional[baml.fs.File] = pydantic.Field(default=None, alias="_file")
     field_on_skip: typing.Optional[typing.Callable[[Error], None]] = pydantic.Field(default=None, alias="_on_skip")
     field_owns_file: bool = pydantic.Field(alias="_owns_file")
-    def headers(self) -> typing.Optional[typing.List[str]]:
+    def headers(self, *, _baml: _BamlOptions | None = None) -> typing.Optional[typing.List[str]]:
         """The column names: the `headers` option when set, the file's header row
         when `has_header = true` (consumed on first call), and `null` otherwise.
 
@@ -274,7 +316,7 @@ class Reader(pydantic.BaseModel):
 
         Raises:
             Error, Io"""
-    async def headers_async(self) -> typing.Optional[typing.List[str]]:
+    async def headers_async(self, *, _baml: _BamlOptions | None = None) -> typing.Optional[typing.List[str]]:
         """The column names: the `headers` option when set, the file's header row
         when `has_header = true` (consumed on first call), and `null` otherwise.
 
@@ -296,7 +338,7 @@ class Reader(pydantic.BaseModel):
 
         Raises:
             Error, Io"""
-    def rows(self, *, _types: dict[str, typing.Any]) -> typing.Any:
+    def rows(self, *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> typing.Any:
         """A typed iterator over the remaining records, decoding each into `T`.
 
         Validates eagerly. It reads the header if necessary and checks that
@@ -318,7 +360,7 @@ class Reader(pydantic.BaseModel):
 
         Raises:
             Error, Io"""
-    async def rows_async(self, *, _types: dict[str, typing.Any]) -> typing.Any:
+    async def rows_async(self, *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> typing.Any:
         """A typed iterator over the remaining records, decoding each into `T`.
 
         Validates eagerly. It reads the header if necessary and checks that
@@ -340,13 +382,41 @@ class Reader(pydantic.BaseModel):
 
         Raises:
             Error, Io"""
-    def skipped(self) -> typing.List[Error]: ...
-    async def skipped_async(self) -> typing.List[Error]: ...
-    def skipped_count(self) -> int: ...
-    async def skipped_count_async(self) -> int: ...
-    def position(self) -> Position: ...
-    async def position_async(self) -> Position: ...
-    def close(self) -> None:
+    def skipped(self, *, _baml: _BamlOptions | None = None) -> typing.List[Error]:
+        """The first `max_skipped` (default 1,000) `Error` values skipped under
+        `on_error = "skip"`.
+
+        Retention is bounded so a pathological file cannot turn a
+        constant-memory stream into an unbounded error log. It keeps the first
+        errors rather than the last, because the first ones usually explain the
+        rest. Use `ReaderOptions.on_skip` to observe every skip, and
+        `skipped_count()` for the true total."""
+    async def skipped_async(self, *, _baml: _BamlOptions | None = None) -> typing.List[Error]:
+        """The first `max_skipped` (default 1,000) `Error` values skipped under
+        `on_error = "skip"`.
+
+        Retention is bounded so a pathological file cannot turn a
+        constant-memory stream into an unbounded error log. It keeps the first
+        errors rather than the last, because the first ones usually explain the
+        rest. Use `ReaderOptions.on_skip` to observe every skip, and
+        `skipped_count()` for the true total."""
+    def skipped_count(self, *, _baml: _BamlOptions | None = None) -> int:
+        """Exact count of records skipped under `on_error = "skip"`.
+
+        Unaffected by `max_skipped` — the counter is kept even once retention
+        stops."""
+    async def skipped_count_async(self, *, _baml: _BamlOptions | None = None) -> int:
+        """Exact count of records skipped under `on_error = "skip"`.
+
+        Unaffected by `max_skipped` — the counter is kept even once retention
+        stops."""
+    def position(self, *, _baml: _BamlOptions | None = None) -> Position:
+        """The position of the start of the next unread record. Its `record`
+        field counts all data records consumed so far, including skipped ones."""
+    async def position_async(self, *, _baml: _BamlOptions | None = None) -> Position:
+        """The position of the start of the next unread record. Its `record`
+        field counts all data records consumed so far, including skipped ones."""
+    def close(self, *, _baml: _BamlOptions | None = None) -> None:
         """Releases the reader. Idempotent.
 
         The underlying file handle is closed only when the reader owns it
@@ -361,7 +431,7 @@ class Reader(pydantic.BaseModel):
 
         Raises:
             Io"""
-    async def close_async(self) -> None:
+    async def close_async(self, *, _baml: _BamlOptions | None = None) -> None:
         """Releases the reader. Idempotent.
 
         The underlying file handle is closed only when the reader owns it
@@ -376,27 +446,43 @@ class Reader(pydantic.BaseModel):
 
         Raises:
             Io"""
-    def _poll_(self) -> typing.Union[Record, _Skip, _NeedData, baml.iter.Done]:
-        """Raises:
+    def _poll_(self, *, _baml: _BamlOptions | None = None) -> typing.Union[Record, _Skip, _NeedData, baml.iter.Done]:
+        """(internal) Advance the native parser by one step.
+
+        Raises:
             Error"""
-    async def _poll__async(self) -> typing.Union[Record, _Skip, _NeedData, baml.iter.Done]:
-        """Raises:
+    async def _poll__async(self, *, _baml: _BamlOptions | None = None) -> typing.Union[Record, _Skip, _NeedData, baml.iter.Done]:
+        """(internal) Advance the native parser by one step.
+
+        Raises:
             Error"""
-    def _poll_headers_(self) -> typing.Union[_Headers, _NeedData]:
-        """Raises:
+    def _poll_headers_(self, *, _baml: _BamlOptions | None = None) -> typing.Union[_Headers, _NeedData]:
+        """(internal) Resolve headers, or request more input.
+
+        Raises:
             Error"""
-    async def _poll_headers__async(self) -> typing.Union[_Headers, _NeedData]:
-        """Raises:
+    async def _poll_headers__async(self, *, _baml: _BamlOptions | None = None) -> typing.Union[_Headers, _NeedData]:
+        """(internal) Resolve headers, or request more input.
+
+        Raises:
             Error"""
-    def _feed_(self, chunk: bytes) -> None: ...
-    async def _feed__async(self, chunk: bytes) -> None: ...
-    def _feed_eof_(self) -> None: ...
-    async def _feed_eof__async(self) -> None: ...
-    def _mark_closed_(self) -> None: ...
-    async def _mark_closed__async(self) -> None: ...
-    def _mark_exhausted_(self) -> None: ...
-    async def _mark_exhausted__async(self) -> None: ...
-    def _read_chunk_(self) -> None:
+    def _feed_(self, chunk: bytes, *, _baml: _BamlOptions | None = None) -> None:
+        """(internal) Append a chunk of source bytes to the parse buffer."""
+    async def _feed__async(self, chunk: bytes, *, _baml: _BamlOptions | None = None) -> None:
+        """(internal) Append a chunk of source bytes to the parse buffer."""
+    def _feed_eof_(self, *, _baml: _BamlOptions | None = None) -> None:
+        """(internal) Mark the source as exhausted."""
+    async def _feed_eof__async(self, *, _baml: _BamlOptions | None = None) -> None:
+        """(internal) Mark the source as exhausted."""
+    def _mark_closed_(self, *, _baml: _BamlOptions | None = None) -> None:
+        """(internal) Mark the reader closed (idempotent)."""
+    async def _mark_closed__async(self, *, _baml: _BamlOptions | None = None) -> None:
+        """(internal) Mark the reader closed (idempotent)."""
+    def _mark_exhausted_(self, *, _baml: _BamlOptions | None = None) -> None:
+        """(internal) Mark the iterator exhausted: subsequent polls return Done."""
+    async def _mark_exhausted__async(self, *, _baml: _BamlOptions | None = None) -> None:
+        """(internal) Mark the iterator exhausted: subsequent polls return Done."""
+    def _read_chunk_(self, *, _baml: _BamlOptions | None = None) -> None:
         """(internal) Pull the next chunk from the backing file, or mark EOF for
         in-memory sources.
 
@@ -407,7 +493,7 @@ class Reader(pydantic.BaseModel):
 
         Raises:
             Io"""
-    async def _read_chunk__async(self) -> None:
+    async def _read_chunk__async(self, *, _baml: _BamlOptions | None = None) -> None:
         """(internal) Pull the next chunk from the backing file, or mark EOF for
         in-memory sources.
 
@@ -428,7 +514,7 @@ class Writer(pydantic.BaseModel):
     field_handle: _BamlPyHandle = pydantic.Field(alias="_handle")
     field_file: typing.Optional[baml.fs.File] = pydantic.Field(default=None, alias="_file")
     field_owns_file: bool = pydantic.Field(alias="_owns_file")
-    def write_record(self, record: typing.List[Value]) -> None:
+    def write_record(self, record: typing.List[Value], *, _baml: _BamlOptions | None = None) -> None:
         """Writes one raw record. Never triggers an automatic header.
 
         The escape hatch from typed writing: cell count and content are
@@ -436,7 +522,7 @@ class Writer(pydantic.BaseModel):
 
         Raises:
             Error, Io"""
-    async def write_record_async(self, record: typing.List[Value]) -> None:
+    async def write_record_async(self, record: typing.List[Value], *, _baml: _BamlOptions | None = None) -> None:
         """Writes one raw record. Never triggers an automatic header.
 
         The escape hatch from typed writing: cell count and content are
@@ -444,7 +530,7 @@ class Writer(pydantic.BaseModel):
 
         Raises:
             Error, Io"""
-    def write_row(self, row: T, *, _types: dict[str, typing.Any] | None = None) -> None:
+    def write_row(self, row: T, *, _types: dict[str, typing.Any] | None = None, _baml: _BamlOptions | None = None) -> None:
         """Writes one typed row, fields in declaration order.
 
         If `write_header` is enabled (the default) and no header has been
@@ -459,7 +545,7 @@ class Writer(pydantic.BaseModel):
 
         Raises:
             Error, Io"""
-    async def write_row_async(self, row: T, *, _types: dict[str, typing.Any] | None = None) -> None:
+    async def write_row_async(self, row: T, *, _types: dict[str, typing.Any] | None = None, _baml: _BamlOptions | None = None) -> None:
         """Writes one typed row, fields in declaration order.
 
         If `write_header` is enabled (the default) and no header has been
@@ -474,7 +560,7 @@ class Writer(pydantic.BaseModel):
 
         Raises:
             Error, Io"""
-    def write_rows(self, rows: typing.List[T], *, _types: dict[str, typing.Any] | None = None) -> None:
+    def write_rows(self, rows: typing.List[T], *, _types: dict[str, typing.Any] | None = None, _baml: _BamlOptions | None = None) -> None:
         """Writes many typed rows as one atomic batch.
 
         On a thrown error nothing from the batch is emitted or counted;
@@ -484,7 +570,7 @@ class Writer(pydantic.BaseModel):
 
         Raises:
             Error, Io"""
-    async def write_rows_async(self, rows: typing.List[T], *, _types: dict[str, typing.Any] | None = None) -> None:
+    async def write_rows_async(self, rows: typing.List[T], *, _types: dict[str, typing.Any] | None = None, _baml: _BamlOptions | None = None) -> None:
         """Writes many typed rows as one atomic batch.
 
         On a thrown error nothing from the batch is emitted or counted;
@@ -494,7 +580,7 @@ class Writer(pydantic.BaseModel):
 
         Raises:
             Error, Io"""
-    def write_header(self, names: typing.List[str]) -> None:
+    def write_header(self, names: typing.List[str], *, _baml: _BamlOptions | None = None) -> None:
         """Writes an explicit header record.
 
         Use it to name columns that do not match `T`'s fields, or to give
@@ -509,7 +595,7 @@ class Writer(pydantic.BaseModel):
 
         Raises:
             Error, Io"""
-    async def write_header_async(self, names: typing.List[str]) -> None:
+    async def write_header_async(self, names: typing.List[str], *, _baml: _BamlOptions | None = None) -> None:
         """Writes an explicit header record.
 
         Use it to name columns that do not match `T`'s fields, or to give
@@ -524,25 +610,47 @@ class Writer(pydantic.BaseModel):
 
         Raises:
             Error, Io"""
-    def records_written(self) -> int: ...
-    async def records_written_async(self) -> int: ...
-    def text(self) -> str:
-        """Raises:
+    def records_written(self, *, _baml: _BamlOptions | None = None) -> int:
+        """Number of data records written so far, headers excluded."""
+    async def records_written_async(self, *, _baml: _BamlOptions | None = None) -> int:
+        """Number of data records written so far, headers excluded."""
+    def text(self, *, _baml: _BamlOptions | None = None) -> str:
+        """The accumulated CSV text. Valid only on `buffer()` writers.
+
+        Non-consuming: the buffer keeps everything, so calling it twice returns
+        the same text, growing as more rows are written.
+
+        # Throws
+
+        - `Error { kind: Options }` on a file-backed writer, whose output has
+          already gone to the file and is not retained.
+
+        Raises:
             Error"""
-    async def text_async(self) -> str:
-        """Raises:
+    async def text_async(self, *, _baml: _BamlOptions | None = None) -> str:
+        """The accumulated CSV text. Valid only on `buffer()` writers.
+
+        Non-consuming: the buffer keeps everything, so calling it twice returns
+        the same text, growing as more rows are written.
+
+        # Throws
+
+        - `Error { kind: Options }` on a file-backed writer, whose output has
+          already gone to the file and is not retained.
+
+        Raises:
             Error"""
-    def flush(self) -> None:
+    def flush(self, *, _baml: _BamlOptions | None = None) -> None:
         """Flushes pending output.
 
         Writes through `baml.fs` flush eagerly, so this is an infallible no-op
         kept for symmetry with other writer APIs."""
-    async def flush_async(self) -> None:
+    async def flush_async(self, *, _baml: _BamlOptions | None = None) -> None:
         """Flushes pending output.
 
         Writes through `baml.fs` flush eagerly, so this is an infallible no-op
         kept for symmetry with other writer APIs."""
-    def close(self) -> None:
+    def close(self, *, _baml: _BamlOptions | None = None) -> None:
         """Flushes and releases the writer. Idempotent.
 
         The underlying file handle is closed only when the writer owns it
@@ -551,7 +659,7 @@ class Writer(pydantic.BaseModel):
 
         Raises:
             Io"""
-    async def close_async(self) -> None:
+    async def close_async(self, *, _baml: _BamlOptions | None = None) -> None:
         """Flushes and releases the writer. Idempotent.
 
         The underlying file handle is closed only when the writer owns it
@@ -560,29 +668,41 @@ class Writer(pydantic.BaseModel):
 
         Raises:
             Io"""
-    def _encode_record_(self, record: typing.List[Value]) -> str:
-        """Raises:
+    def _encode_record_(self, record: typing.List[Value], *, _baml: _BamlOptions | None = None) -> str:
+        """(internal) Encode one raw record, updating writer state.
+
+        Raises:
             Error"""
-    async def _encode_record__async(self, record: typing.List[Value]) -> str:
-        """Raises:
+    async def _encode_record__async(self, record: typing.List[Value], *, _baml: _BamlOptions | None = None) -> str:
+        """(internal) Encode one raw record, updating writer state.
+
+        Raises:
             Error"""
-    def _encode_header_(self, names: typing.List[str]) -> str:
-        """Raises:
+    def _encode_header_(self, names: typing.List[str], *, _baml: _BamlOptions | None = None) -> str:
+        """(internal) Encode an explicit header record, updating writer state.
+
+        Raises:
             Error"""
-    async def _encode_header__async(self, names: typing.List[str]) -> str:
-        """Raises:
+    async def _encode_header__async(self, names: typing.List[str], *, _baml: _BamlOptions | None = None) -> str:
+        """(internal) Encode an explicit header record, updating writer state.
+
+        Raises:
             Error"""
-    def _bytes_written_(self) -> int: ...
-    async def _bytes_written__async(self) -> int: ...
-    def _mark_closed_(self) -> None: ...
-    async def _mark_closed__async(self) -> None: ...
-    def _emit_(self, out: str) -> None:
+    def _bytes_written_(self, *, _baml: _BamlOptions | None = None) -> int:
+        """(internal) Total bytes encoded so far."""
+    async def _bytes_written__async(self, *, _baml: _BamlOptions | None = None) -> int:
+        """(internal) Total bytes encoded so far."""
+    def _mark_closed_(self, *, _baml: _BamlOptions | None = None) -> None:
+        """(internal) Mark the writer closed (idempotent)."""
+    async def _mark_closed__async(self, *, _baml: _BamlOptions | None = None) -> None:
+        """(internal) Mark the writer closed (idempotent)."""
+    def _emit_(self, out: str, *, _baml: _BamlOptions | None = None) -> None:
         """(internal) Write encoded text to the backing file, if any. Buffer
         writers accumulate natively and receive `""` here.
 
         Raises:
             Io"""
-    async def _emit__async(self, out: str) -> None:
+    async def _emit__async(self, out: str, *, _baml: _BamlOptions | None = None) -> None:
         """(internal) Write encoded text to the backing file, if any. Buffer
         writers accumulate natively and receive `""` here.
 
@@ -590,7 +710,7 @@ class Writer(pydantic.BaseModel):
             Io"""
 
 
-def reader(source: typing.Union[str, bytes, baml.fs.File], *, options: typing.Union[ReaderOptions, None, UNSET] = None) -> Reader:
+def reader(source: typing.Union[str, bytes, baml.fs.File], *, options: typing.Union[ReaderOptions, None, UNSET] = None, _baml: _BamlOptions | None = None) -> Reader:
     """A streaming reader over in-memory text or bytes, or an open file handle.
 
     A `string` or `uint8array` source is CSV content, parsed in place. A
@@ -609,7 +729,7 @@ def reader(source: typing.Union[str, bytes, baml.fs.File], *, options: typing.Un
 
     Raises:
         Error"""
-async def reader_async(source: typing.Union[str, bytes, baml.fs.File], *, options: typing.Union[ReaderOptions, None, UNSET] = None) -> Reader:
+async def reader_async(source: typing.Union[str, bytes, baml.fs.File], *, options: typing.Union[ReaderOptions, None, UNSET] = None, _baml: _BamlOptions | None = None) -> Reader:
     """A streaming reader over in-memory text or bytes, or an open file handle.
 
     A `string` or `uint8array` source is CSV content, parsed in place. A
@@ -630,7 +750,7 @@ async def reader_async(source: typing.Union[str, bytes, baml.fs.File], *, option
         Error"""
 
 
-def open(path: str, *, options: typing.Union[ReaderOptions, None, UNSET] = None) -> Reader:
+def open(path: str, *, options: typing.Union[ReaderOptions, None, UNSET] = None, _baml: _BamlOptions | None = None) -> Reader:
     """Opens the file at `path` through `baml.fs` and streams it.
 
     The reader owns the resulting handle, so `close()` closes the file.
@@ -642,7 +762,7 @@ def open(path: str, *, options: typing.Union[ReaderOptions, None, UNSET] = None)
 
     Raises:
         Error, Io"""
-async def open_async(path: str, *, options: typing.Union[ReaderOptions, None, UNSET] = None) -> Reader:
+async def open_async(path: str, *, options: typing.Union[ReaderOptions, None, UNSET] = None, _baml: _BamlOptions | None = None) -> Reader:
     """Opens the file at `path` through `baml.fs` and streams it.
 
     The reader owns the resulting handle, so `close()` closes the file.
@@ -656,7 +776,7 @@ async def open_async(path: str, *, options: typing.Union[ReaderOptions, None, UN
         Error, Io"""
 
 
-def read(path: str, *, options: typing.Union[ReaderOptions, None, UNSET] = None, _types: dict[str, typing.Any]) -> typing.List[T]:
+def read(path: str, *, options: typing.Union[ReaderOptions, None, UNSET] = None, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> typing.List[T]:
     """Eager typed read of a whole file, equivalent to
     `open(path).rows<T>().collect()`.
 
@@ -671,7 +791,7 @@ def read(path: str, *, options: typing.Union[ReaderOptions, None, UNSET] = None,
 
     Raises:
         Error, Io"""
-async def read_async(path: str, *, options: typing.Union[ReaderOptions, None, UNSET] = None, _types: dict[str, typing.Any]) -> typing.List[T]:
+async def read_async(path: str, *, options: typing.Union[ReaderOptions, None, UNSET] = None, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> typing.List[T]:
     """Eager typed read of a whole file, equivalent to
     `open(path).rows<T>().collect()`.
 
@@ -688,7 +808,7 @@ async def read_async(path: str, *, options: typing.Union[ReaderOptions, None, UN
         Error, Io"""
 
 
-def parse(source: typing.Union[str, bytes], *, options: typing.Union[ReaderOptions, None, UNSET] = None) -> typing.List[typing.List[str]]:
+def parse(source: typing.Union[str, bytes], *, options: typing.Union[ReaderOptions, None, UNSET] = None, _baml: _BamlOptions | None = None) -> typing.List[typing.List[str]]:
     """Eager untyped parse of in-memory input: every record as a `string[]`.
 
     The array-of-arrays shape Node's `csv-parse` returns by default. Cells come
@@ -704,7 +824,7 @@ def parse(source: typing.Union[str, bytes], *, options: typing.Union[ReaderOptio
 
     Raises:
         Error"""
-async def parse_async(source: typing.Union[str, bytes], *, options: typing.Union[ReaderOptions, None, UNSET] = None) -> typing.List[typing.List[str]]:
+async def parse_async(source: typing.Union[str, bytes], *, options: typing.Union[ReaderOptions, None, UNSET] = None, _baml: _BamlOptions | None = None) -> typing.List[typing.List[str]]:
     """Eager untyped parse of in-memory input: every record as a `string[]`.
 
     The array-of-arrays shape Node's `csv-parse` returns by default. Cells come
@@ -722,7 +842,7 @@ async def parse_async(source: typing.Union[str, bytes], *, options: typing.Union
         Error"""
 
 
-def decode(source: typing.Union[str, bytes], *, options: typing.Union[ReaderOptions, None, UNSET] = None, _types: dict[str, typing.Any]) -> typing.List[T]:
+def decode(source: typing.Union[str, bytes], *, options: typing.Union[ReaderOptions, None, UNSET] = None, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> typing.List[T]:
     """Eager typed parse of in-memory input.
 
     The in-memory counterpart of `read<T>`, with `Record.decode<T>`'s rules.
@@ -737,7 +857,7 @@ def decode(source: typing.Union[str, bytes], *, options: typing.Union[ReaderOpti
 
     Raises:
         Error"""
-async def decode_async(source: typing.Union[str, bytes], *, options: typing.Union[ReaderOptions, None, UNSET] = None, _types: dict[str, typing.Any]) -> typing.List[T]:
+async def decode_async(source: typing.Union[str, bytes], *, options: typing.Union[ReaderOptions, None, UNSET] = None, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> typing.List[T]:
     """Eager typed parse of in-memory input.
 
     The in-memory counterpart of `read<T>`, with `Record.decode<T>`'s rules.
@@ -754,7 +874,7 @@ async def decode_async(source: typing.Union[str, bytes], *, options: typing.Unio
         Error"""
 
 
-def decode_optional(source: typing.Union[str, bytes], *, options: typing.Union[ReaderOptions, None, UNSET] = None, _types: dict[str, typing.Any]) -> typing.Optional[T]:
+def decode_optional(source: typing.Union[str, bytes], *, options: typing.Union[ReaderOptions, None, UNSET] = None, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> typing.Optional[T]:
     """Typed parse of an input with zero or one data record.
 
     The tolerant sibling of `decode_one<T>`: an empty input is `null` rather
@@ -769,7 +889,7 @@ def decode_optional(source: typing.Union[str, bytes], *, options: typing.Union[R
 
     Raises:
         Error"""
-async def decode_optional_async(source: typing.Union[str, bytes], *, options: typing.Union[ReaderOptions, None, UNSET] = None, _types: dict[str, typing.Any]) -> typing.Optional[T]:
+async def decode_optional_async(source: typing.Union[str, bytes], *, options: typing.Union[ReaderOptions, None, UNSET] = None, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> typing.Optional[T]:
     """Typed parse of an input with zero or one data record.
 
     The tolerant sibling of `decode_one<T>`: an empty input is `null` rather
@@ -786,7 +906,7 @@ async def decode_optional_async(source: typing.Union[str, bytes], *, options: ty
         Error"""
 
 
-def decode_one(source: typing.Union[str, bytes], *, options: typing.Union[ReaderOptions, None, UNSET] = None, _types: dict[str, typing.Any]) -> T:
+def decode_one(source: typing.Union[str, bytes], *, options: typing.Union[ReaderOptions, None, UNSET] = None, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> T:
     """Typed parse of an input with exactly one data record.
 
     Fits LLM output that was requested as exactly one row: `has_header: false`
@@ -801,7 +921,7 @@ def decode_one(source: typing.Union[str, bytes], *, options: typing.Union[Reader
 
     Raises:
         Error"""
-async def decode_one_async(source: typing.Union[str, bytes], *, options: typing.Union[ReaderOptions, None, UNSET] = None, _types: dict[str, typing.Any]) -> T:
+async def decode_one_async(source: typing.Union[str, bytes], *, options: typing.Union[ReaderOptions, None, UNSET] = None, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> T:
     """Typed parse of an input with exactly one data record.
 
     Fits LLM output that was requested as exactly one row: `has_header: false`
@@ -818,7 +938,7 @@ async def decode_one_async(source: typing.Union[str, bytes], *, options: typing.
         Error"""
 
 
-def writer(file: baml.fs.File, *, options: typing.Union[WriterOptions, None, UNSET] = None) -> Writer:
+def writer(file: baml.fs.File, *, options: typing.Union[WriterOptions, None, UNSET] = None, _baml: _BamlOptions | None = None) -> Writer:
     """A streaming writer to an open file handle.
 
     Emits from the file's current cursor and never truncates; use `create` for
@@ -832,7 +952,7 @@ def writer(file: baml.fs.File, *, options: typing.Union[WriterOptions, None, UNS
 
     Raises:
         Error"""
-async def writer_async(file: baml.fs.File, *, options: typing.Union[WriterOptions, None, UNSET] = None) -> Writer:
+async def writer_async(file: baml.fs.File, *, options: typing.Union[WriterOptions, None, UNSET] = None, _baml: _BamlOptions | None = None) -> Writer:
     """A streaming writer to an open file handle.
 
     Emits from the file's current cursor and never truncates; use `create` for
@@ -848,7 +968,7 @@ async def writer_async(file: baml.fs.File, *, options: typing.Union[WriterOption
         Error"""
 
 
-def create(path: str, *, options: typing.Union[WriterOptions, None, UNSET] = None) -> Writer:
+def create(path: str, *, options: typing.Union[WriterOptions, None, UNSET] = None, _baml: _BamlOptions | None = None) -> Writer:
     """Creates or truncates the file at `path` and stream-writes to it.
 
     Parent directories are created as needed, as `baml.fs.write` does. The
@@ -861,7 +981,7 @@ def create(path: str, *, options: typing.Union[WriterOptions, None, UNSET] = Non
 
     Raises:
         Error, Io"""
-async def create_async(path: str, *, options: typing.Union[WriterOptions, None, UNSET] = None) -> Writer:
+async def create_async(path: str, *, options: typing.Union[WriterOptions, None, UNSET] = None, _baml: _BamlOptions | None = None) -> Writer:
     """Creates or truncates the file at `path` and stream-writes to it.
 
     Parent directories are created as needed, as `baml.fs.write` does. The
@@ -876,7 +996,7 @@ async def create_async(path: str, *, options: typing.Union[WriterOptions, None, 
         Error, Io"""
 
 
-def buffer(*, options: typing.Union[WriterOptions, None, UNSET] = None) -> Writer:
+def buffer(*, options: typing.Union[WriterOptions, None, UNSET] = None, _baml: _BamlOptions | None = None) -> Writer:
     """An in-memory writer; retrieve the accumulated CSV with `text()`.
 
     The only writer whose output stays reachable — file-backed writers hand
@@ -889,7 +1009,7 @@ def buffer(*, options: typing.Union[WriterOptions, None, UNSET] = None) -> Write
 
     Raises:
         Error"""
-async def buffer_async(*, options: typing.Union[WriterOptions, None, UNSET] = None) -> Writer:
+async def buffer_async(*, options: typing.Union[WriterOptions, None, UNSET] = None, _baml: _BamlOptions | None = None) -> Writer:
     """An in-memory writer; retrieve the accumulated CSV with `text()`.
 
     The only writer whose output stays reachable — file-backed writers hand
@@ -904,7 +1024,7 @@ async def buffer_async(*, options: typing.Union[WriterOptions, None, UNSET] = No
         Error"""
 
 
-def write(path: str, rows: typing.List[T], *, options: typing.Union[WriterOptions, None, UNSET] = None, _types: dict[str, typing.Any] | None = None) -> int:
+def write(path: str, rows: typing.List[T], *, options: typing.Union[WriterOptions, None, UNSET] = None, _types: dict[str, typing.Any] | None = None, _baml: _BamlOptions | None = None) -> int:
     """One-shot typed file write, creating or truncating like `baml.fs.write`.
 
     The rows go out as one atomic batch, so a value that will not encode leaves
@@ -921,7 +1041,7 @@ def write(path: str, rows: typing.List[T], *, options: typing.Union[WriterOption
 
     Raises:
         Error, Io"""
-async def write_async(path: str, rows: typing.List[T], *, options: typing.Union[WriterOptions, None, UNSET] = None, _types: dict[str, typing.Any] | None = None) -> int:
+async def write_async(path: str, rows: typing.List[T], *, options: typing.Union[WriterOptions, None, UNSET] = None, _types: dict[str, typing.Any] | None = None, _baml: _BamlOptions | None = None) -> int:
     """One-shot typed file write, creating or truncating like `baml.fs.write`.
 
     The rows go out as one atomic batch, so a value that will not encode leaves
@@ -940,7 +1060,7 @@ async def write_async(path: str, rows: typing.List[T], *, options: typing.Union[
         Error, Io"""
 
 
-def stringify(rows: typing.List[T], *, options: typing.Union[WriterOptions, None, UNSET] = None, _types: dict[str, typing.Any] | None = None) -> str:
+def stringify(rows: typing.List[T], *, options: typing.Union[WriterOptions, None, UNSET] = None, _types: dict[str, typing.Any] | None = None, _baml: _BamlOptions | None = None) -> str:
     """Serializes rows of `T` to CSV text.
 
     A header comes first, unless `WriterOptions.write_header` is `false`. The
@@ -954,7 +1074,7 @@ def stringify(rows: typing.List[T], *, options: typing.Union[WriterOptions, None
 
     Raises:
         Error"""
-async def stringify_async(rows: typing.List[T], *, options: typing.Union[WriterOptions, None, UNSET] = None, _types: dict[str, typing.Any] | None = None) -> str:
+async def stringify_async(rows: typing.List[T], *, options: typing.Union[WriterOptions, None, UNSET] = None, _types: dict[str, typing.Any] | None = None, _baml: _BamlOptions | None = None) -> str:
     """Serializes rows of `T` to CSV text.
 
     A header comes first, unless `WriterOptions.write_header` is `false`. The
@@ -970,7 +1090,7 @@ async def stringify_async(rows: typing.List[T], *, options: typing.Union[WriterO
         Error"""
 
 
-def stringify_records(records: typing.List[typing.List[Value]], *, options: typing.Union[WriterOptions, None, UNSET] = None) -> str:
+def stringify_records(records: typing.List[typing.List[Value]], *, options: typing.Union[WriterOptions, None, UNSET] = None, _baml: _BamlOptions | None = None) -> str:
     """Serializes raw records to CSV text.
 
     No header is ever emitted: raw records carry no field names to derive one
@@ -984,7 +1104,7 @@ def stringify_records(records: typing.List[typing.List[Value]], *, options: typi
 
     Raises:
         Error"""
-async def stringify_records_async(records: typing.List[typing.List[Value]], *, options: typing.Union[WriterOptions, None, UNSET] = None) -> str:
+async def stringify_records_async(records: typing.List[typing.List[Value]], *, options: typing.Union[WriterOptions, None, UNSET] = None, _baml: _BamlOptions | None = None) -> str:
     """Serializes raw records to CSV text.
 
     No header is ever emitted: raw records carry no field names to derive one
@@ -1000,7 +1120,7 @@ async def stringify_records_async(records: typing.List[typing.List[Value]], *, o
         Error"""
 
 
-def to_markdown(rows: typing.List[T], *, max_rows: typing.Union[int, UNSET] = 100, _types: dict[str, typing.Any] | None = None) -> str:
+def to_markdown(rows: typing.List[T], *, max_rows: typing.Union[int, UNSET] = 100, _types: dict[str, typing.Any] | None = None, _baml: _BamlOptions | None = None) -> str:
     """Renders rows of `T` as a GitHub-style Markdown table for prompt context.
 
     Headers come from `T`'s field names. `|` is escaped and embedded newlines
@@ -1013,7 +1133,7 @@ def to_markdown(rows: typing.List[T], *, max_rows: typing.Union[int, UNSET] = 10
     prompt that renders "<unrepresentable>" in one cell is more useful than no
     prompt. Where CSV would reject a nested value, this falls back to its JSON
     form. A `T` that is not a class renders as a single `value` column."""
-async def to_markdown_async(rows: typing.List[T], *, max_rows: typing.Union[int, UNSET] = 100, _types: dict[str, typing.Any] | None = None) -> str:
+async def to_markdown_async(rows: typing.List[T], *, max_rows: typing.Union[int, UNSET] = 100, _types: dict[str, typing.Any] | None = None, _baml: _BamlOptions | None = None) -> str:
     """Renders rows of `T` as a GitHub-style Markdown table for prompt context.
 
     Headers come from `T`'s field names. `|` is escaped and embedded newlines
@@ -1028,14 +1148,14 @@ async def to_markdown_async(rows: typing.List[T], *, max_rows: typing.Union[int,
     form. A `T` that is not a class renders as a single `value` column."""
 
 
-def to_markdown_records(records: typing.List[typing.List[str]], *, headers: typing.Union[typing.List[str], None, UNSET] = None, max_rows: typing.Union[int, UNSET] = 100) -> str:
+def to_markdown_records(records: typing.List[typing.List[str]], *, headers: typing.Union[typing.List[str], None, UNSET] = None, max_rows: typing.Union[int, UNSET] = 100, _baml: _BamlOptions | None = None) -> str:
     """Renders untyped records as a GitHub-style Markdown table.
 
     The `parse`-shaped counterpart of `to_markdown<T>`. Without `headers` the
     columns are named `col1`, `col2`, ... out to the width of the widest
     rendered record; supply the header row explicitly to do better. Escaping
     and `… (N more rows)` truncation are as in `to_markdown<T>`."""
-async def to_markdown_records_async(records: typing.List[typing.List[str]], *, headers: typing.Union[typing.List[str], None, UNSET] = None, max_rows: typing.Union[int, UNSET] = 100) -> str:
+async def to_markdown_records_async(records: typing.List[typing.List[str]], *, headers: typing.Union[typing.List[str], None, UNSET] = None, max_rows: typing.Union[int, UNSET] = 100, _baml: _BamlOptions | None = None) -> str:
     """Renders untyped records as a GitHub-style Markdown table.
 
     The `parse`-shaped counterpart of `to_markdown<T>`. Without `headers` the
@@ -1044,99 +1164,155 @@ async def to_markdown_records_async(records: typing.List[typing.List[str]], *, h
     and `… (N more rows)` truncation are as in `to_markdown<T>`."""
 
 
-def _reader(source: typing.Union[str, bytes, baml.fs.File], options: typing.Optional[ReaderOptions], owns_file: bool) -> Reader:
-    """Raises:
-        Error"""
-async def _reader_async(source: typing.Union[str, bytes, baml.fs.File], options: typing.Optional[ReaderOptions], owns_file: bool) -> Reader:
-    """Raises:
-        Error"""
+def _reader(source: typing.Union[str, bytes, baml.fs.File], options: typing.Optional[ReaderOptions], owns_file: bool, *, _baml: _BamlOptions | None = None) -> Reader:
+    """(internal) Construct a reader handle. Do not call directly; use `reader`.
 
-
-def _writer(file: baml.fs.File, options: typing.Optional[WriterOptions], owns_file: bool) -> Writer:
-    """Raises:
+    Raises:
         Error"""
-async def _writer_async(file: baml.fs.File, options: typing.Optional[WriterOptions], owns_file: bool) -> Writer:
-    """Raises:
+async def _reader_async(source: typing.Union[str, bytes, baml.fs.File], options: typing.Optional[ReaderOptions], owns_file: bool, *, _baml: _BamlOptions | None = None) -> Reader:
+    """(internal) Construct a reader handle. Do not call directly; use `reader`.
+
+    Raises:
         Error"""
 
 
-def _buffer(options: typing.Optional[WriterOptions]) -> Writer:
-    """Raises:
-        Error"""
-async def _buffer_async(options: typing.Optional[WriterOptions]) -> Writer:
-    """Raises:
-        Error"""
+def _writer(file: baml.fs.File, options: typing.Optional[WriterOptions], owns_file: bool, *, _baml: _BamlOptions | None = None) -> Writer:
+    """(internal) Construct a file-backed writer handle. Use `writer`.
 
-
-def _validate_columns(r: Reader, *, _types: dict[str, typing.Any]) -> None:
-    """Raises:
+    Raises:
         Error"""
-async def _validate_columns_async(r: Reader, *, _types: dict[str, typing.Any]) -> None:
-    """Raises:
+async def _writer_async(file: baml.fs.File, options: typing.Optional[WriterOptions], owns_file: bool, *, _baml: _BamlOptions | None = None) -> Writer:
+    """(internal) Construct a file-backed writer handle. Use `writer`.
+
+    Raises:
         Error"""
 
 
-def _try_decode(rec: Record, r: Reader, *, _types: dict[str, typing.Any]) -> typing.Union[T, _Skip]:
-    """Raises:
-        Error"""
-async def _try_decode_async(rec: Record, r: Reader, *, _types: dict[str, typing.Any]) -> typing.Union[T, _Skip]:
-    """Raises:
-        Error"""
+def _buffer(options: typing.Optional[WriterOptions], *, _baml: _BamlOptions | None = None) -> Writer:
+    """(internal) Construct a buffer writer handle. Use `buffer`.
 
-
-def _decode_record(rec: Record, *, _types: dict[str, typing.Any]) -> T:
-    """Raises:
+    Raises:
         Error"""
-async def _decode_record_async(rec: Record, *, _types: dict[str, typing.Any]) -> T:
-    """Raises:
+async def _buffer_async(options: typing.Optional[WriterOptions], *, _baml: _BamlOptions | None = None) -> Writer:
+    """(internal) Construct a buffer writer handle. Use `buffer`.
+
+    Raises:
         Error"""
 
 
-def _cell_by_name(rec: Record, column: str, *, _types: dict[str, typing.Any]) -> typing.Optional[T]:
-    """Raises:
-        Error"""
-async def _cell_by_name_async(rec: Record, column: str, *, _types: dict[str, typing.Any]) -> typing.Optional[T]:
-    """Raises:
-        Error"""
+def _validate_columns(r: Reader, *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> None:
+    """(internal) Check that every non-optional field of `T` is satisfiable by
+    the reader's columns. Use `Reader.rows<T>`.
 
-
-def _cell_by_index(rec: Record, index: int, *, _types: dict[str, typing.Any]) -> typing.Optional[T]:
-    """Raises:
+    Raises:
         Error"""
-async def _cell_by_index_async(rec: Record, index: int, *, _types: dict[str, typing.Any]) -> typing.Optional[T]:
-    """Raises:
+async def _validate_columns_async(r: Reader, *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> None:
+    """(internal) Check that every non-optional field of `T` is satisfiable by
+    the reader's columns. Use `Reader.rows<T>`.
+
+    Raises:
         Error"""
 
 
-def _encode_row(w: Writer, row: T, *, _types: dict[str, typing.Any] | None = None) -> str:
-    """Raises:
-        Error"""
-async def _encode_row_async(w: Writer, row: T, *, _types: dict[str, typing.Any] | None = None) -> str:
-    """Raises:
-        Error"""
+def _try_decode(rec: Record, r: Reader, *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> typing.Union[T, _Skip]:
+    """(internal) Decode one record into `T`, honoring the reader's `on_error`
+    policy: returns `_Skip` instead of throwing under `"skip"`.
 
-
-def _encode_rows(w: Writer, rows: typing.List[T], *, _types: dict[str, typing.Any] | None = None) -> str:
-    """Raises:
+    Raises:
         Error"""
-async def _encode_rows_async(w: Writer, rows: typing.List[T], *, _types: dict[str, typing.Any] | None = None) -> str:
-    """Raises:
+async def _try_decode_async(rec: Record, r: Reader, *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> typing.Union[T, _Skip]:
+    """(internal) Decode one record into `T`, honoring the reader's `on_error`
+    policy: returns `_Skip` instead of throwing under `"skip"`.
+
+    Raises:
         Error"""
 
 
-def _to_markdown(rows: typing.List[T], max_rows: int, *, _types: dict[str, typing.Any] | None = None) -> str: ...
-async def _to_markdown_async(rows: typing.List[T], max_rows: int, *, _types: dict[str, typing.Any] | None = None) -> str: ...
+def _decode_record(rec: Record, *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> T:
+    """(internal) Decode one record into `T`, always throwing on failure. Use
+    `Record.decode<T>`.
+
+    Raises:
+        Error"""
+async def _decode_record_async(rec: Record, *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> T:
+    """(internal) Decode one record into `T`, always throwing on failure. Use
+    `Record.decode<T>`.
+
+    Raises:
+        Error"""
 
 
-def _to_markdown_records(records: typing.List[typing.List[str]], headers: typing.Optional[typing.List[str]], max_rows: int) -> str: ...
-async def _to_markdown_records_async(records: typing.List[typing.List[str]], headers: typing.Optional[typing.List[str]], max_rows: int) -> str: ...
+def _cell_by_name(rec: Record, column: str, *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> typing.Optional[T]:
+    """(internal) Convert one cell by header name. Use `Record.get<T>`.
+
+    Raises:
+        Error"""
+async def _cell_by_name_async(rec: Record, column: str, *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> typing.Optional[T]:
+    """(internal) Convert one cell by header name. Use `Record.get<T>`.
+
+    Raises:
+        Error"""
 
 
-def _error(kind: ErrorKind, message: str) -> Error:
+def _cell_by_index(rec: Record, index: int, *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> typing.Optional[T]:
+    """(internal) Convert one cell by index. Use `Record.get_at<T>`.
+
+    Raises:
+        Error"""
+async def _cell_by_index_async(rec: Record, index: int, *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> typing.Optional[T]:
+    """(internal) Convert one cell by index. Use `Record.get_at<T>`.
+
+    Raises:
+        Error"""
+
+
+def _encode_row(w: Writer, row: T, *, _types: dict[str, typing.Any] | None = None, _baml: _BamlOptions | None = None) -> str:
+    """(internal) Encode one typed row (plus auto-header). Use
+    `Writer.write_row<T>`.
+
+    Raises:
+        Error"""
+async def _encode_row_async(w: Writer, row: T, *, _types: dict[str, typing.Any] | None = None, _baml: _BamlOptions | None = None) -> str:
+    """(internal) Encode one typed row (plus auto-header). Use
+    `Writer.write_row<T>`.
+
+    Raises:
+        Error"""
+
+
+def _encode_rows(w: Writer, rows: typing.List[T], *, _types: dict[str, typing.Any] | None = None, _baml: _BamlOptions | None = None) -> str:
+    """(internal) Encode many typed rows (plus auto-header). Use
+    `Writer.write_rows<T>`.
+
+    Raises:
+        Error"""
+async def _encode_rows_async(w: Writer, rows: typing.List[T], *, _types: dict[str, typing.Any] | None = None, _baml: _BamlOptions | None = None) -> str:
+    """(internal) Encode many typed rows (plus auto-header). Use
+    `Writer.write_rows<T>`.
+
+    Raises:
+        Error"""
+
+
+def _to_markdown(rows: typing.List[T], max_rows: int, *, _types: dict[str, typing.Any] | None = None, _baml: _BamlOptions | None = None) -> str:
+    """(internal) Render typed rows as a Markdown table. Use `to_markdown`."""
+async def _to_markdown_async(rows: typing.List[T], max_rows: int, *, _types: dict[str, typing.Any] | None = None, _baml: _BamlOptions | None = None) -> str:
+    """(internal) Render typed rows as a Markdown table. Use `to_markdown`."""
+
+
+def _to_markdown_records(records: typing.List[typing.List[str]], headers: typing.Optional[typing.List[str]], max_rows: int, *, _baml: _BamlOptions | None = None) -> str:
+    """(internal) Render raw records as a Markdown table. Use
+    `to_markdown_records`."""
+async def _to_markdown_records_async(records: typing.List[typing.List[str]], headers: typing.Optional[typing.List[str]], max_rows: int, *, _baml: _BamlOptions | None = None) -> str:
+    """(internal) Render raw records as a Markdown table. Use
+    `to_markdown_records`."""
+
+
+def _error(kind: ErrorKind, message: str, *, _baml: _BamlOptions | None = None) -> Error:
     """(internal) Construct an `Error` with no positional fields — for the
     input-scoped kinds (`NotFound`, `TooManyRows`) that no single record
     caused."""
-async def _error_async(kind: ErrorKind, message: str) -> Error:
+async def _error_async(kind: ErrorKind, message: str, *, _baml: _BamlOptions | None = None) -> Error:
     """(internal) Construct an `Error` with no positional fields — for the
     input-scoped kinds (`NotFound`, `TooManyRows`) that no single record
     caused."""

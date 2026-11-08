@@ -142,10 +142,6 @@ class GwImagesResponse(pydantic.BaseModel):
     usage: typing.Optional[GwImagesUsage] = None
 
 
-_gw_images_client_id       = _define_function("vercel.internal._gw_images_client_id", "sync",  ["c"], binding_name="_gw_images_client_id", binding_qualname="_gw_images_client_id", binding_module=__name__)
-_gw_images_client_id_async = _define_function("vercel.internal._gw_images_client_id", "async", ["c"], binding_name="_gw_images_client_id_async", binding_qualname="_gw_images_client_id_async", binding_module=__name__)
-
-
 _gw_images_drop_nulls       = _define_function("vercel.internal._gw_images_drop_nulls", "sync",  ["value"], binding_name="_gw_images_drop_nulls", binding_qualname="_gw_images_drop_nulls", binding_module=__name__)
 _gw_images_drop_nulls_async = _define_function("vercel.internal._gw_images_drop_nulls", "async", ["value"], binding_name="_gw_images_drop_nulls_async", binding_qualname="_gw_images_drop_nulls_async", binding_module=__name__)
 
@@ -161,7 +157,7 @@ handed to the gateway as a link and only local/base64/`data:` sources are
 inlined.
 
 Raises:
-    InvalidArgument, Io, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+    InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
 _gw_images_file_async = _define_function("vercel.internal._gw_images_file", "async", ["media"], ["preview"], binding_name="_gw_images_file_async", binding_qualname="_gw_images_file_async", binding_module=__name__)
 _gw_images_file_async.__doc__ = """(internal) One image prompt part as a `files[]` element. Media is NOT fetched here: the
 protocol takes a `{type:"url"}` reference directly, so a remote image is
@@ -169,7 +165,7 @@ handed to the gateway as a link and only local/base64/`data:` sources are
 inlined.
 
 Raises:
-    InvalidArgument, Io, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+    InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
 
 
 _gw_images_collect       = _define_function("vercel.internal._gw_images_collect", "sync",  ["blocks", "parts", "files"], ["preview"], binding_name="_gw_images_collect", binding_qualname="_gw_images_collect", binding_module=__name__)
@@ -179,7 +175,7 @@ does image editing / variations (image-model protocol v4) — at every
 position. The other media kinds have no representation and are rejected.
 
 Raises:
-    InvalidArgument, Io, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+    InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
 _gw_images_collect_async = _define_function("vercel.internal._gw_images_collect", "async", ["blocks", "parts", "files"], ["preview"], binding_name="_gw_images_collect_async", binding_qualname="_gw_images_collect_async", binding_module=__name__)
 _gw_images_collect_async.__doc__ = """(internal) Collect a turn into the endpoint's two inputs: text blocks trimmed into
 `parts` (blanks dropped), image blocks into `files` — how this endpoint
@@ -187,7 +183,7 @@ does image editing / variations (image-model protocol v4) — at every
 position. The other media kinds have no representation and are rejected.
 
 Raises:
-    InvalidArgument, Io, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+    InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
 
 
 _gw_images_input       = _define_function("vercel.internal._gw_images_input", "sync",  ["prompt", "journal"], ["preview"], binding_name="_gw_images_input", binding_qualname="_gw_images_input", binding_module=__name__)
@@ -198,7 +194,7 @@ sys_llm's `prompt_to_text`, roles discarded. Journal user turns follow so
 a re-ask still reaches the model.
 
 Raises:
-    InvalidArgument, Io, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+    InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
 _gw_images_input_async = _define_function("vercel.internal._gw_images_input", "async", ["prompt", "journal"], ["preview"], binding_name="_gw_images_input_async", binding_qualname="_gw_images_input_async", binding_module=__name__)
 _gw_images_input_async.__doc__ = """(internal) The rendered prompt lowered to the endpoint's two inputs.
 
@@ -207,7 +203,7 @@ sys_llm's `prompt_to_text`, roles discarded. Journal user turns follow so
 a re-ask still reaches the model.
 
 Raises:
-    InvalidArgument, Io, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+    InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
 
 
 _gw_images_trim_slash       = _define_function("vercel.internal._gw_images_trim_slash", "sync",  ["url"], binding_name="_gw_images_trim_slash", binding_qualname="_gw_images_trim_slash", binding_module=__name__)
@@ -266,7 +262,7 @@ base64 — storing the URL text as the image's payload would hand user code
 bytes that are not the image.
 
 Raises:
-    ParseFailed"""
+    InvalidResponse"""
 _gw_images_value_async = _define_function("vercel.internal._gw_images_value", "async", ["encoded", "fallback_mime"], binding_name="_gw_images_value_async", binding_qualname="_gw_images_value_async", binding_module=__name__)
 _gw_images_value_async.__doc__ = """(internal) One `images[]` element as an image value. Raw base64 is the documented shape;
 a `data:<mime>;base64,` payload carries its own MIME type and wins. A `data:`
@@ -275,7 +271,7 @@ base64 — storing the URL text as the image's payload would hand user code
 bytes that are not the image.
 
 Raises:
-    ParseFailed"""
+    InvalidResponse"""
 
 
 gateway_images_warning_text       = _define_function("vercel.internal.gateway_images_warning_text", "sync",  ["warning"], binding_name="gateway_images_warning_text", binding_qualname="gateway_images_warning_text", binding_module=__name__)
@@ -290,7 +286,7 @@ no finish reason, so the stop reason is always Complete (sys_llm's
 ignored — are logged, since nothing else in the turn records them.
 
 Raises:
-    ParseFailed"""
+    SerializationError, InvalidResponse"""
 gateway_images_parse_async = _define_function("vercel.internal.gateway_images_parse", "async", ["c", "resp"], binding_name="gateway_images_parse_async", binding_qualname="gateway_images_parse_async", binding_module=__name__)
 gateway_images_parse_async.__doc__ = """One decoded response -> one model turn of media blocks. The endpoint reports
 no finish reason, so the stop reason is always Complete (sys_llm's
@@ -299,7 +295,11 @@ no finish reason, so the stop reason is always Complete (sys_llm's
 ignored — are logged, since nothing else in the turn records them.
 
 Raises:
-    ParseFailed"""
+    SerializationError, InvalidResponse"""
+
+
+gateway_images_usage       = _define_function("vercel.internal.gateway_images_usage", "sync",  ["resp"], binding_name="gateway_images_usage", binding_qualname="gateway_images_usage", binding_module=__name__)
+gateway_images_usage_async = _define_function("vercel.internal.gateway_images_usage", "async", ["resp"], binding_name="gateway_images_usage_async", binding_qualname="gateway_images_usage_async", binding_module=__name__)
 
 
 gateway_images_invoke       = _define_function("vercel.internal.gateway_images_invoke", "sync",  ["c", "input"], binding_name="gateway_images_invoke", binding_qualname="gateway_images_invoke", binding_module=__name__)
@@ -329,6 +329,8 @@ __all__ = [
     "gateway_images_warning_text_async",
     "gateway_images_parse",
     "gateway_images_parse_async",
+    "gateway_images_usage",
+    "gateway_images_usage_async",
     "gateway_images_invoke",
     "gateway_images_invoke_async",
 ]

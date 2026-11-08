@@ -28,9 +28,9 @@ from . import errors
 from . import fs
 from . import future
 from . import glob
+from . import hash
 from . import host
 from . import http
-from . import id
 from . import io
 from . import iter
 from . import json
@@ -39,6 +39,7 @@ from . import net
 from . import ops
 from . import panics
 from . import random
+from . import regex
 from . import sap
 from . import spawn
 from . import sys
@@ -54,6 +55,8 @@ import pydantic
 if typing.TYPE_CHECKING:
     from .. import baml
 
+from .._invocation_types import BamlOptions as _BamlOptions
+
 from baml_bridge import BamlError as BamlError, BamlPanic as BamlPanic, UNSET as UNSET
 
 
@@ -67,7 +70,7 @@ V = typing.TypeVar("V")
 
 class Bigint(pydantic.BaseModel):
     @staticmethod
-    def parse(text: str) -> int:
+    def parse(text: str, *, _baml: _BamlOptions | None = None) -> int:
         """Parses `text` as a base ten signed integer.
 
         Accepts an optional leading `+` or `-` followed by one or more ASCII
@@ -97,7 +100,7 @@ class Bigint(pydantic.BaseModel):
         Raises:
             ParseError"""
     @staticmethod
-    async def parse_async(text: str) -> int:
+    async def parse_async(text: str, *, _baml: _BamlOptions | None = None) -> int:
         """Parses `text` as a base ten signed integer.
 
         Accepts an optional leading `+` or `-` followed by one or more ASCII
@@ -127,7 +130,7 @@ class Bigint(pydantic.BaseModel):
         Raises:
             ParseError"""
     @staticmethod
-    def random(lower: int, upper: int, *, rng: typing.Union[typing.Any, UNSET] = UNSET) -> int:
+    def random(lower: int, upper: int, *, rng: typing.Union[typing.Any, UNSET] = UNSET, _baml: _BamlOptions | None = None) -> int:
         """Returns a uniformly distributed random integer in the half-open range
         `[lower, upper)`, drawn from `rng`.
 
@@ -158,7 +161,7 @@ class Bigint(pydantic.BaseModel):
         Raises:
             InvalidArgument"""
     @staticmethod
-    async def random_async(lower: int, upper: int, *, rng: typing.Union[typing.Any, UNSET] = UNSET) -> int:
+    async def random_async(lower: int, upper: int, *, rng: typing.Union[typing.Any, UNSET] = UNSET, _baml: _BamlOptions | None = None) -> int:
         """Returns a uniformly distributed random integer in the half-open range
         `[lower, upper)`, drawn from `rng`.
 
@@ -189,20 +192,20 @@ class Bigint(pydantic.BaseModel):
         Raises:
             InvalidArgument"""
     @staticmethod
-    def _random_byte_count_(lower: int, upper: int) -> int:
+    def _random_byte_count_(lower: int, upper: int, *, _baml: _BamlOptions | None = None) -> int:
         """(internal) Number of bytes needed for one draw over `[lower, upper)`."""
     @staticmethod
-    async def _random_byte_count__async(lower: int, upper: int) -> int:
+    async def _random_byte_count__async(lower: int, upper: int, *, _baml: _BamlOptions | None = None) -> int:
         """(internal) Number of bytes needed for one draw over `[lower, upper)`."""
     @staticmethod
-    def _random_in_range_(draw: bytes, lower: int, upper: int) -> int:
+    def _random_in_range_(draw: bytes, lower: int, upper: int, *, _baml: _BamlOptions | None = None) -> int:
         """(internal) Maps one draw onto `[lower, upper)`, returning `upper` when
         the draw must be rejected."""
     @staticmethod
-    async def _random_in_range__async(draw: bytes, lower: int, upper: int) -> int:
+    async def _random_in_range__async(draw: bytes, lower: int, upper: int, *, _baml: _BamlOptions | None = None) -> int:
         """(internal) Maps one draw onto `[lower, upper)`, returning `upper` when
         the draw must be rejected."""
-    def abs(self) -> int:
+    def abs(self, *, _baml: _BamlOptions | None = None) -> int:
         """Returns the absolute value of `self`.
 
         # Examples
@@ -211,7 +214,7 @@ class Bigint(pydantic.BaseModel):
         (-7n).abs()         // 7n
         (3n).abs()          // 3n
         ```"""
-    async def abs_async(self) -> int:
+    async def abs_async(self, *, _baml: _BamlOptions | None = None) -> int:
         """Returns the absolute value of `self`.
 
         # Examples
@@ -220,7 +223,7 @@ class Bigint(pydantic.BaseModel):
         (-7n).abs()         // 7n
         (3n).abs()          // 3n
         ```"""
-    def isqrt(self) -> int:
+    def isqrt(self, *, _baml: _BamlOptions | None = None) -> int:
         """Returns the largest `r` such that `r * r <= self`: the integer square
         root of `self`.
 
@@ -238,7 +241,7 @@ class Bigint(pydantic.BaseModel):
 
         Raises:
             InvalidArgument"""
-    async def isqrt_async(self) -> int:
+    async def isqrt_async(self, *, _baml: _BamlOptions | None = None) -> int:
         """Returns the largest `r` such that `r * r <= self`: the integer square
         root of `self`.
 
@@ -256,9 +259,53 @@ class Bigint(pydantic.BaseModel):
 
         Raises:
             InvalidArgument"""
-    def pow(self, exp: int) -> int: ...
-    async def pow_async(self, exp: int) -> int: ...
-    def ilog(self, base: int) -> int:
+    def pow(self, exp: int, *, _baml: _BamlOptions | None = None) -> int:
+        """Returns `self ** exp`.
+
+        `0 ** 0` is `1n`, by convention. A negative `exp` gives `0n`, because
+        the exact value `1 / self ** -exp` lies in `(-1, 1)` for `|self| > 1`
+        and rounds toward zero. That holds uniformly: for `self == 1n` or
+        `self == -1n` the exact value is `±1n`, and the result is still `0n`.
+
+        # Panics
+
+        - `baml.panics.AllocFailure` if the estimated result exceeds `bigint`'s
+          workspace cap.
+
+        # Examples
+
+        ```baml
+        (2n).pow(10n)      // 1024n
+        (2n).pow(0n)       // 1n
+        (0n).pow(0n)       // 1n   (convention)
+        (2n).pow(-1n)      // 0n
+        (-2n).pow(3n)      // -8n
+        (10n).pow(100n)    // a very large number
+        ```"""
+    async def pow_async(self, exp: int, *, _baml: _BamlOptions | None = None) -> int:
+        """Returns `self ** exp`.
+
+        `0 ** 0` is `1n`, by convention. A negative `exp` gives `0n`, because
+        the exact value `1 / self ** -exp` lies in `(-1, 1)` for `|self| > 1`
+        and rounds toward zero. That holds uniformly: for `self == 1n` or
+        `self == -1n` the exact value is `±1n`, and the result is still `0n`.
+
+        # Panics
+
+        - `baml.panics.AllocFailure` if the estimated result exceeds `bigint`'s
+          workspace cap.
+
+        # Examples
+
+        ```baml
+        (2n).pow(10n)      // 1024n
+        (2n).pow(0n)       // 1n
+        (0n).pow(0n)       // 1n   (convention)
+        (2n).pow(-1n)      // 0n
+        (-2n).pow(3n)      // -8n
+        (10n).pow(100n)    // a very large number
+        ```"""
+    def ilog(self, base: int, *, _baml: _BamlOptions | None = None) -> int:
         """Returns the largest `n` such that `base ** n <= self`: the logarithm of
         `self` in `base`, rounded down.
 
@@ -278,7 +325,7 @@ class Bigint(pydantic.BaseModel):
 
         Raises:
             InvalidArgument"""
-    async def ilog_async(self, base: int) -> int:
+    async def ilog_async(self, base: int, *, _baml: _BamlOptions | None = None) -> int:
         """Returns the largest `n` such that `base ** n <= self`: the logarithm of
         `self` in `base`, rounded down.
 
@@ -298,7 +345,7 @@ class Bigint(pydantic.BaseModel):
 
         Raises:
             InvalidArgument"""
-    def to_int(self) -> int:
+    def to_int(self, *, _baml: _BamlOptions | None = None) -> int:
         """Narrows `self` to a fixed-width `int`.
 
         # Throws
@@ -319,7 +366,7 @@ class Bigint(pydantic.BaseModel):
 
         Raises:
             InvalidArgument"""
-    async def to_int_async(self) -> int:
+    async def to_int_async(self, *, _baml: _BamlOptions | None = None) -> int:
         """Narrows `self` to a fixed-width `int`.
 
         # Throws
@@ -344,14 +391,14 @@ class Bigint(pydantic.BaseModel):
 
 class Bool(pydantic.BaseModel):
     @staticmethod
-    def random(*, rng: typing.Union[typing.Any, UNSET] = UNSET) -> bool:
+    def random(*, rng: typing.Union[typing.Any, UNSET] = UNSET, _baml: _BamlOptions | None = None) -> bool:
         """Returns a random `true` or `false`, drawn from `rng`.
 
         `rng` defaults to `random.SystemRandom`, the host's cryptographic
         entropy source; pass a seeded generator to make the draw reproducible.
         Each call consumes one byte of entropy and tests its high bit."""
     @staticmethod
-    async def random_async(*, rng: typing.Union[typing.Any, UNSET] = UNSET) -> bool:
+    async def random_async(*, rng: typing.Union[typing.Any, UNSET] = UNSET, _baml: _BamlOptions | None = None) -> bool:
         """Returns a random `true` or `false`, drawn from `rng`.
 
         `rng` defaults to `random.SystemRandom`, the host's cryptographic
@@ -361,7 +408,7 @@ class Bool(pydantic.BaseModel):
 
 class Array(pydantic.BaseModel, typing.Generic[T]):
     @staticmethod
-    def filled(length: int, value: T) -> typing.List[T]:
+    def filled(length: int, value: T, *, _baml: _BamlOptions | None = None) -> typing.List[T]:
         """Returns an array of `length` elements, every one of them `value`.
 
         The idiomatic way to allocate a runtime-sized, pre-initialized buffer —
@@ -387,7 +434,7 @@ class Array(pydantic.BaseModel, typing.Generic[T]):
         rows[0].push(1);                      // rows is now [[1], [1], [1]]
         ```"""
     @staticmethod
-    async def filled_async(length: int, value: T) -> typing.List[T]:
+    async def filled_async(length: int, value: T, *, _baml: _BamlOptions | None = None) -> typing.List[T]:
         """Returns an array of `length` elements, every one of them `value`.
 
         The idiomatic way to allocate a runtime-sized, pre-initialized buffer —
@@ -413,7 +460,7 @@ class Array(pydantic.BaseModel, typing.Generic[T]):
         rows[0].push(1);                      // rows is now [[1], [1], [1]]
         ```"""
     @staticmethod
-    def generate(length: int, f: typing.Callable[[int], T], *, _types: dict[str, typing.Any]) -> typing.List[T]:
+    def generate(length: int, f: typing.Callable[[int], T], *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> typing.List[T]:
         """Returns an array of `length` elements, where element `i` is `f(i)`.
 
         Unlike `Array.filled`, which reuses one shared value, every slot gets an
@@ -435,7 +482,7 @@ class Array(pydantic.BaseModel, typing.Generic[T]):
         Array.generate(rows, (r: int) -> int[] { Array.filled(cols, 0) })
         ```"""
     @staticmethod
-    async def generate_async(length: int, f: typing.Callable[[int], T], *, _types: dict[str, typing.Any]) -> typing.List[T]:
+    async def generate_async(length: int, f: typing.Callable[[int], T], *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> typing.List[T]:
         """Returns an array of `length` elements, where element `i` is `f(i)`.
 
         Unlike `Array.filled`, which reuses one shared value, every slot gets an
@@ -456,13 +503,13 @@ class Array(pydantic.BaseModel, typing.Generic[T]):
         // A 2D grid whose rows can be mutated independently:
         Array.generate(rows, (r: int) -> int[] { Array.filled(cols, 0) })
         ```"""
-    def length(self) -> int:
+    def length(self, *, _baml: _BamlOptions | None = None) -> int:
         """Returns the number of elements. `O(1)` — the length is stored, not
         counted."""
-    async def length_async(self) -> int:
+    async def length_async(self, *, _baml: _BamlOptions | None = None) -> int:
         """Returns the number of elements. `O(1)` — the length is stored, not
         counted."""
-    def at(self, index: int) -> typing.Optional[T]:
+    def at(self, index: int, *, _baml: _BamlOptions | None = None) -> typing.Optional[T]:
         """Returns the element at `index`, or `null` if out of bounds.
 
         Resolves `index` exactly as the subscript does, negative indices
@@ -480,7 +527,7 @@ class Array(pydantic.BaseModel, typing.Generic[T]):
         [10, 20, 30].at(-1)   // 30
         [10, 20, 30].at(99)   // null
         ```"""
-    async def at_async(self, index: int) -> typing.Optional[T]:
+    async def at_async(self, index: int, *, _baml: _BamlOptions | None = None) -> typing.Optional[T]:
         """Returns the element at `index`, or `null` if out of bounds.
 
         Resolves `index` exactly as the subscript does, negative indices
@@ -498,39 +545,91 @@ class Array(pydantic.BaseModel, typing.Generic[T]):
         [10, 20, 30].at(-1)   // 30
         [10, 20, 30].at(99)   // null
         ```"""
-    def push(self, item: T) -> int: ...
-    async def push_async(self, item: T) -> int: ...
-    def pop(self) -> typing.Optional[T]: ...
-    async def pop_async(self) -> typing.Optional[T]: ...
-    def remove_at(self, index: int) -> typing.Optional[T]: ...
-    async def remove_at_async(self, index: int) -> typing.Optional[T]: ...
-    def concat(self, other: typing.List[T]) -> typing.List[T]:
+    def push(self, item: T, *, _baml: _BamlOptions | None = None) -> int:
+        """Appends `item` to the end of the array and returns the new length.
+        Amortized `O(1)`."""
+    async def push_async(self, item: T, *, _baml: _BamlOptions | None = None) -> int:
+        """Appends `item` to the end of the array and returns the new length.
+        Amortized `O(1)`."""
+    def pop(self, *, _baml: _BamlOptions | None = None) -> typing.Optional[T]:
+        """Removes and returns the last element, or `null` if the array is empty.
+        `O(1)` — the inverse of `push`.
+
+        When `T` is nullable, `null` means either "the array was empty" or "the
+        last element was `null`". Drive a drain loop off `length()` in that
+        case."""
+    async def pop_async(self, *, _baml: _BamlOptions | None = None) -> typing.Optional[T]:
+        """Removes and returns the last element, or `null` if the array is empty.
+        `O(1)` — the inverse of `push`.
+
+        When `T` is nullable, `null` means either "the array was empty" or "the
+        last element was `null`". Drive a drain loop off `length()` in that
+        case."""
+    def remove_at(self, index: int, *, _baml: _BamlOptions | None = None) -> typing.Optional[T]:
+        """Removes and returns the element at `index`, or `null` if out of bounds.
+
+        Resolves `index` as `at` does; an out-of-range `index` leaves the array
+        unchanged. `O(n)`, because later elements shift backward — `pop` is the
+        `O(1)` removal from the end.
+
+        # Examples
+        ```baml
+        let xs = [10, 20, 30];
+        xs.remove_at(1)   // 20   xs is now [10, 30]
+        xs.remove_at(-1)  // 30   xs is now [10]
+        xs.remove_at(99)  // null
+        ```"""
+    async def remove_at_async(self, index: int, *, _baml: _BamlOptions | None = None) -> typing.Optional[T]:
+        """Removes and returns the element at `index`, or `null` if out of bounds.
+
+        Resolves `index` as `at` does; an out-of-range `index` leaves the array
+        unchanged. `O(n)`, because later elements shift backward — `pop` is the
+        `O(1)` removal from the end.
+
+        # Examples
+        ```baml
+        let xs = [10, 20, 30];
+        xs.remove_at(1)   // 20   xs is now [10, 30]
+        xs.remove_at(-1)  // 30   xs is now [10]
+        xs.remove_at(99)  // null
+        ```"""
+    def concat(self, other: typing.List[T], *, _baml: _BamlOptions | None = None) -> typing.List[T]:
         """Returns the elements of `self` followed by the elements of `other`.
         Neither input is mutated."""
-    async def concat_async(self, other: typing.List[T]) -> typing.List[T]:
+    async def concat_async(self, other: typing.List[T], *, _baml: _BamlOptions | None = None) -> typing.List[T]:
         """Returns the elements of `self` followed by the elements of `other`.
         Neither input is mutated."""
-    def for_each(self, fn: typing.Callable[[T], None], *, _types: dict[str, typing.Any]) -> None:
-        """Calls `fn` once for each element, left to right, discarding its result."""
-    async def for_each_async(self, fn: typing.Callable[[T], None], *, _types: dict[str, typing.Any]) -> None:
-        """Calls `fn` once for each element, left to right, discarding its result."""
-    def filter(self, predicate: typing.Callable[[T], bool], *, _types: dict[str, typing.Any]) -> typing.List[T]: ...
-    async def filter_async(self, predicate: typing.Callable[[T], bool], *, _types: dict[str, typing.Any]) -> typing.List[T]: ...
-    def filter_map(self, fn: typing.Callable[[T], typing.Optional[U]], *, _types: dict[str, typing.Any]) -> typing.List[U]:
+    def for_each(self, fn: typing.Callable[[T], None], *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> None:
+        """Calls `fn` once for each element, left to right."""
+    async def for_each_async(self, fn: typing.Callable[[T], None], *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> None:
+        """Calls `fn` once for each element, left to right."""
+    def filter(self, predicate: typing.Callable[[T], bool], *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> typing.List[T]:
+        """Returns the elements matching `predicate`, in order.
+
+        JavaScript's
+        [`Array.prototype.filter`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/filter).
+        For a lazy version, use `iter().filter(predicate)`."""
+    async def filter_async(self, predicate: typing.Callable[[T], bool], *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> typing.List[T]:
+        """Returns the elements matching `predicate`, in order.
+
+        JavaScript's
+        [`Array.prototype.filter`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/filter).
+        For a lazy version, use `iter().filter(predicate)`."""
+    def filter_map(self, fn: typing.Callable[[T], typing.Optional[U]], *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> typing.List[U]:
         """Returns the non-null results of `fn` — mapping and filtering in one
         pass.
 
         A `null` result drops that element, which makes a mapped-to `null`
         indistinguishable from a drop when `U` is itself nullable. For a lazy
         version, use `iter().filter_map(fn)`."""
-    async def filter_map_async(self, fn: typing.Callable[[T], typing.Optional[U]], *, _types: dict[str, typing.Any]) -> typing.List[U]:
+    async def filter_map_async(self, fn: typing.Callable[[T], typing.Optional[U]], *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> typing.List[U]:
         """Returns the non-null results of `fn` — mapping and filtering in one
         pass.
 
         A `null` result drops that element, which makes a mapped-to `null`
         indistinguishable from a drop when `U` is itself nullable. For a lazy
         version, use `iter().filter_map(fn)`."""
-    def reverse(self) -> typing.List[T]:
+    def reverse(self, *, _baml: _BamlOptions | None = None) -> typing.List[T]:
         """Returns the elements in reverse order.
 
         Unlike JavaScript's `Array.prototype.reverse`, which reverses in place,
@@ -544,7 +643,7 @@ class Array(pydantic.BaseModel, typing.Generic[T]):
         let reversed = arr.reverse();
         assert.equal(reversed, [3, 2, 1]);
         ```"""
-    async def reverse_async(self) -> typing.List[T]:
+    async def reverse_async(self, *, _baml: _BamlOptions | None = None) -> typing.List[T]:
         """Returns the elements in reverse order.
 
         Unlike JavaScript's `Array.prototype.reverse`, which reverses in place,
@@ -558,11 +657,87 @@ class Array(pydantic.BaseModel, typing.Generic[T]):
         let reversed = arr.reverse();
         assert.equal(reversed, [3, 2, 1]);
         ```"""
-    def sort_by(self, compare: typing.Callable[[T, T], baml.ops.Ordering], *, _types: dict[str, typing.Any]) -> typing.List[T]: ...
-    async def sort_by_async(self, compare: typing.Callable[[T, T], baml.ops.Ordering], *, _types: dict[str, typing.Any]) -> typing.List[T]: ...
-    def sort_by_key(self, key: typing.Callable[[T], U], *, _types: dict[str, typing.Any]) -> typing.List[T]: ...
-    async def sort_by_key_async(self, key: typing.Callable[[T], U], *, _types: dict[str, typing.Any]) -> typing.List[T]: ...
-    def slice(self, start: int, end: int) -> typing.List[T]:
+    def sort_by(self, compare: typing.Callable[[T, T], baml.ops.Ordering], *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> typing.List[T]:
+        """Sorts the array in place using a comparator and returns `self` — the
+        same array object, not a copy.
+
+        The comparator returns a `baml.ops.Ordering`: `Less` sorts the first
+        argument before the second, `Equal` keeps their relative order, and
+        `Greater` sorts it after. This is the same three-way answer
+        `baml.ops.Compare.cmp` produces, so `a.cmp(b)` is directly usable as a
+        comparator body. The sort is stable, so elements the comparator calls
+        `Equal` stay in their original order.
+
+        Comparator calls run sequentially in a deterministic merge order, but
+        that order is an implementation detail; a comparator must not depend on
+        a particular comparison sequence.
+
+        The write-back happens only once the whole sort completes. A comparator
+        that throws therefore leaves `self` in its pre-sort order, and one that
+        mutates `self` has those mutations discarded.
+
+        # Examples
+
+        ```baml
+        xs.sort_by((a: int, b: int) -> baml.ops.Ordering throws never { a.cmp(b) })
+        ```"""
+    async def sort_by_async(self, compare: typing.Callable[[T, T], baml.ops.Ordering], *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> typing.List[T]:
+        """Sorts the array in place using a comparator and returns `self` — the
+        same array object, not a copy.
+
+        The comparator returns a `baml.ops.Ordering`: `Less` sorts the first
+        argument before the second, `Equal` keeps their relative order, and
+        `Greater` sorts it after. This is the same three-way answer
+        `baml.ops.Compare.cmp` produces, so `a.cmp(b)` is directly usable as a
+        comparator body. The sort is stable, so elements the comparator calls
+        `Equal` stay in their original order.
+
+        Comparator calls run sequentially in a deterministic merge order, but
+        that order is an implementation detail; a comparator must not depend on
+        a particular comparison sequence.
+
+        The write-back happens only once the whole sort completes. A comparator
+        that throws therefore leaves `self` in its pre-sort order, and one that
+        mutates `self` has those mutations discarded.
+
+        # Examples
+
+        ```baml
+        xs.sort_by((a: int, b: int) -> baml.ops.Ordering throws never { a.cmp(b) })
+        ```"""
+    def sort_by_key(self, key: typing.Callable[[T], U], *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> typing.List[T]:
+        """Sorts the array in place by a key, then returns `self` — the same array
+        object, not a copy.
+
+        Each key is computed exactly once, left to right, and the elements are
+        then ordered by their keys' natural order (`baml.ops.Compare.cmp`). That
+        compute-once guarantee is what makes this cheaper than the equivalent
+        `sort_by` when the key is expensive to derive. The sort is stable, so
+        elements with equal keys keep their original order.
+
+        Like `sort_by`, the write-back happens only on success: a `key` that
+        throws leaves `self` in its pre-sort order, and a `key` that mutates
+        `self` has those mutations discarded.
+
+        The key type must implement `baml.ops.Compare`, whose ordering is total
+        and `throws never`, so the only error is the key callback's own `E`."""
+    async def sort_by_key_async(self, key: typing.Callable[[T], U], *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> typing.List[T]:
+        """Sorts the array in place by a key, then returns `self` — the same array
+        object, not a copy.
+
+        Each key is computed exactly once, left to right, and the elements are
+        then ordered by their keys' natural order (`baml.ops.Compare.cmp`). That
+        compute-once guarantee is what makes this cheaper than the equivalent
+        `sort_by` when the key is expensive to derive. The sort is stable, so
+        elements with equal keys keep their original order.
+
+        Like `sort_by`, the write-back happens only on success: a `key` that
+        throws leaves `self` in its pre-sort order, and a `key` that mutates
+        `self` has those mutations discarded.
+
+        The key type must implement `baml.ops.Compare`, whose ordering is total
+        and `throws never`, so the only error is the key callback's own `E`."""
+    def slice(self, start: int, end: int, *, _baml: _BamlOptions | None = None) -> typing.List[T]:
         """Returns the elements from `start` (inclusive) to `end` (exclusive).
 
         Negative bounds count from the end. Unlike `at` and the subscript, an
@@ -579,7 +754,7 @@ class Array(pydantic.BaseModel, typing.Generic[T]):
         [1, 2, 3].slice(-2, 3)     // [2, 3]
         [1, 2, 3].slice(2, 1)      // []
         ```"""
-    async def slice_async(self, start: int, end: int) -> typing.List[T]:
+    async def slice_async(self, start: int, end: int, *, _baml: _BamlOptions | None = None) -> typing.List[T]:
         """Returns the elements from `start` (inclusive) to `end` (exclusive).
 
         Negative bounds count from the end. Unlike `at` and the subscript, an
@@ -596,7 +771,7 @@ class Array(pydantic.BaseModel, typing.Generic[T]):
         [1, 2, 3].slice(-2, 3)     // [2, 3]
         [1, 2, 3].slice(2, 1)      // []
         ```"""
-    def join(self, separator: str) -> str:
+    def join(self, separator: str, *, _baml: _BamlOptions | None = None) -> str:
         """Joins the elements into one string, separated by `separator`.
 
         Each element is rendered with `string.from`: a runtime type implementing
@@ -611,7 +786,7 @@ class Array(pydantic.BaseModel, typing.Generic[T]):
         [1, 2, 3].join(",")  // "1,2,3"
         [true, false, true].join("||")  // "true||false||true"
         ```"""
-    async def join_async(self, separator: str) -> str:
+    async def join_async(self, separator: str, *, _baml: _BamlOptions | None = None) -> str:
         """Joins the elements into one string, separated by `separator`.
 
         Each element is rendered with `string.from`: a runtime type implementing
@@ -626,135 +801,853 @@ class Array(pydantic.BaseModel, typing.Generic[T]):
         [1, 2, 3].join(",")  // "1,2,3"
         [true, false, true].join("||")  // "true||false||true"
         ```"""
-    def map(self, f: typing.Callable[[T], U], *, _types: dict[str, typing.Any]) -> typing.List[U]: ...
-    async def map_async(self, f: typing.Callable[[T], U], *, _types: dict[str, typing.Any]) -> typing.List[U]: ...
-    def some(self, predicate: typing.Callable[[T], bool], *, _types: dict[str, typing.Any]) -> bool: ...
-    async def some_async(self, predicate: typing.Callable[[T], bool], *, _types: dict[str, typing.Any]) -> bool: ...
-    def every(self, predicate: typing.Callable[[T], bool], *, _types: dict[str, typing.Any]) -> bool: ...
-    async def every_async(self, predicate: typing.Callable[[T], bool], *, _types: dict[str, typing.Any]) -> bool: ...
-    def find(self, predicate: typing.Callable[[T], bool], *, _types: dict[str, typing.Any]) -> typing.Optional[T]: ...
-    async def find_async(self, predicate: typing.Callable[[T], bool], *, _types: dict[str, typing.Any]) -> typing.Optional[T]: ...
-    def find_index(self, predicate: typing.Callable[[T], bool], *, _types: dict[str, typing.Any]) -> typing.Optional[int]: ...
-    async def find_index_async(self, predicate: typing.Callable[[T], bool], *, _types: dict[str, typing.Any]) -> typing.Optional[int]: ...
-    def find_last(self, predicate: typing.Callable[[T], bool], *, _types: dict[str, typing.Any]) -> typing.Optional[T]: ...
-    async def find_last_async(self, predicate: typing.Callable[[T], bool], *, _types: dict[str, typing.Any]) -> typing.Optional[T]: ...
-    def find_last_index(self, predicate: typing.Callable[[T], bool], *, _types: dict[str, typing.Any]) -> typing.Optional[int]: ...
-    async def find_last_index_async(self, predicate: typing.Callable[[T], bool], *, _types: dict[str, typing.Any]) -> typing.Optional[int]: ...
-    def includes(self, item: T) -> bool: ...
-    async def includes_async(self, item: T) -> bool: ...
-    def index_of(self, item: T) -> typing.Optional[int]: ...
-    async def index_of_async(self, item: T) -> typing.Optional[int]: ...
-    def last_index_of(self, item: T) -> typing.Optional[int]: ...
-    async def last_index_of_async(self, item: T) -> typing.Optional[int]: ...
-    def reduce(self, reducer: typing.Callable[[A, T], A], initial: A, *, _types: dict[str, typing.Any]) -> A: ...
-    async def reduce_async(self, reducer: typing.Callable[[A, T], A], initial: A, *, _types: dict[str, typing.Any]) -> A: ...
-    def flat_map(self, f: typing.Callable[[T], typing.List[U]], *, _types: dict[str, typing.Any]) -> typing.List[U]: ...
-    async def flat_map_async(self, f: typing.Callable[[T], typing.List[U]], *, _types: dict[str, typing.Any]) -> typing.List[U]: ...
-    def clear(self) -> None: ...
-    async def clear_async(self) -> None: ...
-    def shift(self) -> typing.Optional[T]: ...
-    async def shift_async(self) -> typing.Optional[T]: ...
-    def unshift(self, item: T) -> int: ...
-    async def unshift_async(self, item: T) -> int: ...
-    def insert(self, item: T, idx: int) -> int:
-        """Raises:
+    def map(self, f: typing.Callable[[T], U], *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> typing.List[U]:
+        """Applies `f` to each element and returns the results, in order.
+
+        JavaScript's
+        [`Array.prototype.map`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/map).
+        For a lazy version, use `iter().map(f)`.
+
+        # Examples
+
+        ```baml
+        [1, 2, 3].map((x: int) -> int { x * 2 })                   // [2, 4, 6]
+        ["a", "bb", "ccc"].map((x: string) -> int { x.length() })  // [1, 2, 3]
+        ```"""
+    async def map_async(self, f: typing.Callable[[T], U], *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> typing.List[U]:
+        """Applies `f` to each element and returns the results, in order.
+
+        JavaScript's
+        [`Array.prototype.map`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/map).
+        For a lazy version, use `iter().map(f)`.
+
+        # Examples
+
+        ```baml
+        [1, 2, 3].map((x: int) -> int { x * 2 })                   // [2, 4, 6]
+        ["a", "bb", "ccc"].map((x: string) -> int { x.length() })  // [1, 2, 3]
+        ```"""
+    def some(self, predicate: typing.Callable[[T], bool], *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> bool:
+        """Returns `true` if `predicate` returns true for any element.
+
+        Scans left to right and short-circuits on the first true, so later
+        elements are never passed to `predicate`. An empty array returns
+        `false`. This is JavaScript's
+        [`some`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/some)
+        and Python's `any`.
+
+        # Examples
+        ```baml
+        [1, 2, 3].some((x: int) -> bool { x > 2 })   // true
+        [].some((x: int) -> bool { true })           // false
+        ```"""
+    async def some_async(self, predicate: typing.Callable[[T], bool], *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> bool:
+        """Returns `true` if `predicate` returns true for any element.
+
+        Scans left to right and short-circuits on the first true, so later
+        elements are never passed to `predicate`. An empty array returns
+        `false`. This is JavaScript's
+        [`some`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/some)
+        and Python's `any`.
+
+        # Examples
+        ```baml
+        [1, 2, 3].some((x: int) -> bool { x > 2 })   // true
+        [].some((x: int) -> bool { true })           // false
+        ```"""
+    def every(self, predicate: typing.Callable[[T], bool], *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> bool:
+        """Returns `true` if `predicate` returns true for *every* element.
+
+        Scans left to right and short-circuits on the first false. An empty
+        array returns `true`. This is JavaScript's
+        [`every`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/every)
+        and Python's `all`.
+
+        # Examples
+        ```baml
+        [2, 4, 6].every((x: int) -> bool { x % 2 == 0 })   // true
+        [].every((x: int) -> bool { false })               // true
+        ```"""
+    async def every_async(self, predicate: typing.Callable[[T], bool], *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> bool:
+        """Returns `true` if `predicate` returns true for *every* element.
+
+        Scans left to right and short-circuits on the first false. An empty
+        array returns `true`. This is JavaScript's
+        [`every`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/every)
+        and Python's `all`.
+
+        # Examples
+        ```baml
+        [2, 4, 6].every((x: int) -> bool { x % 2 == 0 })   // true
+        [].every((x: int) -> bool { false })               // true
+        ```"""
+    def find(self, predicate: typing.Callable[[T], bool], *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> typing.Optional[T]:
+        """Returns the first element matching `predicate`, or `null` if none does.
+
+        Scans left to right and short-circuits on the first match. When `T` is
+        nullable the result is ambiguous — a matched `null` element and "no
+        match" look the same; use `find_index` there.
+
+        # Examples
+        ```baml
+        [1, 2, 3, 4].find((x: int) -> bool { x > 2 })   // 3
+        [1, 2, 3].find((x: int) -> bool { x > 9 })      // null
+        ```"""
+    async def find_async(self, predicate: typing.Callable[[T], bool], *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> typing.Optional[T]:
+        """Returns the first element matching `predicate`, or `null` if none does.
+
+        Scans left to right and short-circuits on the first match. When `T` is
+        nullable the result is ambiguous — a matched `null` element and "no
+        match" look the same; use `find_index` there.
+
+        # Examples
+        ```baml
+        [1, 2, 3, 4].find((x: int) -> bool { x > 2 })   // 3
+        [1, 2, 3].find((x: int) -> bool { x > 9 })      // null
+        ```"""
+    def find_index(self, predicate: typing.Callable[[T], bool], *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> typing.Optional[int]:
+        """Returns the index of the first element matching `predicate`, or `null`
+        if none does.
+
+        Scans left to right and short-circuits on the first match. JavaScript's
+        `findIndex`, but a miss is `null` rather than `-1`.
+
+        # Examples
+        ```baml
+        [1, 2, 3, 4].find_index((x: int) -> bool { x > 2 })   // 2
+        [1, 2].find_index((x: int) -> bool { x > 9 })         // null
+        ```"""
+    async def find_index_async(self, predicate: typing.Callable[[T], bool], *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> typing.Optional[int]:
+        """Returns the index of the first element matching `predicate`, or `null`
+        if none does.
+
+        Scans left to right and short-circuits on the first match. JavaScript's
+        `findIndex`, but a miss is `null` rather than `-1`.
+
+        # Examples
+        ```baml
+        [1, 2, 3, 4].find_index((x: int) -> bool { x > 2 })   // 2
+        [1, 2].find_index((x: int) -> bool { x > 9 })         // null
+        ```"""
+    def find_last(self, predicate: typing.Callable[[T], bool], *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> typing.Optional[T]:
+        """Returns the *last* element matching `predicate`, or `null` if none does.
+
+        Like `find`, but scans right to left. A nullable `T` makes the result
+        ambiguous the same way; use `find_last_index` there.
+
+        # Examples
+        ```baml
+        [1, 2, 3, 4].find_last((x: int) -> bool { x > 1 })   // 4
+        [1, 2, 3].find_last((x: int) -> bool { x > 9 })      // null
+        ```"""
+    async def find_last_async(self, predicate: typing.Callable[[T], bool], *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> typing.Optional[T]:
+        """Returns the *last* element matching `predicate`, or `null` if none does.
+
+        Like `find`, but scans right to left. A nullable `T` makes the result
+        ambiguous the same way; use `find_last_index` there.
+
+        # Examples
+        ```baml
+        [1, 2, 3, 4].find_last((x: int) -> bool { x > 1 })   // 4
+        [1, 2, 3].find_last((x: int) -> bool { x > 9 })      // null
+        ```"""
+    def find_last_index(self, predicate: typing.Callable[[T], bool], *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> typing.Optional[int]:
+        """Returns the index of the *last* element matching `predicate`, or `null`
+        if none does.
+
+        Like `find_index`, but scans right to left. The index is still counted
+        from the front.
+
+        # Examples
+        ```baml
+        [1, 2, 1, 2].find_last_index((x: int) -> bool { x == 1 })   // 2
+        ```"""
+    async def find_last_index_async(self, predicate: typing.Callable[[T], bool], *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> typing.Optional[int]:
+        """Returns the index of the *last* element matching `predicate`, or `null`
+        if none does.
+
+        Like `find_index`, but scans right to left. The index is still counted
+        from the front.
+
+        # Examples
+        ```baml
+        [1, 2, 1, 2].find_last_index((x: int) -> bool { x == 1 })   // 2
+        ```"""
+    def includes(self, item: T, *, _baml: _BamlOptions | None = None) -> bool:
+        """Returns `true` if the array contains an element equal to `item`. Scans
+        left to right, stopping at the first match; `O(n)`.
+
+        Equality here is a fixed built-in test, *not* the `==` operator. `int`,
+        `bool` and `null` compare by value; `float` by IEEE equality, so a `NaN`
+        element never matches and `0.0` matches `-0.0`; `string` and
+        `uint8array` by content; enum variants by variant identity. Everything
+        else — `bigint`, arrays, maps, class instances, `type` values — compares
+        by *reference*, so a structurally identical but separately constructed
+        value is not found. For `==`'s deep, override-aware comparison, spell it
+        out: `self.some((x: T) -> bool { x == item })`.
+
+        JavaScript's
+        [`includes`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/includes)
+        matches `NaN` against itself; this does not.
+
+        # Examples
+        ```baml
+        [1, 2, 3].includes(2)     // true
+        ["a", "b"].includes("b")  // true
+        [[1]].includes([1])       // false — by reference, though [1] == [1]
+        ```"""
+    async def includes_async(self, item: T, *, _baml: _BamlOptions | None = None) -> bool:
+        """Returns `true` if the array contains an element equal to `item`. Scans
+        left to right, stopping at the first match; `O(n)`.
+
+        Equality here is a fixed built-in test, *not* the `==` operator. `int`,
+        `bool` and `null` compare by value; `float` by IEEE equality, so a `NaN`
+        element never matches and `0.0` matches `-0.0`; `string` and
+        `uint8array` by content; enum variants by variant identity. Everything
+        else — `bigint`, arrays, maps, class instances, `type` values — compares
+        by *reference*, so a structurally identical but separately constructed
+        value is not found. For `==`'s deep, override-aware comparison, spell it
+        out: `self.some((x: T) -> bool { x == item })`.
+
+        JavaScript's
+        [`includes`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/includes)
+        matches `NaN` against itself; this does not.
+
+        # Examples
+        ```baml
+        [1, 2, 3].includes(2)     // true
+        ["a", "b"].includes("b")  // true
+        [[1]].includes([1])       // false — by reference, though [1] == [1]
+        ```"""
+    def index_of(self, item: T, *, _baml: _BamlOptions | None = None) -> typing.Optional[int]:
+        """Returns the index of the first element equal to `item`, or `null` if
+        there is none. `O(n)`.
+
+        Equality is the built-in test described on `includes` — notably *not*
+        the `==` operator for `bigint` or for container and class-instance
+        elements. JavaScript's `indexOf`, but a miss is `null` rather than `-1`.
+
+        # Examples
+        ```baml
+        [10, 20, 30].index_of(20)   // 1
+        [10, 20].index_of(99)       // null
+        ```"""
+    async def index_of_async(self, item: T, *, _baml: _BamlOptions | None = None) -> typing.Optional[int]:
+        """Returns the index of the first element equal to `item`, or `null` if
+        there is none. `O(n)`.
+
+        Equality is the built-in test described on `includes` — notably *not*
+        the `==` operator for `bigint` or for container and class-instance
+        elements. JavaScript's `indexOf`, but a miss is `null` rather than `-1`.
+
+        # Examples
+        ```baml
+        [10, 20, 30].index_of(20)   // 1
+        [10, 20].index_of(99)       // null
+        ```"""
+    def last_index_of(self, item: T, *, _baml: _BamlOptions | None = None) -> typing.Optional[int]:
+        """Returns the index of the last element equal to `item`, or `null` if
+        there is none.
+
+        Equality is the built-in test described on `includes`. Scans right to
+        left, so it stops early on a match near the end but is `O(n)` in the
+        worst case.
+
+        # Examples
+        ```baml
+        [10, 20, 10].last_index_of(10)   // 2
+        [10, 20].last_index_of(99)       // null
+        ```"""
+    async def last_index_of_async(self, item: T, *, _baml: _BamlOptions | None = None) -> typing.Optional[int]:
+        """Returns the index of the last element equal to `item`, or `null` if
+        there is none.
+
+        Equality is the built-in test described on `includes`. Scans right to
+        left, so it stops early on a match near the end but is `O(n)` in the
+        worst case.
+
+        # Examples
+        ```baml
+        [10, 20, 10].last_index_of(10)   // 2
+        [10, 20].last_index_of(99)       // null
+        ```"""
+    def reduce(self, reducer: typing.Callable[[A, T], A], initial: A, *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> A:
+        """Folds the array into a single value, starting from `initial`.
+
+        Each element `t`, left to right, updates the accumulator to
+        `reducer(acc, t)`; the final accumulator is returned. An empty array
+        returns `initial` unchanged. The argument order is
+        `(accumulator, element)`, as in JavaScript's
+        [`reduce`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/reduce)
+        — but `initial` is mandatory here, so reducing an empty array is never
+        an error.
+
+        # Examples
+        ```baml
+        [1, 2, 3, 4].reduce((acc: int, x: int) -> int { acc + x }, 0)   // 10
+        [].reduce((acc: int, x: int) -> int { acc + x }, 42)            // 42
+        ```"""
+    async def reduce_async(self, reducer: typing.Callable[[A, T], A], initial: A, *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> A:
+        """Folds the array into a single value, starting from `initial`.
+
+        Each element `t`, left to right, updates the accumulator to
+        `reducer(acc, t)`; the final accumulator is returned. An empty array
+        returns `initial` unchanged. The argument order is
+        `(accumulator, element)`, as in JavaScript's
+        [`reduce`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/reduce)
+        — but `initial` is mandatory here, so reducing an empty array is never
+        an error.
+
+        # Examples
+        ```baml
+        [1, 2, 3, 4].reduce((acc: int, x: int) -> int { acc + x }, 0)   // 10
+        [].reduce((acc: int, x: int) -> int { acc + x }, 42)            // 42
+        ```"""
+    def flat_map(self, f: typing.Callable[[T], typing.List[U]], *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> typing.List[U]:
+        """Maps each element to an array via `f`, then concatenates the results —
+        one level of flattening, never more.
+
+        Only the flattened result is allocated; the intermediate array of arrays
+        never exists. This is JavaScript's
+        [`flatMap`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/flatMap).
+
+        # Examples
+        ```baml
+        [1, 2, 3].flat_map((x: int) -> int[] { [x, x * 10] })
+          // [1, 10, 2, 20, 3, 30]
+        [1, 2].flat_map((x: int) -> int[] { [] })   // []
+        ```"""
+    async def flat_map_async(self, f: typing.Callable[[T], typing.List[U]], *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> typing.List[U]:
+        """Maps each element to an array via `f`, then concatenates the results —
+        one level of flattening, never more.
+
+        Only the flattened result is allocated; the intermediate array of arrays
+        never exists. This is JavaScript's
+        [`flatMap`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/flatMap).
+
+        # Examples
+        ```baml
+        [1, 2, 3].flat_map((x: int) -> int[] { [x, x * 10] })
+          // [1, 10, 2, 20, 3, 30]
+        [1, 2].flat_map((x: int) -> int[] { [] })   // []
+        ```"""
+    def clear(self, *, _baml: _BamlOptions | None = None) -> None:
+        """Removes every element, leaving `length() == 0`.
+
+        The array object is emptied, not replaced, so every other reference to
+        it observes the empty array too. Rebind to a fresh `[]` to leave the
+        original alone."""
+    async def clear_async(self, *, _baml: _BamlOptions | None = None) -> None:
+        """Removes every element, leaving `length() == 0`.
+
+        The array object is emptied, not replaced, so every other reference to
+        it observes the empty array too. Rebind to a fresh `[]` to leave the
+        original alone."""
+    def shift(self, *, _baml: _BamlOptions | None = None) -> typing.Optional[T]:
+        """Removes and returns the first element, or `null` if the array is empty.
+
+        `O(n)`, because every later element shifts forward — `pop` is the `O(1)`
+        removal from the *back*. As with `pop`, a nullable `T` leaves `null`
+        ambiguous between "empty" and "the first element was `null`".
+
+        # Examples
+        ```baml
+        let xs = [1, 2, 3];
+        xs.shift()      // 1
+        xs              // [2, 3]
+        [].shift()      // null
+        ```"""
+    async def shift_async(self, *, _baml: _BamlOptions | None = None) -> typing.Optional[T]:
+        """Removes and returns the first element, or `null` if the array is empty.
+
+        `O(n)`, because every later element shifts forward — `pop` is the `O(1)`
+        removal from the *back*. As with `pop`, a nullable `T` leaves `null`
+        ambiguous between "empty" and "the first element was `null`".
+
+        # Examples
+        ```baml
+        let xs = [1, 2, 3];
+        xs.shift()      // 1
+        xs              // [2, 3]
+        [].shift()      // null
+        ```"""
+    def unshift(self, item: T, *, _baml: _BamlOptions | None = None) -> int:
+        """Inserts `item` at the front of the array and returns the new length.
+
+        `O(n)`, because every existing element shifts one position right —
+        `push` is the `O(1)` insertion at the *back*.
+
+        # Examples
+        ```baml
+        let xs = [2, 3];
+        xs.unshift(1)   // 3   (new length)
+        xs              // [1, 2, 3]
+        ```"""
+    async def unshift_async(self, item: T, *, _baml: _BamlOptions | None = None) -> int:
+        """Inserts `item` at the front of the array and returns the new length.
+
+        `O(n)`, because every existing element shifts one position right —
+        `push` is the `O(1)` insertion at the *back*.
+
+        # Examples
+        ```baml
+        let xs = [2, 3];
+        xs.unshift(1)   // 3   (new length)
+        xs              // [1, 2, 3]
+        ```"""
+    def insert(self, item: T, idx: int, *, _baml: _BamlOptions | None = None) -> int:
+        """Inserts `item` at index `idx` and returns the new length. `O(n)`, since
+        the elements at `[idx, length())` shift one position right.
+
+        `idx` is an *insertion* position, so unlike `at` it accepts the whole
+        closed range `[0, length()]` — inserting at `length()` is `push(item)`.
+        Negative indices count from the end, so `-1` inserts *before* the last
+        element and `-length()` at the front; the append position has no
+        negative spelling.
+
+        # Throws
+        - `baml.errors.InvalidArgument` if `idx` falls outside
+          `[-length(), length()]`; `self` is left unchanged.
+
+        # Examples
+        ```baml
+        let xs = [1, 2, 4];
+        xs.insert(3, 2)        // 4   inserts 3 at index 2; xs is now [1, 2, 3, 4]
+        xs.insert(9, -1)       // 5   inserts before the last; xs is now [1, 2, 3, 9, 4]
+        xs.insert(0, 100)      // throws — idx beyond length
+        ```
+
+        Raises:
             InvalidArgument"""
-    async def insert_async(self, item: T, idx: int) -> int:
-        """Raises:
+    async def insert_async(self, item: T, idx: int, *, _baml: _BamlOptions | None = None) -> int:
+        """Inserts `item` at index `idx` and returns the new length. `O(n)`, since
+        the elements at `[idx, length())` shift one position right.
+
+        `idx` is an *insertion* position, so unlike `at` it accepts the whole
+        closed range `[0, length()]` — inserting at `length()` is `push(item)`.
+        Negative indices count from the end, so `-1` inserts *before* the last
+        element and `-length()` at the front; the append position has no
+        negative spelling.
+
+        # Throws
+        - `baml.errors.InvalidArgument` if `idx` falls outside
+          `[-length(), length()]`; `self` is left unchanged.
+
+        # Examples
+        ```baml
+        let xs = [1, 2, 4];
+        xs.insert(3, 2)        // 4   inserts 3 at index 2; xs is now [1, 2, 3, 4]
+        xs.insert(9, -1)       // 5   inserts before the last; xs is now [1, 2, 3, 9, 4]
+        xs.insert(0, 100)      // throws — idx beyond length
+        ```
+
+        Raises:
             InvalidArgument"""
-    def splice(self, start: int, count: int, replace: typing.List[T]) -> None:
-        """Raises:
+    def splice(self, start: int, count: int, replace: typing.List[T], *, _baml: _BamlOptions | None = None) -> None:
+        """Replaces the elements at `[start, start + count)` with the contents of
+        `replace`.
+
+        The replacement may be longer or shorter than `count`, so the array
+        grows or shrinks; `count == 0` makes this a pure insertion at `start`.
+        `start` is an insertion position, resolved exactly as `insert`'s `idx`:
+        negatives count from the end, and the closed range
+        `[-length(), length()]` is valid. A `start + count` past the end clamps
+        `count` to `length() - start` rather than reporting it.
+
+        Unlike JavaScript's
+        [`Array.prototype.splice`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/splice),
+        the removed elements are *not* returned — take a `slice` first if you
+        need them. The elements of `replace` are moved in as-is, so a reference
+        type stays shared between `replace` and `self`.
+
+        # Throws
+        - `baml.errors.InvalidArgument` if `start` falls outside
+          `[-length(), length()]`, or if `count` is negative; `self` is left
+          unchanged in both cases.
+
+        # Examples
+        ```baml
+        let xs = [0, 1, 2, 3, 4];
+        xs.splice(1, 2, [9, 9, 9])   // xs is now [0, 9, 9, 9, 3, 4]
+        xs.splice(0, 0, [-1])        // pure insertion: [-1, 0, 9, 9, 9, 3, 4]
+        xs.splice(-1, 1, [])         // removes the last element: [-1, 0, 9, 9, 9, 3]
+        xs.splice(99, 0, [])         // throws — start out of range
+        ```
+
+        Raises:
             InvalidArgument"""
-    async def splice_async(self, start: int, count: int, replace: typing.List[T]) -> None:
-        """Raises:
+    async def splice_async(self, start: int, count: int, replace: typing.List[T], *, _baml: _BamlOptions | None = None) -> None:
+        """Replaces the elements at `[start, start + count)` with the contents of
+        `replace`.
+
+        The replacement may be longer or shorter than `count`, so the array
+        grows or shrinks; `count == 0` makes this a pure insertion at `start`.
+        `start` is an insertion position, resolved exactly as `insert`'s `idx`:
+        negatives count from the end, and the closed range
+        `[-length(), length()]` is valid. A `start + count` past the end clamps
+        `count` to `length() - start` rather than reporting it.
+
+        Unlike JavaScript's
+        [`Array.prototype.splice`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/splice),
+        the removed elements are *not* returned — take a `slice` first if you
+        need them. The elements of `replace` are moved in as-is, so a reference
+        type stays shared between `replace` and `self`.
+
+        # Throws
+        - `baml.errors.InvalidArgument` if `start` falls outside
+          `[-length(), length()]`, or if `count` is negative; `self` is left
+          unchanged in both cases.
+
+        # Examples
+        ```baml
+        let xs = [0, 1, 2, 3, 4];
+        xs.splice(1, 2, [9, 9, 9])   // xs is now [0, 9, 9, 9, 3, 4]
+        xs.splice(0, 0, [-1])        // pure insertion: [-1, 0, 9, 9, 9, 3, 4]
+        xs.splice(-1, 1, [])         // removes the last element: [-1, 0, 9, 9, 9, 3]
+        xs.splice(99, 0, [])         // throws — start out of range
+        ```
+
+        Raises:
             InvalidArgument"""
 
 
 class Map(pydantic.BaseModel, typing.Generic[K, V]):
-    def length(self) -> int:
+    def length(self, *, _baml: _BamlOptions | None = None) -> int:
         """Returns the number of entries. `O(1)`."""
-    async def length_async(self) -> int:
+    async def length_async(self, *, _baml: _BamlOptions | None = None) -> int:
         """Returns the number of entries. `O(1)`."""
-    def has(self, key: K) -> bool: ...
-    async def has_async(self, key: K) -> bool: ...
-    def keys(self) -> typing.List[K]: ...
-    async def keys_async(self) -> typing.List[K]: ...
-    def values(self) -> typing.List[V]:
+    def has(self, key: K, *, _baml: _BamlOptions | None = None) -> bool:
+        """Returns `true` if the map contains an entry for `key`. `O(1)`.
+
+        Prefer this to `get(key) != null`: a key mapped to `null` is present,
+        but `get` cannot say so."""
+    async def has_async(self, key: K, *, _baml: _BamlOptions | None = None) -> bool:
+        """Returns `true` if the map contains an entry for `key`. `O(1)`.
+
+        Prefer this to `get(key) != null`: a key mapped to `null` is present,
+        but `get` cannot say so."""
+    def keys(self, *, _baml: _BamlOptions | None = None) -> typing.List[K]:
+        """Returns the keys, in insertion order.
+
+        The array is a snapshot, not a live view: later `set` and `delete` calls
+        do not change it, and mutating it does not change the map. Iterating it
+        while mutating the map is therefore safe."""
+    async def keys_async(self, *, _baml: _BamlOptions | None = None) -> typing.List[K]:
+        """Returns the keys, in insertion order.
+
+        The array is a snapshot, not a live view: later `set` and `delete` calls
+        do not change it, and mutating it does not change the map. Iterating it
+        while mutating the map is therefore safe."""
+    def values(self, *, _baml: _BamlOptions | None = None) -> typing.List[V]:
         """Returns the values, in the same order as `keys()` — so `keys()[i]` maps
         to `values()[i]`.
 
         The array is a snapshot, but the values are not copied: a reference type
         is shared with the map, so mutating a value obtained here also mutates
         the one the map holds."""
-    async def values_async(self) -> typing.List[V]:
+    async def values_async(self, *, _baml: _BamlOptions | None = None) -> typing.List[V]:
         """Returns the values, in the same order as `keys()` — so `keys()[i]` maps
         to `values()[i]`.
 
         The array is a snapshot, but the values are not copied: a reference type
         is shared with the map, so mutating a value obtained here also mutates
         the one the map holds."""
-    def set(self, key: K, value: V) -> typing.Optional[V]: ...
-    async def set_async(self, key: K, value: V) -> typing.Optional[V]: ...
-    def get(self, key: K) -> typing.Optional[V]: ...
-    async def get_async(self, key: K) -> typing.Optional[V]: ...
-    def delete(self, key: K) -> typing.Optional[V]: ...
-    async def delete_async(self, key: K) -> typing.Optional[V]: ...
-    def get_or_insert(self, key: K, default: V) -> V: ...
-    async def get_or_insert_async(self, key: K, default: V) -> V: ...
-    def clear(self) -> None: ...
-    async def clear_async(self) -> None: ...
+    def set(self, key: K, value: V, *, _baml: _BamlOptions | None = None) -> typing.Optional[V]:
+        """Inserts or replaces the entry for `key` and returns the previous value,
+        or `null` if `key` was absent. `O(1)`.
+
+        Replacing an existing key keeps its original position in iteration
+        order; a new key is appended at the end. `self[key] = value` is the same
+        operation, minus the previous value.
+
+        # Examples
+        ```baml
+        let m: map<string, int> = {};
+        m.set("a", 1)         // null  (was absent)
+        m.set("a", 2)         // 1     (returns the old value)
+        ```"""
+    async def set_async(self, key: K, value: V, *, _baml: _BamlOptions | None = None) -> typing.Optional[V]:
+        """Inserts or replaces the entry for `key` and returns the previous value,
+        or `null` if `key` was absent. `O(1)`.
+
+        Replacing an existing key keeps its original position in iteration
+        order; a new key is appended at the end. `self[key] = value` is the same
+        operation, minus the previous value.
+
+        # Examples
+        ```baml
+        let m: map<string, int> = {};
+        m.set("a", 1)         // null  (was absent)
+        m.set("a", 2)         // 1     (returns the old value)
+        ```"""
+    def get(self, key: K, *, _baml: _BamlOptions | None = None) -> typing.Optional[V]:
+        """Returns the value for `key`, or `null` if the key is absent. `O(1)`.
+
+        The non-panicking counterpart of `self[key]`, which raises
+        `baml.panics.MapKeyNotFound` where `get` returns `null`.
+
+        # Examples
+        ```baml
+        let m: map<string, int> = {"a": 1};
+        m.get("a")     // 1
+        m.get("b")     // null
+        ```"""
+    async def get_async(self, key: K, *, _baml: _BamlOptions | None = None) -> typing.Optional[V]:
+        """Returns the value for `key`, or `null` if the key is absent. `O(1)`.
+
+        The non-panicking counterpart of `self[key]`, which raises
+        `baml.panics.MapKeyNotFound` where `get` returns `null`.
+
+        # Examples
+        ```baml
+        let m: map<string, int> = {"a": 1};
+        m.get("a")     // 1
+        m.get("b")     // null
+        ```"""
+    def index(self, key: K, *, _baml: _BamlOptions | None = None) -> V:
+        """Reads `key`, raising `baml.panics.MapKeyNotFound` if it is absent."""
+    async def index_async(self, key: K, *, _baml: _BamlOptions | None = None) -> V:
+        """Reads `key`, raising `baml.panics.MapKeyNotFound` if it is absent."""
+    def delete(self, key: K, *, _baml: _BamlOptions | None = None) -> typing.Optional[V]:
+        """Removes the entry for `key` and returns its value, or `null` if the key
+        was absent.
+
+        The entries that remain keep their insertion order, which costs `O(n)`:
+        everything after the removed entry shifts down. An order-scrambling
+        `O(1)` removal is deliberately not offered — iteration order is part of
+        this type's contract.
+
+        # Examples
+        ```baml
+        let m: map<string, int> = {"a": 1, "b": 2};
+        m.delete("a")     // 1
+        m.delete("a")     // null  (already gone)
+        ```"""
+    async def delete_async(self, key: K, *, _baml: _BamlOptions | None = None) -> typing.Optional[V]:
+        """Removes the entry for `key` and returns its value, or `null` if the key
+        was absent.
+
+        The entries that remain keep their insertion order, which costs `O(n)`:
+        everything after the removed entry shifts down. An order-scrambling
+        `O(1)` removal is deliberately not offered — iteration order is part of
+        this type's contract.
+
+        # Examples
+        ```baml
+        let m: map<string, int> = {"a": 1, "b": 2};
+        m.delete("a")     // 1
+        m.delete("a")     // null  (already gone)
+        ```"""
+    def get_or_insert(self, key: K, default: V, *, _baml: _BamlOptions | None = None) -> V:
+        """Returns the value for `key`, inserting `default` first if the key was
+        absent. Python's
+        [`dict.setdefault`](https://docs.python.org/3/library/stdtypes.html#dict.setdefault).
+
+        The map is touched only on insertion, and the new key is appended at the
+        end of the iteration order.
+
+        `default` is an ordinary argument, so it is evaluated at the call site
+        whether or not it ends up being inserted. Guard an expensive or
+        side-effecting default behind `has` yourself.
+
+        # Examples
+        ```baml
+        let m: map<string, int> = {};
+        m.get_or_insert("k", 10)   // 10  (inserted)
+        m.get_or_insert("k", 99)   // 10  (existing — `99` ignored)
+        ```"""
+    async def get_or_insert_async(self, key: K, default: V, *, _baml: _BamlOptions | None = None) -> V:
+        """Returns the value for `key`, inserting `default` first if the key was
+        absent. Python's
+        [`dict.setdefault`](https://docs.python.org/3/library/stdtypes.html#dict.setdefault).
+
+        The map is touched only on insertion, and the new key is appended at the
+        end of the iteration order.
+
+        `default` is an ordinary argument, so it is evaluated at the call site
+        whether or not it ends up being inserted. Guard an expensive or
+        side-effecting default behind `has` yourself.
+
+        # Examples
+        ```baml
+        let m: map<string, int> = {};
+        m.get_or_insert("k", 10)   // 10  (inserted)
+        m.get_or_insert("k", 99)   // 10  (existing — `99` ignored)
+        ```"""
+    def clear(self, *, _baml: _BamlOptions | None = None) -> None:
+        """Removes every entry, leaving `length() == 0`.
+
+        The map object is emptied, not replaced, so every other reference to it
+        observes the empty map too. Rebind to a fresh `{}` to leave the original
+        alone."""
+    async def clear_async(self, *, _baml: _BamlOptions | None = None) -> None:
+        """Removes every entry, leaving `length() == 0`.
+
+        The map object is emptied, not replaced, so every other reference to it
+        observes the empty map too. Rebind to a fresh `{}` to leave the original
+        alone."""
 
 
-def _sum_int(values: typing.List[int]) -> int: ...
-async def _sum_int_async(values: typing.List[int]) -> int: ...
+def _sum_int(values: typing.List[int], *, _baml: _BamlOptions | None = None) -> int:
+    """(internal) Native backing for `int[].sum()`; call that instead. Adds every
+    element left to right starting from `0`, range-checking the running total at
+    each step. The empty array sums to `0`.
+
+    # Panics
+    - `baml.panics.IntegerOverflow` when a running total leaves the `int` range."""
+async def _sum_int_async(values: typing.List[int], *, _baml: _BamlOptions | None = None) -> int:
+    """(internal) Native backing for `int[].sum()`; call that instead. Adds every
+    element left to right starting from `0`, range-checking the running total at
+    each step. The empty array sums to `0`.
+
+    # Panics
+    - `baml.panics.IntegerOverflow` when a running total leaves the `int` range."""
 
 
-def _sum_float(values: typing.List[float]) -> float: ...
-async def _sum_float_async(values: typing.List[float]) -> float: ...
+def _sum_float(values: typing.List[float], *, _baml: _BamlOptions | None = None) -> float:
+    """(internal) Native backing for `float[].sum()`; call that instead. Adds every
+    element left to right starting from `0.0` with plain sequential IEEE 754
+    addition; the empty array sums to `0.0`. Never fails — a total too large to
+    represent becomes an infinity."""
+async def _sum_float_async(values: typing.List[float], *, _baml: _BamlOptions | None = None) -> float:
+    """(internal) Native backing for `float[].sum()`; call that instead. Adds every
+    element left to right starting from `0.0` with plain sequential IEEE 754
+    addition; the empty array sums to `0.0`. Never fails — a total too large to
+    represent becomes an infinity."""
 
 
-def _median_float(values: typing.List[float]) -> float:
-    """Raises:
+def _median_float(values: typing.List[float], *, _baml: _BamlOptions | None = None) -> float:
+    """(internal) Native backing for `float[].median()`; call that instead. Sorts a
+    *copy* of `values` by BAML's total float order and returns the middle element,
+    or the mean of the two middle elements for an even count, leaving `values`
+    untouched.
+
+    # Throws
+    - `baml.errors.InvalidArgument` when `values` is empty.
+
+    Raises:
         InvalidArgument"""
-async def _median_float_async(values: typing.List[float]) -> float:
-    """Raises:
+async def _median_float_async(values: typing.List[float], *, _baml: _BamlOptions | None = None) -> float:
+    """(internal) Native backing for `float[].median()`; call that instead. Sorts a
+    *copy* of `values` by BAML's total float order and returns the middle element,
+    or the mean of the two middle elements for an even count, leaving `values`
+    untouched.
+
+    # Throws
+    - `baml.errors.InvalidArgument` when `values` is empty.
+
+    Raises:
         InvalidArgument"""
 
 
-def _to_string_default(value: T, *, _types: dict[str, typing.Any] | None = None) -> str: ...
-async def _to_string_default_async(value: T, *, _types: dict[str, typing.Any] | None = None) -> str: ...
+def _to_string_default(value: T, *, _types: dict[str, typing.Any] | None = None, _baml: _BamlOptions | None = None) -> str:
+    """(internal) The structural rendering used by the default `baml.ToString` body.
+
+    Primitives render naturally (`5`, `true`, `null`); containers and class
+    instances render structurally (`[1, 2]`, `Point { x: 1, y: 2 }`). A nested
+    value whose runtime class *does* implement `baml.ToString` renders through
+    that override, so the default honors overrides at every depth, just as
+    `string.from` does. Never throws."""
+async def _to_string_default_async(value: T, *, _types: dict[str, typing.Any] | None = None, _baml: _BamlOptions | None = None) -> str:
+    """(internal) The structural rendering used by the default `baml.ToString` body.
+
+    Primitives render naturally (`5`, `true`, `null`); containers and class
+    instances render structurally (`[1, 2]`, `Point { x: 1, y: 2 }`). A nested
+    value whose runtime class *does* implement `baml.ToString` renders through
+    that override, so the default honors overrides at every depth, just as
+    `string.from` does. Never throws."""
 
 
-def _cleanup_begin(value: T, *, _types: dict[str, typing.Any] | None = None) -> bool: ...
-async def _cleanup_begin_async(value: T, *, _types: dict[str, typing.Any] | None = None) -> bool: ...
+def _cleanup_begin(value: T, *, _types: dict[str, typing.Any] | None = None, _baml: _BamlOptions | None = None) -> bool:
+    """(internal) Run-once guard for a user class's magic `cleanup(self) -> void`
+    method (BEP-042), compiled into the method's prologue as
+    `if (!baml._cleanup_begin(self)) { return; }`.
+
+    Atomically test-and-sets the receiver instance's per-instance "cleaned"
+    latch and returns `true` only on the *first* invocation, so the body runs
+    once. A second `cleanup` on the same instance — from an explicit call, a
+    `defer`, or (later) the GC finalizer — returns `false` and the body is
+    skipped. The latch is set on entry, so a `cleanup` that throws still counts
+    as cleaned (BEP-042). A non-instance receiver returns `true` defensively;
+    the guard is only emitted for class `cleanup` methods, whose `self` is
+    always an instance."""
+async def _cleanup_begin_async(value: T, *, _types: dict[str, typing.Any] | None = None, _baml: _BamlOptions | None = None) -> bool:
+    """(internal) Run-once guard for a user class's magic `cleanup(self) -> void`
+    method (BEP-042), compiled into the method's prologue as
+    `if (!baml._cleanup_begin(self)) { return; }`.
+
+    Atomically test-and-sets the receiver instance's per-instance "cleaned"
+    latch and returns `true` only on the *first* invocation, so the body runs
+    once. A second `cleanup` on the same instance — from an explicit call, a
+    `defer`, or (later) the GC finalizer — returns `false` and the body is
+    skipped. The latch is set on entry, so a `cleanup` that throws still counts
+    as cleaned (BEP-042). A non-instance receiver returns `true` defensively;
+    the guard is only emitted for class `cleanup` methods, whose `self` is
+    always an instance."""
 
 
-def _to_json_default(value: T, *, _types: dict[str, typing.Any] | None = None) -> baml.json.json:
-    """Raises:
+def _to_json_default(value: T, *, _types: dict[str, typing.Any] | None = None, _baml: _BamlOptions | None = None) -> baml.json.json:
+    """(internal) The structural rendering used by the default `baml.ToJson` body.
+
+    Primitives render naturally; containers and class instances render
+    structurally (`[1, 2]`, `{"field": value}`), enums as their variant name,
+    media as the tagged form. A nested value whose runtime class *does*
+    implement `baml.ToJson` renders through that override, so the default honors
+    overrides at every depth, just as `baml.json.from` does. Throws
+    `baml.json.SerializationError` for non-representable values.
+
+    Raises:
         SerializationError"""
-async def _to_json_default_async(value: T, *, _types: dict[str, typing.Any] | None = None) -> baml.json.json:
-    """Raises:
+async def _to_json_default_async(value: T, *, _types: dict[str, typing.Any] | None = None, _baml: _BamlOptions | None = None) -> baml.json.json:
+    """(internal) The structural rendering used by the default `baml.ToJson` body.
+
+    Primitives render naturally; containers and class instances render
+    structurally (`[1, 2]`, `{"field": value}`), enums as their variant name,
+    media as the tagged form. A nested value whose runtime class *does*
+    implement `baml.ToJson` renders through that override, so the default honors
+    overrides at every depth, just as `baml.json.from` does. Throws
+    `baml.json.SerializationError` for non-representable values.
+
+    Raises:
         SerializationError"""
 
 
-def _to_json_shim(value: T, *, _types: dict[str, typing.Any] | None = None) -> baml.json.json:
-    """Raises:
-        SerializationError"""
-async def _to_json_shim_async(value: T, *, _types: dict[str, typing.Any] | None = None) -> baml.json.json:
-    """Raises:
-        SerializationError"""
+def _from_json_structural_default(j: baml.json.json, *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> T:
+    """Decode the root structurally while honoring nested FromJson implementations.
 
-
-def _from_json_shim(j: baml.json.json, *, _types: dict[str, typing.Any]) -> T:
-    """Raises:
+    Raises:
         DecodeError"""
-async def _from_json_shim_async(j: baml.json.json, *, _types: dict[str, typing.Any]) -> T:
-    """Raises:
+async def _from_json_structural_default_async(j: baml.json.json, *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> T:
+    """Decode the root structurally while honoring nested FromJson implementations.
+
+    Raises:
         DecodeError"""
 
 
-def deep_copy(value: T, *, _types: dict[str, typing.Any] | None = None) -> T: ...
-async def deep_copy_async(value: T, *, _types: dict[str, typing.Any] | None = None) -> T: ...
+def _equals_structural_default(a: typing.Any, b: typing.Any, *, _baml: _BamlOptions | None = None) -> bool:
+    """Compare structurally in one cycle-aware walk, honoring nested Equals overrides."""
+async def _equals_structural_default_async(a: typing.Any, b: typing.Any, *, _baml: _BamlOptions | None = None) -> bool:
+    """Compare structurally in one cycle-aware walk, honoring nested Equals overrides."""
+
+
+def deep_copy(value: T, *, _types: dict[str, typing.Any] | None = None, _baml: _BamlOptions | None = None) -> T:
+    """Returns a deep copy of `value`: nested arrays, maps, and class instances
+    are cloned recursively.
+
+    Sharing and cycles survive the copy. Two references to the same nested
+    object still point at one copied object afterward, rather than becoming
+    independent copies. `Future` is the exception — a future is a handle onto
+    live async state the runtime owns, not a value with contents to clone, so a
+    future nested inside `value` is shared, not duplicated."""
+async def deep_copy_async(value: T, *, _types: dict[str, typing.Any] | None = None, _baml: _BamlOptions | None = None) -> T:
+    """Returns a deep copy of `value`: nested arrays, maps, and class instances
+    are cloned recursively.
+
+    Sharing and cycles survive the copy. Two references to the same nested
+    object still point at one copied object afterward, rather than becoming
+    independent copies. `Future` is the exception — a future is a handle onto
+    live async state the runtime owns, not a value with contents to clone, so a
+    future nested inside `value` is shared, not duplicated."""
 
 
 class TaggedString(pydantic.BaseModel):
@@ -764,7 +1657,7 @@ class TaggedString(pydantic.BaseModel):
 
 class Float(pydantic.BaseModel):
     @staticmethod
-    def parse(text: str) -> float:
+    def parse(text: str, *, _baml: _BamlOptions | None = None) -> float:
         """Parses `text` as a floating-point number.
 
         Accepts decimal notation (`1.5`, `-0.25`), scientific notation (`1e3`,
@@ -795,7 +1688,7 @@ class Float(pydantic.BaseModel):
         Raises:
             ParseError"""
     @staticmethod
-    async def parse_async(text: str) -> float:
+    async def parse_async(text: str, *, _baml: _BamlOptions | None = None) -> float:
         """Parses `text` as a floating-point number.
 
         Accepts decimal notation (`1.5`, `-0.25`), scientific notation (`1e3`,
@@ -826,7 +1719,7 @@ class Float(pydantic.BaseModel):
         Raises:
             ParseError"""
     @staticmethod
-    def random(*, rng: typing.Union[typing.Any, UNSET] = UNSET) -> float:
+    def random(*, rng: typing.Union[typing.Any, UNSET] = UNSET, _baml: _BamlOptions | None = None) -> float:
         """Returns a uniformly distributed random float in the half-open range
         `[0.0, 1.0)`, drawn from `rng`.
 
@@ -845,7 +1738,7 @@ class Float(pydantic.BaseModel):
         float.random(rng = rng)
         ```"""
     @staticmethod
-    async def random_async(*, rng: typing.Union[typing.Any, UNSET] = UNSET) -> float:
+    async def random_async(*, rng: typing.Union[typing.Any, UNSET] = UNSET, _baml: _BamlOptions | None = None) -> float:
         """Returns a uniformly distributed random float in the half-open range
         `[0.0, 1.0)`, drawn from `rng`.
 
@@ -864,47 +1757,47 @@ class Float(pydantic.BaseModel):
         float.random(rng = rng)
         ```"""
     @staticmethod
-    def _unit_from_draw_(draw: int) -> float:
+    def _unit_from_draw_(draw: int, *, _baml: _BamlOptions | None = None) -> float:
         """(internal) Maps 53 bits of an `int` draw onto `[0.0, 1.0)`."""
     @staticmethod
-    async def _unit_from_draw__async(draw: int) -> float:
+    async def _unit_from_draw__async(draw: int, *, _baml: _BamlOptions | None = None) -> float:
         """(internal) Maps 53 bits of an `int` draw onto `[0.0, 1.0)`."""
     @staticmethod
-    def pi() -> float:
+    def pi(*, _baml: _BamlOptions | None = None) -> float:
         """Returns π, the ratio of a circle's circumference to its diameter, to
         float precision (about 15 decimal digits)."""
     @staticmethod
-    async def pi_async() -> float:
+    async def pi_async(*, _baml: _BamlOptions | None = None) -> float:
         """Returns π, the ratio of a circle's circumference to its diameter, to
         float precision (about 15 decimal digits)."""
     @staticmethod
-    def e() -> float:
+    def e(*, _baml: _BamlOptions | None = None) -> float:
         """Returns Euler's number `e`, the base of the natural logarithm."""
     @staticmethod
-    async def e_async() -> float:
+    async def e_async(*, _baml: _BamlOptions | None = None) -> float:
         """Returns Euler's number `e`, the base of the natural logarithm."""
     @staticmethod
-    def golden_ratio() -> float:
+    def golden_ratio(*, _baml: _BamlOptions | None = None) -> float:
         """Returns the golden ratio `φ = (1 + √5) / 2`, about `1.618`."""
     @staticmethod
-    async def golden_ratio_async() -> float:
+    async def golden_ratio_async(*, _baml: _BamlOptions | None = None) -> float:
         """Returns the golden ratio `φ = (1 + √5) / 2`, about `1.618`."""
     @staticmethod
-    def nan() -> float:
+    def nan(*, _baml: _BamlOptions | None = None) -> float:
         """Returns a NaN value. Test for it with `x.is_nan()`, never with equality."""
     @staticmethod
-    async def nan_async() -> float:
+    async def nan_async(*, _baml: _BamlOptions | None = None) -> float:
         """Returns a NaN value. Test for it with `x.is_nan()`, never with equality."""
     @staticmethod
-    def inf() -> float:
+    def inf(*, _baml: _BamlOptions | None = None) -> float:
         """Returns positive infinity. Negate it — `-float.inf()` — for negative
         infinity."""
     @staticmethod
-    async def inf_async() -> float:
+    async def inf_async(*, _baml: _BamlOptions | None = None) -> float:
         """Returns positive infinity. Negate it — `-float.inf()` — for negative
         infinity."""
     @staticmethod
-    def max_finite() -> float:
+    def max_finite(*, _baml: _BamlOptions | None = None) -> float:
         """Returns the largest finite `float`, approximately
         `1.7976931348623157e308`.
 
@@ -912,7 +1805,7 @@ class Float(pydantic.BaseModel):
         `float.inf()` is larger. Named `max_finite` rather than `max_value`
         (the `int` spelling) because `float`'s range includes the infinities."""
     @staticmethod
-    async def max_finite_async() -> float:
+    async def max_finite_async(*, _baml: _BamlOptions | None = None) -> float:
         """Returns the largest finite `float`, approximately
         `1.7976931348623157e308`.
 
@@ -920,7 +1813,7 @@ class Float(pydantic.BaseModel):
         `float.inf()` is larger. Named `max_finite` rather than `max_value`
         (the `int` spelling) because `float`'s range includes the infinities."""
     @staticmethod
-    def min_finite() -> float:
+    def min_finite(*, _baml: _BamlOptions | None = None) -> float:
         """Returns the smallest (most negative) finite `float`, approximately
         `-1.7976931348623157e308`. Equal to `-float.max_finite()`.
 
@@ -928,7 +1821,7 @@ class Float(pydantic.BaseModel):
         one — some languages (notably Java's `Double.MIN_VALUE`) use the latter
         meaning for a similarly-named constant."""
     @staticmethod
-    async def min_finite_async() -> float:
+    async def min_finite_async(*, _baml: _BamlOptions | None = None) -> float:
         """Returns the smallest (most negative) finite `float`, approximately
         `-1.7976931348623157e308`. Equal to `-float.max_finite()`.
 
@@ -936,7 +1829,7 @@ class Float(pydantic.BaseModel):
         one — some languages (notably Java's `Double.MIN_VALUE`) use the latter
         meaning for a similarly-named constant."""
     @staticmethod
-    def epsilon() -> float:
+    def epsilon(*, _baml: _BamlOptions | None = None) -> float:
         """Returns the machine epsilon: the difference between `1.0` and the next
         largest representable float, approximately `2.220446049250313e-16`.
 
@@ -944,14 +1837,14 @@ class Float(pydantic.BaseModel):
         e.g. `(a - b).abs() < float.epsilon() * scale`. It is *not* the smallest
         positive float, which is far smaller (`5e-324`, subnormal)."""
     @staticmethod
-    async def epsilon_async() -> float:
+    async def epsilon_async(*, _baml: _BamlOptions | None = None) -> float:
         """Returns the machine epsilon: the difference between `1.0` and the next
         largest representable float, approximately `2.220446049250313e-16`.
 
         This is the standard tolerance unit for approximate float comparison,
         e.g. `(a - b).abs() < float.epsilon() * scale`. It is *not* the smallest
         positive float, which is far smaller (`5e-324`, subnormal)."""
-    def is_nan(self) -> bool:
+    def is_nan(self, *, _baml: _BamlOptions | None = None) -> bool:
         """Returns `true` if `self` is NaN — the "not a number" sentinel invalid
         operations produce, such as `(-1.0).sqrt()`, `float.inf() - float.inf()`,
         or `0.0 / 0.0`.
@@ -967,7 +1860,7 @@ class Float(pydantic.BaseModel):
         float.nan().is_nan()   // true
         float.inf().is_nan()   // false
         ```"""
-    async def is_nan_async(self) -> bool:
+    async def is_nan_async(self, *, _baml: _BamlOptions | None = None) -> bool:
         """Returns `true` if `self` is NaN — the "not a number" sentinel invalid
         operations produce, such as `(-1.0).sqrt()`, `float.inf() - float.inf()`,
         or `0.0 / 0.0`.
@@ -983,7 +1876,7 @@ class Float(pydantic.BaseModel):
         float.nan().is_nan()   // true
         float.inf().is_nan()   // false
         ```"""
-    def is_infinite(self) -> bool:
+    def is_infinite(self, *, _baml: _BamlOptions | None = None) -> bool:
         """Returns `true` if `self` is positive or negative infinity.
 
         # Examples
@@ -994,7 +1887,7 @@ class Float(pydantic.BaseModel):
         (1000000.0 * 1000000.0).is_infinite()     // false  (1e12, large but finite)
         float.nan().is_infinite()                 // false
         ```"""
-    async def is_infinite_async(self) -> bool:
+    async def is_infinite_async(self, *, _baml: _BamlOptions | None = None) -> bool:
         """Returns `true` if `self` is positive or negative infinity.
 
         # Examples
@@ -1005,7 +1898,7 @@ class Float(pydantic.BaseModel):
         (1000000.0 * 1000000.0).is_infinite()     // false  (1e12, large but finite)
         float.nan().is_infinite()                 // false
         ```"""
-    def is_finite(self) -> bool:
+    def is_finite(self, *, _baml: _BamlOptions | None = None) -> bool:
         """Returns `true` if `self` is neither NaN nor infinite. Subnormals and
         `±0.0` count as finite.
 
@@ -1017,7 +1910,7 @@ class Float(pydantic.BaseModel):
         float.inf().is_finite()    // false
         float.nan().is_finite()    // false
         ```"""
-    async def is_finite_async(self) -> bool:
+    async def is_finite_async(self, *, _baml: _BamlOptions | None = None) -> bool:
         """Returns `true` if `self` is neither NaN nor infinite. Subnormals and
         `±0.0` count as finite.
 
@@ -1029,7 +1922,7 @@ class Float(pydantic.BaseModel):
         float.inf().is_finite()    // false
         float.nan().is_finite()    // false
         ```"""
-    def abs(self) -> float:
+    def abs(self, *, _baml: _BamlOptions | None = None) -> float:
         """Returns the absolute value of `self`. NaN stays NaN.
 
         # Examples
@@ -1040,7 +1933,7 @@ class Float(pydantic.BaseModel):
         (-0.0).abs()           // 0.0
         float.nan().abs()      // NaN
         ```"""
-    async def abs_async(self) -> float:
+    async def abs_async(self, *, _baml: _BamlOptions | None = None) -> float:
         """Returns the absolute value of `self`. NaN stays NaN.
 
         # Examples
@@ -1051,7 +1944,7 @@ class Float(pydantic.BaseModel):
         (-0.0).abs()           // 0.0
         float.nan().abs()      // NaN
         ```"""
-    def signum(self) -> float:
+    def signum(self, *, _baml: _BamlOptions | None = None) -> float:
         """Returns `1.0` if `self` is positive and `-1.0` if `self` is negative,
         where the sign of `±0.0` and of NaN counts.
 
@@ -1073,7 +1966,7 @@ class Float(pydantic.BaseModel):
         (-float.inf()).signum() // -1.0
         float.nan().signum()    // 1.0
         ```"""
-    async def signum_async(self) -> float:
+    async def signum_async(self, *, _baml: _BamlOptions | None = None) -> float:
         """Returns `1.0` if `self` is positive and `-1.0` if `self` is negative,
         where the sign of `±0.0` and of NaN counts.
 
@@ -1095,7 +1988,7 @@ class Float(pydantic.BaseModel):
         (-float.inf()).signum() // -1.0
         float.nan().signum()    // 1.0
         ```"""
-    def floor(self) -> float:
+    def floor(self, *, _baml: _BamlOptions | None = None) -> float:
         """Returns the largest integer less than or equal to `self`, as a float.
         The sign of `±0.0` is preserved; NaN and `±inf` pass through.
 
@@ -1106,7 +1999,7 @@ class Float(pydantic.BaseModel):
         (-1.5).floor()   // -2.0
         (3.0).floor()    // 3.0
         ```"""
-    async def floor_async(self) -> float:
+    async def floor_async(self, *, _baml: _BamlOptions | None = None) -> float:
         """Returns the largest integer less than or equal to `self`, as a float.
         The sign of `±0.0` is preserved; NaN and `±inf` pass through.
 
@@ -1117,7 +2010,7 @@ class Float(pydantic.BaseModel):
         (-1.5).floor()   // -2.0
         (3.0).floor()    // 3.0
         ```"""
-    def ceil(self) -> float:
+    def ceil(self, *, _baml: _BamlOptions | None = None) -> float:
         """Returns the smallest integer greater than or equal to `self`, as a
         float. The sign of `±0.0` is preserved; NaN and `±inf` pass through.
 
@@ -1127,7 +2020,7 @@ class Float(pydantic.BaseModel):
         (3.2).ceil()    // 4.0
         (-1.5).ceil()   // -1.0
         ```"""
-    async def ceil_async(self) -> float:
+    async def ceil_async(self, *, _baml: _BamlOptions | None = None) -> float:
         """Returns the smallest integer greater than or equal to `self`, as a
         float. The sign of `±0.0` is preserved; NaN and `±inf` pass through.
 
@@ -1137,7 +2030,7 @@ class Float(pydantic.BaseModel):
         (3.2).ceil()    // 4.0
         (-1.5).ceil()   // -1.0
         ```"""
-    def round(self) -> float:
+    def round(self, *, _baml: _BamlOptions | None = None) -> float:
         """Returns the integer nearest to `self`, as a float, with ties rounded
         away from zero: `0.5` to `1.0`, `-0.5` to `-1.0`, `1.5` to `2.0`.
 
@@ -1149,7 +2042,7 @@ class Float(pydantic.BaseModel):
         (1.4).round()    // 1.0
         (1.6).round()    // 2.0
         ```"""
-    async def round_async(self) -> float:
+    async def round_async(self, *, _baml: _BamlOptions | None = None) -> float:
         """Returns the integer nearest to `self`, as a float, with ties rounded
         away from zero: `0.5` to `1.0`, `-0.5` to `-1.0`, `1.5` to `2.0`.
 
@@ -1161,7 +2054,7 @@ class Float(pydantic.BaseModel):
         (1.4).round()    // 1.0
         (1.6).round()    // 2.0
         ```"""
-    def trunc(self) -> float:
+    def trunc(self, *, _baml: _BamlOptions | None = None) -> float:
         """Returns the integer part of `self`, discarding the fraction — that is,
         `self` rounded toward zero.
 
@@ -1171,7 +2064,7 @@ class Float(pydantic.BaseModel):
         (3.7).trunc()    // 3.0
         (-3.7).trunc()   // -3.0
         ```"""
-    async def trunc_async(self) -> float:
+    async def trunc_async(self, *, _baml: _BamlOptions | None = None) -> float:
         """Returns the integer part of `self`, discarding the fraction — that is,
         `self` rounded toward zero.
 
@@ -1181,7 +2074,7 @@ class Float(pydantic.BaseModel):
         (3.7).trunc()    // 3.0
         (-3.7).trunc()   // -3.0
         ```"""
-    def fract(self) -> float:
+    def fract(self, *, _baml: _BamlOptions | None = None) -> float:
         """Returns the fractional part of `self`, `self - self.trunc()`.
 
         # Examples
@@ -1191,7 +2084,7 @@ class Float(pydantic.BaseModel):
         (-3.7).fract()   // -0.7
         (5.0).fract()    // 0.0
         ```"""
-    async def fract_async(self) -> float:
+    async def fract_async(self, *, _baml: _BamlOptions | None = None) -> float:
         """Returns the fractional part of `self`, `self - self.trunc()`.
 
         # Examples
@@ -1201,7 +2094,7 @@ class Float(pydantic.BaseModel):
         (-3.7).fract()   // -0.7
         (5.0).fract()    // 0.0
         ```"""
-    def ifloor(self) -> int:
+    def ifloor(self, *, _baml: _BamlOptions | None = None) -> int:
         """Like `floor`, but returns `int`.
 
         # Throws
@@ -1211,7 +2104,7 @@ class Float(pydantic.BaseModel):
 
         Raises:
             InvalidArgument"""
-    async def ifloor_async(self) -> int:
+    async def ifloor_async(self, *, _baml: _BamlOptions | None = None) -> int:
         """Like `floor`, but returns `int`.
 
         # Throws
@@ -1221,7 +2114,7 @@ class Float(pydantic.BaseModel):
 
         Raises:
             InvalidArgument"""
-    def iceil(self) -> int:
+    def iceil(self, *, _baml: _BamlOptions | None = None) -> int:
         """Like `ceil`, but returns `int`.
 
         # Throws
@@ -1231,7 +2124,7 @@ class Float(pydantic.BaseModel):
 
         Raises:
             InvalidArgument"""
-    async def iceil_async(self) -> int:
+    async def iceil_async(self, *, _baml: _BamlOptions | None = None) -> int:
         """Like `ceil`, but returns `int`.
 
         # Throws
@@ -1241,7 +2134,7 @@ class Float(pydantic.BaseModel):
 
         Raises:
             InvalidArgument"""
-    def iround(self) -> int:
+    def iround(self, *, _baml: _BamlOptions | None = None) -> int:
         """Like `round`, but returns `int`.
 
         # Throws
@@ -1251,7 +2144,7 @@ class Float(pydantic.BaseModel):
 
         Raises:
             InvalidArgument"""
-    async def iround_async(self) -> int:
+    async def iround_async(self, *, _baml: _BamlOptions | None = None) -> int:
         """Like `round`, but returns `int`.
 
         # Throws
@@ -1261,7 +2154,7 @@ class Float(pydantic.BaseModel):
 
         Raises:
             InvalidArgument"""
-    def itrunc(self) -> int:
+    def itrunc(self, *, _baml: _BamlOptions | None = None) -> int:
         """Like `trunc`, but returns `int`.
 
         # Throws
@@ -1271,7 +2164,7 @@ class Float(pydantic.BaseModel):
 
         Raises:
             InvalidArgument"""
-    async def itrunc_async(self) -> int:
+    async def itrunc_async(self, *, _baml: _BamlOptions | None = None) -> int:
         """Like `trunc`, but returns `int`.
 
         # Throws
@@ -1281,7 +2174,7 @@ class Float(pydantic.BaseModel):
 
         Raises:
             InvalidArgument"""
-    def sqrt(self) -> float:
+    def sqrt(self, *, _baml: _BamlOptions | None = None) -> float:
         """Returns the square root of `self`, or NaN if `self` is negative.
 
         # Examples
@@ -1292,7 +2185,7 @@ class Float(pydantic.BaseModel):
         (-1.0).sqrt()      // NaN
         (0.0).sqrt()       // 0.0
         ```"""
-    async def sqrt_async(self) -> float:
+    async def sqrt_async(self, *, _baml: _BamlOptions | None = None) -> float:
         """Returns the square root of `self`, or NaN if `self` is negative.
 
         # Examples
@@ -1303,7 +2196,7 @@ class Float(pydantic.BaseModel):
         (-1.0).sqrt()      // NaN
         (0.0).sqrt()       // 0.0
         ```"""
-    def pow(self, exp: float) -> float:
+    def pow(self, exp: float, *, _baml: _BamlOptions | None = None) -> float:
         """Returns `self ** exp`, computed in floating point.
 
         Gives NaN wherever the mathematical value is not real, such as a
@@ -1317,7 +2210,7 @@ class Float(pydantic.BaseModel):
         (2.0).pow(0.5)          // sqrt(2)
         (-1.0).pow(0.5)         // NaN
         ```"""
-    async def pow_async(self, exp: float) -> float:
+    async def pow_async(self, exp: float, *, _baml: _BamlOptions | None = None) -> float:
         """Returns `self ** exp`, computed in floating point.
 
         Gives NaN wherever the mathematical value is not real, such as a
@@ -1331,7 +2224,7 @@ class Float(pydantic.BaseModel):
         (2.0).pow(0.5)          // sqrt(2)
         (-1.0).pow(0.5)         // NaN
         ```"""
-    def log(self, base: float) -> float:
+    def log(self, base: float, *, _baml: _BamlOptions | None = None) -> float:
         """Returns the logarithm of `self` in the given `base`, computed as
         `ln(self) / ln(base)`.
 
@@ -1366,7 +2259,7 @@ class Float(pydantic.BaseModel):
         (2.0).log(1.0)       // +infinity
         (1.0).log(1.0)       // NaN
         ```"""
-    async def log_async(self, base: float) -> float:
+    async def log_async(self, base: float, *, _baml: _BamlOptions | None = None) -> float:
         """Returns the logarithm of `self` in the given `base`, computed as
         `ln(self) / ln(base)`.
 
@@ -1401,7 +2294,7 @@ class Float(pydantic.BaseModel):
         (2.0).log(1.0)       // +infinity
         (1.0).log(1.0)       // NaN
         ```"""
-    def exp(self) -> float:
+    def exp(self, *, _baml: _BamlOptions | None = None) -> float:
         """Returns `e ** self`, the natural exponential of `self`.
 
         Precision and determinism are not guaranteed and may vary depending on platform and version.
@@ -1414,7 +2307,7 @@ class Float(pydantic.BaseModel):
         (-float.inf()).exp()  // 0.0
         float.nan().exp()     // NaN
         ```"""
-    async def exp_async(self) -> float:
+    async def exp_async(self, *, _baml: _BamlOptions | None = None) -> float:
         """Returns `e ** self`, the natural exponential of `self`.
 
         Precision and determinism are not guaranteed and may vary depending on platform and version.
@@ -1427,7 +2320,7 @@ class Float(pydantic.BaseModel):
         (-float.inf()).exp()  // 0.0
         float.nan().exp()     // NaN
         ```"""
-    def ln(self) -> float:
+    def ln(self, *, _baml: _BamlOptions | None = None) -> float:
         """Returns the natural logarithm (base `e`) of `self`.
 
         Like `log`, returns `NaN` for `self < 0` and negative infinity for `self == 0`.
@@ -1442,7 +2335,7 @@ class Float(pydantic.BaseModel):
         (0.0).ln()        // -infinity
         (-1.0).ln()       // NaN
         ```"""
-    async def ln_async(self) -> float:
+    async def ln_async(self, *, _baml: _BamlOptions | None = None) -> float:
         """Returns the natural logarithm (base `e`) of `self`.
 
         Like `log`, returns `NaN` for `self < 0` and negative infinity for `self == 0`.
@@ -1457,7 +2350,7 @@ class Float(pydantic.BaseModel):
         (0.0).ln()        // -infinity
         (-1.0).ln()       // NaN
         ```"""
-    def log2(self) -> float:
+    def log2(self, *, _baml: _BamlOptions | None = None) -> float:
         """Returns the base-2 logarithm of `self`.
 
         Like `log`, returns `NaN` for `self < 0` and negative infinity for `self == 0`.
@@ -1472,7 +2365,7 @@ class Float(pydantic.BaseModel):
         (1.0).log2()      // 0.0
         (0.0).log2()      // -infinity
         ```"""
-    async def log2_async(self) -> float:
+    async def log2_async(self, *, _baml: _BamlOptions | None = None) -> float:
         """Returns the base-2 logarithm of `self`.
 
         Like `log`, returns `NaN` for `self < 0` and negative infinity for `self == 0`.
@@ -1487,7 +2380,7 @@ class Float(pydantic.BaseModel):
         (1.0).log2()      // 0.0
         (0.0).log2()      // -infinity
         ```"""
-    def log10(self) -> float:
+    def log10(self, *, _baml: _BamlOptions | None = None) -> float:
         """Returns the base-10 logarithm of `self`.
 
         Like `log`, returns `NaN` for `self < 0` and negative infinity for `self == 0`.
@@ -1503,7 +2396,7 @@ class Float(pydantic.BaseModel):
         (1.0).log10()     // 0.0
         (0.0).log10()     // -infinity
         ```"""
-    async def log10_async(self) -> float:
+    async def log10_async(self, *, _baml: _BamlOptions | None = None) -> float:
         """Returns the base-10 logarithm of `self`.
 
         Like `log`, returns `NaN` for `self < 0` and negative infinity for `self == 0`.
@@ -1519,7 +2412,7 @@ class Float(pydantic.BaseModel):
         (1.0).log10()     // 0.0
         (0.0).log10()     // -infinity
         ```"""
-    def cbrt(self) -> float:
+    def cbrt(self, *, _baml: _BamlOptions | None = None) -> float:
         """Returns the real cube root of `self`.
 
         Defined for negative inputs, unlike `self.pow(1.0 / 3.0)`:
@@ -1535,7 +2428,7 @@ class Float(pydantic.BaseModel):
         (1000.0).cbrt()   // 10.0
         (0.0).cbrt()      // 0.0
         ```"""
-    async def cbrt_async(self) -> float:
+    async def cbrt_async(self, *, _baml: _BamlOptions | None = None) -> float:
         """Returns the real cube root of `self`.
 
         Defined for negative inputs, unlike `self.pow(1.0 / 3.0)`:
@@ -1551,7 +2444,7 @@ class Float(pydantic.BaseModel):
         (1000.0).cbrt()   // 10.0
         (0.0).cbrt()      // 0.0
         ```"""
-    def hypot(self, other: float) -> float:
+    def hypot(self, other: float, *, _baml: _BamlOptions | None = None) -> float:
         """Returns the Euclidean distance `sqrt(self² + other²)`, computed so that
         large magnitudes do not overflow along the way.
 
@@ -1561,7 +2454,7 @@ class Float(pydantic.BaseModel):
         (3.0).hypot(4.0)    // 5.0
         (0.0).hypot(0.0)    // 0.0
         ```"""
-    async def hypot_async(self, other: float) -> float:
+    async def hypot_async(self, other: float, *, _baml: _BamlOptions | None = None) -> float:
         """Returns the Euclidean distance `sqrt(self² + other²)`, computed so that
         large magnitudes do not overflow along the way.
 
@@ -1571,31 +2464,31 @@ class Float(pydantic.BaseModel):
         (3.0).hypot(4.0)    // 5.0
         (0.0).hypot(0.0)    // 0.0
         ```"""
-    def sin(self) -> float:
+    def sin(self, *, _baml: _BamlOptions | None = None) -> float:
         """Sine of `self`, in radians."""
-    async def sin_async(self) -> float:
+    async def sin_async(self, *, _baml: _BamlOptions | None = None) -> float:
         """Sine of `self`, in radians."""
-    def cos(self) -> float:
+    def cos(self, *, _baml: _BamlOptions | None = None) -> float:
         """Cosine of `self`, in radians."""
-    async def cos_async(self) -> float:
+    async def cos_async(self, *, _baml: _BamlOptions | None = None) -> float:
         """Cosine of `self`, in radians."""
-    def tan(self) -> float:
+    def tan(self, *, _baml: _BamlOptions | None = None) -> float:
         """Tangent of `self`, in radians. Very large near odd multiples of π/2."""
-    async def tan_async(self) -> float:
+    async def tan_async(self, *, _baml: _BamlOptions | None = None) -> float:
         """Tangent of `self`, in radians. Very large near odd multiples of π/2."""
-    def asin(self) -> float:
+    def asin(self, *, _baml: _BamlOptions | None = None) -> float:
         """Inverse sine, in `[-π/2, π/2]`. NaN if `self` is outside `[-1, 1]`."""
-    async def asin_async(self) -> float:
+    async def asin_async(self, *, _baml: _BamlOptions | None = None) -> float:
         """Inverse sine, in `[-π/2, π/2]`. NaN if `self` is outside `[-1, 1]`."""
-    def acos(self) -> float:
+    def acos(self, *, _baml: _BamlOptions | None = None) -> float:
         """Inverse cosine, in `[0, π]`. NaN if `self` is outside `[-1, 1]`."""
-    async def acos_async(self) -> float:
+    async def acos_async(self, *, _baml: _BamlOptions | None = None) -> float:
         """Inverse cosine, in `[0, π]`. NaN if `self` is outside `[-1, 1]`."""
-    def atan(self) -> float:
+    def atan(self, *, _baml: _BamlOptions | None = None) -> float:
         """Inverse tangent, in `(-π/2, π/2)`."""
-    async def atan_async(self) -> float:
+    async def atan_async(self, *, _baml: _BamlOptions | None = None) -> float:
         """Inverse tangent, in `(-π/2, π/2)`."""
-    def atan2(self, other: float) -> float:
+    def atan2(self, other: float, *, _baml: _BamlOptions | None = None) -> float:
         """Returns the angle in radians from the positive x-axis to the point
         `(x = other, y = self)`, in `[-π, π]`.
 
@@ -1606,7 +2499,7 @@ class Float(pydantic.BaseModel):
         (1.0).atan2(0.0)        // π/2    (90°, due north)
         (0.0).atan2(-1.0)       // π      (180°, due west)
         ```"""
-    async def atan2_async(self, other: float) -> float:
+    async def atan2_async(self, other: float, *, _baml: _BamlOptions | None = None) -> float:
         """Returns the angle in radians from the positive x-axis to the point
         `(x = other, y = self)`, in `[-π, π]`.
 
@@ -1617,43 +2510,43 @@ class Float(pydantic.BaseModel):
         (1.0).atan2(0.0)        // π/2    (90°, due north)
         (0.0).atan2(-1.0)       // π      (180°, due west)
         ```"""
-    def sinh(self) -> float:
+    def sinh(self, *, _baml: _BamlOptions | None = None) -> float:
         """Hyperbolic sine."""
-    async def sinh_async(self) -> float:
+    async def sinh_async(self, *, _baml: _BamlOptions | None = None) -> float:
         """Hyperbolic sine."""
-    def cosh(self) -> float:
+    def cosh(self, *, _baml: _BamlOptions | None = None) -> float:
         """Hyperbolic cosine."""
-    async def cosh_async(self) -> float:
+    async def cosh_async(self, *, _baml: _BamlOptions | None = None) -> float:
         """Hyperbolic cosine."""
-    def tanh(self) -> float:
+    def tanh(self, *, _baml: _BamlOptions | None = None) -> float:
         """Hyperbolic tangent, bounded to `(-1, 1)`."""
-    async def tanh_async(self) -> float:
+    async def tanh_async(self, *, _baml: _BamlOptions | None = None) -> float:
         """Hyperbolic tangent, bounded to `(-1, 1)`."""
-    def asinh(self) -> float:
+    def asinh(self, *, _baml: _BamlOptions | None = None) -> float:
         """Inverse hyperbolic sine, defined for every real."""
-    async def asinh_async(self) -> float:
+    async def asinh_async(self, *, _baml: _BamlOptions | None = None) -> float:
         """Inverse hyperbolic sine, defined for every real."""
-    def acosh(self) -> float:
+    def acosh(self, *, _baml: _BamlOptions | None = None) -> float:
         """Inverse hyperbolic cosine, defined on `[1, ∞)`. NaN for `self < 1`."""
-    async def acosh_async(self) -> float:
+    async def acosh_async(self, *, _baml: _BamlOptions | None = None) -> float:
         """Inverse hyperbolic cosine, defined on `[1, ∞)`. NaN for `self < 1`."""
-    def atanh(self) -> float:
+    def atanh(self, *, _baml: _BamlOptions | None = None) -> float:
         """Inverse hyperbolic tangent, defined on `(-1, 1)`. `±∞` at the
         endpoints, NaN outside them."""
-    async def atanh_async(self) -> float:
+    async def atanh_async(self, *, _baml: _BamlOptions | None = None) -> float:
         """Inverse hyperbolic tangent, defined on `(-1, 1)`. `±∞` at the
         endpoints, NaN outside them."""
-    def to_radians(self) -> float:
+    def to_radians(self, *, _baml: _BamlOptions | None = None) -> float:
         """Converts `self` from degrees to radians."""
-    async def to_radians_async(self) -> float:
+    async def to_radians_async(self, *, _baml: _BamlOptions | None = None) -> float:
         """Converts `self` from degrees to radians."""
-    def to_degrees(self) -> float:
+    def to_degrees(self, *, _baml: _BamlOptions | None = None) -> float:
         """Converts `self` from radians to degrees."""
-    async def to_degrees_async(self) -> float:
+    async def to_degrees_async(self, *, _baml: _BamlOptions | None = None) -> float:
         """Converts `self` from radians to degrees."""
 
 
-def _trunc_to_int(value: float) -> int:
+def _trunc_to_int(value: float, *, _baml: _BamlOptions | None = None) -> int:
     """(internal) Truncates `value` toward zero and returns the integer part,
     saturating to the full 64-bit machine range rather than BAML's narrower
     63-bit `int` range, and mapping NaN to `0`. It never throws, so a saturated
@@ -1664,7 +2557,7 @@ def _trunc_to_int(value: float) -> int:
     in practice. User code should prefer the range-checked `float.itrunc()`, or
     the float-returning `float.trunc()`; this saturating form is deliberately
     not public surface."""
-async def _trunc_to_int_async(value: float) -> int:
+async def _trunc_to_int_async(value: float, *, _baml: _BamlOptions | None = None) -> int:
     """(internal) Truncates `value` toward zero and returns the integer part,
     saturating to the full 64-bit machine range rather than BAML's narrower
     63-bit `int` range, and mapping NaN to `0`. It never throws, so a saturated
@@ -1675,11 +2568,17 @@ async def _trunc_to_int_async(value: float) -> int:
     in practice. User code should prefer the range-checked `float.itrunc()`, or
     the float-returning `float.trunc()`; this saturating form is deliberately
     not public surface."""
+
+
+def _hash_structural_default(value: typing.Any, state: typing.Any, *, _baml: _BamlOptions | None = None) -> None:
+    """The native structural implementation selected by a `Hash` witness."""
+async def _hash_structural_default_async(value: typing.Any, state: typing.Any, *, _baml: _BamlOptions | None = None) -> None:
+    """The native structural implementation selected by a `Hash` witness."""
 
 
 class Int(pydantic.BaseModel):
     @staticmethod
-    def parse(text: str) -> int:
+    def parse(text: str, *, _baml: _BamlOptions | None = None) -> int:
         """Parses `text` as a base ten signed integer.
 
         Accepts an optional leading `+` or `-` followed by one or more ASCII
@@ -1706,7 +2605,7 @@ class Int(pydantic.BaseModel):
         Raises:
             ParseError"""
     @staticmethod
-    async def parse_async(text: str) -> int:
+    async def parse_async(text: str, *, _baml: _BamlOptions | None = None) -> int:
         """Parses `text` as a base ten signed integer.
 
         Accepts an optional leading `+` or `-` followed by one or more ASCII
@@ -1733,7 +2632,7 @@ class Int(pydantic.BaseModel):
         Raises:
             ParseError"""
     @staticmethod
-    def random(lower: int, upper: int, *, rng: typing.Union[typing.Any, UNSET] = UNSET) -> int:
+    def random(lower: int, upper: int, *, rng: typing.Union[typing.Any, UNSET] = UNSET, _baml: _BamlOptions | None = None) -> int:
         """Returns a uniformly distributed random integer in the half-open range
         `[lower, upper)`, drawn from `rng`.
 
@@ -1764,7 +2663,7 @@ class Int(pydantic.BaseModel):
         Raises:
             InvalidArgument"""
     @staticmethod
-    async def random_async(lower: int, upper: int, *, rng: typing.Union[typing.Any, UNSET] = UNSET) -> int:
+    async def random_async(lower: int, upper: int, *, rng: typing.Union[typing.Any, UNSET] = UNSET, _baml: _BamlOptions | None = None) -> int:
         """Returns a uniformly distributed random integer in the half-open range
         `[lower, upper)`, drawn from `rng`.
 
@@ -1795,32 +2694,60 @@ class Int(pydantic.BaseModel):
         Raises:
             InvalidArgument"""
     @staticmethod
-    def _random_in_range_(draw: int, lower: int, upper: int) -> int:
+    def _random_in_range_(draw: int, lower: int, upper: int, *, _baml: _BamlOptions | None = None) -> int:
         """(internal) Maps one full-range draw onto `[lower, upper)`, returning
         `upper` when the draw must be rejected."""
     @staticmethod
-    async def _random_in_range__async(draw: int, lower: int, upper: int) -> int:
+    async def _random_in_range__async(draw: int, lower: int, upper: int, *, _baml: _BamlOptions | None = None) -> int:
         """(internal) Maps one full-range draw onto `[lower, upper)`, returning
         `upper` when the draw must be rejected."""
     @staticmethod
-    def max_value() -> int:
+    def max_value(*, _baml: _BamlOptions | None = None) -> int:
         """Returns the largest representable `int`, `2^62 - 1`
         (`4_611_686_018_427_387_903`)."""
     @staticmethod
-    async def max_value_async() -> int:
+    async def max_value_async(*, _baml: _BamlOptions | None = None) -> int:
         """Returns the largest representable `int`, `2^62 - 1`
         (`4_611_686_018_427_387_903`)."""
     @staticmethod
-    def min_value() -> int:
+    def min_value(*, _baml: _BamlOptions | None = None) -> int:
         """Returns the smallest representable `int`, `-2^62`
         (`-4_611_686_018_427_387_904`). `int.min_value().abs()` panics."""
     @staticmethod
-    async def min_value_async() -> int:
+    async def min_value_async(*, _baml: _BamlOptions | None = None) -> int:
         """Returns the smallest representable `int`, `-2^62`
         (`-4_611_686_018_427_387_904`). `int.min_value().abs()` panics."""
-    def abs(self) -> int: ...
-    async def abs_async(self) -> int: ...
-    def isqrt(self) -> int:
+    def abs(self, *, _baml: _BamlOptions | None = None) -> int:
+        """Returns the absolute value of `self`.
+
+        # Panics
+
+        - `baml.panics.IntegerOverflow` for `int.min_value()`, whose absolute
+          value `2^62` is one past `int.max_value()`.
+
+        # Examples
+
+        ```baml
+        (-7).abs()             // 7
+        (3).abs()              // 3
+        int.min_value().abs()  // panics
+        ```"""
+    async def abs_async(self, *, _baml: _BamlOptions | None = None) -> int:
+        """Returns the absolute value of `self`.
+
+        # Panics
+
+        - `baml.panics.IntegerOverflow` for `int.min_value()`, whose absolute
+          value `2^62` is one past `int.max_value()`.
+
+        # Examples
+
+        ```baml
+        (-7).abs()             // 7
+        (3).abs()              // 3
+        int.min_value().abs()  // panics
+        ```"""
+    def isqrt(self, *, _baml: _BamlOptions | None = None) -> int:
         """Returns the largest `r` such that `r * r <= self`: the integer square
         root of `self`.
 
@@ -1838,7 +2765,7 @@ class Int(pydantic.BaseModel):
 
         Raises:
             InvalidArgument"""
-    async def isqrt_async(self) -> int:
+    async def isqrt_async(self, *, _baml: _BamlOptions | None = None) -> int:
         """Returns the largest `r` such that `r * r <= self`: the integer square
         root of `self`.
 
@@ -1856,7 +2783,7 @@ class Int(pydantic.BaseModel):
 
         Raises:
             InvalidArgument"""
-    def pow(self, exp: int) -> int:
+    def pow(self, exp: int, *, _baml: _BamlOptions | None = None) -> int:
         """Returns `self ** exp`, saturating instead of panicking on overflow:
         `int.max_value()` for positive overflow, `int.min_value()` for negative.
 
@@ -1875,7 +2802,7 @@ class Int(pydantic.BaseModel):
         (-2).pow(3)      // -8
         (10).pow(100)    // saturates to int.max_value()
         ```"""
-    async def pow_async(self, exp: int) -> int:
+    async def pow_async(self, exp: int, *, _baml: _BamlOptions | None = None) -> int:
         """Returns `self ** exp`, saturating instead of panicking on overflow:
         `int.max_value()` for positive overflow, `int.min_value()` for negative.
 
@@ -1894,7 +2821,7 @@ class Int(pydantic.BaseModel):
         (-2).pow(3)      // -8
         (10).pow(100)    // saturates to int.max_value()
         ```"""
-    def ilog(self, base: int) -> int:
+    def ilog(self, base: int, *, _baml: _BamlOptions | None = None) -> int:
         """Returns the largest `n` such that `base ** n <= self`: the logarithm of
         `self` in `base`, rounded down.
 
@@ -1914,7 +2841,7 @@ class Int(pydantic.BaseModel):
 
         Raises:
             InvalidArgument"""
-    async def ilog_async(self, base: int) -> int:
+    async def ilog_async(self, base: int, *, _baml: _BamlOptions | None = None) -> int:
         """Returns the largest `n` such that `base ** n <= self`: the logarithm of
         `self` in `base`, rounded down.
 
@@ -1934,7 +2861,7 @@ class Int(pydantic.BaseModel):
 
         Raises:
             InvalidArgument"""
-    def leading_zeros(self) -> int:
+    def leading_zeros(self, *, _baml: _BamlOptions | None = None) -> int:
         """Returns the number of leading zero bits.
 
         # Examples
@@ -1944,7 +2871,7 @@ class Int(pydantic.BaseModel):
         (1).leading_zeros()  // 63
         (-1).leading_zeros() // 0   (all ones)
         ```"""
-    async def leading_zeros_async(self) -> int:
+    async def leading_zeros_async(self, *, _baml: _BamlOptions | None = None) -> int:
         """Returns the number of leading zero bits.
 
         # Examples
@@ -1954,7 +2881,7 @@ class Int(pydantic.BaseModel):
         (1).leading_zeros()  // 63
         (-1).leading_zeros() // 0   (all ones)
         ```"""
-    def leading_ones(self) -> int:
+    def leading_ones(self, *, _baml: _BamlOptions | None = None) -> int:
         """Returns the number of leading one bits.
 
         # Examples
@@ -1963,7 +2890,7 @@ class Int(pydantic.BaseModel):
         (0).leading_ones()   // 0
         (-1).leading_ones()  // 64
         ```"""
-    async def leading_ones_async(self) -> int:
+    async def leading_ones_async(self, *, _baml: _BamlOptions | None = None) -> int:
         """Returns the number of leading one bits.
 
         # Examples
@@ -1972,7 +2899,7 @@ class Int(pydantic.BaseModel):
         (0).leading_ones()   // 0
         (-1).leading_ones()  // 64
         ```"""
-    def trailing_zeros(self) -> int:
+    def trailing_zeros(self, *, _baml: _BamlOptions | None = None) -> int:
         """Returns the number of trailing zero bits.
 
         # Examples
@@ -1982,7 +2909,7 @@ class Int(pydantic.BaseModel):
         (8).trailing_zeros()  // 3   (binary 1000)
         (1).trailing_zeros()  // 0
         ```"""
-    async def trailing_zeros_async(self) -> int:
+    async def trailing_zeros_async(self, *, _baml: _BamlOptions | None = None) -> int:
         """Returns the number of trailing zero bits.
 
         # Examples
@@ -1992,7 +2919,7 @@ class Int(pydantic.BaseModel):
         (8).trailing_zeros()  // 3   (binary 1000)
         (1).trailing_zeros()  // 0
         ```"""
-    def trailing_ones(self) -> int:
+    def trailing_ones(self, *, _baml: _BamlOptions | None = None) -> int:
         """Returns the number of trailing one bits.
 
         # Examples
@@ -2002,7 +2929,7 @@ class Int(pydantic.BaseModel):
         (8).trailing_ones()   // 0
         (-1).trailing_ones()  // 64
         ```"""
-    async def trailing_ones_async(self) -> int:
+    async def trailing_ones_async(self, *, _baml: _BamlOptions | None = None) -> int:
         """Returns the number of trailing one bits.
 
         # Examples
@@ -2012,7 +2939,7 @@ class Int(pydantic.BaseModel):
         (8).trailing_ones()   // 0
         (-1).trailing_ones()  // 64
         ```"""
-    def count_zeros(self) -> int:
+    def count_zeros(self, *, _baml: _BamlOptions | None = None) -> int:
         """Returns the total number of zero bits.
 
         # Examples
@@ -2021,7 +2948,7 @@ class Int(pydantic.BaseModel):
         (0).count_zeros()   // 64
         (-1).count_zeros()  // 0
         ```"""
-    async def count_zeros_async(self) -> int:
+    async def count_zeros_async(self, *, _baml: _BamlOptions | None = None) -> int:
         """Returns the total number of zero bits.
 
         # Examples
@@ -2030,7 +2957,7 @@ class Int(pydantic.BaseModel):
         (0).count_zeros()   // 64
         (-1).count_zeros()  // 0
         ```"""
-    def count_ones(self) -> int:
+    def count_ones(self, *, _baml: _BamlOptions | None = None) -> int:
         """Returns the total number of one bits, also known as the population
         count or "popcount".
 
@@ -2041,7 +2968,7 @@ class Int(pydantic.BaseModel):
         (7).count_ones()   // 3
         (-1).count_ones()  // 64
         ```"""
-    async def count_ones_async(self) -> int:
+    async def count_ones_async(self, *, _baml: _BamlOptions | None = None) -> int:
         """Returns the total number of one bits, also known as the population
         count or "popcount".
 
@@ -2058,21 +2985,69 @@ class Null(pydantic.BaseModel):
     ...
 
 
-def _is_primitive_array(arr: typing.List[T], *, _types: dict[str, typing.Any] | None = None) -> bool: ...
-async def _is_primitive_array_async(arr: typing.List[T], *, _types: dict[str, typing.Any] | None = None) -> bool: ...
+def _is_primitive_array(arr: typing.List[T], *, _types: dict[str, typing.Any] | None = None, _baml: _BamlOptions | None = None) -> bool:
+    """Whether `arr` is a homogeneous primitive array (`int`/`bigint`/`string`/
+    `float`) that the native `_rust_sort` fast path can natural-sort, decided
+    by the first element's runtime type tag (a `T[]`'s homogeneity plus the
+    `T extends baml.ops.Compare` bound at the call sites guarantee the first
+    element speaks for the whole array). Empty arrays return `true` — the native
+    sort is a no-op on them. Internal: this is `Sortable.sort`'s dispatch guard.
+    It tests runtime *values* rather than type arguments because a BAML-level
+    `is`-test on a `T`-typed value constant-folds to false, and frame type args
+    are not reliable across every call path into a blanket impl."""
+async def _is_primitive_array_async(arr: typing.List[T], *, _types: dict[str, typing.Any] | None = None, _baml: _BamlOptions | None = None) -> bool:
+    """Whether `arr` is a homogeneous primitive array (`int`/`bigint`/`string`/
+    `float`) that the native `_rust_sort` fast path can natural-sort, decided
+    by the first element's runtime type tag (a `T[]`'s homogeneity plus the
+    `T extends baml.ops.Compare` bound at the call sites guarantee the first
+    element speaks for the whole array). Empty arrays return `true` — the native
+    sort is a no-op on them. Internal: this is `Sortable.sort`'s dispatch guard.
+    It tests runtime *values* rather than type arguments because a BAML-level
+    `is`-test on a `T`-typed value constant-folds to false, and frame type args
+    are not reliable across every call path into a blanket impl."""
 
 
-def _rust_sort(arr: A, *, _types: dict[str, typing.Any] | None = None) -> A: ...
-async def _rust_sort_async(arr: A, *, _types: dict[str, typing.Any] | None = None) -> A: ...
+def _rust_sort(arr: A, *, _types: dict[str, typing.Any] | None = None, _baml: _BamlOptions | None = None) -> A:
+    """Sorts a primitive array (`int`/`bigint`/`string`/`float`) in place by its
+    natural order and returns it (the same array object — no copy). Total and
+    infallible for every supported element type — `float` uses BAML's total
+    float order, which covers NaN, so it never throws. Only reached from
+    `Sortable.sort`'s primitive fast path
+    (guarded by `_is_primitive_array`), where the element type is known to be
+    one of these — other element types use `sort_by`.
+
+    `arr` is typed as a bare generic (`A`, not `T[]` with `T extends
+    baml.ops.Compare`): the native-glue codegen passes generic parameters as raw
+    values, which is what lets the implementation sort the receiver's backing
+    storage in place and return the receiver itself — a `T[]`-typed parameter
+    would be deconstructed to a slice and re-allocated on return. The
+    `may_yield` directive is likewise glue-shaping only (raw receiver + error
+    channel); the comparator is pure Rust and never yields to BAML."""
+async def _rust_sort_async(arr: A, *, _types: dict[str, typing.Any] | None = None, _baml: _BamlOptions | None = None) -> A:
+    """Sorts a primitive array (`int`/`bigint`/`string`/`float`) in place by its
+    natural order and returns it (the same array object — no copy). Total and
+    infallible for every supported element type — `float` uses BAML's total
+    float order, which covers NaN, so it never throws. Only reached from
+    `Sortable.sort`'s primitive fast path
+    (guarded by `_is_primitive_array`), where the element type is known to be
+    one of these — other element types use `sort_by`.
+
+    `arr` is typed as a bare generic (`A`, not `T[]` with `T extends
+    baml.ops.Compare`): the native-glue codegen passes generic parameters as raw
+    values, which is what lets the implementation sort the receiver's backing
+    storage in place and return the receiver itself — a `T[]`-typed parameter
+    would be deconstructed to a slice and re-allocated on return. The
+    `may_yield` directive is likewise glue-shaping only (raw receiver + error
+    channel); the comparator is pure Rust and never yields to BAML."""
 
 
 class String(pydantic.BaseModel):
     @staticmethod
-    def from_(value: T, *, _types: dict[str, typing.Any] | None = None) -> str:
+    def from_(value: T, *, _types: dict[str, typing.Any] | None = None, _baml: _BamlOptions | None = None) -> str:
         """Renders any value as human-readable text.
 
-        Dispatches to `baml.ToString.to_string` when `value`'s runtime type
-        implements it, and to a default structural rendering otherwise.
+        Dispatches to `baml.ToString.to_string`, using the implicit structural
+        implementation when the runtime type has no explicit implementation.
 
         # Examples
 
@@ -2082,11 +3057,11 @@ class String(pydantic.BaseModel):
         string.from([1, 2, 3])     // "[1, 2, 3]"
         ```"""
     @staticmethod
-    async def from__async(value: T, *, _types: dict[str, typing.Any] | None = None) -> str:
+    async def from__async(value: T, *, _types: dict[str, typing.Any] | None = None, _baml: _BamlOptions | None = None) -> str:
         """Renders any value as human-readable text.
 
-        Dispatches to `baml.ToString.to_string` when `value`'s runtime type
-        implements it, and to a default structural rendering otherwise.
+        Dispatches to `baml.ToString.to_string`, using the implicit structural
+        implementation when the runtime type has no explicit implementation.
 
         # Examples
 
@@ -2096,7 +3071,7 @@ class String(pydantic.BaseModel):
         string.from([1, 2, 3])     // "[1, 2, 3]"
         ```"""
     @staticmethod
-    def from_utf8(utf8: bytes) -> str:
+    def from_utf8(utf8: bytes, *, _baml: _BamlOptions | None = None) -> str:
         """Decodes UTF-8 bytes into a string, rejecting anything malformed.
 
         For lossy decoding, which substitutes U+FFFD for each invalid sequence,
@@ -2121,7 +3096,7 @@ class String(pydantic.BaseModel):
         Raises:
             InvalidArgument"""
     @staticmethod
-    async def from_utf8_async(utf8: bytes) -> str:
+    async def from_utf8_async(utf8: bytes, *, _baml: _BamlOptions | None = None) -> str:
         """Decodes UTF-8 bytes into a string, rejecting anything malformed.
 
         For lossy decoding, which substitutes U+FFFD for each invalid sequence,
@@ -2146,7 +3121,7 @@ class String(pydantic.BaseModel):
         Raises:
             InvalidArgument"""
     @staticmethod
-    def from_code_points(unicode: typing.List[int]) -> str:
+    def from_code_points(unicode: typing.List[int], *, _baml: _BamlOptions | None = None) -> str:
         """Builds a string from an array of Unicode code points.
 
         Each value must be in `[0, 0x10FFFF]` and must not be a UTF-16 surrogate,
@@ -2172,7 +3147,7 @@ class String(pydantic.BaseModel):
         Raises:
             InvalidArgument"""
     @staticmethod
-    async def from_code_points_async(unicode: typing.List[int]) -> str:
+    async def from_code_points_async(unicode: typing.List[int], *, _baml: _BamlOptions | None = None) -> str:
         """Builds a string from an array of Unicode code points.
 
         Each value must be in `[0, 0x10FFFF]` and must not be a UTF-16 surrogate,
@@ -2197,7 +3172,7 @@ class String(pydantic.BaseModel):
 
         Raises:
             InvalidArgument"""
-    def length(self) -> int:
+    def length(self, *, _baml: _BamlOptions | None = None) -> int:
         """Returns the number of characters (Unicode code points).
 
         `O(1)`: the count is cached at construction time. It equals `byte_length()`
@@ -2215,7 +3190,7 @@ class String(pydantic.BaseModel):
         "😀".length()     // 1
         "".length()       // 0
         ```"""
-    async def length_async(self) -> int:
+    async def length_async(self, *, _baml: _BamlOptions | None = None) -> int:
         """Returns the number of characters (Unicode code points).
 
         `O(1)`: the count is cached at construction time. It equals `byte_length()`
@@ -2233,11 +3208,11 @@ class String(pydantic.BaseModel):
         "😀".length()     // 1
         "".length()       // 0
         ```"""
-    def char_count(self) -> int:
+    def char_count(self, *, _baml: _BamlOptions | None = None) -> int:
         """Alias for `length()`."""
-    async def char_count_async(self) -> int:
+    async def char_count_async(self, *, _baml: _BamlOptions | None = None) -> int:
         """Alias for `length()`."""
-    def is_empty(self) -> bool:
+    def is_empty(self, *, _baml: _BamlOptions | None = None) -> bool:
         """Returns true if the string has no characters.
 
         # Examples
@@ -2246,7 +3221,7 @@ class String(pydantic.BaseModel):
         "".is_empty()       // true
         "hello".is_empty()  // false
         ```"""
-    async def is_empty_async(self) -> bool:
+    async def is_empty_async(self, *, _baml: _BamlOptions | None = None) -> bool:
         """Returns true if the string has no characters.
 
         # Examples
@@ -2255,7 +3230,7 @@ class String(pydantic.BaseModel):
         "".is_empty()       // true
         "hello".is_empty()  // false
         ```"""
-    def byte_length(self) -> int:
+    def byte_length(self, *, _baml: _BamlOptions | None = None) -> int:
         """Returns the length in UTF-8 bytes.
 
         `O(1)`. This is the size on the wire — the length of `to_utf8()` — and so
@@ -2269,7 +3244,7 @@ class String(pydantic.BaseModel):
         "héllo".byte_length()  // 6
         "😀".byte_length()     // 4
         ```"""
-    async def byte_length_async(self) -> int:
+    async def byte_length_async(self, *, _baml: _BamlOptions | None = None) -> int:
         """Returns the length in UTF-8 bytes.
 
         `O(1)`. This is the size on the wire — the length of `to_utf8()` — and so
@@ -2283,7 +3258,7 @@ class String(pydantic.BaseModel):
         "héllo".byte_length()  // 6
         "😀".byte_length()     // 4
         ```"""
-    def to_lower_case(self) -> str:
+    def to_lower_case(self, *, _baml: _BamlOptions | None = None) -> str:
         """Returns the lowercase equivalent of this string.
 
         Full Unicode case conversion, and not locale-aware: the Turkish/Azeri
@@ -2299,7 +3274,7 @@ class String(pydantic.BaseModel):
         "HELLO WORLD".to_lower_case()  // "hello world"
         "ὈΔΥΣΣΕΎΣ".to_lower_case()     // "ὀδυσσεύς" (final Σ lowercases to ς, not σ)
         ```"""
-    async def to_lower_case_async(self) -> str:
+    async def to_lower_case_async(self, *, _baml: _BamlOptions | None = None) -> str:
         """Returns the lowercase equivalent of this string.
 
         Full Unicode case conversion, and not locale-aware: the Turkish/Azeri
@@ -2315,7 +3290,7 @@ class String(pydantic.BaseModel):
         "HELLO WORLD".to_lower_case()  // "hello world"
         "ὈΔΥΣΣΕΎΣ".to_lower_case()     // "ὀδυσσεύς" (final Σ lowercases to ς, not σ)
         ```"""
-    def to_upper_case(self) -> str:
+    def to_upper_case(self, *, _baml: _BamlOptions | None = None) -> str:
         """Returns the uppercase equivalent of this string.
 
         Full Unicode case conversion, and not locale-aware: the Turkish/Azeri
@@ -2331,7 +3306,7 @@ class String(pydantic.BaseModel):
         "hello".to_upper_case()   // "HELLO"
         "tschüß".to_upper_case()  // "TSCHÜSS" (ß expands to SS)
         ```"""
-    async def to_upper_case_async(self) -> str:
+    async def to_upper_case_async(self, *, _baml: _BamlOptions | None = None) -> str:
         """Returns the uppercase equivalent of this string.
 
         Full Unicode case conversion, and not locale-aware: the Turkish/Azeri
@@ -2347,7 +3322,7 @@ class String(pydantic.BaseModel):
         "hello".to_upper_case()   // "HELLO"
         "tschüß".to_upper_case()  // "TSCHÜSS" (ß expands to SS)
         ```"""
-    def trim(self) -> str:
+    def trim(self, *, _baml: _BamlOptions | None = None) -> str:
         """Returns the string with leading and trailing whitespace removed.
 
         Whitespace is the Unicode `White_Space` property: ASCII spaces, tabs,
@@ -2363,7 +3338,7 @@ class String(pydantic.BaseModel):
         "\\n\\thi\\n".trim()  // "hi"
         "hi".trim()        // "hi"
         ```"""
-    async def trim_async(self) -> str:
+    async def trim_async(self, *, _baml: _BamlOptions | None = None) -> str:
         """Returns the string with leading and trailing whitespace removed.
 
         Whitespace is the Unicode `White_Space` property: ASCII spaces, tabs,
@@ -2379,7 +3354,7 @@ class String(pydantic.BaseModel):
         "\\n\\thi\\n".trim()  // "hi"
         "hi".trim()        // "hi"
         ```"""
-    def trim_start(self) -> str:
+    def trim_start(self, *, _baml: _BamlOptions | None = None) -> str:
         """Returns the string with leading whitespace removed; trailing whitespace is
         kept. Whitespace is defined as in `trim`.
 
@@ -2392,7 +3367,7 @@ class String(pydantic.BaseModel):
         "  hi  ".trim_start()  // "hi  "
         "\\nhi".trim_start()    // "hi"
         ```"""
-    async def trim_start_async(self) -> str:
+    async def trim_start_async(self, *, _baml: _BamlOptions | None = None) -> str:
         """Returns the string with leading whitespace removed; trailing whitespace is
         kept. Whitespace is defined as in `trim`.
 
@@ -2405,7 +3380,7 @@ class String(pydantic.BaseModel):
         "  hi  ".trim_start()  // "hi  "
         "\\nhi".trim_start()    // "hi"
         ```"""
-    def trim_end(self) -> str:
+    def trim_end(self, *, _baml: _BamlOptions | None = None) -> str:
         """Returns the string with trailing whitespace removed; leading whitespace is
         kept. Whitespace is defined as in `trim`.
 
@@ -2418,7 +3393,7 @@ class String(pydantic.BaseModel):
         "  hi  ".trim_end()  // "  hi"
         "hi\\n".trim_end()    // "hi"
         ```"""
-    async def trim_end_async(self) -> str:
+    async def trim_end_async(self, *, _baml: _BamlOptions | None = None) -> str:
         """Returns the string with trailing whitespace removed; leading whitespace is
         kept. Whitespace is defined as in `trim`.
 
@@ -2431,7 +3406,7 @@ class String(pydantic.BaseModel):
         "  hi  ".trim_end()  // "  hi"
         "hi\\n".trim_end()    // "hi"
         ```"""
-    def includes(self, search: str) -> bool:
+    def includes(self, search: str, *, _baml: _BamlOptions | None = None) -> bool:
         """Returns true if `search` occurs anywhere in the string.
 
         Python's `search in self`, JavaScript's
@@ -2443,7 +3418,7 @@ class String(pydantic.BaseModel):
         "hello".includes("ll")  // true
         "hello".includes("world")  // false
         ```"""
-    async def includes_async(self, search: str) -> bool:
+    async def includes_async(self, search: str, *, _baml: _BamlOptions | None = None) -> bool:
         """Returns true if `search` occurs anywhere in the string.
 
         Python's `search in self`, JavaScript's
@@ -2455,7 +3430,7 @@ class String(pydantic.BaseModel):
         "hello".includes("ll")  // true
         "hello".includes("world")  // false
         ```"""
-    def starts_with(self, prefix: str) -> bool:
+    def starts_with(self, prefix: str, *, _baml: _BamlOptions | None = None) -> bool:
         """Returns true if the string starts with `prefix`.
 
         Python's [`str.startswith`](https://docs.python.org/3/library/stdtypes.html#str.startswith),
@@ -2467,7 +3442,7 @@ class String(pydantic.BaseModel):
         "hello".starts_with("h")  // true
         "hello".starts_with("world")  // false
         ```"""
-    async def starts_with_async(self, prefix: str) -> bool:
+    async def starts_with_async(self, prefix: str, *, _baml: _BamlOptions | None = None) -> bool:
         """Returns true if the string starts with `prefix`.
 
         Python's [`str.startswith`](https://docs.python.org/3/library/stdtypes.html#str.startswith),
@@ -2479,7 +3454,7 @@ class String(pydantic.BaseModel):
         "hello".starts_with("h")  // true
         "hello".starts_with("world")  // false
         ```"""
-    def ends_with(self, suffix: str) -> bool:
+    def ends_with(self, suffix: str, *, _baml: _BamlOptions | None = None) -> bool:
         """Returns true if the string ends with `suffix`.
 
         Python's [`str.endswith`](https://docs.python.org/3/library/stdtypes.html#str.endswith),
@@ -2491,7 +3466,7 @@ class String(pydantic.BaseModel):
         "hello".ends_with("o")  // true
         "hello".ends_with("world")  // false
         ```"""
-    async def ends_with_async(self, suffix: str) -> bool:
+    async def ends_with_async(self, suffix: str, *, _baml: _BamlOptions | None = None) -> bool:
         """Returns true if the string ends with `suffix`.
 
         Python's [`str.endswith`](https://docs.python.org/3/library/stdtypes.html#str.endswith),
@@ -2503,7 +3478,7 @@ class String(pydantic.BaseModel):
         "hello".ends_with("o")  // true
         "hello".ends_with("world")  // false
         ```"""
-    def split(self, delimiter: str) -> typing.List[str]:
+    def split(self, delimiter: str, *, _baml: _BamlOptions | None = None) -> typing.List[str]:
         """Splits the string on `delimiter`.
 
         An empty `delimiter` splits into single characters. A `delimiter` that never
@@ -2520,7 +3495,7 @@ class String(pydantic.BaseModel):
         "hello".split("")      // ["h", "e", "l", "l", "o"]
         "no match".split(",")  // ["no match"]
         ```"""
-    async def split_async(self, delimiter: str) -> typing.List[str]:
+    async def split_async(self, delimiter: str, *, _baml: _BamlOptions | None = None) -> typing.List[str]:
         """Splits the string on `delimiter`.
 
         An empty `delimiter` splits into single characters. A `delimiter` that never
@@ -2537,7 +3512,7 @@ class String(pydantic.BaseModel):
         "hello".split("")      // ["h", "e", "l", "l", "o"]
         "no match".split(",")  // ["no match"]
         ```"""
-    def chars(self) -> typing.List[str]:
+    def chars(self, *, _baml: _BamlOptions | None = None) -> typing.List[str]:
         """Returns each Unicode code point as a one-character string.
 
         Python's `list(s)`.
@@ -2549,7 +3524,7 @@ class String(pydantic.BaseModel):
         "é😀".chars()    // ["é", "😀"]
         "".chars()       // []
         ```"""
-    async def chars_async(self) -> typing.List[str]:
+    async def chars_async(self, *, _baml: _BamlOptions | None = None) -> typing.List[str]:
         """Returns each Unicode code point as a one-character string.
 
         Python's `list(s)`.
@@ -2561,7 +3536,7 @@ class String(pydantic.BaseModel):
         "é😀".chars()    // ["é", "😀"]
         "".chars()       // []
         ```"""
-    def lines(self) -> typing.List[str]:
+    def lines(self, *, _baml: _BamlOptions | None = None) -> typing.List[str]:
         """Splits the string into lines, on either `\\n` or `\\r\\n`.
 
         The terminator is not part of the returned strings, and a final terminator
@@ -2580,7 +3555,7 @@ class String(pydantic.BaseModel):
         "".lines()           // []
         "\\n".lines()         // [""]
         ```"""
-    async def lines_async(self) -> typing.List[str]:
+    async def lines_async(self, *, _baml: _BamlOptions | None = None) -> typing.List[str]:
         """Splits the string into lines, on either `\\n` or `\\r\\n`.
 
         The terminator is not part of the returned strings, and a final terminator
@@ -2599,7 +3574,7 @@ class String(pydantic.BaseModel):
         "".lines()           // []
         "\\n".lines()         // [""]
         ```"""
-    def slice(self, start: int, end: int) -> str:
+    def slice(self, start: int, end: int, *, _baml: _BamlOptions | None = None) -> str:
         """Returns the characters in `[start, end)`.
 
         Both bounds are character offsets, matching `length()`, and may be negative
@@ -2619,7 +3594,7 @@ class String(pydantic.BaseModel):
         "😀hello".slice(0, 1)       // "😀"
         "😀hello".slice(1, 4)       // "hel"
         ```"""
-    async def slice_async(self, start: int, end: int) -> str:
+    async def slice_async(self, start: int, end: int, *, _baml: _BamlOptions | None = None) -> str:
         """Returns the characters in `[start, end)`.
 
         Both bounds are character offsets, matching `length()`, and may be negative
@@ -2639,31 +3614,49 @@ class String(pydantic.BaseModel):
         "😀hello".slice(0, 1)       // "😀"
         "😀hello".slice(1, 4)       // "hel"
         ```"""
-    def replace(self, search: str, replacement: str) -> str:
-        """Replaces the first occurrence of `search` with `replacement`.
+    def replace(self, search: typing.Union[str, baml.regex.Regex], replacement: str, *, _baml: _BamlOptions | None = None) -> str:
+        """Replaces the first occurrence of `search`.
 
-        JavaScript's [`replace`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String/replace)
-        given a string pattern. Python's `str.replace` replaces every occurrence
-        unless given a count, so this is `s.replace(search, replacement, 1)`.
+        `search` is either a `string`, matched literally, or a
+        `baml.regex.Regex`, matched as a pattern. `replacement` is a `string`.
 
-        # Examples
+        With a `baml.regex.Regex` search, a `string` replacement is a template:
+        `$0` is the whole match, `$1`..`$n` the numbered groups, `$name` and
+        `${name}` the named ones, and `$$` a literal `$`. A group that did not
+        participate — or does not exist — expands to nothing. `$1abc` names a
+        group `1abc`; write `${1}abc` to delimit group `1`.
 
-        ```baml
-        "hello world".replace("world", "universe")  // "hello universe"
-        ```"""
-    async def replace_async(self, search: str, replacement: str) -> str:
-        """Replaces the first occurrence of `search` with `replacement`.
-
-        JavaScript's [`replace`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String/replace)
-        given a string pattern. Python's `str.replace` replaces every occurrence
-        unless given a count, so this is `s.replace(search, replacement, 1)`.
+        With a literal `string` search, a `string` replacement stays literal:
+        `$1` in existing code keeps meaning `$1`.
 
         # Examples
-
-        ```baml
-        "hello world".replace("world", "universe")  // "hello universe"
+        ```
+        "a.b".replace(".", "-")                                  // "a-b"
+        "a.b".replace(baml.regex.new("."), "-")              // "-.b"
+        "5 cm".replace(baml.regex.new("(\\\\d+) cm"), "${1}mm") // "5mm"
         ```"""
-    def index_of(self, search: str) -> typing.Optional[int]:
+    async def replace_async(self, search: typing.Union[str, baml.regex.Regex], replacement: str, *, _baml: _BamlOptions | None = None) -> str:
+        """Replaces the first occurrence of `search`.
+
+        `search` is either a `string`, matched literally, or a
+        `baml.regex.Regex`, matched as a pattern. `replacement` is a `string`.
+
+        With a `baml.regex.Regex` search, a `string` replacement is a template:
+        `$0` is the whole match, `$1`..`$n` the numbered groups, `$name` and
+        `${name}` the named ones, and `$$` a literal `$`. A group that did not
+        participate — or does not exist — expands to nothing. `$1abc` names a
+        group `1abc`; write `${1}abc` to delimit group `1`.
+
+        With a literal `string` search, a `string` replacement stays literal:
+        `$1` in existing code keeps meaning `$1`.
+
+        # Examples
+        ```
+        "a.b".replace(".", "-")                                  // "a-b"
+        "a.b".replace(baml.regex.new("."), "-")              // "-.b"
+        "5 cm".replace(baml.regex.new("(\\\\d+) cm"), "${1}mm") // "5mm"
+        ```"""
+    def index_of(self, search: str, *, _baml: _BamlOptions | None = None) -> typing.Optional[int]:
         """Returns the character index of the first occurrence of `search`, or `null`
         if it does not occur.
 
@@ -2681,7 +3674,7 @@ class String(pydantic.BaseModel):
         "😀hello".index_of("h")          // 1
         "abc".index_of("z")              // null
         ```"""
-    async def index_of_async(self, search: str) -> typing.Optional[int]:
+    async def index_of_async(self, search: str, *, _baml: _BamlOptions | None = None) -> typing.Optional[int]:
         """Returns the character index of the first occurrence of `search`, or `null`
         if it does not occur.
 
@@ -2699,7 +3692,7 @@ class String(pydantic.BaseModel):
         "😀hello".index_of("h")          // 1
         "abc".index_of("z")              // null
         ```"""
-    def last_index_of(self, search: str) -> typing.Optional[int]:
+    def last_index_of(self, search: str, *, _baml: _BamlOptions | None = None) -> typing.Optional[int]:
         """Returns the character index at which the last occurrence of `search` starts,
         or `null` if it does not occur.
 
@@ -2715,7 +3708,7 @@ class String(pydantic.BaseModel):
         "😀hello".last_index_of("h")          // 1
         "abc".last_index_of("z")              // null
         ```"""
-    async def last_index_of_async(self, search: str) -> typing.Optional[int]:
+    async def last_index_of_async(self, search: str, *, _baml: _BamlOptions | None = None) -> typing.Optional[int]:
         """Returns the character index at which the last occurrence of `search` starts,
         or `null` if it does not occur.
 
@@ -2731,7 +3724,7 @@ class String(pydantic.BaseModel):
         "😀hello".last_index_of("h")          // 1
         "abc".last_index_of("z")              // null
         ```"""
-    def at(self, index: int) -> typing.Optional[str]:
+    def at(self, index: int, *, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
         """Returns the character at `index` as a one-character string, or `null` if
         `index` is out of range.
 
@@ -2751,7 +3744,7 @@ class String(pydantic.BaseModel):
         "hello".at(-1)  // "o"
         "hi".at(99)     // null
         ```"""
-    async def at_async(self, index: int) -> typing.Optional[str]:
+    async def at_async(self, index: int, *, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
         """Returns the character at `index` as a one-character string, or `null` if
         `index` is out of range.
 
@@ -2771,7 +3764,7 @@ class String(pydantic.BaseModel):
         "hello".at(-1)  // "o"
         "hi".at(99)     // null
         ```"""
-    def code_point_at(self, index: int) -> typing.Optional[int]:
+    def code_point_at(self, index: int, *, _baml: _BamlOptions | None = None) -> typing.Optional[int]:
         """Returns the Unicode code point of the character at `index`, as an `int`.
 
         The numeric counterpart of `at`: same character indexing, a negative
@@ -2794,7 +3787,7 @@ class String(pydantic.BaseModel):
         "😀hello".code_point_at(1)  // 104 ("h", not a UTF-16 unit)
         "hi".code_point_at(99)      // null
         ```"""
-    async def code_point_at_async(self, index: int) -> typing.Optional[int]:
+    async def code_point_at_async(self, index: int, *, _baml: _BamlOptions | None = None) -> typing.Optional[int]:
         """Returns the Unicode code point of the character at `index`, as an `int`.
 
         The numeric counterpart of `at`: same character indexing, a negative
@@ -2817,7 +3810,7 @@ class String(pydantic.BaseModel):
         "😀hello".code_point_at(1)  // 104 ("h", not a UTF-16 unit)
         "hi".code_point_at(99)      // null
         ```"""
-    def repeat(self, count: int) -> str:
+    def repeat(self, count: int, *, _baml: _BamlOptions | None = None) -> str:
         """Returns `self` repeated `count` times. A negative `count` counts as 0.
 
         Python's `s * count` also yields `""` for a negative count; JavaScript's
@@ -2831,7 +3824,7 @@ class String(pydantic.BaseModel):
         "hi".repeat(0)   // ""
         "hi".repeat(-1)  // ""
         ```"""
-    async def repeat_async(self, count: int) -> str:
+    async def repeat_async(self, count: int, *, _baml: _BamlOptions | None = None) -> str:
         """Returns `self` repeated `count` times. A negative `count` counts as 0.
 
         Python's `s * count` also yields `""` for a negative count; JavaScript's
@@ -2845,29 +3838,61 @@ class String(pydantic.BaseModel):
         "hi".repeat(0)   // ""
         "hi".repeat(-1)  // ""
         ```"""
-    def replace_all(self, search: str, replacement: str) -> str:
-        """Replaces every occurrence of `search` with `replacement`.
+    def replace_all(self, search: typing.Union[str, baml.regex.Regex], replacement: str, *, _baml: _BamlOptions | None = None) -> str:
+        """Replaces every occurrence of `search`.
 
-        Python's [`str.replace`](https://docs.python.org/3/library/stdtypes.html#str.replace),
-        JavaScript's [`replaceAll`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String/replaceAll).
-
-        # Examples
-
-        ```baml
-        "hello world".replace_all("l", "L")  // "heLLo worLd"
-        ```"""
-    async def replace_all_async(self, search: str, replacement: str) -> str:
-        """Replaces every occurrence of `search` with `replacement`.
-
-        Python's [`str.replace`](https://docs.python.org/3/library/stdtypes.html#str.replace),
-        JavaScript's [`replaceAll`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String/replaceAll).
+        Same search and replacement rules as `replace`, applied to every
+        non-overlapping match instead of only the first. With a pattern that
+        can match the empty string the scan still terminates: it advances one
+        codepoint past an empty match.
 
         # Examples
-
-        ```baml
-        "hello world".replace_all("l", "L")  // "heLLo worLd"
+        ```
+        "a.b.c".replace_all(".", "-")                       // "a-b-c"
+        "a1b2".replace_all(baml.regex.new("\\\\d"), "#") // "a#b#"
         ```"""
-    def is_numeric(self) -> bool:
+    async def replace_all_async(self, search: typing.Union[str, baml.regex.Regex], replacement: str, *, _baml: _BamlOptions | None = None) -> str:
+        """Replaces every occurrence of `search`.
+
+        Same search and replacement rules as `replace`, applied to every
+        non-overlapping match instead of only the first. With a pattern that
+        can match the empty string the scan still terminates: it advances one
+        codepoint past an empty match.
+
+        # Examples
+        ```
+        "a.b.c".replace_all(".", "-")                       // "a-b-c"
+        "a1b2".replace_all(baml.regex.new("\\\\d"), "#") // "a#b#"
+        ```"""
+    def _as_string_(self, *, _baml: _BamlOptions | None = None) -> str:
+        """(internal) `self` as the `string` primitive.
+
+        Inside a `class String` body `self` is the class, not the primitive, so
+        it cannot be handed to an API declared over `string` — `baml.regex`'s
+        methods, here. A whole-length `slice` is the cheap way across:
+        `substring` hands back a view of the same bytes, where interpolation
+        would route through `string.from`'s override-honoring walker and copy."""
+    async def _as_string__async(self, *, _baml: _BamlOptions | None = None) -> str:
+        """(internal) `self` as the `string` primitive.
+
+        Inside a `class String` body `self` is the class, not the primitive, so
+        it cannot be handed to an API declared over `string` — `baml.regex`'s
+        methods, here. A whole-length `slice` is the cheap way across:
+        `substring` hands back a view of the same bytes, where interpolation
+        would route through `string.from`'s override-honoring walker and copy."""
+    def _replace_literal_(self, search: str, replacement: str, *, _baml: _BamlOptions | None = None) -> str:
+        """(internal) `replace` restricted to a literal search and a literal replacement.
+        Called from `baml.regex._replace`, which owns the dispatch."""
+    async def _replace_literal__async(self, search: str, replacement: str, *, _baml: _BamlOptions | None = None) -> str:
+        """(internal) `replace` restricted to a literal search and a literal replacement.
+        Called from `baml.regex._replace`, which owns the dispatch."""
+    def _replace_all_literal_(self, search: str, replacement: str, *, _baml: _BamlOptions | None = None) -> str:
+        """(internal) `replace_all` restricted to a literal search and a literal replacement.
+        Called from `baml.regex._replace`, which owns the dispatch."""
+    async def _replace_all_literal__async(self, search: str, replacement: str, *, _baml: _BamlOptions | None = None) -> str:
+        """(internal) `replace_all` restricted to a literal search and a literal replacement.
+        Called from `baml.regex._replace`, which owns the dispatch."""
+    def is_numeric(self, *, _baml: _BamlOptions | None = None) -> bool:
         """Returns true if every character is numeric per Unicode: general categories
         `Nd`, `Nl`, and `No` — decimal digits, letter-numbers, and other-numbers.
 
@@ -2879,7 +3904,7 @@ class String(pydantic.BaseModel):
         "12a".is_numeric()    // false
         "".is_numeric()       // true (vacuous)
         ```"""
-    async def is_numeric_async(self) -> bool:
+    async def is_numeric_async(self, *, _baml: _BamlOptions | None = None) -> bool:
         """Returns true if every character is numeric per Unicode: general categories
         `Nd`, `Nl`, and `No` — decimal digits, letter-numbers, and other-numbers.
 
@@ -2891,7 +3916,7 @@ class String(pydantic.BaseModel):
         "12a".is_numeric()    // false
         "".is_numeric()       // true (vacuous)
         ```"""
-    def is_alphabetic(self) -> bool:
+    def is_alphabetic(self, *, _baml: _BamlOptions | None = None) -> bool:
         """Returns true if every character has the Unicode `Alphabetic` property.
 
         Broader than general category `L` (letters): `Alphabetic` also covers
@@ -2908,7 +3933,7 @@ class String(pydantic.BaseModel):
         "abc1".is_alphabetic()   // false
         "Ⅷ".is_alphabetic()      // true (Roman numeral, category `Nl` but still `Alphabetic`)
         ```"""
-    async def is_alphabetic_async(self) -> bool:
+    async def is_alphabetic_async(self, *, _baml: _BamlOptions | None = None) -> bool:
         """Returns true if every character has the Unicode `Alphabetic` property.
 
         Broader than general category `L` (letters): `Alphabetic` also covers
@@ -2925,7 +3950,7 @@ class String(pydantic.BaseModel):
         "abc1".is_alphabetic()   // false
         "Ⅷ".is_alphabetic()      // true (Roman numeral, category `Nl` but still `Alphabetic`)
         ```"""
-    def is_alphanumeric(self) -> bool:
+    def is_alphanumeric(self, *, _baml: _BamlOptions | None = None) -> bool:
         """Returns true if every character is alphabetic or numeric per Unicode.
 
         The test is per character, so `"a1"` passes even though neither
@@ -2938,7 +3963,7 @@ class String(pydantic.BaseModel):
         "héllo7".is_alphanumeric()  // true
         "a b".is_alphanumeric()     // false (space is not)
         ```"""
-    async def is_alphanumeric_async(self) -> bool:
+    async def is_alphanumeric_async(self, *, _baml: _BamlOptions | None = None) -> bool:
         """Returns true if every character is alphabetic or numeric per Unicode.
 
         The test is per character, so `"a1"` passes even though neither
@@ -2951,7 +3976,7 @@ class String(pydantic.BaseModel):
         "héllo7".is_alphanumeric()  // true
         "a b".is_alphanumeric()     // false (space is not)
         ```"""
-    def is_uppercase(self) -> bool:
+    def is_uppercase(self, *, _baml: _BamlOptions | None = None) -> bool:
         """Returns true if every character is uppercase per Unicode: general category
         `Lu`, plus other characters with the `Uppercase` property.
 
@@ -2965,7 +3990,7 @@ class String(pydantic.BaseModel):
         "Hello".is_uppercase()  // false
         "123".is_uppercase()    // false (digits aren't uppercase)
         ```"""
-    async def is_uppercase_async(self) -> bool:
+    async def is_uppercase_async(self, *, _baml: _BamlOptions | None = None) -> bool:
         """Returns true if every character is uppercase per Unicode: general category
         `Lu`, plus other characters with the `Uppercase` property.
 
@@ -2979,7 +4004,7 @@ class String(pydantic.BaseModel):
         "Hello".is_uppercase()  // false
         "123".is_uppercase()    // false (digits aren't uppercase)
         ```"""
-    def is_lowercase(self) -> bool:
+    def is_lowercase(self, *, _baml: _BamlOptions | None = None) -> bool:
         """Returns true if every character is lowercase per Unicode: general category
         `Ll`, plus other characters with the `Lowercase` property.
 
@@ -2989,7 +4014,7 @@ class String(pydantic.BaseModel):
         "hello".is_lowercase()  // true
         "Hello".is_lowercase()  // false
         ```"""
-    async def is_lowercase_async(self) -> bool:
+    async def is_lowercase_async(self, *, _baml: _BamlOptions | None = None) -> bool:
         """Returns true if every character is lowercase per Unicode: general category
         `Ll`, plus other characters with the `Lowercase` property.
 
@@ -2999,7 +4024,7 @@ class String(pydantic.BaseModel):
         "hello".is_lowercase()  // true
         "Hello".is_lowercase()  // false
         ```"""
-    def is_whitespace(self) -> bool:
+    def is_whitespace(self, *, _baml: _BamlOptions | None = None) -> bool:
         """Returns true if every character has the Unicode `White_Space` property:
         space, tab, newline, NBSP, and other Unicode whitespace.
 
@@ -3010,7 +4035,7 @@ class String(pydantic.BaseModel):
         " \\t\\n".is_whitespace()    // true
         "a b".is_whitespace()      // false
         ```"""
-    async def is_whitespace_async(self) -> bool:
+    async def is_whitespace_async(self, *, _baml: _BamlOptions | None = None) -> bool:
         """Returns true if every character has the Unicode `White_Space` property:
         space, tab, newline, NBSP, and other Unicode whitespace.
 
@@ -3021,7 +4046,7 @@ class String(pydantic.BaseModel):
         " \\t\\n".is_whitespace()    // true
         "a b".is_whitespace()      // false
         ```"""
-    def is_control(self) -> bool:
+    def is_control(self, *, _baml: _BamlOptions | None = None) -> bool:
         """Returns true if every character is a control character per Unicode:
         general category `Cc`.
 
@@ -3031,7 +4056,7 @@ class String(pydantic.BaseModel):
         "\\n\\t".is_control()  // true
         "a".is_control()     // false
         ```"""
-    async def is_control_async(self) -> bool:
+    async def is_control_async(self, *, _baml: _BamlOptions | None = None) -> bool:
         """Returns true if every character is a control character per Unicode:
         general category `Cc`.
 
@@ -3041,7 +4066,7 @@ class String(pydantic.BaseModel):
         "\\n\\t".is_control()  // true
         "a".is_control()     // false
         ```"""
-    def is_graphic(self) -> bool:
+    def is_graphic(self, *, _baml: _BamlOptions | None = None) -> bool:
         """Returns true if every character is graphic: neither a control character
         nor whitespace.
 
@@ -3057,7 +4082,7 @@ class String(pydantic.BaseModel):
         "a b".is_graphic()      // false (space is not graphic)
         "a\\n".is_graphic()      // false (newline is control)
         ```"""
-    async def is_graphic_async(self) -> bool:
+    async def is_graphic_async(self, *, _baml: _BamlOptions | None = None) -> bool:
         """Returns true if every character is graphic: neither a control character
         nor whitespace.
 
@@ -3073,7 +4098,7 @@ class String(pydantic.BaseModel):
         "a b".is_graphic()      // false (space is not graphic)
         "a\\n".is_graphic()      // false (newline is control)
         ```"""
-    def is_ascii(self) -> bool:
+    def is_ascii(self, *, _baml: _BamlOptions | None = None) -> bool:
         """Returns true if every character is ASCII: a code point in `[0x00, 0x7F]`.
 
         # Examples
@@ -3082,7 +4107,7 @@ class String(pydantic.BaseModel):
         "hello".is_ascii()    // true
         "héllo".is_ascii()    // false (`é` is U+00E9)
         ```"""
-    async def is_ascii_async(self) -> bool:
+    async def is_ascii_async(self, *, _baml: _BamlOptions | None = None) -> bool:
         """Returns true if every character is ASCII: a code point in `[0x00, 0x7F]`.
 
         # Examples
@@ -3091,7 +4116,7 @@ class String(pydantic.BaseModel):
         "hello".is_ascii()    // true
         "héllo".is_ascii()    // false (`é` is U+00E9)
         ```"""
-    def is_ascii_numeric(self) -> bool:
+    def is_ascii_numeric(self, *, _baml: _BamlOptions | None = None) -> bool:
         """Returns true if every character is an ASCII decimal digit, `0` through `9`.
 
         Stricter than `is_numeric`, which accepts non-ASCII numerals.
@@ -3102,7 +4127,7 @@ class String(pydantic.BaseModel):
         "12345".is_ascii_numeric()  // true
         "Ⅷ".is_ascii_numeric()      // false (Roman numeral)
         ```"""
-    async def is_ascii_numeric_async(self) -> bool:
+    async def is_ascii_numeric_async(self, *, _baml: _BamlOptions | None = None) -> bool:
         """Returns true if every character is an ASCII decimal digit, `0` through `9`.
 
         Stricter than `is_numeric`, which accepts non-ASCII numerals.
@@ -3113,7 +4138,7 @@ class String(pydantic.BaseModel):
         "12345".is_ascii_numeric()  // true
         "Ⅷ".is_ascii_numeric()      // false (Roman numeral)
         ```"""
-    def is_ascii_alphabetic(self) -> bool:
+    def is_ascii_alphabetic(self, *, _baml: _BamlOptions | None = None) -> bool:
         """Returns true if every character is an ASCII letter, `A` through `Z` or `a`
         through `z`.
 
@@ -3123,7 +4148,7 @@ class String(pydantic.BaseModel):
         "hello".is_ascii_alphabetic()  // true
         "héllo".is_ascii_alphabetic()  // false
         ```"""
-    async def is_ascii_alphabetic_async(self) -> bool:
+    async def is_ascii_alphabetic_async(self, *, _baml: _BamlOptions | None = None) -> bool:
         """Returns true if every character is an ASCII letter, `A` through `Z` or `a`
         through `z`.
 
@@ -3133,7 +4158,7 @@ class String(pydantic.BaseModel):
         "hello".is_ascii_alphabetic()  // true
         "héllo".is_ascii_alphabetic()  // false
         ```"""
-    def is_ascii_alphanumeric(self) -> bool:
+    def is_ascii_alphanumeric(self, *, _baml: _BamlOptions | None = None) -> bool:
         """Returns true if every character is an ASCII letter or digit.
 
         # Examples
@@ -3142,7 +4167,7 @@ class String(pydantic.BaseModel):
         "abc123".is_ascii_alphanumeric()  // true
         "héllo".is_ascii_alphanumeric()   // false
         ```"""
-    async def is_ascii_alphanumeric_async(self) -> bool:
+    async def is_ascii_alphanumeric_async(self, *, _baml: _BamlOptions | None = None) -> bool:
         """Returns true if every character is an ASCII letter or digit.
 
         # Examples
@@ -3151,7 +4176,7 @@ class String(pydantic.BaseModel):
         "abc123".is_ascii_alphanumeric()  // true
         "héllo".is_ascii_alphanumeric()   // false
         ```"""
-    def is_ascii_uppercase(self) -> bool:
+    def is_ascii_uppercase(self, *, _baml: _BamlOptions | None = None) -> bool:
         """Returns true if every character is an ASCII uppercase letter, `A` through
         `Z`.
 
@@ -3161,7 +4186,7 @@ class String(pydantic.BaseModel):
         "HELLO".is_ascii_uppercase()  // true
         "héllo".is_ascii_uppercase()  // false
         ```"""
-    async def is_ascii_uppercase_async(self) -> bool:
+    async def is_ascii_uppercase_async(self, *, _baml: _BamlOptions | None = None) -> bool:
         """Returns true if every character is an ASCII uppercase letter, `A` through
         `Z`.
 
@@ -3171,7 +4196,7 @@ class String(pydantic.BaseModel):
         "HELLO".is_ascii_uppercase()  // true
         "héllo".is_ascii_uppercase()  // false
         ```"""
-    def is_ascii_lowercase(self) -> bool:
+    def is_ascii_lowercase(self, *, _baml: _BamlOptions | None = None) -> bool:
         """Returns true if every character is an ASCII lowercase letter, `a` through
         `z`.
 
@@ -3181,7 +4206,7 @@ class String(pydantic.BaseModel):
         "hello".is_ascii_lowercase()  // true
         "héllo".is_ascii_lowercase()  // false
         ```"""
-    async def is_ascii_lowercase_async(self) -> bool:
+    async def is_ascii_lowercase_async(self, *, _baml: _BamlOptions | None = None) -> bool:
         """Returns true if every character is an ASCII lowercase letter, `a` through
         `z`.
 
@@ -3191,7 +4216,7 @@ class String(pydantic.BaseModel):
         "hello".is_ascii_lowercase()  // true
         "héllo".is_ascii_lowercase()  // false
         ```"""
-    def is_ascii_whitespace(self) -> bool:
+    def is_ascii_whitespace(self, *, _baml: _BamlOptions | None = None) -> bool:
         """Returns true if every character is ASCII whitespace: space (`\\x20`),
         horizontal tab (`\\t`), line feed (`\\n`), form feed (`\\x0C`), or carriage
         return (`\\r`).
@@ -3204,7 +4229,7 @@ class String(pydantic.BaseModel):
         " ".is_ascii_whitespace()  // true
         "héllo".is_ascii_whitespace()  // false
         ```"""
-    async def is_ascii_whitespace_async(self) -> bool:
+    async def is_ascii_whitespace_async(self, *, _baml: _BamlOptions | None = None) -> bool:
         """Returns true if every character is ASCII whitespace: space (`\\x20`),
         horizontal tab (`\\t`), line feed (`\\n`), form feed (`\\x0C`), or carriage
         return (`\\r`).
@@ -3217,7 +4242,7 @@ class String(pydantic.BaseModel):
         " ".is_ascii_whitespace()  // true
         "héllo".is_ascii_whitespace()  // false
         ```"""
-    def is_ascii_control(self) -> bool:
+    def is_ascii_control(self, *, _baml: _BamlOptions | None = None) -> bool:
         """Returns true if every character is an ASCII control character: a code point
         in `[0x00, 0x1F]`, or DEL (`0x7F`).
 
@@ -3227,7 +4252,7 @@ class String(pydantic.BaseModel):
         "".is_ascii_control()  // true
         "héllo".is_ascii_control()  // false
         ```"""
-    async def is_ascii_control_async(self) -> bool:
+    async def is_ascii_control_async(self, *, _baml: _BamlOptions | None = None) -> bool:
         """Returns true if every character is an ASCII control character: a code point
         in `[0x00, 0x1F]`, or DEL (`0x7F`).
 
@@ -3237,7 +4262,7 @@ class String(pydantic.BaseModel):
         "".is_ascii_control()  // true
         "héllo".is_ascii_control()  // false
         ```"""
-    def is_ascii_graphic(self) -> bool:
+    def is_ascii_graphic(self, *, _baml: _BamlOptions | None = None) -> bool:
         """Returns true if every character is an ASCII graphic character: printable,
         non-space, non-control, meaning a code point in `[0x21, 0x7E]`.
 
@@ -3249,7 +4274,7 @@ class String(pydantic.BaseModel):
         "".is_ascii_graphic()  // true
         "héllo".is_ascii_graphic()  // false
         ```"""
-    async def is_ascii_graphic_async(self) -> bool:
+    async def is_ascii_graphic_async(self, *, _baml: _BamlOptions | None = None) -> bool:
         """Returns true if every character is an ASCII graphic character: printable,
         non-space, non-control, meaning a code point in `[0x21, 0x7E]`.
 
@@ -3261,7 +4286,7 @@ class String(pydantic.BaseModel):
         "".is_ascii_graphic()  // true
         "héllo".is_ascii_graphic()  // false
         ```"""
-    def is_ascii_hex(self) -> bool:
+    def is_ascii_hex(self, *, _baml: _BamlOptions | None = None) -> bool:
         """Returns true if every character is an ASCII hexadecimal digit: `0` through
         `9`, `a` through `f`, or `A` through `F`.
 
@@ -3271,7 +4296,7 @@ class String(pydantic.BaseModel):
         "deadBEEF".is_ascii_hex()  // true
         "0x123".is_ascii_hex()     // false (`x` is not a hex digit)
         ```"""
-    async def is_ascii_hex_async(self) -> bool:
+    async def is_ascii_hex_async(self, *, _baml: _BamlOptions | None = None) -> bool:
         """Returns true if every character is an ASCII hexadecimal digit: `0` through
         `9`, `a` through `f`, or `A` through `F`.
 
@@ -3281,7 +4306,7 @@ class String(pydantic.BaseModel):
         "deadBEEF".is_ascii_hex()  // true
         "0x123".is_ascii_hex()     // false (`x` is not a hex digit)
         ```"""
-    def to_utf8(self) -> bytes:
+    def to_utf8(self, *, _baml: _BamlOptions | None = None) -> bytes:
         """Returns the string encoded as UTF-8 bytes.
 
         The result has length `self.byte_length()`. Inverse of `string.from_utf8`.
@@ -3296,7 +4321,7 @@ class String(pydantic.BaseModel):
         "é".to_utf8()      // [0xC3, 0xA9]
         "".to_utf8()       // []
         ```"""
-    async def to_utf8_async(self) -> bytes:
+    async def to_utf8_async(self, *, _baml: _BamlOptions | None = None) -> bytes:
         """Returns the string encoded as UTF-8 bytes.
 
         The result has length `self.byte_length()`. Inverse of `string.from_utf8`.
@@ -3311,7 +4336,7 @@ class String(pydantic.BaseModel):
         "é".to_utf8()      // [0xC3, 0xA9]
         "".to_utf8()       // []
         ```"""
-    def to_code_points(self) -> typing.List[int]:
+    def to_code_points(self, *, _baml: _BamlOptions | None = None) -> typing.List[int]:
         """Returns the string's Unicode code points as `int`s.
 
         One element per character, so `self.length()` of them, each in
@@ -3330,7 +4355,7 @@ class String(pydantic.BaseModel):
         "🐑".to_code_points()    // [128017]
         "".to_code_points()      // []
         ```"""
-    async def to_code_points_async(self) -> typing.List[int]:
+    async def to_code_points_async(self, *, _baml: _BamlOptions | None = None) -> typing.List[int]:
         """Returns the string's Unicode code points as `int`s.
 
         One element per character, so `self.length()` of them, each in
@@ -3353,7 +4378,7 @@ class String(pydantic.BaseModel):
 
 class Uint8Array(pydantic.BaseModel):
     @staticmethod
-    def zeroes(size: int) -> bytes:
+    def zeroes(size: int, *, _baml: _BamlOptions | None = None) -> bytes:
         """Creates an array of `size` zero bytes.
 
         # Throws
@@ -3374,7 +4399,7 @@ class Uint8Array(pydantic.BaseModel):
         Raises:
             InvalidArgument"""
     @staticmethod
-    async def zeroes_async(size: int) -> bytes:
+    async def zeroes_async(size: int, *, _baml: _BamlOptions | None = None) -> bytes:
         """Creates an array of `size` zero bytes.
 
         # Throws
@@ -3395,7 +4420,7 @@ class Uint8Array(pydantic.BaseModel):
         Raises:
             InvalidArgument"""
     @staticmethod
-    def from_array(array: typing.List[int]) -> bytes:
+    def from_array(array: typing.List[int], *, _baml: _BamlOptions | None = None) -> bytes:
         """Creates a `uint8array` from an array of integers, one byte per element.
 
         Unlike `push`, this validates rather than masks.
@@ -3414,7 +4439,7 @@ class Uint8Array(pydantic.BaseModel):
         Raises:
             InvalidArgument"""
     @staticmethod
-    async def from_array_async(array: typing.List[int]) -> bytes:
+    async def from_array_async(array: typing.List[int], *, _baml: _BamlOptions | None = None) -> bytes:
         """Creates a `uint8array` from an array of integers, one byte per element.
 
         Unlike `push`, this validates rather than masks.
@@ -3433,7 +4458,7 @@ class Uint8Array(pydantic.BaseModel):
         Raises:
             InvalidArgument"""
     @staticmethod
-    def from_hex(hex: str) -> bytes:
+    def from_hex(hex: str, *, _baml: _BamlOptions | None = None) -> bytes:
         """Decodes a hexadecimal string such as `"deadbeef"` into bytes.
 
         Two characters per byte, in either case. Python's
@@ -3454,7 +4479,7 @@ class Uint8Array(pydantic.BaseModel):
         Raises:
             InvalidArgument"""
     @staticmethod
-    async def from_hex_async(hex: str) -> bytes:
+    async def from_hex_async(hex: str, *, _baml: _BamlOptions | None = None) -> bytes:
         """Decodes a hexadecimal string such as `"deadbeef"` into bytes.
 
         Two characters per byte, in either case. Python's
@@ -3475,7 +4500,7 @@ class Uint8Array(pydantic.BaseModel):
         Raises:
             InvalidArgument"""
     @staticmethod
-    def from_base64(base64: str) -> bytes:
+    def from_base64(base64: str, *, _baml: _BamlOptions | None = None) -> bytes:
         """Decodes a Base64-encoded string into bytes.
 
         Accepts both the standard (`+/`) and URL-safe (`-_`) alphabets, with or
@@ -3494,7 +4519,7 @@ class Uint8Array(pydantic.BaseModel):
         Raises:
             InvalidArgument"""
     @staticmethod
-    async def from_base64_async(base64: str) -> bytes:
+    async def from_base64_async(base64: str, *, _baml: _BamlOptions | None = None) -> bytes:
         """Decodes a Base64-encoded string into bytes.
 
         Accepts both the standard (`+/`) and URL-safe (`-_`) alphabets, with or
@@ -3512,11 +4537,11 @@ class Uint8Array(pydantic.BaseModel):
 
         Raises:
             InvalidArgument"""
-    def length(self) -> int:
+    def length(self, *, _baml: _BamlOptions | None = None) -> int:
         """Returns the number of bytes."""
-    async def length_async(self) -> int:
+    async def length_async(self, *, _baml: _BamlOptions | None = None) -> int:
         """Returns the number of bytes."""
-    def at(self, index: int) -> typing.Optional[int]:
+    def at(self, index: int, *, _baml: _BamlOptions | None = None) -> typing.Optional[int]:
         """Returns the byte at `index`, or `null` if `index` is out of range.
 
         A negative `index` counts from the end, so `-1` is the last byte. This is
@@ -3530,7 +4555,7 @@ class Uint8Array(pydantic.BaseModel):
         b"abc".at(-1)  // 99
         b"abc".at(99)  // null
         ```"""
-    async def at_async(self, index: int) -> typing.Optional[int]:
+    async def at_async(self, index: int, *, _baml: _BamlOptions | None = None) -> typing.Optional[int]:
         """Returns the byte at `index`, or `null` if `index` is out of range.
 
         A negative `index` counts from the end, so `-1` is the last byte. This is
@@ -3544,11 +4569,23 @@ class Uint8Array(pydantic.BaseModel):
         b"abc".at(-1)  // 99
         b"abc".at(99)  // null
         ```"""
-    def push(self, item: int) -> int: ...
-    async def push_async(self, item: int) -> int: ...
-    def pop(self) -> typing.Optional[int]: ...
-    async def pop_async(self) -> typing.Optional[int]: ...
-    def concat(self, other: bytes) -> bytes:
+    def push(self, item: int, *, _baml: _BamlOptions | None = None) -> int:
+        """Appends `item` to the end of the array and returns the new length.
+
+        `item` is masked to its low 8 bits rather than rejected: `256` appends `0`,
+        and `-1` appends `255`. Use `from_array` when out-of-range input should be
+        an error instead."""
+    async def push_async(self, item: int, *, _baml: _BamlOptions | None = None) -> int:
+        """Appends `item` to the end of the array and returns the new length.
+
+        `item` is masked to its low 8 bits rather than rejected: `256` appends `0`,
+        and `-1` appends `255`. Use `from_array` when out-of-range input should be
+        an error instead."""
+    def pop(self, *, _baml: _BamlOptions | None = None) -> typing.Optional[int]:
+        """Removes and returns the last byte, or `null` if the array is empty."""
+    async def pop_async(self, *, _baml: _BamlOptions | None = None) -> typing.Optional[int]:
+        """Removes and returns the last byte, or `null` if the array is empty."""
+    def concat(self, other: bytes, *, _baml: _BamlOptions | None = None) -> bytes:
         """Returns a new array holding `self` followed by `other`.
 
         # Examples
@@ -3556,7 +4593,7 @@ class Uint8Array(pydantic.BaseModel):
         ```baml
         b"abc".concat(b"def")  // [97, 98, 99, 100, 101, 102]
         ```"""
-    async def concat_async(self, other: bytes) -> bytes:
+    async def concat_async(self, other: bytes, *, _baml: _BamlOptions | None = None) -> bytes:
         """Returns a new array holding `self` followed by `other`.
 
         # Examples
@@ -3564,7 +4601,7 @@ class Uint8Array(pydantic.BaseModel):
         ```baml
         b"abc".concat(b"def")  // [97, 98, 99, 100, 101, 102]
         ```"""
-    def includes(self, item: int) -> bool:
+    def includes(self, item: int, *, _baml: _BamlOptions | None = None) -> bool:
         """Returns true if the array contains `item`.
 
         An `item` outside 0–255 is never present.
@@ -3574,7 +4611,7 @@ class Uint8Array(pydantic.BaseModel):
         ```baml
         b"abc".includes(98)  // true
         ```"""
-    async def includes_async(self, item: int) -> bool:
+    async def includes_async(self, item: int, *, _baml: _BamlOptions | None = None) -> bool:
         """Returns true if the array contains `item`.
 
         An `item` outside 0–255 is never present.
@@ -3584,7 +4621,7 @@ class Uint8Array(pydantic.BaseModel):
         ```baml
         b"abc".includes(98)  // true
         ```"""
-    def index_of(self, item: int) -> typing.Optional[int]:
+    def index_of(self, item: int, *, _baml: _BamlOptions | None = None) -> typing.Optional[int]:
         """Returns the index of the first occurrence of `item`, or `null` if it is
         absent. An `item` outside 0–255 is never present.
 
@@ -3594,7 +4631,7 @@ class Uint8Array(pydantic.BaseModel):
         b"abc".index_of(98)   // 1
         b"abc".index_of(122)  // null
         ```"""
-    async def index_of_async(self, item: int) -> typing.Optional[int]:
+    async def index_of_async(self, item: int, *, _baml: _BamlOptions | None = None) -> typing.Optional[int]:
         """Returns the index of the first occurrence of `item`, or `null` if it is
         absent. An `item` outside 0–255 is never present.
 
@@ -3604,7 +4641,7 @@ class Uint8Array(pydantic.BaseModel):
         b"abc".index_of(98)   // 1
         b"abc".index_of(122)  // null
         ```"""
-    def reverse(self) -> bytes:
+    def reverse(self, *, _baml: _BamlOptions | None = None) -> bytes:
         """Returns a new array with the bytes in reverse order.
 
         JavaScript's [`reverse`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/TypedArray/reverse)
@@ -3615,7 +4652,7 @@ class Uint8Array(pydantic.BaseModel):
         ```baml
         b"abc".reverse()  // b"cba"
         ```"""
-    async def reverse_async(self) -> bytes:
+    async def reverse_async(self, *, _baml: _BamlOptions | None = None) -> bytes:
         """Returns a new array with the bytes in reverse order.
 
         JavaScript's [`reverse`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/TypedArray/reverse)
@@ -3626,7 +4663,7 @@ class Uint8Array(pydantic.BaseModel):
         ```baml
         b"abc".reverse()  // b"cba"
         ```"""
-    def slice(self, start: int, end: int) -> bytes:
+    def slice(self, start: int, end: int, *, _baml: _BamlOptions | None = None) -> bytes:
         """Returns the bytes in `[start, end)`.
 
         Either bound may be negative, counting from the end. Out-of-range bounds
@@ -3638,7 +4675,7 @@ class Uint8Array(pydantic.BaseModel):
         b"hello".slice(0, 3)    // b"hel"
         b"hello".slice(-3, -1)  // b"ll"
         ```"""
-    async def slice_async(self, start: int, end: int) -> bytes:
+    async def slice_async(self, start: int, end: int, *, _baml: _BamlOptions | None = None) -> bytes:
         """Returns the bytes in `[start, end)`.
 
         Either bound may be negative, counting from the end. Out-of-range bounds
@@ -3650,7 +4687,7 @@ class Uint8Array(pydantic.BaseModel):
         b"hello".slice(0, 3)    // b"hel"
         b"hello".slice(-3, -1)  // b"ll"
         ```"""
-    def to_array(self) -> typing.List[int]:
+    def to_array(self, *, _baml: _BamlOptions | None = None) -> typing.List[int]:
         """Returns the bytes as `int`s, each in the range 0–255.
 
         # Examples
@@ -3658,7 +4695,7 @@ class Uint8Array(pydantic.BaseModel):
         ```baml
         b"hi".to_array()  // [104, 105]
         ```"""
-    async def to_array_async(self) -> typing.List[int]:
+    async def to_array_async(self, *, _baml: _BamlOptions | None = None) -> typing.List[int]:
         """Returns the bytes as `int`s, each in the range 0–255.
 
         # Examples
@@ -3666,7 +4703,7 @@ class Uint8Array(pydantic.BaseModel):
         ```baml
         b"hi".to_array()  // [104, 105]
         ```"""
-    def to_hex(self) -> str:
+    def to_hex(self, *, _baml: _BamlOptions | None = None) -> str:
         """Encodes the bytes as a lowercase hexadecimal string, two characters per
         byte. Python's [`bytes.hex`](https://docs.python.org/3/library/stdtypes.html#bytes.hex).
 
@@ -3675,7 +4712,7 @@ class Uint8Array(pydantic.BaseModel):
         ```baml
         uint8array.from_hex("deadbeef").to_hex()  // "deadbeef"
         ```"""
-    async def to_hex_async(self) -> str:
+    async def to_hex_async(self, *, _baml: _BamlOptions | None = None) -> str:
         """Encodes the bytes as a lowercase hexadecimal string, two characters per
         byte. Python's [`bytes.hex`](https://docs.python.org/3/library/stdtypes.html#bytes.hex).
 
@@ -3684,7 +4721,7 @@ class Uint8Array(pydantic.BaseModel):
         ```baml
         uint8array.from_hex("deadbeef").to_hex()  // "deadbeef"
         ```"""
-    def to_base64(self) -> str:
+    def to_base64(self, *, _baml: _BamlOptions | None = None) -> str:
         """Encodes the bytes as a standard Base64 string, with `=` padding. Python's
         [`base64.b64encode`](https://docs.python.org/3/library/base64.html#base64.b64encode).
 
@@ -3693,7 +4730,7 @@ class Uint8Array(pydantic.BaseModel):
         ```baml
         "hello".to_utf8().to_base64()   // "aGVsbG8="
         ```"""
-    async def to_base64_async(self) -> str:
+    async def to_base64_async(self, *, _baml: _BamlOptions | None = None) -> str:
         """Encodes the bytes as a standard Base64 string, with `=` padding. Python's
         [`base64.b64encode`](https://docs.python.org/3/library/base64.html#base64.b64encode).
 
@@ -3702,12 +4739,14 @@ class Uint8Array(pydantic.BaseModel):
         ```baml
         "hello".to_utf8().to_base64()   // "aGVsbG8="
         ```"""
-    def _to_string_impl_(self) -> str:
+    def _to_string_impl_(self, *, _baml: _BamlOptions | None = None) -> str:
         """(internal) Native backing for the `to_string` implementation above."""
-    async def _to_string_impl__async(self) -> str:
+    async def _to_string_impl__async(self, *, _baml: _BamlOptions | None = None) -> str:
         """(internal) Native backing for the `to_string` implementation above."""
-    def sort(self) -> None: ...
-    async def sort_async(self) -> None: ...
+    def sort(self, *, _baml: _BamlOptions | None = None) -> None:
+        """Sorts the bytes in place, ascending."""
+    async def sort_async(self, *, _baml: _BamlOptions | None = None) -> None:
+        """Sorts the bytes in place, ascending."""
 
 
 __all__ = [

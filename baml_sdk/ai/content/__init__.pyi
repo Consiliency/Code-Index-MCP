@@ -31,6 +31,8 @@ if typing.TYPE_CHECKING:
     from ... import baml
     from ...baml import UNSET as UNSET
 
+from ..._invocation_types import BamlOptions as _BamlOptions
+
 
 class Text(pydantic.BaseModel):
     text: str
@@ -51,41 +53,41 @@ class Media(pydantic.BaseModel):
     provider_id: typing.Optional[str] = None
     revised_prompt: typing.Optional[str] = None
     @staticmethod
-    def new(value: typing.Union[baml.media.Image, baml.media.Audio, baml.media.Video, baml.media.Pdf], *, provider_id: typing.Union[str, None, UNSET] = None, revised_prompt: typing.Union[str, None, UNSET] = None) -> Media:
+    def new(value: typing.Union[baml.media.Image, baml.media.Audio, baml.media.Video, baml.media.Pdf], *, provider_id: typing.Union[str, None, UNSET] = None, revised_prompt: typing.Union[str, None, UNSET] = None, _baml: _BamlOptions | None = None) -> Media:
         """Wrap a media value a client just built from a provider payload.
         `baml.media.Image.from_base64` and its siblings return the `image` /
         `audio` / `video` / `pdf` primitives, and `baml.media.Image` is the
         declaration that carries `image`'s members rather than a second
         nominal type, so the value already is a `MediaPart` member."""
     @staticmethod
-    async def new_async(value: typing.Union[baml.media.Image, baml.media.Audio, baml.media.Video, baml.media.Pdf], *, provider_id: typing.Union[str, None, UNSET] = None, revised_prompt: typing.Union[str, None, UNSET] = None) -> Media:
+    async def new_async(value: typing.Union[baml.media.Image, baml.media.Audio, baml.media.Video, baml.media.Pdf], *, provider_id: typing.Union[str, None, UNSET] = None, revised_prompt: typing.Union[str, None, UNSET] = None, _baml: _BamlOptions | None = None) -> Media:
         """Wrap a media value a client just built from a provider payload.
         `baml.media.Image.from_base64` and its siblings return the `image` /
         `audio` / `video` / `pdf` primitives, and `baml.media.Image` is the
         declaration that carries `image`'s members rather than a second
         nominal type, so the value already is a `MediaPart` member."""
-    def kind(self) -> str:
+    def kind(self, *, _baml: _BamlOptions | None = None) -> str:
         """The payload's media kind: "image", "audio", "video", or "pdf"."""
-    async def kind_async(self) -> str:
+    async def kind_async(self, *, _baml: _BamlOptions | None = None) -> str:
         """The payload's media kind: "image", "audio", "video", or "pdf"."""
 
 
-def blocks(items: typing.List[typing.Union[str, baml.media.Image, baml.media.Audio, baml.media.Video, baml.media.Pdf, Text, Media]]) -> typing.List[Block]:
+def blocks(items: typing.List[typing.Union[str, baml.media.Image, baml.media.Audio, baml.media.Video, baml.media.Pdf, Text, Media]], *, _baml: _BamlOptions | None = None) -> typing.List[Block]:
     """Content blocks from ordinary values: a bare `string` becomes `Text`, a bare
     `image` / `audio` / `video` / `pdf` becomes `Media` with null provenance, and
     a block already built passes through. The one constructor behind
-    `root.events.UserMessage.of` and `root.events.ToolCompleted.of`."""
-async def blocks_async(items: typing.List[typing.Union[str, baml.media.Image, baml.media.Audio, baml.media.Video, baml.media.Pdf, Text, Media]]) -> typing.List[Block]:
+    `ai.events.UserMessage.of` and `ai.events.ToolCompleted.of`."""
+async def blocks_async(items: typing.List[typing.Union[str, baml.media.Image, baml.media.Audio, baml.media.Video, baml.media.Pdf, Text, Media]], *, _baml: _BamlOptions | None = None) -> typing.List[Block]:
     """Content blocks from ordinary values: a bare `string` becomes `Text`, a bare
     `image` / `audio` / `video` / `pdf` becomes `Media` with null provenance, and
     a block already built passes through. The one constructor behind
-    `root.events.UserMessage.of` and `root.events.ToolCompleted.of`."""
+    `ai.events.UserMessage.of` and `ai.events.ToolCompleted.of`."""
 
 
-def text(content: typing.List[Block]) -> str:
+def text(content: typing.List[Block], *, _baml: _BamlOptions | None = None) -> str:
     """The readable projection of a block list: `Text` blocks as written, each
     `Media` block as a `[image]`-style placeholder, joined in order."""
-async def text_async(content: typing.List[Block]) -> str:
+async def text_async(content: typing.List[Block], *, _baml: _BamlOptions | None = None) -> str:
     """The readable projection of a block list: `Text` blocks as written, each
     `Media` block as a `[image]`-style placeholder, joined in order."""
 
@@ -95,6 +97,7 @@ class StopReason(str, enum.Enum):
     ToolUse = "ToolUse"
     MaxTokens = "MaxTokens"
     Refused = "Refused"
+    Failed = "Failed"
 
 
 Block: typing.TypeAlias = typing.Union[Text, Media]

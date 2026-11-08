@@ -28,10 +28,17 @@ import pydantic
 if typing.TYPE_CHECKING:
     from ... import ai
     from ... import baml
+    from ... import vendor
     from ...baml import UNSET as UNSET
 
+from ..._invocation_types import BamlOptions as _BamlOptions
 
-def resolve(selector: Selector, providers: typing.Callable[[str, str], typing.Optional[typing.Any]], prefixes: typing.List[str]) -> typing.Any:
+
+E = typing.TypeVar("E")
+T = typing.TypeVar("T")
+
+
+def resolve(selector: Selector, providers: typing.Callable[[str, str], typing.Optional[typing.Any]], prefixes: typing.List[str], *, _baml: _BamlOptions | None = None) -> typing.Any:
     """Resolve a `Selector` to the client to call, at CALL time.
 
       * a `ai.Client` is returned unchanged (identity);
@@ -56,7 +63,7 @@ def resolve(selector: Selector, providers: typing.Callable[[str, str], typing.Op
 
     Raises:
         Io, ParseError, InvalidRequest"""
-async def resolve_async(selector: Selector, providers: typing.Callable[[str, str], typing.Optional[typing.Any]], prefixes: typing.List[str]) -> typing.Any:
+async def resolve_async(selector: Selector, providers: typing.Callable[[str, str], typing.Optional[typing.Any]], prefixes: typing.List[str], *, _baml: _BamlOptions | None = None) -> typing.Any:
     """Resolve a `Selector` to the client to call, at CALL time.
 
       * a `ai.Client` is returned unchanged (identity);
@@ -83,12 +90,38 @@ async def resolve_async(selector: Selector, providers: typing.Callable[[str, str
         Io, ParseError, InvalidRequest"""
 
 
-def default_retry_judgment(f: typing.Any) -> bool:
+def _may_try_again(cause: Retryable, *, _baml: _BamlOptions | None = None) -> bool:
+    """(internal) The safety gate shared by Retry and Fallback, streaming or not.
+    A typed failure passes only when replaying it is safe. A `baml.errors.Timeout`
+    always passes: a member raises it for its own deadline (any of the four in
+    its `ai.LlmTimeoutOptions`, or a `baml.future.with_timeout` it applies
+    itself), which is a failed attempt like a transport failure, and legacy
+    clients retried and failed over on it too. A caller's deadline never reaches
+    this gate: it cancels the members, and every wrapper re-throws
+    `baml.panics.Cancelled`. When no attempt or member is left, the original
+    `Timeout` propagates unchanged."""
+async def _may_try_again_async(cause: Retryable, *, _baml: _BamlOptions | None = None) -> bool:
+    """(internal) The safety gate shared by Retry and Fallback, streaming or not.
+    A typed failure passes only when replaying it is safe. A `baml.errors.Timeout`
+    always passes: a member raises it for its own deadline (any of the four in
+    its `ai.LlmTimeoutOptions`, or a `baml.future.with_timeout` it applies
+    itself), which is a failed attempt like a transport failure, and legacy
+    clients retried and failed over on it too. A caller's deadline never reaches
+    this gate: it cancels the members, and every wrapper re-throws
+    `baml.panics.Cancelled`. When no attempt or member is left, the original
+    `Timeout` propagates unchanged."""
+
+
+def default_retry_judgment(f: typing.Any, *, _baml: _BamlOptions | None = None) -> bool:
     """The default judgment: a request the provider rejected does not become
     valid by resending."""
-async def default_retry_judgment_async(f: typing.Any) -> bool:
+async def default_retry_judgment_async(f: typing.Any, *, _baml: _BamlOptions | None = None) -> bool:
     """The default judgment: a request the provider rejected does not become
     valid by resending."""
+
+
+def _provider_error_retryable(error: ai.errors.ProviderError, *, _baml: _BamlOptions | None = None) -> bool: ...
+async def _provider_error_retryable_async(error: ai.errors.ProviderError, *, _baml: _BamlOptions | None = None) -> bool: ...
 
 
 class Backoff(pydantic.BaseModel):
@@ -96,27 +129,69 @@ class Backoff(pydantic.BaseModel):
     multiplier: int
     max_ms: int
     @staticmethod
-    def new(*, initial_ms: typing.Union[int, UNSET] = 250, multiplier: typing.Union[int, UNSET] = 2, max_ms: typing.Union[int, UNSET] = 10000) -> Backoff: ...
+    def new(*, initial_ms: typing.Union[int, UNSET] = 250, multiplier: typing.Union[int, UNSET] = 2, max_ms: typing.Union[int, UNSET] = 10000, _baml: _BamlOptions | None = None) -> Backoff: ...
     @staticmethod
-    async def new_async(*, initial_ms: typing.Union[int, UNSET] = 250, multiplier: typing.Union[int, UNSET] = 2, max_ms: typing.Union[int, UNSET] = 10000) -> Backoff: ...
-    def delay_ms(self, attempt: int, f: typing.Any) -> int:
+    async def new_async(*, initial_ms: typing.Union[int, UNSET] = 250, multiplier: typing.Union[int, UNSET] = 2, max_ms: typing.Union[int, UNSET] = 10000, _baml: _BamlOptions | None = None) -> Backoff: ...
+    def delay_ms(self, attempt: int, f: Retryable, *, _baml: _BamlOptions | None = None) -> int:
         """The delay before attempt N (first retry is attempt 1). A
         `ai.errors.RateLimited.retry_after_ms` hint overrides the computed value."""
-    async def delay_ms_async(self, attempt: int, f: typing.Any) -> int:
+    async def delay_ms_async(self, attempt: int, f: Retryable, *, _baml: _BamlOptions | None = None) -> int:
         """The delay before attempt N (first retry is attempt 1). A
         `ai.errors.RateLimited.retry_after_ms` hint overrides the computed value."""
 
 
-def _failed_leg_call(client_name: typing.Optional[str], f: typing.Any) -> ai.events.LLMCall:
-    """(internal) Map a classified failure to a failed-leg wire record (`selected: false`).
-    Timing is best-effort: a failed leg's start was never measured, so it is
-    null — never fabricated. `client_name` falls back to the failure's own
-    provider when the wrapper does not know the member's id."""
-async def _failed_leg_call_async(client_name: typing.Optional[str], f: typing.Any) -> ai.events.LLMCall:
-    """(internal) Map a classified failure to a failed-leg wire record (`selected: false`).
-    Timing is best-effort: a failed leg's start was never measured, so it is
-    null — never fabricated. `client_name` falls back to the failure's own
-    provider when the wrapper does not know the member's id."""
+def _failed_attempt(member: typing.Any, f: Retryable, *, _baml: _BamlOptions | None = None) -> ai.ModelTurn:
+    """(internal) Map a classified failure or a member timeout to a failed attempt
+    of `member`. It holds the call only when a response arrived. No response
+    named a model and the call's timing was never measured, so both are null,
+    never fabricated."""
+async def _failed_attempt_async(member: typing.Any, f: Retryable, *, _baml: _BamlOptions | None = None) -> ai.ModelTurn:
+    """(internal) Map a classified failure or a member timeout to a failed attempt
+    of `member`. It holds the call only when a response arrived. No response
+    named a model and the call's timing was never measured, so both are null,
+    never fabricated."""
+
+
+def _wrapper_turn(attempts: typing.List[ai.ModelTurn], *, _baml: _BamlOptions | None = None) -> ai.ModelTurn:
+    """(internal) A wrapper's turn over its member `attempts`, oldest first: it
+    answers as the last one, which succeeded, and makes no call itself."""
+async def _wrapper_turn_async(attempts: typing.List[ai.ModelTurn], *, _baml: _BamlOptions | None = None) -> ai.ModelTurn:
+    """(internal) A wrapper's turn over its member `attempts`, oldest first: it
+    answers as the last one, which succeeded, and makes no call itself."""
+
+
+def retry_attempt(attempt: int, client: str, body: typing.Callable[[], T], *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> T:
+    """One `Retry` attempt, as a span of its own: `attempt` counts from 1 and
+    `client` is the member's `requested_model()`. Run with `$trace = _attempt_trace()`, which
+    captures only those inputs (`body` is recorded as an opaque closure), never
+    the client, the prompt or an error's body. The attempt's requests are
+    network spans under it, and each attempt's span ends before the next starts."""
+async def retry_attempt_async(attempt: int, client: str, body: typing.Callable[[], T], *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> T:
+    """One `Retry` attempt, as a span of its own: `attempt` counts from 1 and
+    `client` is the member's `requested_model()`. Run with `$trace = _attempt_trace()`, which
+    captures only those inputs (`body` is recorded as an opaque closure), never
+    the client, the prompt or an error's body. The attempt's requests are
+    network spans under it, and each attempt's span ends before the next starts."""
+
+
+def fallback_attempt(member: int, client: str, body: typing.Callable[[], T], *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> T:
+    """One `Fallback` member try, as a span of its own: `member` is the member's
+    index in `members`, from 0, and `client` its `requested_model()`. Captured like
+    `retry_attempt`."""
+async def fallback_attempt_async(member: int, client: str, body: typing.Callable[[], T], *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> T:
+    """One `Fallback` member try, as a span of its own: `member` is the member's
+    index in `members`, from 0, and `client` its `requested_model()`. Captured like
+    `retry_attempt`."""
+
+
+def _attempt_trace(*, _baml: _BamlOptions | None = None) -> vendor.trace.Options:
+    """(internal) The tracing options of an attempt span: its inputs only."""
+async def _attempt_trace_async(*, _baml: _BamlOptions | None = None) -> vendor.trace.Options:
+    """(internal) The tracing options of an attempt span: its inputs only."""
+
+
+class RetryCause(pydantic.BaseModel):
+    cause: Retryable
 
 
 class Retry(pydantic.BaseModel):
@@ -125,43 +200,60 @@ class Retry(pydantic.BaseModel):
     retry_if: typing.Callable[[typing.Any], bool]
     backoff: Backoff
     @staticmethod
-    def new(inner: typing.Any, *, max_attempts: typing.Union[int, UNSET] = 3, retry_if: typing.Union[typing.Callable[[typing.Any], bool], None, UNSET] = None, backoff: typing.Union[Backoff, None, UNSET] = None) -> Retry: ...
+    def new(inner: typing.Any, *, max_attempts: typing.Union[int, UNSET] = 3, retry_if: typing.Union[typing.Callable[[typing.Any], bool], None, UNSET] = None, backoff: typing.Union[Backoff, None, UNSET] = None, _baml: _BamlOptions | None = None) -> Retry: ...
     @staticmethod
-    async def new_async(inner: typing.Any, *, max_attempts: typing.Union[int, UNSET] = 3, retry_if: typing.Union[typing.Callable[[typing.Any], bool], None, UNSET] = None, backoff: typing.Union[Backoff, None, UNSET] = None) -> Retry: ...
-    def _attempt_(self, input: ai.ModelTurnInput, remaining: int, failed: typing.List[ai.events.LLMCall]) -> ai.ModelTurn:
+    async def new_async(inner: typing.Any, *, max_attempts: typing.Union[int, UNSET] = 3, retry_if: typing.Union[typing.Callable[[typing.Any], bool], None, UNSET] = None, backoff: typing.Union[Backoff, None, UNSET] = None, _baml: _BamlOptions | None = None) -> Retry: ...
+    def _attempt_(self, input: ai.ModelTurnInput, remaining: int, attempts: typing.List[ai.ModelTurn], *, _baml: _BamlOptions | None = None) -> ai.ModelTurn:
         """Raises:
-            Timeout, UnknownError, CompilationError"""
-    async def _attempt__async(self, input: ai.ModelTurnInput, remaining: int, failed: typing.List[ai.events.LLMCall]) -> ai.ModelTurn:
+            CompilationError, Timeout, UnknownError"""
+    async def _attempt__async(self, input: ai.ModelTurnInput, remaining: int, attempts: typing.List[ai.ModelTurn], *, _baml: _BamlOptions | None = None) -> ai.ModelTurn:
         """Raises:
-            Timeout, UnknownError, CompilationError"""
+            CompilationError, Timeout, UnknownError"""
+    def _wants_retry_(self, cause: Retryable, *, _baml: _BamlOptions | None = None) -> bool:
+        """The safety gate is not overridable; the judgment is. `retry_if` judges
+        typed failures; a member timeout passes the gate and is always retried."""
+    async def _wants_retry__async(self, cause: Retryable, *, _baml: _BamlOptions | None = None) -> bool:
+        """The safety gate is not overridable; the judgment is. `retry_if` judges
+        typed failures; a member timeout passes the gate and is always retried."""
 
 
 class RoundRobin(pydantic.BaseModel):
     members: typing.List[typing.Any]
     counter: int
     @staticmethod
-    def new(members: typing.List[typing.Any]) -> RoundRobin:
+    def new(members: typing.List[typing.Any], *, _baml: _BamlOptions | None = None) -> RoundRobin:
         """Raises:
             InvalidRequest"""
     @staticmethod
-    async def new_async(members: typing.List[typing.Any]) -> RoundRobin:
+    async def new_async(members: typing.List[typing.Any], *, _baml: _BamlOptions | None = None) -> RoundRobin:
         """Raises:
             InvalidRequest"""
 
 
 class Fallback(pydantic.BaseModel):
     members: typing.List[typing.Any]
-    def _try_(self, input: ai.ModelTurnInput, index: int, failed: typing.List[ai.events.LLMCall]) -> ai.ModelTurn:
+    def _try_(self, input: ai.ModelTurnInput, index: int, attempts: typing.List[ai.ModelTurn], *, _baml: _BamlOptions | None = None) -> ai.ModelTurn:
         """Raises:
-            Timeout, UnknownError, CompilationError"""
-    async def _try__async(self, input: ai.ModelTurnInput, index: int, failed: typing.List[ai.events.LLMCall]) -> ai.ModelTurn:
+            CompilationError, Timeout, UnknownError"""
+    async def _try__async(self, input: ai.ModelTurnInput, index: int, attempts: typing.List[ai.ModelTurn], *, _baml: _BamlOptions | None = None) -> ai.ModelTurn:
         """Raises:
-            Timeout, UnknownError, CompilationError"""
+            CompilationError, Timeout, UnknownError"""
+
+
+def _relayed(stream: ai.stream.TurnStream, member: typing.Any, *, _baml: _BamlOptions | None = None) -> ai.stream.TurnStream:
+    """(internal) `stream`, from `member`, relayed
+    without retrying, so its turn is a child of the relay's, as a wrapper's
+    turn has its member's."""
+async def _relayed_async(stream: ai.stream.TurnStream, member: typing.Any, *, _baml: _BamlOptions | None = None) -> ai.stream.TurnStream:
+    """(internal) `stream`, from `member`, relayed
+    without retrying, so its turn is a child of the relay's, as a wrapper's
+    turn has its member's."""
 
 
 class StreamRelay(pydantic.BaseModel):
     open: typing.Callable[[], ai.stream.TurnStream]
-    retry: typing.Callable[[typing.Any], bool]
+    retry: typing.Callable[[Retryable], bool]
+    member: typing.Callable[[], typing.Any]
     current: typing.Optional[ai.stream.TurnStream] = None
     emitted: bool
     pending_text: typing.List[str]
@@ -169,21 +261,21 @@ class StreamRelay(pydantic.BaseModel):
     terminal: typing.List[ai.stream.Event]
     terminal_cursor: int
     finished: bool
-    calls: typing.List[ai.events.LLMCall]
-    def close_current(self) -> None: ...
-    async def close_current_async(self) -> None: ...
-    def recover(self, error: ai.errors.RaisedInClient) -> None:
+    child_turns: typing.List[ai.ModelTurn]
+    def close_current(self, *, _baml: _BamlOptions | None = None) -> None: ...
+    async def close_current_async(self, *, _baml: _BamlOptions | None = None) -> None: ...
+    def recover(self, error: ai.errors.RaisedInClient, *, _baml: _BamlOptions | None = None) -> None:
         """Raises:
-            Timeout, UnknownError, CompilationError"""
-    async def recover_async(self, error: ai.errors.RaisedInClient) -> None:
+            CompilationError, Timeout, UnknownError"""
+    async def recover_async(self, error: ai.errors.RaisedInClient, *, _baml: _BamlOptions | None = None) -> None:
         """Raises:
-            Timeout, UnknownError, CompilationError"""
-    def next_event(self) -> typing.Union[ai.stream.Event, ai.stream.Done]:
+            CompilationError, Timeout, UnknownError"""
+    def next_event(self, *, _baml: _BamlOptions | None = None) -> typing.Union[ai.stream.Event, ai.stream.Done]:
         """Raises:
-            Timeout, UnknownError, CompilationError"""
-    async def next_event_async(self) -> typing.Union[ai.stream.Event, ai.stream.Done]:
+            CompilationError, Timeout, UnknownError"""
+    async def next_event_async(self, *, _baml: _BamlOptions | None = None) -> typing.Union[ai.stream.Event, ai.stream.Done]:
         """Raises:
-            Timeout, UnknownError, CompilationError"""
+            CompilationError, Timeout, UnknownError"""
 
 
 class StreamRelayError(pydantic.BaseModel):
@@ -193,16 +285,25 @@ class StreamRelayError(pydantic.BaseModel):
 Selector: typing.TypeAlias = typing.Union[typing.Any, str, baml.env.Ref]
 
 
+Retryable: typing.TypeAlias = typing.Union[typing.Any, baml.errors.Timeout]
+
+
 __all__ = [
     "resolve",
     "resolve_async",
     "default_retry_judgment",
     "default_retry_judgment_async",
     "Backoff",
+    "retry_attempt",
+    "retry_attempt_async",
+    "fallback_attempt",
+    "fallback_attempt_async",
+    "RetryCause",
     "Retry",
     "RoundRobin",
     "Fallback",
     "StreamRelay",
     "StreamRelayError",
     "Selector",
+    "Retryable",
 ]

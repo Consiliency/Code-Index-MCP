@@ -21,6 +21,10 @@
 
 from __future__ import annotations
 
+from ._invocation_types import BamlOptions as BamlOptions
+from . import experimental as experimental
+from .vendor import trace as trace
+
 def get_baml_source_files() -> dict[str, str]: ...
 
 from . import ai
@@ -29,7 +33,7 @@ from . import reflect
 from . import vendor
 
 from .ai.stream import Done as _BamlStreamDone
-from baml_bridge import BamlStream as _BamlStream
+from ._invocation_types import BamlStream as _BamlStream
 
 import typing
 import typing_extensions
@@ -38,6 +42,8 @@ import pydantic
 if typing.TYPE_CHECKING:
     from . import ai
     from .baml import UNSET as UNSET
+
+from ._invocation_types import BamlOptions as _BamlOptions
 
 
 class ChunkInput(pydantic.BaseModel):
@@ -58,44 +64,44 @@ class FileSummaryResult(pydantic.BaseModel):
     summaries: typing.List[ChunkSummary]
 
 
-def SummarizeFileChunks(language: str, file_path: str, file_content: str, chunks: typing.List[ChunkInput], *, on_event: typing.Union[typing.Callable[[ai.events.Event], None], None, UNSET] = None) -> FileSummaryResult:
+def SummarizeFileChunks(language: str, file_path: str, file_content: str, chunks: typing.List[ChunkInput], *, on_event: typing.Union[typing.Callable[[ai.events.Event], None], None, UNSET] = None, _baml: _BamlOptions | None = None) -> FileSummaryResult:
     """Raises:
-        InvalidArgument, Io, ParseError, Timeout, UnknownError, CompilationError"""
-async def SummarizeFileChunks_async(language: str, file_path: str, file_content: str, chunks: typing.List[ChunkInput], *, on_event: typing.Union[typing.Callable[[ai.events.Event], None], None, UNSET] = None) -> FileSummaryResult:
+        CompilationError, InvalidArgument, Io, ParseError, Timeout, UnknownError"""
+async def SummarizeFileChunks_async(language: str, file_path: str, file_content: str, chunks: typing.List[ChunkInput], *, on_event: typing.Union[typing.Callable[[ai.events.Event], None], None, UNSET] = None, _baml: _BamlOptions | None = None) -> FileSummaryResult:
     """Raises:
-        InvalidArgument, Io, ParseError, Timeout, UnknownError, CompilationError"""
-def SummarizeFileChunks_spec(language: str, file_path: str, file_content: str, chunks: typing.List[ChunkInput]) -> ai.FunctionSpec[FileSummaryResult]:
-    """Raises:
-        InvalidArgument, Io, ParseError, InvalidRequest"""
-async def SummarizeFileChunks_spec_async(language: str, file_path: str, file_content: str, chunks: typing.List[ChunkInput]) -> ai.FunctionSpec[FileSummaryResult]:
+        CompilationError, InvalidArgument, Io, ParseError, Timeout, UnknownError"""
+def SummarizeFileChunks_spec(language: str, file_path: str, file_content: str, chunks: typing.List[ChunkInput], *, _baml: _BamlOptions | None = None) -> ai.FunctionSpec[FileSummaryResult]:
     """Raises:
         InvalidArgument, Io, ParseError, InvalidRequest"""
-def SummarizeFileChunks_stream(language: str, file_path: str, file_content: str, chunks: typing.List[ChunkInput], *, on_event: typing.Union[typing.Callable[[ai.events.Event], None], None, UNSET] = None) -> _BamlStream[typing.Union[FileSummaryResult, _BamlStreamDone], FileSummaryResult, FileSummaryResult]:
+async def SummarizeFileChunks_spec_async(language: str, file_path: str, file_content: str, chunks: typing.List[ChunkInput], *, _baml: _BamlOptions | None = None) -> ai.FunctionSpec[FileSummaryResult]:
     """Raises:
-        InvalidArgument, Io, ParseError, Timeout, UnknownError, CompilationError"""
-async def SummarizeFileChunks_stream_async(language: str, file_path: str, file_content: str, chunks: typing.List[ChunkInput], *, on_event: typing.Union[typing.Callable[[ai.events.Event], None], None, UNSET] = None) -> _BamlStream[typing.Union[FileSummaryResult, _BamlStreamDone], FileSummaryResult, FileSummaryResult]:
+        InvalidArgument, Io, ParseError, InvalidRequest"""
+def SummarizeFileChunks_stream(language: str, file_path: str, file_content: str, chunks: typing.List[ChunkInput], *, on_event: typing.Union[typing.Callable[[ai.events.Event], None], None, UNSET] = None, _baml: _BamlOptions | None = None) -> _BamlStream[typing.Union[FileSummaryResult, _BamlStreamDone], FileSummaryResult, FileSummaryResult]:
     """Raises:
-        InvalidArgument, Io, ParseError, Timeout, UnknownError, CompilationError"""
+        CompilationError, SpanError, InvalidArgument, Io, ParseError, Timeout, UnknownError"""
+async def SummarizeFileChunks_stream_async(language: str, file_path: str, file_content: str, chunks: typing.List[ChunkInput], *, on_event: typing.Union[typing.Callable[[ai.events.Event], None], None, UNSET] = None, _baml: _BamlOptions | None = None) -> _BamlStream[typing.Union[FileSummaryResult, _BamlStreamDone], FileSummaryResult, FileSummaryResult]:
+    """Raises:
+        CompilationError, SpanError, InvalidArgument, Io, ParseError, Timeout, UnknownError"""
 
 
-def SummarizeChunkAlone(language: str, symbol: str, line_start: int, line_end: int, content: str, parent_context: str, file_context: str, *, on_event: typing.Union[typing.Callable[[ai.events.Event], None], None, UNSET] = None) -> ChunkSummary:
+def SummarizeChunkAlone(language: str, symbol: str, line_start: int, line_end: int, content: str, parent_context: str, file_context: str, *, on_event: typing.Union[typing.Callable[[ai.events.Event], None], None, UNSET] = None, _baml: _BamlOptions | None = None) -> ChunkSummary:
     """Raises:
-        InvalidArgument, Io, ParseError, Timeout, UnknownError, CompilationError"""
-async def SummarizeChunkAlone_async(language: str, symbol: str, line_start: int, line_end: int, content: str, parent_context: str, file_context: str, *, on_event: typing.Union[typing.Callable[[ai.events.Event], None], None, UNSET] = None) -> ChunkSummary:
+        CompilationError, InvalidArgument, Io, ParseError, Timeout, UnknownError"""
+async def SummarizeChunkAlone_async(language: str, symbol: str, line_start: int, line_end: int, content: str, parent_context: str, file_context: str, *, on_event: typing.Union[typing.Callable[[ai.events.Event], None], None, UNSET] = None, _baml: _BamlOptions | None = None) -> ChunkSummary:
     """Raises:
-        InvalidArgument, Io, ParseError, Timeout, UnknownError, CompilationError"""
-def SummarizeChunkAlone_spec(language: str, symbol: str, line_start: int, line_end: int, content: str, parent_context: str, file_context: str) -> ai.FunctionSpec[ChunkSummary]:
-    """Raises:
-        InvalidArgument, Io, ParseError, InvalidRequest"""
-async def SummarizeChunkAlone_spec_async(language: str, symbol: str, line_start: int, line_end: int, content: str, parent_context: str, file_context: str) -> ai.FunctionSpec[ChunkSummary]:
+        CompilationError, InvalidArgument, Io, ParseError, Timeout, UnknownError"""
+def SummarizeChunkAlone_spec(language: str, symbol: str, line_start: int, line_end: int, content: str, parent_context: str, file_context: str, *, _baml: _BamlOptions | None = None) -> ai.FunctionSpec[ChunkSummary]:
     """Raises:
         InvalidArgument, Io, ParseError, InvalidRequest"""
-def SummarizeChunkAlone_stream(language: str, symbol: str, line_start: int, line_end: int, content: str, parent_context: str, file_context: str, *, on_event: typing.Union[typing.Callable[[ai.events.Event], None], None, UNSET] = None) -> _BamlStream[typing.Union[ChunkSummary, _BamlStreamDone], ChunkSummary, ChunkSummary]:
+async def SummarizeChunkAlone_spec_async(language: str, symbol: str, line_start: int, line_end: int, content: str, parent_context: str, file_context: str, *, _baml: _BamlOptions | None = None) -> ai.FunctionSpec[ChunkSummary]:
     """Raises:
-        InvalidArgument, Io, ParseError, Timeout, UnknownError, CompilationError"""
-async def SummarizeChunkAlone_stream_async(language: str, symbol: str, line_start: int, line_end: int, content: str, parent_context: str, file_context: str, *, on_event: typing.Union[typing.Callable[[ai.events.Event], None], None, UNSET] = None) -> _BamlStream[typing.Union[ChunkSummary, _BamlStreamDone], ChunkSummary, ChunkSummary]:
+        InvalidArgument, Io, ParseError, InvalidRequest"""
+def SummarizeChunkAlone_stream(language: str, symbol: str, line_start: int, line_end: int, content: str, parent_context: str, file_context: str, *, on_event: typing.Union[typing.Callable[[ai.events.Event], None], None, UNSET] = None, _baml: _BamlOptions | None = None) -> _BamlStream[typing.Union[ChunkSummary, _BamlStreamDone], ChunkSummary, ChunkSummary]:
     """Raises:
-        InvalidArgument, Io, ParseError, Timeout, UnknownError, CompilationError"""
+        CompilationError, SpanError, InvalidArgument, Io, ParseError, Timeout, UnknownError"""
+async def SummarizeChunkAlone_stream_async(language: str, symbol: str, line_start: int, line_end: int, content: str, parent_context: str, file_context: str, *, on_event: typing.Union[typing.Callable[[ai.events.Event], None], None, UNSET] = None, _baml: _BamlOptions | None = None) -> _BamlStream[typing.Union[ChunkSummary, _BamlStreamDone], ChunkSummary, ChunkSummary]:
+    """Raises:
+        CompilationError, SpanError, InvalidArgument, Io, ParseError, Timeout, UnknownError"""
 
 
 __all__ = [

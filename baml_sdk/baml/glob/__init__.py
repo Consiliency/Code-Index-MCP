@@ -64,8 +64,8 @@ class Glob(pydantic.BaseModel):
         populate_by_name=True,
     )
     field_handle: _BamlPyHandle = pydantic.Field(alias="_handle")
-    scan       = _define_function("baml.glob.Glob.scan", "sync",  ["self", "root"], binding_name="scan", binding_qualname="Glob.scan", binding_module=__name__)
-    scan_async = _define_function("baml.glob.Glob.scan", "async", ["self", "root"], binding_name="scan_async", binding_qualname="Glob.scan_async", binding_module=__name__)
+    scan       = _define_function("baml.glob.Glob.scan", "sync",  ["self", "start"], binding_name="scan", binding_qualname="Glob.scan", binding_module=__name__)
+    scan_async = _define_function("baml.glob.Glob.scan", "async", ["self", "start"], binding_name="scan_async", binding_qualname="Glob.scan_async", binding_module=__name__)
     matches       = _define_function("baml.glob.Glob.matches", "sync",  ["self", "path"], binding_name="matches", binding_qualname="Glob.matches", binding_module=__name__)
     matches_async = _define_function("baml.glob.Glob.matches", "async", ["self", "path"], binding_name="matches_async", binding_qualname="Glob.matches_async", binding_module=__name__)
 

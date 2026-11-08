@@ -30,11 +30,13 @@ if typing.TYPE_CHECKING:
     from ... import baml
     from ...baml import UNSET as UNSET
 
+from ..._invocation_types import BamlOptions as _BamlOptions
+
 
 T = typing.TypeVar("T")
 
 
-def resolve_credential(cred: typing.Optional[ai.Credential], env_fallback: typing.Optional[str]) -> typing.Optional[str]:
+def resolve_credential(cred: typing.Optional[ai.Credential], env_fallback: typing.Optional[str], *, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
     """Collapse a client's `ai.Credential?` option to the value to put on the
     wire, reading the environment at REQUEST time (never at construction).
 
@@ -59,7 +61,7 @@ def resolve_credential(cred: typing.Optional[ai.Credential], env_fallback: typin
 
     Raises:
         Io, ParseError"""
-async def resolve_credential_async(cred: typing.Optional[ai.Credential], env_fallback: typing.Optional[str]) -> typing.Optional[str]:
+async def resolve_credential_async(cred: typing.Optional[ai.Credential], env_fallback: typing.Optional[str], *, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
     """Collapse a client's `ai.Credential?` option to the value to put on the
     wire, reading the environment at REQUEST time (never at construction).
 
@@ -86,7 +88,7 @@ async def resolve_credential_async(cred: typing.Optional[ai.Credential], env_fal
         Io, ParseError"""
 
 
-def redact_url_secrets(text: str) -> str:
+def redact_url_secrets(text: str, *, _baml: _BamlOptions | None = None) -> str:
     """Scrub credential-bearing query parameters out of free text before it becomes
     an `ai.errors.Failure.detail`.
 
@@ -94,7 +96,7 @@ def redact_url_secrets(text: str) -> str:
     the key in `?key=…` — would otherwise leak it: the native HTTP layer renders
     `reqwest::Error`, whose `Display` embeds the request URL, straight into the
     transport-failure message."""
-async def redact_url_secrets_async(text: str) -> str:
+async def redact_url_secrets_async(text: str, *, _baml: _BamlOptions | None = None) -> str:
     """Scrub credential-bearing query parameters out of free text before it becomes
     an `ai.errors.Failure.detail`.
 
@@ -104,21 +106,21 @@ async def redact_url_secrets_async(text: str) -> str:
     transport-failure message."""
 
 
-def redact_request_headers(headers: typing.Dict[str, str]) -> typing.Dict[str, str]:
+def redact_request_headers(headers: typing.Dict[str, str], *, _baml: _BamlOptions | None = None) -> typing.Dict[str, str]:
     """Replace credential-bearing request headers with "REDACTED" before a
-    request snapshot rides an `ai.events.LLMCall`. Unlike previews, the
+    request snapshot rides an `ai.events.ModelCall`. Unlike previews, the
     request `invoke` actually sends DOES carry auth headers (`x-api-key`,
     `authorization`, Azure's `api-key`, ...), so captured requests must be
     scrubbed. Matching is case-insensitive; values are replaced, names kept."""
-async def redact_request_headers_async(headers: typing.Dict[str, str]) -> typing.Dict[str, str]:
+async def redact_request_headers_async(headers: typing.Dict[str, str], *, _baml: _BamlOptions | None = None) -> typing.Dict[str, str]:
     """Replace credential-bearing request headers with "REDACTED" before a
-    request snapshot rides an `ai.events.LLMCall`. Unlike previews, the
+    request snapshot rides an `ai.events.ModelCall`. Unlike previews, the
     request `invoke` actually sends DOES carry auth headers (`x-api-key`,
     `authorization`, Azure's `api-key`, ...), so captured requests must be
     scrubbed. Matching is case-insensitive; values are replaced, names kept."""
 
 
-def credential_sources(cred: typing.Optional[ai.Credential], canonical_env: typing.Optional[str]) -> str:
+def credential_sources(cred: typing.Optional[ai.Credential], canonical_env: typing.Optional[str], *, _baml: _BamlOptions | None = None) -> str:
     """The environment variables a credential chain consulted, as a readable list,
     for the "no credential configured" error a client raises when the whole
     chain came back empty.
@@ -128,7 +130,7 @@ def credential_sources(cred: typing.Optional[ai.Credential], canonical_env: typi
     without this the error would name only the provider's canonical variable and
     never mention the one the caller actually asked for. Values are never
     included — only names."""
-async def credential_sources_async(cred: typing.Optional[ai.Credential], canonical_env: typing.Optional[str]) -> str:
+async def credential_sources_async(cred: typing.Optional[ai.Credential], canonical_env: typing.Optional[str], *, _baml: _BamlOptions | None = None) -> str:
     """The environment variables a credential chain consulted, as a readable list,
     for the "no credential configured" error a client raises when the whole
     chain came back empty.
@@ -140,17 +142,19 @@ async def credential_sources_async(cred: typing.Optional[ai.Credential], canonic
     included — only names."""
 
 
-def send_as(req: baml.http.Request, provider: str, *, request_timeout_ms: typing.Union[int, None, UNSET] = None, _types: dict[str, typing.Any]) -> T:
+def send_as(req: baml.http.Request, provider: str, *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> T:
     """Send, classify non-2xx via `ai.errors.classify_http`, decode the body as T.
     T = json-shaped envelope class; unknown fields are ignored by the decoder.
-    A null or non-positive timeout preserves the transport's unbounded default.
+    The request runs under its own `timeout` and `connect_timeout` (see
+    `baml.http.Request`); a client puts its `ai.LlmTimeoutOptions` there.
 
     Raises:
         Timeout"""
-async def send_as_async(req: baml.http.Request, provider: str, *, request_timeout_ms: typing.Union[int, None, UNSET] = None, _types: dict[str, typing.Any]) -> T:
+async def send_as_async(req: baml.http.Request, provider: str, *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> T:
     """Send, classify non-2xx via `ai.errors.classify_http`, decode the body as T.
     T = json-shaped envelope class; unknown fields are ignored by the decoder.
-    A null or non-positive timeout preserves the transport's unbounded default.
+    The request runs under its own `timeout` and `connect_timeout` (see
+    `baml.http.Request`); a client puts its `ai.LlmTimeoutOptions` there.
 
     Raises:
         Timeout"""
@@ -158,25 +162,29 @@ async def send_as_async(req: baml.http.Request, provider: str, *, request_timeou
 
 class SentAs(pydantic.BaseModel, typing.Generic[T]):
     value: T
-    call: ai.events.LLMCall
+    call: ai.events.ModelCall
 
 
-def send_as_with_wire(req: baml.http.Request, provider: str, client_name: str, *, capture_wire: typing.Union[bool, UNSET] = True, request_timeout_ms: typing.Union[int, None, UNSET] = None, _types: dict[str, typing.Any]) -> SentAs[T]:
-    """Same contract as `send_as`, plus the LLMCall wire record. On a non-2xx or
-    transport failure this still throws the same classified error `send_as`
-    throws — composite clients build failed-leg records from the error itself
-    (`_failed_leg_call`), so no record accompanies a throw. `capture_wire`
+def send_as_with_wire(req: baml.http.Request, model: ai.events.ModelKey, *, capture_wire: typing.Union[bool, UNSET] = True, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> SentAs[T]:
+    """Same contract as `send_as`, plus the ModelCall record billed to `model`;
+    its `usage` and resolved model are the caller's to fill once it decodes the
+    response (`ai.internal.with_own_call`). On a non-2xx or transport failure
+    this still throws the same classified error `send_as` throws — composite
+    clients build failed attempts from the error itself (`_failed_attempt`),
+    so no record accompanies a throw. `capture_wire`
     gates the request/response bodies; status, headers, and timing are always
     recorded. The request URL and captured response body are redacted with
     `redact_url_secrets` before storing.
 
     Raises:
         Timeout"""
-async def send_as_with_wire_async(req: baml.http.Request, provider: str, client_name: str, *, capture_wire: typing.Union[bool, UNSET] = True, request_timeout_ms: typing.Union[int, None, UNSET] = None, _types: dict[str, typing.Any]) -> SentAs[T]:
-    """Same contract as `send_as`, plus the LLMCall wire record. On a non-2xx or
-    transport failure this still throws the same classified error `send_as`
-    throws — composite clients build failed-leg records from the error itself
-    (`_failed_leg_call`), so no record accompanies a throw. `capture_wire`
+async def send_as_with_wire_async(req: baml.http.Request, model: ai.events.ModelKey, *, capture_wire: typing.Union[bool, UNSET] = True, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> SentAs[T]:
+    """Same contract as `send_as`, plus the ModelCall record billed to `model`;
+    its `usage` and resolved model are the caller's to fill once it decodes the
+    response (`ai.internal.with_own_call`). On a non-2xx or transport failure
+    this still throws the same classified error `send_as` throws — composite
+    clients build failed attempts from the error itself (`_failed_attempt`),
+    so no record accompanies a throw. `capture_wire`
     gates the request/response bodies; status, headers, and timing are always
     recorded. The request URL and captured response body are redacted with
     `redact_url_secrets` before storing.
@@ -185,13 +193,13 @@ async def send_as_with_wire_async(req: baml.http.Request, provider: str, client_
         Timeout"""
 
 
-def render_output_format(t: typing.Any) -> str:
+def render_output_format(t: typing.Any, *, _baml: _BamlOptions | None = None) -> str:
     """The return type's schema as prompt text, in the standard dialect —
     exactly what ${ctx.output_format()} renders in an LLM function block.
 
     Raises:
         CompilationError"""
-async def render_output_format_async(t: typing.Any) -> str:
+async def render_output_format_async(t: typing.Any, *, _baml: _BamlOptions | None = None) -> str:
     """The return type's schema as prompt text, in the standard dialect —
     exactly what ${ctx.output_format()} renders in an LLM function block.
 
@@ -205,43 +213,45 @@ class ResolvedMedia(pydantic.BaseModel):
     mime_type: str
 
 
-def resolve_media(media: ai.MediaPart, fetch_url: bool) -> ResolvedMedia:
+def resolve_media(media: ai.MediaPart, fetch_url: bool, *, _baml: _BamlOptions | None = None) -> ResolvedMedia:
     """Resolve BAML media for provider request lowering. This mirrors the media
-    resolution pass in `sys_llm`: local files become base64, existing base64 is
-    retained, and URL fetching is selected by the provider.
+    resolution pass in `sys_llm`: existing base64 is retained, and URL fetching
+    is selected by the provider. Media built from a file already holds its
+    content as base64.
 
     Raises:
-        InvalidArgument, Io, Timeout, NetworkFailure"""
-async def resolve_media_async(media: ai.MediaPart, fetch_url: bool) -> ResolvedMedia:
+        InvalidArgument, Timeout, NetworkFailure"""
+async def resolve_media_async(media: ai.MediaPart, fetch_url: bool, *, _baml: _BamlOptions | None = None) -> ResolvedMedia:
     """Resolve BAML media for provider request lowering. This mirrors the media
-    resolution pass in `sys_llm`: local files become base64, existing base64 is
-    retained, and URL fetching is selected by the provider.
+    resolution pass in `sys_llm`: existing base64 is retained, and URL fetching
+    is selected by the provider. Media built from a file already holds its
+    content as base64.
 
     Raises:
-        InvalidArgument, Io, Timeout, NetworkFailure"""
+        InvalidArgument, Timeout, NetworkFailure"""
 
 
-def resolve_media_preview(media: ai.MediaPart) -> ResolvedMedia:
-    """Resolve media for a request preview without reading a file or fetching a
-    URL. Existing base64 and `data:` payloads are preserved; provider-specific
-    renderers decide whether an ordinary URL is supported on their wire form.
+def resolve_media_preview(media: ai.MediaPart, *, _baml: _BamlOptions | None = None) -> ResolvedMedia:
+    """Resolve media for a request preview without fetching a URL. Existing base64
+    and `data:` payloads are preserved; provider-specific renderers decide
+    whether an ordinary URL is supported on their wire form.
 
     Raises:
         PreviewUnsupported"""
-async def resolve_media_preview_async(media: ai.MediaPart) -> ResolvedMedia:
-    """Resolve media for a request preview without reading a file or fetching a
-    URL. Existing base64 and `data:` payloads are preserved; provider-specific
-    renderers decide whether an ordinary URL is supported on their wire form.
+async def resolve_media_preview_async(media: ai.MediaPart, *, _baml: _BamlOptions | None = None) -> ResolvedMedia:
+    """Resolve media for a request preview without fetching a URL. Existing base64
+    and `data:` payloads are preserved; provider-specific renderers decide
+    whether an ordinary URL is supported on their wire form.
 
     Raises:
         PreviewUnsupported"""
 
 
-def merge_request_body(base: baml.json.json, overrides: typing.Optional[baml.json.json]) -> baml.json.json:
+def merge_request_body(base: baml.json.json, overrides: typing.Optional[baml.json.json], *, _baml: _BamlOptions | None = None) -> baml.json.json:
     """Deep-merge a client's `request_body` passthrough into its serialized
     request. Call this as the LAST step of building the wire body:
 
-        let body = baml.json.to_json(typed_request);
+        let body = baml.json.from(typed_request);
         let merged = ai.wire.merge_request_body(body, c.request_body);
         baml.json.stringify(merged)
 
@@ -250,11 +260,11 @@ def merge_request_body(base: baml.json.json, overrides: typing.Optional[baml.jso
     client injected), and every other value replaces wholesale. A `null`
     `overrides` means "no passthrough configured" and returns `base` unchanged;
     it never deletes the whole body."""
-async def merge_request_body_async(base: baml.json.json, overrides: typing.Optional[baml.json.json]) -> baml.json.json:
+async def merge_request_body_async(base: baml.json.json, overrides: typing.Optional[baml.json.json], *, _baml: _BamlOptions | None = None) -> baml.json.json:
     """Deep-merge a client's `request_body` passthrough into its serialized
     request. Call this as the LAST step of building the wire body:
 
-        let body = baml.json.to_json(typed_request);
+        let body = baml.json.from(typed_request);
         let merged = ai.wire.merge_request_body(body, c.request_body);
         baml.json.stringify(merged)
 
@@ -265,25 +275,81 @@ async def merge_request_body_async(base: baml.json.json, overrides: typing.Optio
     it never deletes the whole body."""
 
 
-def prompt_blocks(message: ai.PromptMessage) -> typing.List[ai.content.Block]:
+def prompt_blocks(message: ai.PromptMessage, *, _baml: _BamlOptions | None = None) -> typing.List[ai.content.Block]:
     """A rendered prompt message's parts as content blocks: a `string` part is
     `Text`, a media part is `Media` with null provenance. The rendered prompt
-    then lowers through the same path as the journal's turns."""
-async def prompt_blocks_async(message: ai.PromptMessage) -> typing.List[ai.content.Block]:
+    then lowers through the same path as the journal's turns.
+
+    A `ai.CacheDelimiter` is dropped, and the text on either side of it is
+    joined back into one `Text` block, so a client that lowers these blocks
+    sends exactly what it would send for the same prompt without the
+    `${cache(...)}`. A client whose wire has a cache marker lowers
+    `prompt_parts(message)` instead."""
+async def prompt_blocks_async(message: ai.PromptMessage, *, _baml: _BamlOptions | None = None) -> typing.List[ai.content.Block]:
     """A rendered prompt message's parts as content blocks: a `string` part is
     `Text`, a media part is `Media` with null provenance. The rendered prompt
-    then lowers through the same path as the journal's turns."""
+    then lowers through the same path as the journal's turns.
+
+    A `ai.CacheDelimiter` is dropped, and the text on either side of it is
+    joined back into one `Text` block, so a client that lowers these blocks
+    sends exactly what it would send for the same prompt without the
+    `${cache(...)}`. A client whose wire has a cache marker lowers
+    `prompt_parts(message)` instead."""
 
 
-def tool_name(j: ai.Journal, id: str) -> typing.Optional[str]:
+def prompt_parts(message: ai.PromptMessage, *, default_cache_args: typing.Union[baml.json.json, UNSET] = None, _baml: _BamlOptions | None = None) -> typing.List[ai.PromptPart]:
+    """A rendered prompt message's parts for a client that SENDS cache delimiters:
+    the same parts as `message.parts`, with each delimiter made a clean
+    boundary between two content blocks.
+
+      * Text directly before a delimiter is end-trimmed and text directly after
+        one is start-trimmed, and a part left empty is dropped — the treatment
+        text around a media part already gets. The marker sits between two
+        blocks on the wire, so the whitespace that separated them in the
+        template has no block to belong to.
+      * A delimiter whose `args` is null (`${cache()}`) takes
+        `default_cache_args`, which the caller passes from its client's
+        `default_cache_args()`. The delimiter returned carries the resolved
+        value, so the caller never sees a null `args`.
+      * When that default is null too, the delimiter is removed and the text
+        around it is joined, untrimmed: there is nothing to send for it, so it
+        is as if it had not been written.
+
+    What the caller does with a delimiter is its own business (a sibling block,
+    a field on the block before); the positions are as written, and so is every
+    `args` that was not null."""
+async def prompt_parts_async(message: ai.PromptMessage, *, default_cache_args: typing.Union[baml.json.json, UNSET] = None, _baml: _BamlOptions | None = None) -> typing.List[ai.PromptPart]:
+    """A rendered prompt message's parts for a client that SENDS cache delimiters:
+    the same parts as `message.parts`, with each delimiter made a clean
+    boundary between two content blocks.
+
+      * Text directly before a delimiter is end-trimmed and text directly after
+        one is start-trimmed, and a part left empty is dropped — the treatment
+        text around a media part already gets. The marker sits between two
+        blocks on the wire, so the whitespace that separated them in the
+        template has no block to belong to.
+      * A delimiter whose `args` is null (`${cache()}`) takes
+        `default_cache_args`, which the caller passes from its client's
+        `default_cache_args()`. The delimiter returned carries the resolved
+        value, so the caller never sees a null `args`.
+      * When that default is null too, the delimiter is removed and the text
+        around it is joined, untrimmed: there is nothing to send for it, so it
+        is as if it had not been written.
+
+    What the caller does with a delimiter is its own business (a sibling block,
+    a field on the block before); the positions are as written, and so is every
+    `args` that was not null."""
+
+
+def tool_name(j: ai.Journal, id: str, *, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
     """The name of the tool a journal call id belongs to: the `ToolUse` block in
     the assistant turn that issued it. Null for an id no assistant turn issued."""
-async def tool_name_async(j: ai.Journal, id: str) -> typing.Optional[str]:
+async def tool_name_async(j: ai.Journal, id: str, *, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
     """The name of the tool a journal call id belongs to: the `ToolUse` block in
     the assistant turn that issued it. Null for an id no assistant turn issued."""
 
 
-def degrade_tool_media(j: ai.Journal, carries: typing.List[str]) -> ai.Journal:
+def degrade_tool_media(j: ai.Journal, carries: typing.List[str], *, _baml: _BamlOptions | None = None) -> ai.Journal:
     """Degrade, as a journal rewrite. A client that carries only some media
     kinds inside a tool result (`carries`, by `kind()`) lowers the copy of `j`
     this returns: every other media block has left its result and, behind a
@@ -294,7 +360,7 @@ def degrade_tool_media(j: ai.Journal, carries: typing.List[str]) -> ai.Journal:
     keeps the `[audio]`-style placeholder so no client sends an empty result.
     Lowering stays pure: the caller's journal is untouched and the trace still
     shows the original events."""
-async def degrade_tool_media_async(j: ai.Journal, carries: typing.List[str]) -> ai.Journal:
+async def degrade_tool_media_async(j: ai.Journal, carries: typing.List[str], *, _baml: _BamlOptions | None = None) -> ai.Journal:
     """Degrade, as a journal rewrite. A client that carries only some media
     kinds inside a tool result (`carries`, by `kind()`) lowers the copy of `j`
     this returns: every other media block has left its result and, behind a
@@ -307,13 +373,13 @@ async def degrade_tool_media_async(j: ai.Journal, carries: typing.List[str]) -> 
     shows the original events."""
 
 
-def sanitize_for_client(j: ai.Journal, client_id: str) -> ai.Journal:
-    """Make one run's journal safe to replay to `client_id`, and return the
-    sanitized copy. Every client should lower
-    `ai.wire.sanitize_for_client(input.journal, self.id())` instead of
-    `input.journal`. The rules, in the order they apply per event:
+def sanitize_for_client(j: ai.Journal, provider: str, requested_model: str, *, _baml: _BamlOptions | None = None) -> ai.Journal:
+    """Make one run's journal safe to replay to a client of `provider` asking for
+    `requested_model`, and return the sanitized copy. Every client should lower
+    `ai.wire.sanitize_for_client(input.journal, provider, self.requested_model())`
+    instead of `input.journal`. The rules, in the order they apply per event:
 
-     1. An assistant turn from a DIFFERENT `client_id` loses its
+     1. An assistant turn from a DIFFERENT provider or requested model loses its
         `ai.content.Reasoning` blocks: one model's thinking is not replayable
         to another (and providers that check reasoning signatures reject it).
      2. Empty and whitespace-only `ai.content.Text` blocks are dropped from
@@ -327,17 +393,17 @@ def sanitize_for_client(j: ai.Journal, client_id: str) -> ai.Journal:
         synthesized `ToolFailed { message: "No result provided" }`, because
         most APIs reject a tool call that was never answered.
 
-    Journal-only events (`RunStarted`, `ToolRequested`, `Usage`,
-    `FinalProduced`) pass through untouched — clients skip them anyway — and,
+    Journal-only events (`RunStarted`, `ToolRequested`, `FinalProduced`)
+    pass through untouched — clients skip them anyway — and,
     like the clients' own lowering, they never close an open tool-result group.
     Nothing here mutates the journal it is given."""
-async def sanitize_for_client_async(j: ai.Journal, client_id: str) -> ai.Journal:
-    """Make one run's journal safe to replay to `client_id`, and return the
-    sanitized copy. Every client should lower
-    `ai.wire.sanitize_for_client(input.journal, self.id())` instead of
-    `input.journal`. The rules, in the order they apply per event:
+async def sanitize_for_client_async(j: ai.Journal, provider: str, requested_model: str, *, _baml: _BamlOptions | None = None) -> ai.Journal:
+    """Make one run's journal safe to replay to a client of `provider` asking for
+    `requested_model`, and return the sanitized copy. Every client should lower
+    `ai.wire.sanitize_for_client(input.journal, provider, self.requested_model())`
+    instead of `input.journal`. The rules, in the order they apply per event:
 
-     1. An assistant turn from a DIFFERENT `client_id` loses its
+     1. An assistant turn from a DIFFERENT provider or requested model loses its
         `ai.content.Reasoning` blocks: one model's thinking is not replayable
         to another (and providers that check reasoning signatures reject it).
      2. Empty and whitespace-only `ai.content.Text` blocks are dropped from
@@ -351,8 +417,8 @@ async def sanitize_for_client_async(j: ai.Journal, client_id: str) -> ai.Journal
         synthesized `ToolFailed { message: "No result provided" }`, because
         most APIs reject a tool call that was never answered.
 
-    Journal-only events (`RunStarted`, `ToolRequested`, `Usage`,
-    `FinalProduced`) pass through untouched — clients skip them anyway — and,
+    Journal-only events (`RunStarted`, `ToolRequested`, `FinalProduced`)
+    pass through untouched — clients skip them anyway — and,
     like the clients' own lowering, they never close an open tool-result group.
     Nothing here mutates the journal it is given."""
 
@@ -382,6 +448,8 @@ __all__ = [
     "merge_request_body_async",
     "prompt_blocks",
     "prompt_blocks_async",
+    "prompt_parts",
+    "prompt_parts_async",
     "tool_name",
     "tool_name_async",
     "degrade_tool_media",

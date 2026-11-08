@@ -29,6 +29,8 @@ import pydantic
 if typing.TYPE_CHECKING:
     from ... import baml
 
+from ..._invocation_types import BamlOptions as _BamlOptions
+
 from baml_bridge import BamlPyHandle as _BamlPyHandle
 
 
@@ -50,18 +52,18 @@ class ShellOutput(pydantic.BaseModel):
     stdout: bytes
     stderr: bytes
     exit_code: int
-    def ok(self) -> bool:
+    def ok(self, *, _baml: _BamlOptions | None = None) -> bool:
         """Returns `true` if the process exited with code `0`."""
-    async def ok_async(self) -> bool:
+    async def ok_async(self, *, _baml: _BamlOptions | None = None) -> bool:
         """Returns `true` if the process exited with code `0`."""
 
 
 class ProcessExit(pydantic.BaseModel):
     exit_code: int
     signal: typing.Optional[str] = None
-    def ok(self) -> bool:
+    def ok(self, *, _baml: _BamlOptions | None = None) -> bool:
         """Returns `true` if the process exited normally with code `0`."""
-    async def ok_async(self) -> bool:
+    async def ok_async(self, *, _baml: _BamlOptions | None = None) -> bool:
         """Returns `true` if the process exited normally with code `0`."""
 
 
@@ -70,9 +72,9 @@ class ReadPipeLines(pydantic.BaseModel):
     field_pending: bytes = pydantic.Field(alias="_pending")
 
 
-def _strip_carriage_return(line: bytes) -> bytes:
+def _strip_carriage_return(line: bytes, *, _baml: _BamlOptions | None = None) -> bytes:
     """(internal) Drop one trailing carriage return so CRLF input produces clean lines."""
-async def _strip_carriage_return_async(line: bytes) -> bytes:
+async def _strip_carriage_return_async(line: bytes, *, _baml: _BamlOptions | None = None) -> bytes:
     """(internal) Drop one trailing carriage return so CRLF input produces clean lines."""
 
 
@@ -81,31 +83,31 @@ class Process(pydantic.BaseModel):
     stdin: WritePipe
     stdout: ReadPipe
     stderr: typing.Optional[ReadPipe] = None
-    def wait(self) -> ProcessExit:
+    def wait(self, *, _baml: _BamlOptions | None = None) -> ProcessExit:
         """Wait for the child to exit.
 
         Raises:
             Io, Timeout"""
-    async def wait_async(self) -> ProcessExit:
+    async def wait_async(self, *, _baml: _BamlOptions | None = None) -> ProcessExit:
         """Wait for the child to exit.
 
         Raises:
             Io, Timeout"""
-    def kill(self) -> None:
+    def kill(self, *, _baml: _BamlOptions | None = None) -> None:
         """Request that the child terminate.
 
         Raises:
             Io"""
-    async def kill_async(self) -> None:
+    async def kill_async(self, *, _baml: _BamlOptions | None = None) -> None:
         """Request that the child terminate.
 
         Raises:
             Io"""
-    def close(self) -> None:
+    def close(self, *, _baml: _BamlOptions | None = None) -> None:
         """Terminate an un-waited child and close its stdin, stdout, and stderr pipes.
 
         Safe to use with `defer { process.close() }`."""
-    async def close_async(self) -> None:
+    async def close_async(self, *, _baml: _BamlOptions | None = None) -> None:
         """Terminate an un-waited child and close its stdin, stdout, and stderr pipes.
 
         Safe to use with `defer { process.close() }`."""
@@ -113,49 +115,49 @@ class Process(pydantic.BaseModel):
 
 class ReadPipe(pydantic.BaseModel):
     field_pipe: _BamlPyHandle = pydantic.Field(alias="_pipe")
-    def close(self) -> None:
+    def close(self, *, _baml: _BamlOptions | None = None) -> None:
         """Close the read pipe, releasing any resources.
 
         Raises:
             Io"""
-    async def close_async(self) -> None:
+    async def close_async(self, *, _baml: _BamlOptions | None = None) -> None:
         """Close the read pipe, releasing any resources.
 
         Raises:
             Io"""
-    def lines(self) -> ReadPipeLines:
+    def lines(self, *, _baml: _BamlOptions | None = None) -> ReadPipeLines:
         """Return a line-oriented view over this pipe."""
-    async def lines_async(self) -> ReadPipeLines:
+    async def lines_async(self, *, _baml: _BamlOptions | None = None) -> ReadPipeLines:
         """Return a line-oriented view over this pipe."""
 
 
 class WritePipe(pydantic.BaseModel):
     field_pipe: _BamlPyHandle = pydantic.Field(alias="_pipe")
-    def close(self) -> None:
+    def close(self, *, _baml: _BamlOptions | None = None) -> None:
         """Close the write pipe, flushing pending data and delivering EOF.
 
         Raises:
             Io"""
-    async def close_async(self) -> None:
+    async def close_async(self, *, _baml: _BamlOptions | None = None) -> None:
         """Close the write pipe, flushing pending data and delivering EOF.
 
         Raises:
             Io"""
 
 
-def exec(program: str, args: typing.Optional[typing.List[str]], options: typing.Optional[ProcessOptions]) -> ShellOutput:
+def exec(program: str, args: typing.Optional[typing.List[str]], options: typing.Optional[ProcessOptions], *, _baml: _BamlOptions | None = None) -> ShellOutput:
     """Runs `program` with the given `args` and returns its output. Throws on I/O failure or timeout.
 
     Raises:
         Io, Timeout"""
-async def exec_async(program: str, args: typing.Optional[typing.List[str]], options: typing.Optional[ProcessOptions]) -> ShellOutput:
+async def exec_async(program: str, args: typing.Optional[typing.List[str]], options: typing.Optional[ProcessOptions], *, _baml: _BamlOptions | None = None) -> ShellOutput:
     """Runs `program` with the given `args` and returns its output. Throws on I/O failure or timeout.
 
     Raises:
         Io, Timeout"""
 
 
-def start_process(program: str, args: typing.Optional[typing.List[str]], options: typing.Optional[ProcessOptions]) -> Process:
+def start_process(program: str, args: typing.Optional[typing.List[str]], options: typing.Optional[ProcessOptions], *, _baml: _BamlOptions | None = None) -> Process:
     """Starts `program` and returns a live process with caller-owned pipes.
 
     Unlike `exec`, output is not buffered until process exit. Reading
@@ -165,7 +167,7 @@ def start_process(program: str, args: typing.Optional[typing.List[str]], options
 
     Raises:
         Io"""
-async def start_process_async(program: str, args: typing.Optional[typing.List[str]], options: typing.Optional[ProcessOptions]) -> Process:
+async def start_process_async(program: str, args: typing.Optional[typing.List[str]], options: typing.Optional[ProcessOptions], *, _baml: _BamlOptions | None = None) -> Process:
     """Starts `program` and returns a live process with caller-owned pipes.
 
     Unlike `exec`, output is not buffered until process exit. Reading
@@ -177,61 +179,83 @@ async def start_process_async(program: str, args: typing.Optional[typing.List[st
         Io"""
 
 
-def shell(command: str, options: typing.Optional[ProcessOptions]) -> ShellOutput:
+def shell(command: str, options: typing.Optional[ProcessOptions], *, _baml: _BamlOptions | None = None) -> ShellOutput:
     """Runs a shell `command` string (passed to `/bin/sh -c`) and returns its output.
 
     Raises:
         Io, Timeout"""
-async def shell_async(command: str, options: typing.Optional[ProcessOptions]) -> ShellOutput:
+async def shell_async(command: str, options: typing.Optional[ProcessOptions], *, _baml: _BamlOptions | None = None) -> ShellOutput:
     """Runs a shell `command` string (passed to `/bin/sh -c`) and returns its output.
 
     Raises:
         Io, Timeout"""
 
 
-def sleep(delay: baml.time.Duration) -> None:
-    """Suspends the current thread for `delay`.
-
-    Raises:
-        Io"""
-async def sleep_async(delay: baml.time.Duration) -> None:
-    """Suspends the current thread for `delay`.
-
-    Raises:
-        Io"""
+def sleep(delay: baml.time.Duration, *, _baml: _BamlOptions | None = None) -> None:
+    """Suspends the current thread for `delay`. A zero or negative `delay` does
+    not wait."""
+async def sleep_async(delay: baml.time.Duration, *, _baml: _BamlOptions | None = None) -> None:
+    """Suspends the current thread for `delay`. A zero or negative `delay` does
+    not wait."""
 
 
-def collect_garbage() -> None:
+def _sleep(delay_nanos: int, *, _baml: _BamlOptions | None = None) -> None:
+    """(internal)"""
+async def _sleep_async(delay_nanos: int, *, _baml: _BamlOptions | None = None) -> None:
+    """(internal)"""
+
+
+def collect_garbage(*, _baml: _BamlOptions | None = None) -> None:
     """Forces a full garbage collection and runs queued `cleanup()` finalizers before returning.
     Intended for deterministic tests and runtime diagnostics; production code should normally
     let the runtime schedule collections automatically."""
-async def collect_garbage_async() -> None:
+async def collect_garbage_async(*, _baml: _BamlOptions | None = None) -> None:
     """Forces a full garbage collection and runs queued `cleanup()` finalizers before returning.
     Intended for deterministic tests and runtime diagnostics; production code should normally
     let the runtime schedule collections automatically."""
 
 
-def panic(message: str) -> None: ...
-async def panic_async(message: str) -> None: ...
+def panic(message: str, *, _baml: _BamlOptions | None = None) -> None:
+    """Panics with `message`.
+
+    # Panics
+
+    - Always panics with `baml.panics.UserPanic`."""
+async def panic_async(message: str, *, _baml: _BamlOptions | None = None) -> None:
+    """Panics with `message`.
+
+    # Panics
+
+    - Always panics with `baml.panics.UserPanic`."""
 
 
-def exit(code: int) -> None: ...
-async def exit_async(code: int) -> None: ...
+def exit(code: int, *, _baml: _BamlOptions | None = None) -> None:
+    """Terminates the process with the given exit `code`.
+
+    # Panics
+
+    - Always panics with `baml.panics.Exit` which, if unhandled, exits the process."""
+async def exit_async(code: int, *, _baml: _BamlOptions | None = None) -> None:
+    """Terminates the process with the given exit `code`.
+
+    # Panics
+
+    - Always panics with `baml.panics.Exit` which, if unhandled, exits the process."""
 
 
-def argv() -> typing.List[str]:
+def argv(*, _baml: _BamlOptions | None = None) -> typing.List[str]:
     """Returns the command-line arguments passed to the BAML program, as an array of strings."""
-async def argv_async() -> typing.List[str]:
+async def argv_async(*, _baml: _BamlOptions | None = None) -> typing.List[str]:
     """Returns the command-line arguments passed to the BAML program, as an array of strings."""
 
 
-def pid() -> int:
+def pid(*, _baml: _BamlOptions | None = None) -> int:
     """Returns the process ID of the current process.
 
     # Panics
 
     - `baml.panics.HostUnavailable` if the environment does not support process IDs (e.g. in a browser)."""
-async def pid_async() -> int:
+async def pid_async(*, _baml: _BamlOptions | None = None) -> int:
     """Returns the process ID of the current process.
 
     # Panics

@@ -28,6 +28,8 @@ import pydantic
 if typing.TYPE_CHECKING:
     from ...baml import UNSET as UNSET
 
+from ..._invocation_types import BamlOptions as _BamlOptions
+
 
 E = typing.TypeVar("E")
 E2 = typing.TypeVar("E2")
@@ -41,7 +43,7 @@ class Done(pydantic.BaseModel):
     ...
 
 
-def flatten(src: typing.Any, *, _types: dict[str, typing.Any]) -> typing.Any:
+def flatten(src: typing.Any, *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> typing.Any:
     """Flattens an iterator of iterables into an iterator over their elements.
 
     Each element of `src` is iterated to exhaustion before the next one is
@@ -55,7 +57,7 @@ def flatten(src: typing.Any, *, _types: dict[str, typing.Any]) -> typing.Any:
 
     A `baml.iter.Flatten` yielding the inner elements laid end to end. It throws
     both the outer iterator's errors and the inner ones'."""
-async def flatten_async(src: typing.Any, *, _types: dict[str, typing.Any]) -> typing.Any:
+async def flatten_async(src: typing.Any, *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> typing.Any:
     """Flattens an iterator of iterables into an iterator over their elements.
 
     Each element of `src` is iterated to exhaustion before the next one is
@@ -75,11 +77,11 @@ class ArrayIterator(pydantic.BaseModel, typing.Generic[T]):
     arr: typing.List[T]
     idx: int
     @staticmethod
-    def new(arr: typing.List[T]) -> ArrayIterator[T]:
+    def new(arr: typing.List[T], *, _baml: _BamlOptions | None = None) -> ArrayIterator[T]:
         """Creates an iterator positioned at the start of `arr`, which is not
         copied."""
     @staticmethod
-    async def new_async(arr: typing.List[T]) -> ArrayIterator[T]:
+    async def new_async(arr: typing.List[T], *, _baml: _BamlOptions | None = None) -> ArrayIterator[T]:
         """Creates an iterator positioned at the start of `arr`, which is not
         copied."""
 
@@ -89,7 +91,7 @@ class Range(pydantic.BaseModel):
     max: int
     step: int
     @staticmethod
-    def new(min: int, max: int, *, step: typing.Union[int, UNSET] = 1) -> Range:
+    def new(min: int, max: int, *, step: typing.Union[int, UNSET] = 1, _baml: _BamlOptions | None = None) -> Range:
         """Creates a range that starts at `min` and adds `step` after each item,
         stopping at the first value that reaches or passes `max`.
 
@@ -105,7 +107,7 @@ class Range(pydantic.BaseModel):
           nothing.
         - `step`: the increment between values; defaults to `1`."""
     @staticmethod
-    async def new_async(min: int, max: int, *, step: typing.Union[int, UNSET] = 1) -> Range:
+    async def new_async(min: int, max: int, *, step: typing.Union[int, UNSET] = 1, _baml: _BamlOptions | None = None) -> Range:
         """Creates a range that starts at `min` and adds `step` after each item,
         stopping at the first value that reaches or passes `max`.
 
@@ -126,7 +128,7 @@ class Repeat(pydantic.BaseModel, typing.Generic[T]):
     value: T
     count: int
     @staticmethod
-    def new(value: T, *, count: typing.Union[int, UNSET] = UNSET) -> Repeat[T]:
+    def new(value: T, *, count: typing.Union[int, UNSET] = UNSET, _baml: _BamlOptions | None = None) -> Repeat[T]:
         """Creates a repeating iterator.
 
         # Parameters
@@ -135,7 +137,7 @@ class Repeat(pydantic.BaseModel, typing.Generic[T]):
         - `count`: how many times to yield it. `0` yields nothing; any negative
           value, including the default, repeats without end."""
     @staticmethod
-    async def new_async(value: T, *, count: typing.Union[int, UNSET] = UNSET) -> Repeat[T]:
+    async def new_async(value: T, *, count: typing.Union[int, UNSET] = UNSET, _baml: _BamlOptions | None = None) -> Repeat[T]:
         """Creates a repeating iterator.
 
         # Parameters
@@ -175,7 +177,7 @@ class Peekable(pydantic.BaseModel, typing.Generic[T, E]):
     source: typing.Any
     buffer: typing.Union[T, Done]
     has_buffer: bool
-    def peek(self) -> typing.Union[T, Done]:
+    def peek(self, *, _baml: _BamlOptions | None = None) -> typing.Union[T, Done]:
         """Returns the element the next `next` will return, or `baml.iter.Done` if
         there is none, without consuming it.
 
@@ -186,7 +188,7 @@ class Peekable(pydantic.BaseModel, typing.Generic[T, E]):
 
         - `E` if advancing the source fails. Nothing is buffered in that case,
           so a retry pulls again rather than replaying the failure."""
-    async def peek_async(self) -> typing.Union[T, Done]:
+    async def peek_async(self, *, _baml: _BamlOptions | None = None) -> typing.Union[T, Done]:
         """Returns the element the next `next` will return, or `baml.iter.Done` if
         there is none, without consuming it.
 

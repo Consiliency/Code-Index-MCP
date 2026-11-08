@@ -145,8 +145,8 @@ class TestRegistry(pydantic.BaseModel):
     _run_selected__async = _define_function("testing.TestRegistry._run_selected", "async", ["self", "names"], binding_name="_run_selected__async", binding_qualname="TestRegistry._run_selected__async", binding_module=__name__)
     _run_selected_pooled_       = _define_function("testing.TestRegistry._run_selected_pooled", "sync",  ["self", "names", "pool"], binding_name="_run_selected_pooled_", binding_qualname="TestRegistry._run_selected_pooled_", binding_module=__name__)
     _run_selected_pooled__async = _define_function("testing.TestRegistry._run_selected_pooled", "async", ["self", "names", "pool"], binding_name="_run_selected_pooled__async", binding_qualname="TestRegistry._run_selected_pooled__async", binding_module=__name__)
-    run_filtered       = _define_function("testing.TestRegistry.run_filtered", "sync",  ["self", "profile_include", "profile_exclude", "cli_include", "cli_exclude", "max_concurrency"], binding_name="run_filtered", binding_qualname="TestRegistry.run_filtered", binding_module=__name__)
-    run_filtered_async = _define_function("testing.TestRegistry.run_filtered", "async", ["self", "profile_include", "profile_exclude", "cli_include", "cli_exclude", "max_concurrency"], binding_name="run_filtered_async", binding_qualname="TestRegistry.run_filtered_async", binding_module=__name__)
+    run_filtered       = _define_function("testing.TestRegistry.run_filtered", "sync",  ["self", "profile_include", "profile_exclude", "cli_include", "cli_exclude", "max_concurrency", "timeout_ms"], binding_name="run_filtered", binding_qualname="TestRegistry.run_filtered", binding_module=__name__)
+    run_filtered_async = _define_function("testing.TestRegistry.run_filtered", "async", ["self", "profile_include", "profile_exclude", "cli_include", "cli_exclude", "max_concurrency", "timeout_ms"], binding_name="run_filtered_async", binding_qualname="TestRegistry.run_filtered_async", binding_module=__name__)
     list_filtered       = _define_function("testing.TestRegistry.list_filtered", "sync",  ["self", "profile_include", "profile_exclude", "cli_include", "cli_exclude"], binding_name="list_filtered", binding_qualname="TestRegistry.list_filtered", binding_module=__name__)
     list_filtered_async = _define_function("testing.TestRegistry.list_filtered", "async", ["self", "profile_include", "profile_exclude", "cli_include", "cli_exclude"], binding_name="list_filtered_async", binding_qualname="TestRegistry.list_filtered_async", binding_module=__name__)
     expand_set       = _define_function("testing.TestRegistry.expand_set", "sync",  ["self", "name"], binding_name="expand_set", binding_qualname="TestRegistry.expand_set", binding_module=__name__)
@@ -163,8 +163,8 @@ _testset_children_selected       = _define_function("testing._testset_children_s
 _testset_children_selected_async = _define_function("testing._testset_children_selected", "async", ["registry", "names", "pool"], binding_name="_testset_children_selected_async", binding_qualname="_testset_children_selected_async", binding_module=__name__)
 
 
-_test_child       = _define_function("testing._test_child", "sync",  ["name", "body", "runner"], binding_name="_test_child", binding_qualname="_test_child", binding_module=__name__)
-_test_child_async = _define_function("testing._test_child", "async", ["name", "body", "runner"], binding_name="_test_child_async", binding_qualname="_test_child_async", binding_module=__name__)
+_test_child       = _define_function("testing._test_child", "sync",  ["name", "body", "runner", "timeout_ms"], binding_name="_test_child", binding_qualname="_test_child", binding_module=__name__)
+_test_child_async = _define_function("testing._test_child", "async", ["name", "body", "runner", "timeout_ms"], binding_name="_test_child_async", binding_qualname="_test_child_async", binding_module=__name__)
 
 
 _testset_child       = _define_function("testing._testset_child", "sync",  ["registry", "ts", "pool"], binding_name="_testset_child", binding_qualname="_testset_child", binding_module=__name__)
@@ -193,22 +193,27 @@ class _TestPool(pydantic.BaseModel):
         populate_by_name=True,
     )
     tokens: typing.List[int]
+    timeout_ms: int
     acquire       = _define_function("testing._TestPool.acquire", "sync",  ["self"], binding_name="acquire", binding_qualname="_TestPool.acquire", binding_module=__name__)
     acquire_async = _define_function("testing._TestPool.acquire", "async", ["self"], binding_name="acquire_async", binding_qualname="_TestPool.acquire_async", binding_module=__name__)
     release       = _define_function("testing._TestPool.release", "sync",  ["self"], binding_name="release", binding_qualname="_TestPool.release", binding_module=__name__)
     release_async = _define_function("testing._TestPool.release", "async", ["self"], binding_name="release_async", binding_qualname="_TestPool.release_async", binding_module=__name__)
 
 
-_test_pool       = _define_function("testing._test_pool", "sync",  ["max_concurrency"], binding_name="_test_pool", binding_qualname="_test_pool", binding_module=__name__)
-_test_pool_async = _define_function("testing._test_pool", "async", ["max_concurrency"], binding_name="_test_pool_async", binding_qualname="_test_pool_async", binding_module=__name__)
+_default_test_timeout_ms       = _define_function("testing._default_test_timeout_ms", "sync",  [], binding_name="_default_test_timeout_ms", binding_qualname="_default_test_timeout_ms", binding_module=__name__)
+_default_test_timeout_ms_async = _define_function("testing._default_test_timeout_ms", "async", [], binding_name="_default_test_timeout_ms_async", binding_qualname="_default_test_timeout_ms_async", binding_module=__name__)
+
+
+_test_pool       = _define_function("testing._test_pool", "sync",  ["max_concurrency", "timeout_ms"], binding_name="_test_pool", binding_qualname="_test_pool", binding_module=__name__)
+_test_pool_async = _define_function("testing._test_pool", "async", ["max_concurrency", "timeout_ms"], binding_name="_test_pool_async", binding_qualname="_test_pool_async", binding_module=__name__)
 
 
 _run_children_parallel       = _define_function("testing._run_children_parallel", "sync",  ["children", "pool"], binding_name="_run_children_parallel", binding_qualname="_run_children_parallel", binding_module=__name__)
 _run_children_parallel_async = _define_function("testing._run_children_parallel", "async", ["children", "pool"], binding_name="_run_children_parallel_async", binding_qualname="_run_children_parallel_async", binding_module=__name__)
 
 
-_run_test       = _define_function("testing._run_test", "sync",  ["body", "runner"], binding_name="_run_test", binding_qualname="_run_test", binding_module=__name__)
-_run_test_async = _define_function("testing._run_test", "async", ["body", "runner"], binding_name="_run_test_async", binding_qualname="_run_test_async", binding_module=__name__)
+_run_test       = _define_function("testing._run_test", "sync",  ["body", "runner", "timeout_ms"], binding_name="_run_test", binding_qualname="_run_test", binding_module=__name__)
+_run_test_async = _define_function("testing._run_test", "async", ["body", "runner", "timeout_ms"], binding_name="_run_test_async", binding_qualname="_run_test_async", binding_module=__name__)
 
 
 _run_testset       = _define_function("testing._run_testset", "sync",  ["children", "runner", "pool"], binding_name="_run_testset", binding_qualname="_run_testset", binding_module=__name__)
@@ -370,6 +375,14 @@ _collect_all_failed_names_async = _define_function("testing._collect_all_failed_
 
 _collect_leaf_messages       = _define_function("testing._collect_leaf_messages", "sync",  ["results", "out"], binding_name="_collect_leaf_messages", binding_qualname="_collect_leaf_messages", binding_module=__name__)
 _collect_leaf_messages_async = _define_function("testing._collect_leaf_messages", "async", ["results", "out"], binding_name="_collect_leaf_messages_async", binding_qualname="_collect_leaf_messages_async", binding_module=__name__)
+
+
+_test_name_count       = _define_function("testing._test_name_count", "sync",  ["entries", "full_name"], binding_name="_test_name_count", binding_qualname="_test_name_count", binding_module=__name__)
+_test_name_count_async = _define_function("testing._test_name_count", "async", ["entries", "full_name"], binding_name="_test_name_count_async", binding_qualname="_test_name_count_async", binding_module=__name__)
+
+
+_testset_name_count       = _define_function("testing._testset_name_count", "sync",  ["entries", "full_name"], binding_name="_testset_name_count", binding_qualname="_testset_name_count", binding_module=__name__)
+_testset_name_count_async = _define_function("testing._testset_name_count", "async", ["entries", "full_name"], binding_name="_testset_name_count_async", binding_qualname="_testset_name_count_async", binding_module=__name__)
 
 
 Quorum       = _define_function("testing.Quorum", "sync",  ["n", "m"], binding_name="Quorum", binding_qualname="Quorum", binding_module=__name__)

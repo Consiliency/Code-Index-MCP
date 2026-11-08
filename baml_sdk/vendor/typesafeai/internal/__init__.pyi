@@ -30,6 +30,8 @@ if typing.TYPE_CHECKING:
     from .... import baml
     from .... import vendor
 
+from ...._invocation_types import BamlOptions as _BamlOptions
+
 
 class ChoiceOption(pydantic.BaseModel):
     key: str
@@ -49,52 +51,52 @@ class Plan(pydantic.BaseModel):
     leaves: typing.List[Leaf]
 
 
-def reject(detail: str) -> ai.errors.InvalidRequest: ...
-async def reject_async(detail: str) -> ai.errors.InvalidRequest: ...
+def reject(detail: str, *, _baml: _BamlOptions | None = None) -> ai.errors.InvalidRequest: ...
+async def reject_async(detail: str, *, _baml: _BamlOptions | None = None) -> ai.errors.InvalidRequest: ...
 
 
-def options(ty: typing.Any) -> typing.List[ChoiceOption]:
+def options(ty: typing.Any, *, _baml: _BamlOptions | None = None) -> typing.List[ChoiceOption]:
     """Raises:
-        InvalidArgument, DecodeError, ParseError, InvalidRequest"""
-async def options_async(ty: typing.Any) -> typing.List[ChoiceOption]:
+        InvalidArgument, DecodeError, ParseError, SerializationError, InvalidRequest"""
+async def options_async(ty: typing.Any, *, _baml: _BamlOptions | None = None) -> typing.List[ChoiceOption]:
     """Raises:
-        InvalidArgument, DecodeError, ParseError, InvalidRequest"""
+        InvalidArgument, DecodeError, ParseError, SerializationError, InvalidRequest"""
 
 
-def accepts_null(ty: typing.Any) -> bool: ...
-async def accepts_null_async(ty: typing.Any) -> bool: ...
+def accepts_null(ty: typing.Any, *, _baml: _BamlOptions | None = None) -> bool: ...
+async def accepts_null_async(ty: typing.Any, *, _baml: _BamlOptions | None = None) -> bool: ...
 
 
-def collect(ty: typing.Any, ids: typing.List[str], labels: typing.List[str], description: typing.Optional[str], aliased: bool, prefix: typing.List[ai.content.Block], ancestors: typing.List[typing.Any]) -> typing.List[Leaf]:
+def collect(ty: typing.Any, ids: typing.List[str], labels: typing.List[str], description: typing.Optional[str], aliased: bool, prefix: typing.List[ai.content.Block], ancestors: typing.List[typing.Any], *, _baml: _BamlOptions | None = None) -> typing.List[Leaf]:
     """Raises:
-        InvalidArgument, DecodeError, ParseError, InvalidRequest"""
-async def collect_async(ty: typing.Any, ids: typing.List[str], labels: typing.List[str], description: typing.Optional[str], aliased: bool, prefix: typing.List[ai.content.Block], ancestors: typing.List[typing.Any]) -> typing.List[Leaf]:
+        InvalidArgument, DecodeError, ParseError, SerializationError, InvalidRequest"""
+async def collect_async(ty: typing.Any, ids: typing.List[str], labels: typing.List[str], description: typing.Optional[str], aliased: bool, prefix: typing.List[ai.content.Block], ancestors: typing.List[typing.Any], *, _baml: _BamlOptions | None = None) -> typing.List[Leaf]:
     """Raises:
-        InvalidArgument, DecodeError, ParseError, InvalidRequest"""
+        InvalidArgument, DecodeError, ParseError, SerializationError, InvalidRequest"""
 
 
-def text_blocks(blocks: typing.List[ai.content.Block]) -> str:
-    """Raises:
-        InvalidRequest"""
-async def text_blocks_async(blocks: typing.List[ai.content.Block]) -> str:
+def text_blocks(blocks: typing.List[ai.content.Block], *, _baml: _BamlOptions | None = None) -> str:
     """Raises:
         InvalidRequest"""
+async def text_blocks_async(blocks: typing.List[ai.content.Block], *, _baml: _BamlOptions | None = None) -> str:
+    """Raises:
+        InvalidRequest"""
 
 
-def plan(input: ai.ModelTurnInput) -> Plan:
+def plan(input: ai.ModelTurnInput, *, _baml: _BamlOptions | None = None) -> Plan:
     """Raises:
-        InvalidArgument, DecodeError, ParseError, InvalidRequest, PromptRenderError"""
-async def plan_async(input: ai.ModelTurnInput) -> Plan:
+        InvalidArgument, DecodeError, ParseError, SerializationError, InvalidRequest, PromptRenderError"""
+async def plan_async(input: ai.ModelTurnInput, *, _baml: _BamlOptions | None = None) -> Plan:
     """Raises:
-        InvalidArgument, DecodeError, ParseError, InvalidRequest, PromptRenderError"""
+        InvalidArgument, DecodeError, ParseError, SerializationError, InvalidRequest, PromptRenderError"""
 
 
-def request(c: vendor.typesafeai.Client, input: ai.ModelTurnInput, p: Plan, preview: bool) -> baml.http.Request:
+def request(c: vendor.typesafeai.Client, input: ai.ModelTurnInput, p: Plan, preview: bool, *, _baml: _BamlOptions | None = None) -> baml.http.Request:
     """Raises:
-        Io, ParseError, InvalidRequest"""
-async def request_async(c: vendor.typesafeai.Client, input: ai.ModelTurnInput, p: Plan, preview: bool) -> baml.http.Request:
+        Io, ParseError, SerializationError, InvalidRequest"""
+async def request_async(c: vendor.typesafeai.Client, input: ai.ModelTurnInput, p: Plan, preview: bool, *, _baml: _BamlOptions | None = None) -> baml.http.Request:
     """Raises:
-        Io, ParseError, InvalidRequest"""
+        Io, ParseError, SerializationError, InvalidRequest"""
 
 
 class Answer(pydantic.BaseModel):
@@ -113,30 +115,30 @@ class Response(pydantic.BaseModel):
     usage: typing.Optional[Usage] = None
 
 
-def failed(detail: str) -> ai.errors.ParseFailed: ...
-async def failed_async(detail: str) -> ai.errors.ParseFailed: ...
+def failed(detail: str, *, _baml: _BamlOptions | None = None) -> ai.errors.ParseFailed: ...
+async def failed_async(detail: str, *, _baml: _BamlOptions | None = None) -> ai.errors.ParseFailed: ...
 
 
-def decode(leaf: Leaf, answer: Answer) -> typing.Any:
+def decode(leaf: Leaf, answer: Answer, *, _baml: _BamlOptions | None = None) -> typing.Any:
     """Raises:
         ParseFailed"""
-async def decode_async(leaf: Leaf, answer: Answer) -> typing.Any:
+async def decode_async(leaf: Leaf, answer: Answer, *, _baml: _BamlOptions | None = None) -> typing.Any:
     """Raises:
         ParseFailed"""
 
 
-def assemble(ty: typing.Any, path: typing.List[str], values: typing.Dict[str, typing.Any]) -> typing.Any:
+def assemble(ty: typing.Any, path: typing.List[str], values: typing.Dict[str, typing.Any], *, _baml: _BamlOptions | None = None) -> typing.Any:
     """Raises:
-        DecodeError, ParseError, SerializationError, ParseFailed"""
-async def assemble_async(ty: typing.Any, path: typing.List[str], values: typing.Dict[str, typing.Any]) -> typing.Any:
+        DecodeError, ParseError, SerializationError"""
+async def assemble_async(ty: typing.Any, path: typing.List[str], values: typing.Dict[str, typing.Any], *, _baml: _BamlOptions | None = None) -> typing.Any:
     """Raises:
-        DecodeError, ParseError, SerializationError, ParseFailed"""
+        DecodeError, ParseError, SerializationError"""
 
 
-def invoke(c: vendor.typesafeai.Client, input: ai.ModelTurnInput) -> ai.ModelTurn:
+def invoke(c: vendor.typesafeai.Client, input: ai.ModelTurnInput, *, _baml: _BamlOptions | None = None) -> ai.ModelTurn:
     """Raises:
         InvalidArgument, Io, ParseError, Timeout, DecodeError, SerializationError"""
-async def invoke_async(c: vendor.typesafeai.Client, input: ai.ModelTurnInput) -> ai.ModelTurn:
+async def invoke_async(c: vendor.typesafeai.Client, input: ai.ModelTurnInput, *, _baml: _BamlOptions | None = None) -> ai.ModelTurn:
     """Raises:
         InvalidArgument, Io, ParseError, Timeout, DecodeError, SerializationError"""
 
