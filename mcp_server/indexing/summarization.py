@@ -18,13 +18,6 @@ from ..storage.sqlite_store import SQLiteStore, assert_chunk_scheme_readable
 
 logger = logging.getLogger(__name__)
 
-# baml-bridge 0.21+ records every BAML call under BAML_HOME and uploads it to
-# Boundary when a key or saved login is present; 0.20.1 recorded nothing.
-# baml.toml binds the generated SDK's recording level to MCP_BAML_TELEMETRY.
-# Prompts carry source code, so recording stays off unless an operator opts in.
-# This must run before the first baml_sdk call initializes the runtime.
-os.environ.setdefault("MCP_BAML_TELEMETRY", "off")
-
 _SYSTEM_PROMPT = (
     "You are a concise code documentation assistant. "
     "Respond with exactly 2 sentences summarizing the code chunk: "
