@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+**Changed** (Consiliency/Code-Index-MCP#119)
+- `baml-bridge` and the BAML toolchain move from 0.20.1 to 0.23.0, matching
+  `phase-loop-runtime` 0.7.29+ so both can share one environment. `baml_sdk/` is
+  regenerated.
+- baml-bridge 0.21+ records every BAML call under `~/.baml/btel` and uploads the
+  recordings to Boundary's cloud when `BOUNDARY_API_KEY` or a saved Boundary
+  login exists. Recording and upload stay **off by default**: the generated SDK
+  bakes `off`, so unset, blank and whitespace values of the new
+  `MCP_BAML_TELEMETRY` variable mean off, whatever imports `baml_sdk` first.
+  `MCP_BAML_TELEMETRY=low|medium|high` opts in. That uploads prompts containing
+  source code whenever a Boundary key or login is present. Upstream's
+  `BAML_TELEMETRY` is ignored. See `docs/SUPPORT_MATRIX.md`.
+- LLM calls now time out after 5 minutes in total, or 10 seconds to connect; they
+  had no limit before. On the single-file summarization path, a stalled provider
+  can take up to 5 minutes for the batch call and up to 5 minutes for each chunk
+  in the fallback.
+- Generated `FunctionSpec.client_id()` is now `requested_model()`, returning the
+  bare model name.
+- `scripts/generate_baml_sdk.py` clears `baml_sdk/` before generating, so modules
+  a newer toolchain dropped don't survive. It and CI set `DO_NOT_TRACK=1`, which
+  stops `baml-cli` usage pings.
+
 **Changed** (Consiliency/Code-Index-MCP#115)
 - Parser stack moves to treesitter-chunker 6.x, tree-sitter 0.26.x and
   tree-sitter-language-pack 1.20.x, matching the other Consiliency repositories
