@@ -90,6 +90,13 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    env:
+      # tree-sitter-language-pack 1.20 downloads grammars on first use and the
+      # sandboxed workers never download. Prefetch into one explicit cache that
+      # release_smoke passes through to its isolated HOME, as the PR agent gate
+      # does, and fail (never skip) grammar tests (#115, v1.5.0 run 42536754295).
+      TREE_SITTER_LANGUAGE_PACK_CACHE_DIR: ${{ github.workspace }}/../tree-sitter-language-pack-cache
+      MCP_REQUIRE_GRAMMARS: "1"
     steps:
       - name: Check out prepared branch
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
@@ -119,7 +126,7 @@ jobs:
           python -m pip install --upgrade pip uv
           uv sync --locked --extra dev --extra semantic
           echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
-          .venv/bin/mcp-index grammars prefetch
+          .venv/bin/mcp-index grammars prefetch --cache-dir "$TREE_SITTER_LANGUAGE_PACK_CACHE_DIR"
           curl -fsSL --retry 3 -o "$RUNNER_TEMP/baml.tar.gz" https://github.com/BoundaryML/baml/releases/download/baml-language-0.23.0/baml-language-0.23.0-x86_64-unknown-linux-gnu.tar.gz
           echo "a1f5ab12e2d60543945c985e372dca66aefe02221d8c235aa618e62720d8a215  $RUNNER_TEMP/baml.tar.gz" | sha256sum -c -
           mkdir -p "$RUNNER_TEMP/baml-0.23.0"
@@ -191,6 +198,13 @@ jobs:
     permissions:
       contents: read
       packages: read
+    env:
+      # tree-sitter-language-pack 1.20 downloads grammars on first use and the
+      # sandboxed workers never download. Prefetch into one explicit cache that
+      # release_smoke passes through to its isolated HOME, as the PR agent gate
+      # does, and fail (never skip) grammar tests (#115, v1.5.0 run 42536754295).
+      TREE_SITTER_LANGUAGE_PACK_CACHE_DIR: ${{ github.workspace }}/../tree-sitter-language-pack-cache
+      MCP_REQUIRE_GRAMMARS: "1"
     steps:
       - name: Refuse publication retries
         run: |
@@ -230,7 +244,7 @@ jobs:
           python -m pip install --upgrade pip uv
           uv sync --locked --extra dev --extra semantic
           echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
-          .venv/bin/mcp-index grammars prefetch
+          .venv/bin/mcp-index grammars prefetch --cache-dir "$TREE_SITTER_LANGUAGE_PACK_CACHE_DIR"
           curl -fsSL --retry 3 -o "$RUNNER_TEMP/baml.tar.gz" https://github.com/BoundaryML/baml/releases/download/baml-language-0.23.0/baml-language-0.23.0-x86_64-unknown-linux-gnu.tar.gz
           echo "a1f5ab12e2d60543945c985e372dca66aefe02221d8c235aa618e62720d8a215  $RUNNER_TEMP/baml.tar.gz" | sha256sum -c -
           mkdir -p "$RUNNER_TEMP/baml-0.23.0"
