@@ -2474,6 +2474,10 @@ class SQLiteStore:
         with self._get_connection() as conn:
             if not conn.in_transaction:
                 conn.execute("BEGIN IMMEDIATE")
+            # Point links key on chunk ids, so they follow the chunk-identity
+            # scheme like code_chunks writes: never link fresh ids into a store
+            # whose scheme marker is mismatched or mid-rebuild (#116 review N5).
+            self._assert_chunk_scheme_writable(conn, chunk_type="code")
             for chunk_id, expected in expected_summaries.items():
                 row = conn.execute(
                     """SELECT summary_text, is_authoritative, profile_id, prompt_fingerprint

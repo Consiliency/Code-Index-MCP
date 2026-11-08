@@ -13,6 +13,8 @@ are excluded, and the CHUNKERSAFE scheme moves to ``treesitter_chunk_id_v6`` so 
 
 from __future__ import annotations
 
+import os
+
 import pytest
 
 chunker = pytest.importorskip("chunker")
@@ -27,10 +29,13 @@ def _chunker_major() -> int:
         return 0
 
 
-pytestmark = pytest.mark.skipif(
-    _chunker_major() != 6,
-    reason="real-v6 contract test requires treesitter-chunker 6.x",
-)
+if _chunker_major() != 6:
+    _reason = "real-v6 contract test requires treesitter-chunker 6.x"
+    # CI sets MCP_REQUIRE_GRAMMARS=1: a resolved chunker of another major must
+    # fail the ID-pin contract rather than skip it quietly (#116 review N4).
+    if os.environ.get("MCP_REQUIRE_GRAMMARS") == "1":
+        raise RuntimeError(f"MCP_REQUIRE_GRAMMARS=1 forbids skipping: {_reason}")
+    pytestmark = pytest.mark.skip(reason=_reason)
 
 # The exact call sites the dispatcher/plugins/graph use.
 from chunker import CodeChunk, chunk_text  # noqa: E402

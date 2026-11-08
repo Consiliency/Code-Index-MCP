@@ -592,3 +592,72 @@ print(json.dumps({{"indexed": stats["indexed_files"], "failed": stats["failed_fi
         "grammar_unavailable" in error or "not in the local grammar cache" in error
         for error in report["errors"]
     ), report
+
+
+@pytest.mark.parametrize("required", ["1", ""])
+def test_v6_contract_fails_instead_of_skipping_under_require_grammars(required):
+    """#116 review N4: a non-6.x chunker must not quietly skip the ID pins."""
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    contract = Path(__file__).with_name("test_chunker_v6_contract.py")
+    script = f"""
+import importlib.metadata, runpy
+real = importlib.metadata.version
+importlib.metadata.version = lambda name: "7.0.0" if name == "treesitter-chunker" else real(name)
+try:
+    namespace = runpy.run_path({str(contract)!r})
+except RuntimeError as exc:
+    print("RAISED", exc)
+else:
+    print("SKIPPED", namespace["pytestmark"].kwargs["reason"])
+"""
+    env = {**os.environ, REQUIRE_ENV: required}
+    result = subprocess.run(
+        [sys.executable, "-c", script], env=env, capture_output=True, text=True, timeout=120
+    )
+    assert result.returncode == 0, result.stderr
+    expected = "RAISED" if required == "1" else "SKIPPED"
+    assert result.stdout.startswith(expected), result.stdout
+
+
+def test_every_standalone_dockerfile_exports_grammars_to_the_shared_libs_dir():
+    """#116 review N6: only Dockerfile.production is built in PR CI, so pin the
+    grammar prefetch shape of the others statically. Images FROM another local
+    image (standard, full) inherit it."""
+    from pathlib import Path
+
+    shared = "/opt/tree-sitter-language-pack/libs"
+    root = Path(__file__).resolve().parents[1] / "docker" / "dockerfiles"
+    checked = []
+    for dockerfile in sorted(root.glob("Dockerfile*")):
+        text = dockerfile.read_text(encoding="utf-8")
+        assert "tree_sitter_languages" not in text, dockerfile.name
+        if "FROM mcp-index:" in text:
+            continue
+        lines = text.splitlines()
+        prefetch = next(
+            (
+                index
+                for index, line in enumerate(lines)
+                if "grammars prefetch" in line or "grammar_commands prefetch" in line
+            ),
+            None,
+        )
+        assert prefetch is not None, f"{dockerfile.name} never prefetches grammars"
+        command = " ".join(lines[prefetch : prefetch + 3])
+        assert f"--export-libs {shared}" in command, dockerfile.name
+        copied_sources = min(
+            index for index, line in enumerate(lines) if line.startswith("COPY mcp_server/")
+        )
+        assert copied_sources < prefetch, f"{dockerfile.name} prefetches before copying sources"
+        final_stage = max(index for index, line in enumerate(lines) if line.startswith("FROM "))
+        assert any(
+            line.strip() == f"ENV TREE_SITTER_LANGUAGE_PACK_LIBS_DIR={shared}"
+            for line in lines[final_stage:]
+        ), f"{dockerfile.name} final stage does not set the libs dir"
+        checked.append(dockerfile.name)
+    assert {"Dockerfile", "Dockerfile.mcp", "Dockerfile.minimal", "Dockerfile.production"} <= set(
+        checked
+    )

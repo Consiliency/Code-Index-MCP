@@ -444,6 +444,30 @@ class _FakeVectorClient:
         return len(point_ids)
 
 
+def test_semantic_point_links_refuse_a_mismatched_chunk_scheme(tmp_path):
+    """#116 review N5: the point-link writer is a chunker-id write path too."""
+    index_path = tmp_path / "current.db"
+    _seed_active_index(index_path, tmp_path)
+    guarded = SQLiteStore(str(index_path))
+    try:
+        # The current scheme accepts links.
+        assert guarded.admit_semantic_point_links([("profile-b", "code-chunk-1", 7, "c")], {})
+    finally:
+        guarded.close()
+    _force_scheme_mismatch(index_path, CHUNKER_V4_SCHEME)
+    guarded = SQLiteStore(str(index_path))
+    try:
+        with pytest.raises(ChunkSchemeMismatchError):
+            guarded.admit_semantic_point_links([("profile-b", "code-chunk-2", 8, "c")], {})
+        with sqlite3.connect(str(index_path)) as raw:
+            rows = raw.execute(
+                "SELECT chunk_id FROM semantic_points WHERE profile_id = 'profile-b'"
+            ).fetchall()
+        assert rows == [("code-chunk-1",)]
+    finally:
+        guarded.close()
+
+
 def _drain_callback(client):
     return lambda collection, point_ids: client.delete_remote_points(
         point_ids, collection=collection
