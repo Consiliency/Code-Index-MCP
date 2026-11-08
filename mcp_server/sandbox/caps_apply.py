@@ -103,22 +103,51 @@ _GRAMMAR_CACHE_ENV = "TREE_SITTER_LANGUAGE_PACK_CACHE_DIR"
 _GRAMMAR_LIBS_ENV = "TREE_SITTER_LANGUAGE_PACK_LIBS_DIR"
 
 
-def _host_grammar_cache_root() -> Optional[Path]:
-    """Resolve the language-pack cache root from the unscrubbed host env.
+def _host_grammar_paths() -> "tuple[Optional[Path], Optional[Path]]":
+    """Resolve the language-pack cache root and shared libs dir from the host env.
 
-    Mirrors ``mcp_server.utils.grammar_cache.resolve_cache_root`` without
-    importing the plugin registry into the worker before the scrub.
+    Called before the worker changes into its scratch dir and scrubs the
+    environment. Mirrors ``mcp_server.utils.grammar_cache.resolve_cache_root``
+    and ``resolve_libs_dir`` (a parity test pins this) without importing
+    ``mcp_server.utils`` before the scrub. The root can derive from
+    HOME/XDG_CACHE_HOME or, as in the pack, the passwd home, and a relative
+    value resolves against the host's working directory rather than the
+    scratch dir (#116 review N2).
     """
+    try:
+        cwd: Optional[Path] = Path.cwd()
+    except OSError:
+        cwd = None
+
+    def absolute(value: str) -> Optional[Path]:
+        path = Path(value).expanduser()
+        if path.is_absolute():
+            return path
+        return cwd / path if cwd is not None else None
+
+    root: Optional[Path] = None
     override = (os.environ.get(_GRAMMAR_CACHE_ENV) or "").strip()
-    if override:
-        return Path(override).expanduser()
     xdg = (os.environ.get("XDG_CACHE_HOME") or "").strip()
-    if xdg:
-        return Path(xdg).expanduser()
     home = (os.environ.get("HOME") or "").strip()
-    if home:
-        return Path(home).expanduser() / ".cache"
-    return None
+    if override:
+        root = absolute(override)
+    elif xdg:
+        root = absolute(xdg)
+    elif home:
+        home_path = absolute(home)
+        root = home_path / ".cache" if home_path is not None else None
+    else:
+        try:
+            import pwd
+
+            passwd_home = pwd.getpwuid(os.getuid()).pw_dir
+        except (ImportError, KeyError, AttributeError, OSError):
+            passwd_home = ""
+        if passwd_home:
+            root = Path(passwd_home) / ".cache"
+    libs_value = (os.environ.get(_GRAMMAR_LIBS_ENV) or "").strip()
+    libs = absolute(libs_value) if libs_value else None
+    return root, libs
 
 
 def _patch_socket_deny() -> None:
@@ -302,6 +331,9 @@ def apply(caps: CapabilitySet) -> None:
     separate :func:`install_fs_guard` call so plugin import can succeed.
     """
     global _SCRATCH_DIR
+    # 0. resolve the host's grammar locations while cwd and env are the host's.
+    grammar_cache_root, grammar_libs_dir = _host_grammar_paths()
+
     # 1. chdir to a scratch dir.
     sandbox_tmp = tempfile.mkdtemp(prefix="sandbox-")
     _SCRATCH_DIR = Path(sandbox_tmp).resolve()
@@ -313,18 +345,19 @@ def apply(caps: CapabilitySet) -> None:
     # 2. close inherited FDs.
     _close_inherited_fds()
 
-    # 3. scrub env, keeping the host's grammar cache root (resolved before the
-    # scrub, since it can derive from HOME/XDG_CACHE_HOME).
-    grammar_cache_root = _host_grammar_cache_root()
-    grammar_libs_dir = (os.environ.get(_GRAMMAR_LIBS_ENV) or "").strip()
+    # 3. scrub env, keeping the host's grammar locations (absolute paths, not
+    # credentials).
     _scrub_env(caps.env_allow)
     os.environ.setdefault("HOME", str(_SCRATCH_DIR))
     if grammar_cache_root is not None:
         os.environ[_GRAMMAR_CACHE_ENV] = str(grammar_cache_root)
-    if grammar_libs_dir:
-        os.environ[_GRAMMAR_LIBS_ENV] = grammar_libs_dir
+    if grammar_libs_dir is not None:
+        os.environ[_GRAMMAR_LIBS_ENV] = str(grammar_libs_dir)
 
-    # 4. network deny.
+    # 4. network deny. The socket patch cannot see the language pack's native
+    # (Rust) downloader, so a network-denied worker also loads grammars from
+    # the local cache only: a cold or rolled-over cache fails closed with
+    # DownloadError instead of downloading into the host cache (#116 B2).
     if not caps.network:
         _patch_socket_deny()
 
@@ -334,4 +367,11 @@ def apply(caps: CapabilitySet) -> None:
     # 6. sqlite policy.
     _patch_sqlite(caps)
 
-    # 7. FS guard deliberately deferred — install after plugin import.
+    # 7. network-denied grammar loading: installed last, after every patch,
+    # and before the plugin is imported so plugins bind the guarded loaders.
+    if not caps.network:
+        from mcp_server.utils import grammar_cache
+
+        grammar_cache.install_offline_guard()
+
+    # 8. FS guard deliberately deferred — install after plugin import.

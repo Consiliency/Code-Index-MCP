@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 import os
 import subprocess
 import sys
@@ -173,3 +174,243 @@ def test_sandboxed_python_plugin_still_produces_chunker_chunks(tmp_path):
         plugin.close()
     assert shard["symbols"], shard
     assert len(shard.get("chunks") or []) >= 1, shard
+
+
+# --- Network-denied grammar loading (#116 review B2, N2) -------------------
+
+_WORKER_CAPS = (
+    '{"fs_read": [], "fs_write": [], "env_allow": [], "network": false, '
+    '"sqlite": "none", "cpu_seconds": 30, "mem_mb": 2048}'
+)
+
+
+def _grammar_free_env(tmp_path, **extra):
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if not k.startswith("TREE_SITTER_LANGUAGE_PACK_") and k not in ("HOME", "XDG_CACHE_HOME")
+    }
+    env.update({"TMPDIR": str(tmp_path), "PYTHONDONTWRITEBYTECODE": "1"})
+    env.update(extra)
+    return env
+
+
+def _tree(root):
+    return sorted(str(p.relative_to(root)) for p in root.rglob("*"))
+
+
+def _run_worker(plugin_module, env, *, strace_log=None):
+    import shutil
+
+    cmd = [sys.executable, "-m", "mcp_server.sandbox.worker_main", plugin_module, _WORKER_CAPS]
+    if strace_log is not None:
+        strace = shutil.which("strace")
+        cmd = [strace, "-f", "-qq", "-e", "trace=connect", "-o", str(strace_log), *cmd]
+    return subprocess.run(
+        cmd, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=120
+    )
+
+
+def _strace_usable():
+    import shutil
+
+    strace = shutil.which("strace")
+    if strace is None:
+        return False
+    probe = subprocess.run(
+        [strace, "-qq", "-e", "trace=none", "true"], capture_output=True, timeout=30
+    )
+    return probe.returncode == 0
+
+
+def test_network_denied_worker_with_cold_grammar_cache_fails_closed_without_writes(tmp_path):
+    """A cold cache must not make a network=False worker download natively.
+
+    Before the fix, language-pack 1.20's Rust downloader fetched the manifest
+    and a ~22 MB bundle from GitHub and wrote them into the host cache, past
+    the Python socket guard and outside fs_write.
+    """
+    cache = tmp_path / "cold-cache"
+    cache.mkdir(mode=0o700)
+    env = _grammar_free_env(
+        tmp_path, HOME=str(tmp_path / "home"), TREE_SITTER_LANGUAGE_PACK_CACHE_DIR=str(cache)
+    )
+    log = tmp_path / "connect.log" if _strace_usable() else None
+    result = _run_worker("mcp_server.plugins.c_plugin", env, strace_log=log)
+
+    assert result.returncode == 1, result.stderr
+    envelope = json.loads(result.stdout.splitlines()[-1])
+    assert envelope["method"] == "startup"
+    assert envelope["payload"]["type"] == "DownloadError"
+    assert envelope["payload"]["state"] == "load_error"
+    assert "not in the local grammar cache" in envelope["payload"]["message"]
+    assert _tree(cache) == [], "worker wrote into the grammar cache"
+    if log is not None:
+        inet = [
+            line
+            for line in log.read_text().splitlines()
+            if "AF_INET" in line or "sin_port" in line or "sin6_port" in line
+        ]
+        assert inet == [], inet
+
+
+def test_network_denied_worker_rolled_over_cache_fails_closed(tmp_path):
+    """A pack patch release moves the versioned cache dir; an older warm dir
+    must read as cold, not trigger a download."""
+    cache = tmp_path / "cache"
+    old = cache / "tree-sitter-language-pack" / "v0.0.0" / "libs"
+    old.mkdir(parents=True)
+    os.chmod(cache, 0o700)
+    before = _tree(cache)
+    env = _grammar_free_env(tmp_path, TREE_SITTER_LANGUAGE_PACK_CACHE_DIR=str(cache))
+    result = _run_worker("mcp_server.plugins.c_plugin", env)
+    assert result.returncode == 1, result.stderr
+    assert "DownloadError" in result.stdout
+    assert _tree(cache) == before
+
+
+def test_network_denied_worker_without_home_pins_passwd_cache_and_fails_closed(tmp_path):
+    """No HOME/XDG_CACHE_HOME: like the pack, resolve the passwd home. A cold
+    one fails closed with nothing written."""
+    passwd_home = tmp_path / "passwd-home"
+    passwd_home.mkdir(mode=0o700)
+    script = f"""
+import json, os, pwd, sys
+real = pwd.getpwuid
+class Entry:
+    pw_dir = {str(passwd_home)!r}
+pwd.getpwuid = lambda uid: Entry()
+from mcp_server.sandbox.capabilities import CapabilitySet
+from mcp_server.sandbox.caps_apply import apply
+apply(CapabilitySet(fs_read=(), fs_write=(), env_allow=frozenset()))
+import tree_sitter_language_pack as pack
+try:
+    pack.get_language("c")
+    outcome = "loaded"
+except pack.DownloadError as exc:
+    outcome = "DownloadError"
+print(json.dumps({{
+    "cache": os.environ.get("TREE_SITTER_LANGUAGE_PACK_CACHE_DIR"),
+    "manifest": os.environ.get("TREE_SITTER_LANGUAGE_PACK_MANIFEST_URL"),
+    "outcome": outcome,
+}}))
+"""
+    env = _grammar_free_env(tmp_path)
+    result = subprocess.run(
+        [sys.executable, "-c", script], env=env, capture_output=True, text=True, timeout=120
+    )
+    assert result.returncode == 0, result.stderr
+    report = json.loads(result.stdout.splitlines()[-1])
+    assert report["cache"] == str(passwd_home / ".cache")
+    assert report["manifest"] == "sandbox-offline://network-denied"
+    assert report["outcome"] == "DownloadError"
+    assert _tree(passwd_home) == []
+
+
+def test_network_denied_worker_loads_warm_cache_without_writing_it(tmp_path):
+    from mcp_server.utils import grammar_cache
+
+    if grammar_cache.missing_grammars(["c"]):
+        reason = "grammar 'c' is not prefetched; run `mcp-index grammars prefetch`"
+        if os.environ.get("MCP_REQUIRE_GRAMMARS") == "1":
+            pytest.fail(f"MCP_REQUIRE_GRAMMARS=1 forbids skipping: {reason}")
+        pytest.skip(reason)
+    root = grammar_cache.resolve_cache_root()
+    libs = grammar_cache.libs_dir()
+    env = _grammar_free_env(tmp_path, HOME=str(tmp_path / "home"))
+    if root is not None:
+        env["TREE_SITTER_LANGUAGE_PACK_CACHE_DIR"] = str(root)
+    if libs is not None:
+        env["TREE_SITTER_LANGUAGE_PACK_LIBS_DIR"] = str(libs)
+    pack_cache = root / "tree-sitter-language-pack" if root is not None else None
+    watched = [p for p in (pack_cache, libs) if p is not None and p.exists()]
+
+    def snapshot():
+        return {
+            str(p): (p.stat().st_mtime_ns, p.stat().st_size)
+            for base in watched
+            for p in [base, *base.rglob("*")]
+        }
+
+    before = snapshot()
+    log = tmp_path / "connect.log" if _strace_usable() else None
+    result = _run_worker("mcp_server.plugins.c_plugin", env, strace_log=log)
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert snapshot() == before, "worker wrote into the grammar cache"
+    if log is not None:
+        inet = [
+            line
+            for line in log.read_text().splitlines()
+            if "sin_port" in line or "sin6_port" in line
+        ]
+        assert inet == [], inet
+
+
+def test_sandbox_resolves_relative_grammar_paths_against_host_cwd(tmp_path):
+    """The worker chdirs into scratch; relative cache/libs values must keep
+    pointing where the host meant (#116 review N2)."""
+    script = """
+import os
+from mcp_server.sandbox.capabilities import CapabilitySet
+from mcp_server.sandbox.caps_apply import apply
+apply(CapabilitySet(fs_read=(), fs_write=(), env_allow=frozenset(), network=True))
+print(os.environ.get("TREE_SITTER_LANGUAGE_PACK_CACHE_DIR"))
+print(os.environ.get("TREE_SITTER_LANGUAGE_PACK_LIBS_DIR"))
+print(os.environ.get("TREE_SITTER_LANGUAGE_PACK_MANIFEST_URL"))
+"""
+    host_cwd = tmp_path / "host"
+    host_cwd.mkdir()
+    env = _grammar_free_env(
+        tmp_path,
+        HOME="/host-home",
+        TREE_SITTER_LANGUAGE_PACK_CACHE_DIR=".cache/ts",
+        TREE_SITTER_LANGUAGE_PACK_LIBS_DIR="libs",
+        TREE_SITTER_LANGUAGE_PACK_MANIFEST_URL="https://example.invalid/manifest",
+        PYTHONPATH=os.pathsep.join(sys.path),
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        env=env,
+        cwd=host_cwd,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines() == [
+        str(host_cwd / ".cache" / "ts"),
+        str(host_cwd / "libs"),
+        # network=True keeps the pack untouched, but the scrub still drops a
+        # host-chosen manifest URL.
+        "None",
+    ]
+
+
+@pytest.mark.parametrize(
+    "env",
+    [
+        {"TREE_SITTER_LANGUAGE_PACK_CACHE_DIR": "/o", "XDG_CACHE_HOME": "/x", "HOME": "/h"},
+        {"XDG_CACHE_HOME": "/x", "HOME": "/h"},
+        {"HOME": "/h"},
+        {"HOME": "rel-home", "TREE_SITTER_LANGUAGE_PACK_LIBS_DIR": "rel-libs"},
+        {"TREE_SITTER_LANGUAGE_PACK_CACHE_DIR": "~/c", "HOME": "/h"},
+        {},
+    ],
+)
+def test_worker_grammar_path_resolution_matches_grammar_cache(monkeypatch, env):
+    from mcp_server.sandbox import caps_apply
+    from mcp_server.utils import grammar_cache
+
+    for key in (
+        "TREE_SITTER_LANGUAGE_PACK_CACHE_DIR",
+        "TREE_SITTER_LANGUAGE_PACK_LIBS_DIR",
+        "XDG_CACHE_HOME",
+        "HOME",
+    ):
+        monkeypatch.delenv(key, raising=False)
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+    assert caps_apply._host_grammar_paths() == (
+        grammar_cache.resolve_cache_root(),
+        grammar_cache.resolve_libs_dir(),
+    )

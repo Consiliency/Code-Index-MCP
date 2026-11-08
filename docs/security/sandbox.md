@@ -26,6 +26,15 @@ enforce declared read roots and override writable URI modes. Both
 so a readonly connection cannot attach a writable database. Unknown SQLite
 capabilities and non-boolean network values in capability JSON are rejected.
 
+With `network: false`, the worker also loads tree-sitter grammars from the
+local cache only, because tree-sitter-language-pack downloads from native code
+that the socket patch cannot see. The worker points the pack's manifest URL at
+an unknown-scheme sentinel that fails before a socket exists, and refuses with
+`DownloadError` any grammar that is not already extracted in the host cache or
+the shared libs directory. A cold cache fails the plugin load without a
+connection and without writing the host cache. See
+[Parser stack and grammar cache](../SUPPORT_MATRIX.md#parser-stack-and-grammar-cache).
+
 ## Limits
 
 These Python wrappers do not contain deliberately malicious plugins.

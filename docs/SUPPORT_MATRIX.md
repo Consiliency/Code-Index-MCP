@@ -151,7 +151,8 @@ tiers above are unchanged by the upgrade.
   It downloads them on first use into a versioned cache,
   `<root>/tree-sitter-language-pack/v1.20.0/libs` (about 93 MB for the 47
   registry grammars). The root is `TREE_SITTER_LANGUAGE_PACK_CACHE_DIR`, else
-  `$XDG_CACHE_HOME`, else `~/.cache`. Run `mcp-index grammars prefetch` while
+  `$XDG_CACHE_HOME`, else `$HOME/.cache`, else the running user's passwd home
+  `.cache`. Run `mcp-index grammars prefetch` while
   network access is available; `mcp-index grammars check` verifies every
   grammar loads offline. A cold cache with no network fails with
   `DownloadError`/`LanguageNotFoundError`. A warm cache works offline and
@@ -161,8 +162,23 @@ tiers above are unchanged by the upgrade.
   libraries to a world-readable directory that any user loads through
   `TREE_SITTER_LANGUAGE_PACK_LIBS_DIR=DIR`. Container images do this into
   `/opt/tree-sitter-language-pack/libs`, CI prefetches before the agent gate,
-  and sandboxed plugin workers keep the host cache root and libs directory even
+  and sandboxed plugin workers keep the host cache root and libs directory
+  (resolved to absolute paths against the host's working directory) even
   though their environment is scrubbed.
+- **Sandboxed workers never download grammars.** The pack downloads from
+  native code that the worker's Python socket guard cannot see, so a
+  network-denied worker (the default) also loads grammars from the local cache
+  only. It points `TREE_SITTER_LANGUAGE_PACK_MANIFEST_URL` at an unknown-scheme
+  sentinel that fails before any socket is created, and it refuses, with
+  `DownloadError`, any grammar that is not already extracted in the cache or
+  present in the libs directory, as well as the pack's download, prefetch and
+  manifest entry points. A cold, missing or rolled-over cache (for example
+  after a 1.20.x patch release moves the versioned directory) therefore fails
+  the plugin load closed, with no connection and nothing written to the host
+  cache, instead of downloading. A warm cache loads read-only. Prefetch on the
+  host after every pack upgrade. A plugin that calls the pack's private native
+  module directly is outside this cooperative guard; even then the sentinel
+  keeps it off the network.
 - **Grammar names.** The public language code `c_sharp` is unchanged; the pack
   grammar is `csharp`.
 - **Platform floor.** The language-pack Linux wheels need glibc 2.34 or newer.

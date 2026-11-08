@@ -12,7 +12,8 @@ The cache root resolves the same way the pack resolves it:
 
 1. ``TREE_SITTER_LANGUAGE_PACK_CACHE_DIR`` when set,
 2. otherwise ``$XDG_CACHE_HOME``,
-3. otherwise ``$HOME/.cache``.
+3. otherwise ``$HOME/.cache``,
+4. otherwise ``<passwd home of the running uid>/.cache``.
 
 The pack refuses a cache directory that is not owned by the running uid or is
 group- or other-writable, so a cache is per user. A warm cache loads without
@@ -29,13 +30,37 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable, List, Optional, Sequence
 
-from mcp_server.plugins.language_registry import get_required_grammars
-
 #: Environment variable the language pack reads for its cache root.
 CACHE_DIR_ENV = "TREE_SITTER_LANGUAGE_PACK_CACHE_DIR"
 
 #: Environment variable for a shared, read-only parser-library directory.
 LIBS_DIR_ENV = "TREE_SITTER_LANGUAGE_PACK_LIBS_DIR"
+
+#: Environment variable the pack reads (lazily) for its download manifest URL.
+MANIFEST_URL_ENV = "TREE_SITTER_LANGUAGE_PACK_MANIFEST_URL"
+
+#: Manifest URL for network-denied processes. The pack's HTTP client rejects
+#: the unknown scheme before it creates a socket, so even a download path the
+#: Python guard cannot see fails without touching the network.
+OFFLINE_MANIFEST_URL = "sandbox-offline://network-denied"
+
+#: Pack entry points that download, write the cache or reconfigure it. A
+#: network-denied process never calls them.
+_OFFLINE_REFUSED = (
+    "clean_cache",
+    "configure",
+    "download",
+    "download_all",
+    "download_group",
+    "init",
+    "manifest_groups",
+    "manifest_languages",
+    "prefetch",
+)
+
+#: Pack entry points that load a grammar by name; allowed only for grammars
+#: already extracted in the cache or present in the shared libs dir.
+_OFFLINE_GUARDED = ("get_language", "get_parser")
 
 #: Pack grammar names whose library file uses a different C symbol name.
 _LIBRARY_SYMBOL_NAMES = {"csharp": "c_sharp"}
@@ -44,24 +69,57 @@ _LIBRARY_SYMBOL_NAMES = {"csharp": "c_sharp"}
 _PROBE_SOURCE = b"x\n"
 
 
-def resolve_cache_root(environ: Optional[os._Environ | dict] = None) -> Optional[Path]:
-    """Return the cache root the language pack uses, without importing it.
+def _passwd_home() -> Optional[Path]:
+    try:
+        import pwd
 
-    Returns ``None`` only when no root can be derived (no override, no
-    ``XDG_CACHE_HOME`` and no ``HOME``), which is the case the pack itself
-    refuses.
+        home = pwd.getpwuid(os.getuid()).pw_dir
+    except (ImportError, KeyError, AttributeError, OSError):
+        return None
+    return Path(home) if home else None
+
+
+def _absolute(value: str, cwd: Optional[Path]) -> Path:
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        path = (cwd if cwd is not None else Path.cwd()) / path
+    return path
+
+
+def resolve_cache_root(
+    environ: Optional[os._Environ | dict] = None, *, cwd: Optional[Path] = None
+) -> Optional[Path]:
+    """Return the absolute cache root the language pack uses, without importing it.
+
+    Mirrors the pack: the override, then ``XDG_CACHE_HOME``, then
+    ``$HOME/.cache``, then the running uid's passwd home. A relative value is
+    resolved against ``cwd`` (default: the current directory), so a caller
+    that is about to ``chdir`` keeps pointing at the same cache. Returns
+    ``None`` only when no root can be derived at all.
     """
     env = os.environ if environ is None else environ
     override = (env.get(CACHE_DIR_ENV) or "").strip()
     if override:
-        return Path(override).expanduser()
+        return _absolute(override, cwd)
     xdg = (env.get("XDG_CACHE_HOME") or "").strip()
     if xdg:
-        return Path(xdg).expanduser()
+        return _absolute(xdg, cwd)
     home = (env.get("HOME") or "").strip()
     if home:
-        return Path(home).expanduser() / ".cache"
+        return _absolute(home, cwd) / ".cache"
+    passwd_home = _passwd_home()
+    if passwd_home is not None:
+        return passwd_home / ".cache"
     return None
+
+
+def resolve_libs_dir(
+    environ: Optional[os._Environ | dict] = None, *, cwd: Optional[Path] = None
+) -> Optional[Path]:
+    """Return the absolute shared parser-library directory, when configured."""
+    env = os.environ if environ is None else environ
+    value = (env.get(LIBS_DIR_ENV) or "").strip()
+    return _absolute(value, cwd) if value else None
 
 
 def _pack():
@@ -93,8 +151,7 @@ def effective_cache_dir() -> str:
 
 def libs_dir() -> Optional[Path]:
     """Return the shared parser-library directory, when configured."""
-    value = (os.environ.get(LIBS_DIR_ENV) or "").strip()
-    return Path(value).expanduser() if value else None
+    return resolve_libs_dir()
 
 
 def _library_names(directory: Path) -> set:
@@ -107,6 +164,13 @@ def _library_names(directory: Path) -> set:
             elif stem.startswith("tree_sitter_"):
                 names.add(stem[len("tree_sitter_") :])
     return names
+
+
+def get_required_grammars() -> List[str]:
+    """Return every pack grammar name the language registry needs."""
+    from mcp_server.plugins.language_registry import get_required_grammars as _required
+
+    return _required()
 
 
 def cached_grammars() -> List[str]:
@@ -203,3 +267,118 @@ def verify(languages: Optional[Sequence[str]] = None, *, offline: bool = True) -
             continue
         result.loaded.append(name)
     return result
+
+
+class OfflineGrammarGuard:
+    """Refuses language-pack downloads and cache writes in a network-denied process.
+
+    Installed by the sandbox worker when its capabilities deny network. A
+    grammar loads only when it is already extracted in the cache or present
+    in the shared libs dir; anything else raises the pack's ``DownloadError``
+    before native code runs, so a cold or rolled-over cache fails closed
+    without a connection and without writing the host cache.
+    """
+
+    def __init__(self, pack) -> None:
+        self._pack = pack
+        self._available: Optional[set] = None
+
+    def _loadable(self, name: str) -> bool:
+        candidates = {name, _symbol(name)}
+        try:
+            from mcp_server.plugins.language_registry import get_grammar_name
+
+            grammar = get_grammar_name(name)
+        except Exception:  # noqa: BLE001 - registry lookup is best effort
+            grammar = None
+        if grammar:
+            candidates.update({grammar, _symbol(grammar)})
+        for refresh in (False, True):
+            if self._available is None or refresh:
+                self._available = set(cached_grammars())
+            if candidates & self._available:
+                return True
+        return False
+
+    def require(self, name: object) -> None:
+        if not isinstance(name, str) or not self._loadable(name):
+            raise self._pack.DownloadError(
+                f"grammar {name!r} is not in the local grammar cache, and this "
+                "process may not download it (network denied). Run "
+                "`mcp-index grammars prefetch` on the host."
+            )
+
+    def refuse(self, entry_point: str) -> None:
+        raise self._pack.DownloadError(
+            f"tree_sitter_language_pack.{entry_point} is disabled in a "
+            "network-denied process; grammars must be prefetched on the host."
+        )
+
+
+def install_offline_guard() -> OfflineGrammarGuard:
+    """Make this process load grammars from the local cache only.
+
+    Points the pack's manifest URL at :data:`OFFLINE_MANIFEST_URL` (no socket
+    is ever created for it) and wraps the pack's public entry points so a
+    grammar that is not already extracted raises ``DownloadError`` instead of
+    downloading or extracting into the cache. Idempotent.
+    """
+    import functools
+
+    pack = _pack()
+    os.environ[MANIFEST_URL_ENV] = OFFLINE_MANIFEST_URL
+    os.environ.pop("TREE_SITTER_LANGUAGE_PACK_TLS_ROOTS", None)
+    existing = getattr(pack, "_mcp_offline_guard", None)
+    if existing is not None:
+        return existing
+    guard = OfflineGrammarGuard(pack)
+    modules = [pack]
+    api = getattr(pack, "api", None)
+    if api is not None:
+        modules.append(api)
+
+    def _guarded(original):
+        @functools.wraps(original)
+        def wrapper(name, *args, **kwargs):
+            guard.require(name)
+            return original(name, *args, **kwargs)
+
+        return wrapper
+
+    def _refused(entry_point):
+        def wrapper(*_args, **_kwargs):
+            guard.refuse(entry_point)
+
+        wrapper.__name__ = entry_point
+        return wrapper
+
+    def _guarded_process(original):
+        @functools.wraps(original)
+        def wrapper(source, config, *args, **kwargs):
+            language = getattr(config, "language", None)
+            if language is None and isinstance(config, dict):
+                language = config.get("language")
+            if language is None and isinstance(config, str):
+                import json
+
+                try:
+                    language = json.loads(config).get("language")
+                except (ValueError, AttributeError):
+                    language = None
+            guard.require(language)
+            return original(source, config, *args, **kwargs)
+
+        return wrapper
+
+    for module in modules:
+        for entry_point in _OFFLINE_GUARDED:
+            original = getattr(module, entry_point, None)
+            if original is not None:
+                setattr(module, entry_point, _guarded(original))
+        for entry_point in _OFFLINE_REFUSED:
+            if hasattr(module, entry_point):
+                setattr(module, entry_point, _refused(entry_point))
+        if hasattr(module, "process"):
+            setattr(module, "process", _guarded_process(getattr(module, "process")))
+    pack._mcp_offline_guard = guard
+    return guard

@@ -103,7 +103,102 @@ def test_resolve_cache_root_matches_pack_resolution_order():
     assert str(grammar_cache.resolve_cache_root(env)) == "/x"
     env.pop("XDG_CACHE_HOME")
     assert str(grammar_cache.resolve_cache_root(env)) == "/h/.cache"
+
+
+def test_resolve_cache_root_falls_back_to_passwd_home_like_the_pack(monkeypatch, tmp_path):
+    from pathlib import Path
+
+    monkeypatch.setattr(grammar_cache, "_passwd_home", lambda: Path("/p"))
+    assert str(grammar_cache.resolve_cache_root({})) == "/p/.cache"
+    monkeypatch.setattr(grammar_cache, "_passwd_home", lambda: None)
     assert grammar_cache.resolve_cache_root({}) is None
+
+
+def test_relative_grammar_paths_resolve_against_the_given_cwd(tmp_path):
+    env = {grammar_cache.CACHE_DIR_ENV: "rel/cache", grammar_cache.LIBS_DIR_ENV: "rel/libs"}
+    assert grammar_cache.resolve_cache_root(env, cwd=tmp_path) == tmp_path / "rel" / "cache"
+    assert grammar_cache.resolve_libs_dir(env, cwd=tmp_path) == tmp_path / "rel" / "libs"
+    assert grammar_cache.resolve_libs_dir({}, cwd=tmp_path) is None
+
+
+class _FakePackError(Exception):
+    pass
+
+
+def _fake_pack(downloaded):
+    import types
+
+    calls = []
+    pack = types.ModuleType("fake_tree_sitter_language_pack")
+    pack.DownloadError = _FakePackError
+    pack.downloaded_languages = lambda: list(downloaded)
+
+    def recorder(name):
+        def entry(*args, **kwargs):
+            calls.append((name, args))
+            return name
+
+        return entry
+
+    for name in (
+        "get_language",
+        "get_parser",
+        "process",
+        "download",
+        "download_all",
+        "download_group",
+        "prefetch",
+        "init",
+        "configure",
+        "clean_cache",
+        "manifest_languages",
+        "manifest_groups",
+    ):
+        setattr(pack, name, recorder(name))
+    return pack, calls
+
+
+def test_offline_guard_loads_only_extracted_grammars(monkeypatch, tmp_path):
+    """#116 review B2: a network-denied process never downloads or extracts."""
+    pack, calls = _fake_pack(["c", "csharp"])
+    monkeypatch.setattr(grammar_cache, "_pack", lambda: pack)
+    monkeypatch.delenv(grammar_cache.LIBS_DIR_ENV, raising=False)
+    monkeypatch.setenv(grammar_cache.MANIFEST_URL_ENV, "https://attacker.invalid/m.json")
+    monkeypatch.setenv("TREE_SITTER_LANGUAGE_PACK_TLS_ROOTS", "/tmp/roots.pem")
+
+    guard = grammar_cache.install_offline_guard()
+    assert grammar_cache.install_offline_guard() is guard  # idempotent
+    assert os.environ[grammar_cache.MANIFEST_URL_ENV] == grammar_cache.OFFLINE_MANIFEST_URL
+    assert grammar_cache.OFFLINE_MANIFEST_URL.split(":", 1)[0] not in {"http", "https", "file"}
+    assert "TREE_SITTER_LANGUAGE_PACK_TLS_ROOTS" not in os.environ
+
+    assert pack.get_language("c") == "get_language"
+    assert pack.get_parser("c_sharp") == "get_parser"  # registry code -> pack grammar
+    assert pack.process("int x;", {"language": "c"}) == "process"
+    for name in ("cpp", "zig", None):
+        with pytest.raises(_FakePackError, match="not in the local grammar cache"):
+            pack.get_language(name)
+    with pytest.raises(_FakePackError):
+        pack.process("x", {"language": "zig"})
+    with pytest.raises(_FakePackError):
+        pack.process("x", object())
+    for name in grammar_cache._OFFLINE_REFUSED:
+        with pytest.raises(_FakePackError, match="network-denied"):
+            getattr(pack, name)(["c"])
+    assert [name for name, _ in calls] == ["get_language", "get_parser", "process"]
+
+
+def test_offline_guard_accepts_shared_libs_dir_grammars(monkeypatch, tmp_path):
+    shared = tmp_path / "libs"
+    shared.mkdir()
+    (shared / "libtree_sitter_cpp.so").write_bytes(b"")
+    pack, _calls = _fake_pack([])
+    monkeypatch.setattr(grammar_cache, "_pack", lambda: pack)
+    monkeypatch.setenv(grammar_cache.LIBS_DIR_ENV, str(shared))
+    grammar_cache.install_offline_guard()
+    assert pack.get_language("cpp") == "get_language"
+    with pytest.raises(_FakePackError):
+        pack.get_language("c")
 
 
 def test_exported_libs_dir_loads_every_grammar_without_a_cache(warm_grammar_cache, tmp_path):
