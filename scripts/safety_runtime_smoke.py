@@ -205,8 +205,11 @@ def run(root: Path, entrypoint: str, env: dict[str, str]):
                 admitted = False
                 if mode == "inflight":
                     slow = fixture / "slow_synthetic.py"
+                    # The writer must outlive the 3 s shutdown grace window. treesitter-chunker
+                    # 6 chunks 20k functions about 34x faster than 4.x (~1.3 s), which let the
+                    # write publish during shutdown; 100k keeps it in flight (#115).
                     slow.write_text(
-                        "\n".join(f"def synthetic_{i}():\n    return {i}\n" for i in range(20000))
+                        "\n".join(f"def synthetic_{i}():\n    return {i}\n" for i in range(100000))
                     )
                     commit_fixture(slow)
                     send(
