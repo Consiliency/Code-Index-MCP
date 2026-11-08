@@ -67,6 +67,16 @@ def test_main_ci_required_aggregator_depends_on_agent_gate():
     assert aggregator["name"] == "Protected Evidence - Agent Gate Passed"
     assert _needs(aggregator) == {"agent-gate"}
     assert "continue-on-error" not in aggregator
+    # A failed matrix leg would otherwise skip the aggregator, and GitHub
+    # treats a skipped required check as passing (#116 review B1).
+    assert aggregator["if"] == "${{ always() }}"
+    result_steps = [
+        step
+        for step in aggregator["steps"]
+        if step.get("env", {}).get("AGENT_GATE_RESULT") == "${{ needs.agent-gate.result }}"
+    ]
+    assert len(result_steps) == 1
+    assert 'test "${AGENT_GATE_RESULT}" = "success"' in result_steps[0]["run"]
 
     gate = jobs["agent-gate"]
     # Python-version matrix (#115): the 3.12 leg evaluates to the exact

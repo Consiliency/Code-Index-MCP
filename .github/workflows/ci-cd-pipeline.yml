@@ -91,13 +91,21 @@ jobs:
         run: make agent-gate
 
   agent-gate-passed:
+    # Required check. GitHub skips a job whose needs failed, and a skipped
+    # required check counts as passing, so this aggregator always runs and
+    # fails unless every agent-gate matrix leg succeeded.
     name: Protected Evidence - Agent Gate Passed
+    if: ${{ always() }}
     runs-on: ubuntu-latest
     needs:
       - agent-gate
     steps:
-      - name: Confirm protected agent gate passed
-        run: echo "Required protected LOCALCI gate passed."
+      - name: Confirm every protected agent gate leg passed
+        env:
+          AGENT_GATE_RESULT: ${{ needs.agent-gate.result }}
+        run: |
+          echo "agent-gate result: ${AGENT_GATE_RESULT}"
+          test "${AGENT_GATE_RESULT}" = "success"
 
   informational-test-cross-platform:
     name: Informational - Test Suite (${{ matrix.os }})

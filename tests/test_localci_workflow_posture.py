@@ -83,3 +83,25 @@ def test_agent_gate_python_matrix_is_bounded_and_keeps_required_name() -> None:
     steps = "\n".join(str(step.get("run", "")) for step in gate["steps"])
     assert "mcp-index grammars prefetch" in steps
     assert "-n auto" not in steps
+
+
+def test_agent_gate_aggregator_fails_closed_when_a_leg_fails() -> None:
+    """A skipped required check counts as passing on GitHub (#116 review B1)."""
+    import yaml
+
+    jobs = yaml.safe_load(_read("ci-cd-pipeline.yml"))["jobs"]
+    aggregator = jobs["agent-gate-passed"]
+    assert aggregator["name"] == "Protected Evidence - Agent Gate Passed"
+    assert aggregator["needs"] == ["agent-gate"]
+    assert aggregator["if"] == "${{ always() }}"
+    assert "continue-on-error" not in aggregator
+    assert aggregator["steps"] == [
+        {
+            "name": "Confirm every protected agent gate leg passed",
+            "env": {"AGENT_GATE_RESULT": "${{ needs.agent-gate.result }}"},
+            "run": (
+                'echo "agent-gate result: ${AGENT_GATE_RESULT}"\n'
+                'test "${AGENT_GATE_RESULT}" = "success"\n'
+            ),
+        }
+    ]
