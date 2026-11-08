@@ -114,6 +114,7 @@ jobs:
       - name: Run release preparation gates
         env:
           BAML_TOOLCHAIN: ${{ runner.temp }}/baml-0.23.0/bin/baml-cli
+          DO_NOT_TRACK: "1"
         run: |
           python -m pip install --upgrade pip uv
           uv sync --locked --extra dev --extra semantic
@@ -224,6 +225,7 @@ jobs:
       - name: Run release gates
         env:
           BAML_TOOLCHAIN: ${{ runner.temp }}/baml-0.23.0/bin/baml-cli
+          DO_NOT_TRACK: "1"
         run: |
           python -m pip install --upgrade pip uv
           uv sync --locked --extra dev --extra semantic

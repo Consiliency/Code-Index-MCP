@@ -185,7 +185,12 @@ def test_baml_regeneration_and_formatting_are_reproducible(tmp_path):
             pytest.fail("BAML 0.23.0 toolchain is required by the release gate")
         pytest.skip("matching BAML 0.23.0 toolchain is not installed")
     checked = subprocess.run(
-        [toolchain, "--version"], capture_output=True, text=True, check=True, timeout=30
+        [toolchain, "--version"],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=30,
+        env={**os.environ, "DO_NOT_TRACK": "1"},
     )
     if not checked.stdout.strip().endswith("0.23.0"):
         if os.environ.get("BAML_REQUIRE_REGEN") == "1":

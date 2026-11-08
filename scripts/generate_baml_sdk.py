@@ -1,6 +1,7 @@
 """Regenerate the checked-in BAML v1 Python SDK with clean whitespace."""
 
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -36,17 +37,23 @@ def bake_recording_default_off(sdk: Path) -> None:
 
 def main() -> int:
     toolchain = os.environ.get("BAML_TOOLCHAIN", "baml")
+    # The toolchain sends a PostHog usage event per invocation unless told not to.
+    env = {**os.environ, "DO_NOT_TRACK": "1"}
     version = subprocess.run(
-        [toolchain, "--version"], capture_output=True, text=True, check=True
+        [toolchain, "--version"], capture_output=True, text=True, check=True, env=env
     ).stdout.strip()
     if not version.endswith(VERSION):
         raise SystemExit(f"BAML toolchain {VERSION} required; found {version}")
 
+    # The generator only prunes files listed in its gitignored output manifest,
+    # so regenerating over a checkout would keep modules a new version dropped.
+    shutil.rmtree(SDK, ignore_errors=True)
     # Generation is offline and pinned to this repo; agent-run gates (make
     # agent-gate) must not depend on the toolchain's editor/agent skill install.
     subprocess.run(
         [toolchain, "generate", "--agent-skill-check", "off", "--project", str(ROOT)],
         check=True,
+        env=env,
     )
     bake_recording_default_off(SDK)
     for path in SDK.rglob("*"):

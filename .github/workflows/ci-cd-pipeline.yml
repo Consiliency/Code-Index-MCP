@@ -77,6 +77,9 @@ jobs:
           mcp-index grammars prefetch --cache-dir "$TREE_SITTER_LANGUAGE_PACK_CACHE_DIR"
 
       - name: Install pinned BAML 0.23.0 toolchain
+        env:
+          # baml-cli sends a PostHog usage event per invocation unless told not to.
+          DO_NOT_TRACK: "1"
         run: |
           set -euo pipefail
           curl -fsSL --retry 3 -o "$RUNNER_TEMP/baml.tar.gz" https://github.com/BoundaryML/baml/releases/download/baml-language-0.23.0/baml-language-0.23.0-x86_64-unknown-linux-gnu.tar.gz
@@ -88,6 +91,7 @@ jobs:
       - name: Run pre-PR agent gate
         env:
           BAML_TOOLCHAIN: ${{ runner.temp }}/baml-0.23.0/bin/baml-cli
+          DO_NOT_TRACK: "1"
         run: make agent-gate
 
   agent-gate-passed:
