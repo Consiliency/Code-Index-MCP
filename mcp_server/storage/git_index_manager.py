@@ -5,6 +5,7 @@ supporting incremental updates and artifact management.
 """
 
 import hashlib
+import inspect
 import json
 import logging
 import math
@@ -12,7 +13,6 @@ import os
 import shutil
 import sqlite3
 import subprocess
-import inspect
 import tempfile
 import threading
 import uuid
