@@ -5,6 +5,7 @@ supporting incremental updates and artifact management.
 """
 
 import hashlib
+import inspect
 import json
 import logging
 import math
@@ -13,6 +14,7 @@ import shutil
 import sqlite3
 import subprocess
 import tempfile
+import threading
 import uuid
 from contextlib import closing
 from dataclasses import dataclass, replace
@@ -168,6 +170,19 @@ class RuntimeRestoreResult:
     counts_after: Dict[str, int]
 
 
+#: Test-only seam for the installed-wheel shutdown smoke: when both are set and
+#: the hold file exists, the staged rebuild parks at that checkpoint (writing
+#: ``<hold file>.held``) until the file is removed or shutdown is requested.
+#: This makes "a writer is in flight when shutdown starts" deterministic without
+#: relying on a fixture being slow enough. Unset in production, it is a no-op.
+_REBUILD_HOLD_STAGE_ENV = "MCP_TEST_REBUILD_HOLD_STAGE"
+_REBUILD_HOLD_FILE_ENV = "MCP_TEST_REBUILD_HOLD_FILE"
+
+
+class RebuildShutdownRequested(RuntimeError):
+    """The owning service is shutting down; abandon the unpublished generation."""
+
+
 class GitAwareIndexManager:
     """Manages indexes synchronized with git commits."""
 
@@ -192,6 +207,29 @@ class GitAwareIndexManager:
         # Wired post-construction by MultiRepositoryWatcher to avoid circular import.
         # Signature: (repo_id: str, current_branch: str, tracked_branch: str) -> None
         self.on_branch_drift: _DriftCallback = None
+        self._shutdown_event = threading.Event()
+
+    @property
+    def _shutdown(self) -> threading.Event:
+        event = self.__dict__.get("_shutdown_event")
+        if event is None:
+            event = self.__dict__.setdefault("_shutdown_event", threading.Event())
+        return event
+
+    def request_shutdown(self) -> None:
+        """Ask in-flight staged rebuilds to stop before they publish.
+
+        The owning service calls this when shutdown starts. A rebuild stops
+        between files and at every pre-publication checkpoint, abandoning its
+        staged generation (the active index is untouched), so the service's
+        graceful cleanup finishes inside the shutdown grace window instead of
+        waiting for a full rebuild and then being force-exited
+        (#116 review S1).
+        """
+        self._shutdown.set()
+
+    def shutdown_requested(self) -> bool:
+        return self._shutdown.is_set()
 
     def sync_repository_index(
         self,
@@ -762,6 +800,13 @@ class GitAwareIndexManager:
                         admitted.added.append(new_path)
                 result = self._incremental_index_update(repo_id, stage_ctx, admitted)
             if not result.clean:
+                if self._shutdown.is_set():
+                    # The walk stopped because the service is shutting down:
+                    # record it as abandoned, not as a real index failure
+                    # (#116 re-check NIT 2).
+                    raise RebuildShutdownRequested(
+                        "service shutdown requested during the index walk"
+                    )
                 raise RuntimeError("Staged full index did not complete cleanly")
             if getattr(self.dispatcher, "_semantic_enabled", False) is True:
                 self._finalize_staged_vectors(repo_id, stage_ctx)
@@ -792,6 +837,8 @@ class GitAwareIndexManager:
             self._rebuild_checkpoint("before_provenance")
             if not self._git_source_unchanged(repo_path, current_commit, current_branch):
                 raise RuntimeError("Repository changed while the generation was building")
+            # Last shutdown check: only the registry publish write itself remains.
+            self._rebuild_checkpoint("before_publish")
             self.registry.publish_generation(
                 repo_id,
                 generation=generation,
@@ -1158,7 +1205,24 @@ class GitAwareIndexManager:
                     os.close(fd)
 
     def _rebuild_checkpoint(self, stage: str) -> None:
-        """Failure-injection seam used by publication boundary tests."""
+        """Failure-injection seam used by publication boundary tests.
+
+        Every checkpoint precedes ``publish_generation``, so it is also where a
+        rebuild honors :meth:`request_shutdown`.
+        """
+        self._hold_for_test(stage)
+        if self._shutdown.is_set():
+            raise RebuildShutdownRequested(f"service shutdown requested before {stage}")
+
+    def _hold_for_test(self, stage: str) -> None:
+        if os.environ.get(_REBUILD_HOLD_STAGE_ENV) != stage:
+            return
+        hold = os.environ.get(_REBUILD_HOLD_FILE_ENV)
+        if not hold or not os.path.exists(hold):
+            return
+        Path(f"{hold}.held").write_text(f"{os.getpid()} {stage}\n", encoding="utf-8")
+        while os.path.exists(hold) and not self._shutdown.wait(0.01):
+            pass
 
     def _quarantine_active_index(
         self,
@@ -1549,6 +1613,17 @@ class GitAwareIndexManager:
 
         return f"Semantic stage ended with {stage}"
 
+    @staticmethod
+    def _accepts_keyword(func: Any, name: str) -> bool:
+        try:
+            parameters = inspect.signature(func).parameters.values()
+        except (TypeError, ValueError):
+            return False
+        return any(
+            parameter.name == name or parameter.kind is inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters
+        )
+
     def _low_level_stage_error(self, low_level: Optional[Dict[str, Any]]) -> Optional[str]:
         """Return an exact lexical/storage blocker before semantic-stage accounting starts."""
         if not low_level:
@@ -1599,11 +1674,16 @@ class GitAwareIndexManager:
         index_dir = Path(repo_info.index_location)
         index_dir.mkdir(parents=True, exist_ok=True)
 
-        # Index the directory
+        # Index the directory. A shutdown request stops the walk between files.
         logger.info(f"Starting full index of {repo_info.name}")
+        cancel_kwargs: Dict[str, Any] = {}
+        if self._accepts_keyword(self.dispatcher.index_directory, "cancel_check"):
+            cancel_kwargs["cancel_check"] = self._shutdown.is_set
         try:
             if progress_callback is None:
-                stats = self.dispatcher.index_directory(ctx, repo_path, recursive=True)
+                stats = self.dispatcher.index_directory(
+                    ctx, repo_path, recursive=True, **cancel_kwargs
+                )
             else:
                 try:
                     stats = self.dispatcher.index_directory(
@@ -1611,11 +1691,14 @@ class GitAwareIndexManager:
                         repo_path,
                         recursive=True,
                         progress_callback=progress_callback,
+                        **cancel_kwargs,
                     )
                 except TypeError as exc:
                     if "progress_callback" not in str(exc):
                         raise
-                    stats = self.dispatcher.index_directory(ctx, repo_path, recursive=True)
+                    stats = self.dispatcher.index_directory(
+                        ctx, repo_path, recursive=True, **cancel_kwargs
+                    )
         except Exception as exc:
             result.failed += 1
             result.errors.append(f"Full index failed: {exc}")

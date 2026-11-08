@@ -540,6 +540,7 @@ def _build_tool_list() -> list[types.Tool]:
                             "health": {"type": "object"},
                             "summarization": {"type": "object"},
                             "repositories": {"type": "array"},
+                            "grammars": {"type": "object"},
                             "client": {"type": ["object", "null"]},
                         },
                         required=("status", "version", "features", "plugins", "repositories"),
@@ -1031,12 +1032,44 @@ class _StdioOutput:
 # ---------------------------------------------------------------------------
 
 
+def _log_grammar_availability() -> None:
+    """Warn loudly at startup when registry grammars cannot load offline.
+
+    Files in those languages fail indexing (``grammar_unavailable``) instead
+    of being indexed without chunks; ``get_status`` reports the same state
+    (#116 review S3).
+    """
+    try:
+        from mcp_server.utils import grammar_cache
+
+        status = grammar_cache.grammar_status()
+    except Exception as exc:  # noqa: BLE001 - never block startup on the check
+        logger.warning("Tree-sitter grammar check failed: %s", type(exc).__name__)
+        return
+    if status["state"] == "ready":
+        return
+    logger.error(
+        "Tree-sitter grammars unavailable offline for %d language(s) (%s)%s. "
+        "Indexing those files fails until fixed. %s",
+        len(status["languages"]),
+        ", ".join(status["languages"]) or "none",
+        (
+            "; unsafe libs dir: " + "; ".join(status["libs_dir_problems"])
+            if status["libs_dir_problems"]
+            else ""
+        ),
+        status["remediation"],
+    )
+
+
 async def initialize_services() -> None:
     """Initialize all services needed for the MCP server."""
     global dispatcher, plugin_manager, sqlite_store, initialization_error
     global _file_watcher, _indexing_thread, _fts_rebuild_thread
     global _indexing_total_files, _indexing_started_at, _local_ctx
     _auto_index = False
+
+    _log_grammar_availability()
 
     try:
         from mcp_server.core.ignore_patterns import build_walker_filter
@@ -1685,6 +1718,14 @@ async def _serve(registry_path=None) -> None:
             watchdog = threading.Timer(_SHUTDOWN_GRACE_SECONDS, _force_shutdown)
             watchdog.daemon = True
             watchdog.start()
+            # An in-flight reindex runs in a worker thread that the serve scope
+            # cannot cancel (abandon_on_cancel=False): without this it kept
+            # building, published, and left cleanup too little of the grace
+            # window, so the watchdog force-exited a healthy service
+            # (#116 review S1).
+            request_shutdown = getattr(git_index_manager, "request_shutdown", None)
+            if callable(request_shutdown):
+                request_shutdown()
         serve_scope.cancel()
 
     try:

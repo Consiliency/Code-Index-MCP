@@ -141,6 +141,83 @@ topology, or install-surface support expansion.
 | Unsandboxed or sandbox-disabled plugin path | disabled-by-default | Explicit operator opt-in only | `activation_mode=disabled_by_default`, sandbox docs | Enabling unsandboxed fallback does not widen documented default support |
 | Same-repo sibling worktrees and non-default indexed routing | unsupported | Outside the indexed-routing contract | readiness classifier, v3 topology docs, failure-matrix tests | Use native search or readiness remediation instead of treating this as indexed support |
 
+## Parser stack and grammar cache
+
+The parser stack is treesitter-chunker 6.x, tree-sitter 0.26.x and
+tree-sitter-language-pack 1.20.x (Consiliency/Code-Index-MCP#115). Support
+tiers above are unchanged by the upgrade.
+
+- **Grammar delivery.** Language-pack 1.20 no longer bundles parser libraries.
+  It downloads them on first use into a versioned cache,
+  `<root>/tree-sitter-language-pack/v1.20.0/libs` (about 93 MB for the 47
+  registry grammars). The root is `TREE_SITTER_LANGUAGE_PACK_CACHE_DIR`, else
+  `$XDG_CACHE_HOME`, else `$HOME/.cache`, else the running user's passwd home
+  `.cache`. Run `mcp-index grammars prefetch` while
+  network access is available; `mcp-index grammars check` verifies every
+  grammar loads offline. A cold cache with no network fails with
+  `DownloadError`/`LanguageNotFoundError`. A warm cache works offline and
+  read-only. The pack refuses a cache directory that is not owned by the
+  running user or is group- or other-writable, so the cache is per user. For
+  shared installs, `mcp-index grammars prefetch --export-libs DIR` copies the
+  libraries to a world-readable directory that any user loads through
+  `TREE_SITTER_LANGUAGE_PACK_LIBS_DIR=DIR`. The pack loads that directory
+  first, without an ownership check, into the server and every sandbox worker,
+  so it must be owned by root or the service user and must not be group- or
+  other-writable; `mcp-index grammars check` fails otherwise, and also when a
+  library in it is writable by others or is a symlink. The export writes each
+  library to a temporary file and renames it into place, so re-exporting on a
+  live host does not disturb running processes. It refuses symlinked path
+  components, an existing directory that is writable by others (such as
+  `/tmp`) or holds anything but parser libraries, and only sets mode 0755 on
+  directories it creates. Container images do this into
+  `/opt/tree-sitter-language-pack/libs`, CI prefetches before the agent gate,
+  and sandboxed plugin workers keep the host cache root and libs directory
+  (resolved to absolute paths against the host's working directory) even
+  though their environment is scrubbed.
+- **Sandboxed workers never download grammars.** The pack downloads from
+  native code that the worker's Python socket guard cannot see, so a
+  network-denied worker (the default) also loads grammars from the local cache
+  only. It points `TREE_SITTER_LANGUAGE_PACK_MANIFEST_URL` at an unknown-scheme
+  sentinel that fails before any socket is created, and it refuses, with
+  `DownloadError`, any grammar that is not already extracted in the cache or
+  present in the libs directory, as well as the pack's download, prefetch and
+  manifest entry points. A cold, missing or rolled-over cache (for example
+  after a 1.20.x patch release moves the versioned directory) therefore fails
+  the plugin load closed, with no connection and nothing written to the host
+  cache, instead of downloading. A warm cache loads read-only. Prefetch on the
+  host after every pack upgrade. A plugin that calls the pack's native module or
+  public loader classes directly, or changes its own environment (for example
+  clearing the manifest URL), is outside this cooperative guard: it can create
+  the versioned cache directory and a lock file, and with the manifest URL
+  cleared it can download. This matches the sandbox's cooperative model; the
+  guard does not contain malicious plugins.
+- **Missing grammars fail closed.** Indexing a file whose plugin needs a
+  grammar that is not loadable offline (not in the cache or libs directory)
+  fails with
+  `grammar_unavailable` instead of storing the file without chunks, so a
+  reindex reports those files as failed and does not publish the generation;
+  the previous generation, or `missing_index`, stays in place. One failed file
+  blocks the whole repository's generation, in every language, as any failed
+  file does; prefetching is therefore mandatory on every host. Document-plugin
+  languages (`markdown`, `plaintext`) never load a grammar and are not
+  affected. `get_status` reports a `grammars` block with `state` (`ready`,
+  `grammar_unavailable`, or `libs_dir_unsafe` when every grammar loads but the
+  shared libs directory fails its ownership or permission checks),
+  the missing grammars, the affected language codes, libs-directory problems
+  and the remediation, and the server logs an error at startup in the same
+  case. Repository readiness of an already published index is unchanged.
+- **Grammar names.** The public language code `c_sharp` is unchanged; the pack
+  grammar is `csharp`.
+- **Platform floor.** The language-pack Linux wheels need glibc 2.34 or newer.
+- **Index identity.** Chunk ids move to the `treesitter_chunk_id_v6` scheme. An
+  index built with treesitter-chunker 4.x (`treesitter_chunk_id_v4`) reports
+  `scheme_mismatch`, fails closed and needs a full `reindex`; it is never mixed
+  with 6.x ids. Semantic profiles fingerprint the chunker version, so 4.x
+  vectors and summaries read as profile-incompatible until rebuilt.
+- **Python.** The required agent gate runs on Python 3.12, 3.13 and 3.14 in
+  hosted Linux CI. That is CI evidence, not installed-runtime acceptance on
+  those versions.
+
 ## V13 Verification Boundary
 
 Published tiers above are unchanged. The `>=3.12` package requirement and

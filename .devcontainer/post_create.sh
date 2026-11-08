@@ -3,12 +3,12 @@ set -e
 
 echo "🚀 Post-create: configuring environment"
 
-# Create and activate virtual environment
-uv venv
+# Install locked Python deps with uv (requirements.txt was retired)
+uv sync --locked --extra dev
 source .venv/bin/activate
 
-# Install Python deps with uv
-uv pip install -r requirements.txt
+# Prefetch tree-sitter grammars (language-pack 1.20 downloads on first use)
+mcp-index grammars prefetch
 
 # Confirm tools
 echo "✅ Python: $(python --version)"

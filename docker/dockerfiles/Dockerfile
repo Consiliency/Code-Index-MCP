@@ -28,6 +28,15 @@ COPY .coveragerc .
 # Install the package in development mode
 RUN uv sync --locked
 
+# Prefetch every registry grammar (tree-sitter-language-pack 1.20 downloads on
+# first use) and export the parser libraries to a shared read-only directory, so
+# containers never download at runtime and any user can load them
+# (Consiliency/Code-Index-MCP#115).
+RUN python -m mcp_server.cli.grammar_commands prefetch --cache-dir /tmp/ts-grammar-cache \
+        --export-libs /opt/tree-sitter-language-pack/libs && \
+    rm -rf /tmp/ts-grammar-cache
+ENV TREE_SITTER_LANGUAGE_PACK_LIBS_DIR=/opt/tree-sitter-language-pack/libs
+
 # Create volume for code indexing
 VOLUME ["/code"]
 

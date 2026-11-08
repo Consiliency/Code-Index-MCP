@@ -2561,6 +2561,15 @@ class EnhancedDispatcher:
                 and bounded_jsonl_shard is None
             ):
                 shard = plugin.indexFile(path, content)
+                grammar_error = self._grammar_unavailable_error(plugin_language)
+                if grammar_error is not None:
+                    return IndexResult(
+                        status=IndexResultStatus.ERROR,
+                        path=path,
+                        observed_hash=None,
+                        actual_hash=None,
+                        error=grammar_error,
+                    )
             try:
                 self._persist_index_shard(ctx, path, content, plugin_language, shard)
             except Exception as e:
@@ -2882,8 +2891,17 @@ class EnhancedDispatcher:
             start_time = time.time()
             logger.info(f"Indexing {path} with {plugin.lang} plugin (guarded)")
             shard = plugin.indexFile(path, content)
+            language = get_language_by_extension(path.suffix.lower()) or plugin.language
+            grammar_error = self._grammar_unavailable_error(language)
+            if grammar_error is not None:
+                return IndexResult(
+                    status=IndexResultStatus.ERROR,
+                    path=path,
+                    observed_hash=expected_hash,
+                    actual_hash=actual_hash,
+                    error=grammar_error,
+                )
             try:
-                language = get_language_by_extension(path.suffix.lower()) or plugin.language
                 self._persist_index_shard(ctx, path, content, language, shard)
             except Exception as e:
                 return IndexResult(
@@ -4051,6 +4069,25 @@ class EnhancedDispatcher:
             return False
         lowered = error.lower()
         return "database is locked" in lowered or "database table is locked" in lowered
+
+    @staticmethod
+    def _grammar_unavailable_error(language: Optional[str]) -> Optional[str]:
+        """Return a ``grammar_unavailable`` error when ``language`` cannot parse.
+
+        Checked after the plugin ran (an unsandboxed plugin with network access
+        may have fetched the grammar on first use), and before the shard is
+        persisted. A plugin that swallowed the missing grammar would otherwise
+        store the file without chunks and the reindex would publish as ready
+        (#116 review S3).
+        """
+        from mcp_server.utils import grammar_cache
+
+        grammar = grammar_cache.unavailable_grammar(language)
+        if grammar is None:
+            return None
+        message = str(grammar_cache.GrammarUnavailableError(str(language), grammar))
+        logger.error("%s", message)
+        return message
 
     def _is_non_indexable_result(self, mutation: IndexResult) -> bool:
         if mutation.status in {

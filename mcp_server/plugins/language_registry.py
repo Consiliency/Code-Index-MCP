@@ -96,6 +96,10 @@ LANGUAGE_CONFIGS = {
     # .NET Languages
     "c_sharp": {
         "code": "c_sharp",
+        # tree-sitter-language-pack 1.20 names this grammar "csharp"; the public
+        # language code (and the chunker language, which feeds chunk ids) stays
+        # "c_sharp" (Consiliency/Code-Index-MCP#115).
+        "grammar": "csharp",
         "name": "C#",
         "extensions": [".cs"],
     },
@@ -301,3 +305,43 @@ def get_language_by_extension(extension: str) -> str | None:
         if extension in config["extensions"]:
             return lang_code
     return None
+
+
+#: Registry languages that are not backed by a tree-sitter grammar.
+GRAMMARLESS_LANGUAGES = frozenset({"plaintext"})
+
+#: Registry languages whose plugin is a document plugin
+#: (``BaseDocumentPlugin``) that never loads a tree-sitter grammar. Their
+#: grammar is still prefetched, but a missing one must not fail their files
+#: (#116 re-check SHOULD-FIX 1).
+PLUGIN_GRAMMARLESS_LANGUAGES = frozenset({"markdown", "plaintext"})
+
+#: Grammars loaded directly by specialized plugins in addition to the
+#: registry codes (the TypeScript plugin parses ``.tsx`` with ``tsx``).
+EXTRA_PLUGIN_GRAMMARS = ("tsx",)
+
+#: The registry language whose files need each extra plugin grammar.
+EXTRA_PLUGIN_GRAMMAR_LANGUAGES = {"tsx": "typescript"}
+
+
+def get_grammar_name(language: str) -> str | None:
+    """Return the tree-sitter-language-pack grammar name for a registry language.
+
+    Use this wherever the pack itself is asked for a grammar (``get_language``,
+    ``prefetch``). The public language code is unchanged; for example
+    ``c_sharp`` maps to the pack's ``csharp`` grammar. Returns ``None`` for
+    languages without a grammar.
+    """
+    if language in GRAMMARLESS_LANGUAGES:
+        return None
+    config = LANGUAGE_CONFIGS.get(language)
+    if config is None:
+        return language
+    return str(config.get("grammar", config["code"]))
+
+
+def get_required_grammars() -> list[str]:
+    """Return every pack grammar name the registry and plugins need, sorted."""
+    names = {get_grammar_name(language) for language in LANGUAGE_CONFIGS}
+    names.update(EXTRA_PLUGIN_GRAMMARS)
+    return sorted(name for name in names if name)

@@ -221,6 +221,32 @@ def _dispatch(plugin: IPlugin, method: str, payload: dict) -> Any:
     raise ValueError(f"Unknown method: {method!r}")
 
 
+#: Plugin ``lang`` values that differ from the chunker/registry language code.
+_CHUNKER_LANGUAGE_ALIASES = {"js": "javascript"}
+
+
+def _prewarm_chunker_parsers(plugin: Any) -> None:
+    """Load the chunker parser for ``plugin``'s language before the FS guard.
+
+    Best effort: a plugin whose language the chunker does not handle, or a
+    chunker that is not installed, is left alone.
+    """
+    lang = getattr(plugin, "lang", None)
+    if not isinstance(lang, str) or not lang:
+        return
+    try:
+        from mcp_server.plugins.language_registry import LANGUAGE_CONFIGS
+
+        code = _CHUNKER_LANGUAGE_ALIASES.get(lang, lang)
+        if code not in LANGUAGE_CONFIGS or code == "plaintext":
+            return
+        from chunker.parser import get_parser
+
+        get_parser(code)
+    except Exception:  # noqa: BLE001 - warm-up must never block startup or touch stdout
+        return
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     argv = list(sys.argv if argv is None else argv)
     if len(argv) < 3:
@@ -248,6 +274,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         except Exception:
             pass
         return 1
+
+    # Phase 2b: warm the chunker parser for the plugin's language. treesitter-
+    # chunker 6 reads installed dist-info metadata the first time it loads the
+    # python/javascript grammars, which the FS guard would deny (#115).
+    _prewarm_chunker_parsers(plugin)
 
     # Phase 3: NOW install the FS guard — plugin code is loaded.
     caps_apply.install_fs_guard(caps)

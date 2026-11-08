@@ -7,6 +7,71 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+**Changed** (Consiliency/Code-Index-MCP#115)
+- Parser stack moves to treesitter-chunker 6.x, tree-sitter 0.26.x and
+  tree-sitter-language-pack 1.20.x, matching the other Consiliency repositories
+  (Consiliency/Code-Index-MCP#115).
+- The required agent gate runs on Python 3.12, 3.13 and 3.14.
+
+**Added**
+- `mcp-index grammars prefetch` and `mcp-index grammars check` manage the
+  language-pack grammar cache. Language-pack 1.20 downloads grammars on first
+  use, so CI, container images and the devcontainer prefetch them.
+  `--export-libs DIR` writes a shared library directory for
+  `TREE_SITTER_LANGUAGE_PACK_LIBS_DIR`, which images use because the pack only
+  accepts a per-user cache. See `docs/SUPPORT_MATRIX.md` for the cache location
+  and offline use.
+- `get_status` reports a `grammars` block (`ready` or `grammar_unavailable`,
+  with the missing grammars and affected languages), and the server logs an
+  error at startup when registry grammars cannot load offline.
+
+**Fixed**
+- Pack grammar lookups use `csharp` for the `c_sharp` language; the public
+  language code is unchanged.
+- Sandboxed plugin workers keep the host grammar cache root and libs
+  directory after their environment is scrubbed, instead of starting from a
+  cold cache.
+- Sandboxed plugin workers warm the chunker parser for their language before
+  installing the filesystem guard. Chunker 6 reads installed package metadata
+  on the first python/javascript parser load, and the guard made `chunk_text`
+  fail, so the sandboxed Python plugin stored no chunks.
+- Network-denied sandbox workers never download grammars. The pack downloads
+  from native code the Python socket guard cannot see, so a cold or
+  rolled-over cache made workers fetch from GitHub and write into the host
+  cache. Workers now load only already-extracted grammars and fail the plugin
+  load closed otherwise.
+- A file whose grammar cannot load offline fails indexing with
+  `grammar_unavailable` instead of being stored without chunks, so a reindex no
+  longer publishes a silently degraded generation.
+- Shutdown asks an in-flight staged rebuild to stop before it publishes, so the
+  shutdown watchdog no longer force-exits (exit code 1) a service whose
+  rebuild was still running when the signal arrived.
+- `grammars prefetch --export-libs` replaces each library atomically, refuses
+  symlinked or other-writable targets and directories that hold other files,
+  and never changes the mode of an existing directory. `grammars check` fails
+  on an unsafe `TREE_SITTER_LANGUAGE_PACK_LIBS_DIR`.
+- The release smoke harness passes the grammar location through and keeps the
+  private grammar cache out of its world-writable cleanup sweep.
+- The devcontainer moves to Debian bookworm because the language-pack wheels
+  need glibc 2.34 or newer.
+
+**Upgrade notes**
+- **Full rebuild required.** Chunk ids move to the `treesitter_chunk_id_v6`
+  scheme. Indexes built with chunker 4.x report `scheme_mismatch` and fail
+  closed until a full `reindex`; they are never mixed with 6.x ids. Semantic
+  profiles fingerprint the chunker version, so existing vectors read as
+  profile-incompatible until they are rebuilt or re-embedded.
+- 6.0 drops erroneous keyword-only `lambda` fragment chunks from Python and
+  changes CRLF handling in `chunk_file`. LF chunk ids are otherwise unchanged.
+- **Grammar prefetch is mandatory.** Run `mcp-index grammars prefetch` after
+  installing, and again after every language-pack upgrade, while network
+  access is available. Sandboxed workers do not download a missing grammar:
+  without a prefetch every file whose plugin needs a grammar fails with
+  `grammar_unavailable`, and a reindex does not publish its generation.
+- `mcp-index grammars check` now fails when `TREE_SITTER_LANGUAGE_PACK_LIBS_DIR`
+  is unsafe (a symlink, not owned by root or the running user, or group- or
+  other-writable); `get_status` reports that case as `libs_dir_unsafe`.
+
 [Unreleased]: # placeholder for post-rc5 work
 
 ## [1.4.1] - 2026-09-12

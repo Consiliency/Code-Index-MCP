@@ -7,6 +7,7 @@ import argparse
 import asyncio
 import json
 import os
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -23,9 +24,17 @@ SOURCE = 'def release_smoke_token():\n    return "installed lexical fixture"\n'
 PASSWORD = "synthetic-smoke-admin-password-00000000"
 
 
+#: Grammar-location paths (not credentials) passed through so the probe uses the
+#: caller's prefetched tree-sitter grammars instead of downloading them
+#: (Consiliency/Code-Index-MCP#115).
+GRAMMAR_ENV = ("TREE_SITTER_LANGUAGE_PACK_CACHE_DIR", "TREE_SITTER_LANGUAGE_PACK_LIBS_DIR")
+
+
 def environment(root: Path) -> dict[str, str]:
     """Use only synthetic configuration, never operator credentials or live indexes."""
+    grammar = {key: os.environ[key] for key in GRAMMAR_ENV if os.environ.get(key)}
     return {
+        **grammar,
         "PATH": os.environ.get("PATH", os.defpath),
         "HOME": str(root / "home"),
         "XDG_CONFIG_HOME": str(root / "home" / ".config"),
@@ -46,6 +55,37 @@ def environment(root: Path) -> dict[str, str]:
         "DEFAULT_ADMIN_EMAIL": "admin@localhost",
         "CORS_ORIGINS": "http://localhost",
     }
+
+
+#: Directory name of a tree-sitter-language-pack cache root.
+GRAMMAR_CACHE_DIR_NAME = "tree-sitter-language-pack"
+
+
+def release_synthetic_root(root: Path, *, final: bool = False) -> None:
+    """Let the host fixture owner remove synthetic smoke outputs under ``root``.
+
+    Intermediate sweeps (later modes reuse ``root``) chmod every directory to
+    0777 except a tree-sitter-language-pack cache, which must stay private:
+    the pack refuses a group- or other-writable cache. The final sweep removes
+    such a cache first, since nothing reuses ``root`` afterwards and its 0700
+    directories would otherwise block host-side cleanup of a mounted root.
+    Only caches inside ``root`` are touched, never the caller's cache.
+    """
+    root = Path(root)
+    if final:
+        resolved_root = root.resolve()
+        for cache in sorted(root.rglob(GRAMMAR_CACHE_DIR_NAME)):
+            if (
+                cache.is_dir()
+                and not cache.is_symlink()
+                and cache.resolve().is_relative_to(resolved_root)
+            ):
+                shutil.rmtree(cache, ignore_errors=True)
+    for path in root.rglob("*"):
+        if GRAMMAR_CACHE_DIR_NAME in path.relative_to(root).parts:
+            continue
+        if path.is_dir() and not path.is_symlink():
+            path.chmod(0o777)
 
 
 def command(argv: list[str], root: Path) -> None:
@@ -324,10 +364,8 @@ def main() -> None:
         else:
             http_probe(args.root, args.url, not args.restart)
     finally:
-        # Only synthetic smoke outputs; permit the host tempfile owner to clean mounted dirs.
-        for path in args.root.rglob("*"):
-            if path.is_dir() and not path.is_symlink():
-                path.chmod(0o777)
+        # Only synthetic smoke outputs; later modes reuse the root.
+        release_synthetic_root(args.root)
 
 
 if __name__ == "__main__":

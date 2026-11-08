@@ -38,6 +38,9 @@ cd Code-Index-MCP
 # Install locked project dependencies
 uv sync --locked
 
+# Prefetch tree-sitter grammars while network access is available
+uv run mcp-index grammars prefetch
+
 # Verify the canonical CLI entrypoint
 uv run mcp-index --version
 ```
@@ -49,7 +52,39 @@ uv run mcp-index --version
 uv run --extra dev python -m build --wheel
 python -m pip install dist/index_it_mcp-1.4.1-py3-none-any.whl
 index-it-mcp --version
+
+# Prefetch tree-sitter grammars while network access is available (mandatory)
+mcp-index grammars prefetch
 ```
+
+### Tree-sitter grammar cache
+
+tree-sitter-language-pack 1.20 downloads parser libraries on first use instead
+of shipping them in its wheel, and sandboxed plugin workers never download.
+Prefetching is therefore **mandatory**: without it every file whose plugin needs
+a grammar fails with `grammar_unavailable`, and a reindex does not publish.
+Prefetch once per install, and again after every language-pack upgrade:
+
+```bash
+mcp-index grammars prefetch                      # default cache root
+mcp-index grammars prefetch --cache-dir /srv/ts  # explicit cache root
+mcp-index grammars check                         # verify offline, no download
+# Shared install (images, multi-user hosts, service accounts):
+mcp-index grammars prefetch --export-libs /opt/tree-sitter-language-pack/libs
+export TREE_SITTER_LANGUAGE_PACK_LIBS_DIR=/opt/tree-sitter-language-pack/libs
+```
+
+The cache root is `TREE_SITTER_LANGUAGE_PACK_CACHE_DIR`, else `$XDG_CACHE_HOME`,
+else `~/.cache`; parser libraries land in
+`<root>/tree-sitter-language-pack/v1.20.0/libs` (about 93 MB). When you prefetch
+with `--cache-dir`, set `TREE_SITTER_LANGUAGE_PACK_CACHE_DIR` to the same path
+for the service. The pack only uses a cache directory owned by the running user
+and not group- or other-writable; when the service runs as another user, export
+the libraries with `--export-libs` and set `TREE_SITTER_LANGUAGE_PACK_LIBS_DIR`
+instead. For offline hosts, prefetch on a connected machine with the same
+package versions and copy the exported libraries (or the user's cache root)
+across; both load read-only. The Linux wheels need glibc 2.34 or newer. See
+[SUPPORT_MATRIX.md](SUPPORT_MATRIX.md#parser-stack-and-grammar-cache).
 
 If a Windows checkout still hits path-length limits after you use the cleaned
 source tree, note that tracked repo paths are capped by the 160-character tracked-path

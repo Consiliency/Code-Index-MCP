@@ -406,3 +406,47 @@ def test_docs_and_helpers_do_not_reference_retired_image_variants():
             stale[relative_path] = hits
 
     assert stale == {}
+
+
+def _load_runtime_probe():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "installed_runtime_smoke_under_test", REPO / "scripts" / "installed_runtime_smoke.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_smoke_sweeps_keep_the_grammar_cache_private_then_remove_it(tmp_path):
+    """#116 review N3: both smokes sweep the synthetic root the same way."""
+    import os
+    import stat
+
+    probe = _load_runtime_probe()
+    root = tmp_path / "runtime"
+    cache = root / "home" / ".cache" / "tree-sitter-language-pack" / "v1" / "libs"
+    cache.mkdir(parents=True)
+    pack = root / "home" / ".cache" / "tree-sitter-language-pack"
+    for directory in (pack, pack / "v1", cache):
+        os.chmod(directory, 0o700)
+    (root / "indexes").mkdir()
+    outside = tmp_path / "caller-cache" / "tree-sitter-language-pack"
+    outside.mkdir(parents=True)
+    (root / "linked").symlink_to(tmp_path / "caller-cache")
+
+    probe.release_synthetic_root(root)
+    assert stat.S_IMODE(os.stat(root / "indexes").st_mode) == 0o777
+    assert stat.S_IMODE(os.stat(root / "home" / ".cache").st_mode) == 0o777
+    for directory in (pack, pack / "v1", cache):
+        assert stat.S_IMODE(os.stat(directory).st_mode) == 0o700
+
+    probe.release_synthetic_root(root, final=True)
+    assert not pack.exists()
+    assert outside.is_dir(), "a cache outside the synthetic root must survive"
+    assert stat.S_IMODE(os.stat(root / "indexes").st_mode) == 0o777
+
+    safety = (REPO / "scripts" / "safety_runtime_smoke.py").read_text(encoding="utf-8")
+    assert "probe.release_synthetic_root(args.root, final=True)" in safety
+    assert ".chmod(0o777)" not in safety

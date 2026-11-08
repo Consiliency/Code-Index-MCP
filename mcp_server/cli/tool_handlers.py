@@ -906,6 +906,7 @@ async def handle_get_status(
             "session_available": current_session is not None,
         },
         "repositories": _build_repositories(repo_resolver, dispatcher),
+        "grammars": _grammar_status(),
     }
     availability_rows = PluginFactory.get_plugin_availability()
     counts: dict[str, int] = {}
@@ -914,6 +915,28 @@ async def handle_get_status(
         counts[state] = counts.get(state, 0) + 1
     status_data["plugins"]["availability_counts"] = counts
     return [types.TextContent(type="text", text=_ensure_response(status_data))]
+
+
+def _grammar_status() -> dict:
+    """Tree-sitter grammar availability (#116 review S3).
+
+    ``state`` is ``grammar_unavailable`` when a registry grammar is missing
+    from the local cache and libs dir, or the libs dir is unsafe; files in
+    the listed languages then fail indexing instead of publishing chunkless.
+    """
+    try:
+        from mcp_server.utils import grammar_cache
+
+        return grammar_cache.grammar_status()
+    except Exception as exc:  # noqa: BLE001 - status must not fail
+        return {
+            "state": "grammar_unavailable",
+            "ready": False,
+            "missing_grammars": [],
+            "languages": [],
+            "error": f"{type(exc).__name__}: {exc}",
+            "remediation": "Run `mcp-index grammars check` for details.",
+        }
 
 
 async def handle_list_plugins(
