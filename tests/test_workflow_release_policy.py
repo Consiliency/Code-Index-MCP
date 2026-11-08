@@ -599,3 +599,20 @@ def test_legacy_image_signer_accepts_protected_main_ancestor(tmp_path):
             capture_output=True,
         )
         assert wrong_tree.returncode != 0
+
+
+@pytest.mark.parametrize("job", ["prepare-release-pr", "preflight-publish"])
+def test_release_gate_jobs_share_an_explicit_grammar_cache(job):
+    """The release gates run release_smoke, which gives the installed package an
+    isolated HOME and passes only the grammar-location variables through. Without
+    an explicit cache the sandboxed plugin sees a cold cache and the gate fails
+    (v1.5.0 run 42536754295). Mirror the PR agent gate: one job-level cache,
+    prefetched into, and MCP_REQUIRE_GRAMMARS=1."""
+    spec = _jobs()[job]
+    env = spec.get("env") or {}
+    assert env.get("TREE_SITTER_LANGUAGE_PACK_CACHE_DIR"), job
+    assert env.get("MCP_REQUIRE_GRAMMARS") == "1", job
+    runs = "\n".join(str(step.get("run", "")) for step in spec["steps"])  # type: ignore[union-attr]
+    assert (
+        'mcp-index grammars prefetch --cache-dir "$TREE_SITTER_LANGUAGE_PACK_CACHE_DIR"' in runs
+    ), job
