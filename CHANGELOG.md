@@ -7,7 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-[Unreleased]: # placeholder for post-rc5 work
+### Changed
+- Parser stack moves to treesitter-chunker 6.x, tree-sitter 0.26.x and
+  tree-sitter-language-pack 1.20.x, matching the other Consiliency repositories
+  (Consiliency/Code-Index-MCP#115).
+- The required agent gate runs on Python 3.12, 3.13 and 3.14.
+
+### Added
+- `mcp-index grammars prefetch` and `mcp-index grammars check` manage the
+  language-pack grammar cache. Language-pack 1.20 downloads grammars on first
+  use, so CI, container images and the devcontainer prefetch them; see
+  `docs/SUPPORT_MATRIX.md` for the cache location and offline use.
+
+### Fixed
+- Pack grammar lookups use `csharp` for the `c_sharp` language; the public
+  language code is unchanged.
+- Sandboxed plugin workers keep the host grammar cache root after their
+  environment is scrubbed, instead of starting from a cold cache.
+- The devcontainer moves to Debian bookworm because the language-pack wheels
+  need glibc 2.34 or newer.
+
+### Upgrade notes
+- **Full rebuild required.** Chunk ids move to the `treesitter_chunk_id_v6`
+  scheme. Indexes built with chunker 4.x report `scheme_mismatch` and fail
+  closed until a full `reindex`; they are never mixed with 6.x ids. Semantic
+  profiles fingerprint the chunker version, so existing vectors read as
+  profile-incompatible until they are rebuilt or re-embedded.
+- 6.0 drops erroneous keyword-only `lambda` fragment chunks from Python and
+  changes CRLF handling in `chunk_file`. LF chunk ids are otherwise unchanged.
+- Run `mcp-index grammars prefetch` after installing, while network access is
+  available.
 
 ## [1.4.1] - 2026-09-12
 

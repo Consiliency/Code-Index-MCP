@@ -34,6 +34,9 @@ def _job_names(*workflow_paths: str) -> set[str]:
     for workflow_path in workflow_paths:
         for job in _jobs(workflow_path).values():
             names.add(job["name"])
+            if "'Protected Evidence - Agent Gate'" in job["name"]:
+                # Matrix name expression; its 3.12 leg is the required check.
+                names.add("Protected Evidence - Agent Gate")
     return names
 
 
@@ -66,7 +69,11 @@ def test_main_ci_required_aggregator_depends_on_agent_gate():
     assert "continue-on-error" not in aggregator
 
     gate = jobs["agent-gate"]
-    assert gate["name"] == "Protected Evidence - Agent Gate"
+    # Python-version matrix (#115): the 3.12 leg evaluates to the exact
+    # required check name; every leg gates the aggregator through needs.
+    assert "'Protected Evidence - Agent Gate'" in gate["name"]
+    assert "matrix.python-version == '3.12'" in gate["name"]
+    assert "3.12" in gate["strategy"]["matrix"]["python-version"]
     assert "continue-on-error" not in gate
 
 

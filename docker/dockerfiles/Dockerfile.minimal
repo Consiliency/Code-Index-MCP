@@ -22,8 +22,14 @@ COPY pyproject.toml uv.lock README.md ./
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel uv && \
     uv sync --locked --no-install-project
 
-# Pre-compile tree-sitter grammars for all supported languages
-RUN .venv/bin/python -c "import tree_sitter_languages; tree_sitter_languages.get_parser('python')"
+# Prefetch every registry grammar (tree-sitter-language-pack 1.20 downloads on
+# first use) into a world-readable cache so containers never download at runtime
+# (Consiliency/Code-Index-MCP#115).
+COPY mcp_server/ ./mcp_server/
+ENV TREE_SITTER_LANGUAGE_PACK_CACHE_DIR=/opt/tree-sitter-language-pack
+RUN .venv/bin/python -m mcp_server.cli.grammar_commands prefetch && \
+    rm -rf /opt/tree-sitter-language-pack/tree-sitter-language-pack/*/bundles && \
+    chmod -R a+rX /opt/tree-sitter-language-pack
 
 # Final stage - minimal runtime
 FROM python:3.12-slim
@@ -40,8 +46,10 @@ RUN useradd -m -s /bin/bash -u 1000 mcp
 # Set working directory
 WORKDIR /app
 
-# Copy from builder
+# Copy from builder (virtualenv and the prefetched, read-only grammar cache)
 COPY --from=builder /build/.venv /app/.venv
+COPY --from=builder /opt/tree-sitter-language-pack /opt/tree-sitter-language-pack
+ENV TREE_SITTER_LANGUAGE_PACK_CACHE_DIR=/opt/tree-sitter-language-pack
 
 # Copy application code
 COPY --chown=mcp:mcp mcp_server/ ./mcp_server/

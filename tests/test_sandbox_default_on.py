@@ -112,3 +112,36 @@ def test_plugin_factory_sandbox_off_when_disabled(monkeypatch):
     assert (
         type(p).__name__ != "SandboxedPlugin"
     ), "sandbox should be off when MCP_PLUGIN_SANDBOX_DISABLE=1 and no capabilities passed"
+
+
+def test_sandbox_pins_host_grammar_cache_root_before_scrubbing_home(tmp_path):
+    """A scrubbed worker must keep reading the host's prefetched grammar cache.
+
+    tree-sitter-language-pack 1.20 resolves its cache from HOME/XDG_CACHE_HOME;
+    after the scrub HOME is the scratch dir, which would be a cold cache and
+    trigger a first-use download (Consiliency/Code-Index-MCP#115).
+    """
+    script = """
+import os
+from mcp_server.sandbox.capabilities import CapabilitySet
+from mcp_server.sandbox.caps_apply import apply
+apply(CapabilitySet(fs_read=(), fs_write=(), env_allow=frozenset()))
+print(os.environ.get("TREE_SITTER_LANGUAGE_PACK_CACHE_DIR"))
+print("XDG_CACHE_HOME" in os.environ)
+"""
+    env = {k: v for k, v in os.environ.items() if k != "TREE_SITTER_LANGUAGE_PACK_CACHE_DIR"}
+    env.update({"HOME": "/host-home", "XDG_CACHE_HOME": "/host-xdg", "TMPDIR": str(tmp_path)})
+    result = subprocess.run([sys.executable, "-c", script], env=env, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines() == ["/host-xdg", "False"]
+
+    env["TREE_SITTER_LANGUAGE_PACK_CACHE_DIR"] = "/opt/grammars"
+    result = subprocess.run([sys.executable, "-c", script], env=env, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines()[0] == "/opt/grammars"
+
+    env.pop("TREE_SITTER_LANGUAGE_PACK_CACHE_DIR")
+    env.pop("XDG_CACHE_HOME")
+    result = subprocess.run([sys.executable, "-c", script], env=env, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines()[0] == "/host-home/.cache"

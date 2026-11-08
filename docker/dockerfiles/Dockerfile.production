@@ -26,6 +26,15 @@ RUN mkdir -p /home/mcp && \
     pip install --no-cache-dir uv && \
     uv sync --locked --extra production --no-editable
 
+# tree-sitter-language-pack 1.20 downloads grammars on first use. Prefetch every
+# registry grammar at build time so the image never downloads at runtime
+# (Consiliency/Code-Index-MCP#115). The pack writes a private (0700) cache, so
+# make it world-readable; the archive bundles are not needed once extracted.
+ENV TREE_SITTER_LANGUAGE_PACK_CACHE_DIR=/opt/tree-sitter-language-pack
+RUN /home/mcp/.venv/bin/mcp-index grammars prefetch && \
+    rm -rf /opt/tree-sitter-language-pack/tree-sitter-language-pack/*/bundles && \
+    chmod -R a+rX /opt/tree-sitter-language-pack
+
 # Production stage
 FROM python:3.12-slim AS production
 ARG DEBIAN_FRONTEND=noninteractive
@@ -44,8 +53,10 @@ RUN groupadd -r mcp && useradd -r -g mcp -d /app -s /bin/bash mcp
 # Set up application directory
 WORKDIR /app
 
-# Copy Python dependencies from builder
+# Copy Python dependencies and the prefetched, read-only grammar cache
 COPY --from=builder /home/mcp/.venv /home/mcp/.venv
+COPY --from=builder /opt/tree-sitter-language-pack /opt/tree-sitter-language-pack
+ENV TREE_SITTER_LANGUAGE_PACK_CACHE_DIR=/opt/tree-sitter-language-pack
 
 # Make sure virtualenv scripts are usable
 ENV PATH=/home/mcp/.venv/bin:$PATH

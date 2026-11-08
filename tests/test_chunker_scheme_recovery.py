@@ -57,6 +57,10 @@ TOOL_RECOVERABLE = tool_handlers_module._RECOVERABLE_REINDEX_STATES
 
 # A scheme value the installed chunker will never emit -> forces a mismatch.
 FOREIGN_SCHEME = "treesitter_chunk_id_recovery_foreign"
+# The marker a treesitter-chunker 4.x runtime stamped on every index it built.
+# Under chunker 6.x it must read as a mismatch and force a full rebuild
+# (Consiliency/Code-Index-MCP#115).
+CHUNKER_V4_SCHEME = "treesitter_chunk_id_v4"
 
 
 # --------------------------------------------------------------------------- #
@@ -132,13 +136,13 @@ def _seed_active_index(index_path: Path, repo_path: Path) -> None:
     store.close()
 
 
-def _force_scheme_mismatch(index_path: Path) -> None:
+def _force_scheme_mismatch(index_path: Path, scheme: str = FOREIGN_SCHEME) -> None:
     """Rewrite the persisted marker to a foreign scheme so the index reads as a
     genuine cross-scheme mismatch against the installed chunker."""
     with sqlite3.connect(str(index_path)) as conn:
         conn.execute(
             "UPDATE index_config SET config_value = ? WHERE config_key = ?",
-            (FOREIGN_SCHEME, CHUNK_SCHEME_MARKER_KEY),
+            (scheme, CHUNK_SCHEME_MARKER_KEY),
         )
     ReadinessClassifier.clear_index_inspection_cache()
 
@@ -269,14 +273,26 @@ def test_tripped_states_are_recoverable_everywhere(state):
 # --------------------------------------------------------------------------- #
 # 2. E2E: a SCHEME_MISMATCH index is refused, then recovered by the REAL tool
 # --------------------------------------------------------------------------- #
-def test_scheme_mismatch_is_refused_then_recovered_by_staged_rebuild(tmp_path):
+@pytest.mark.parametrize(
+    "built_scheme",
+    [FOREIGN_SCHEME, CHUNKER_V4_SCHEME],
+    ids=["foreign-scheme", "chunker-v4-built-index"],
+)
+def test_scheme_mismatch_is_refused_then_recovered_by_staged_rebuild(tmp_path, built_scheme):
+    if built_scheme == current_chunk_id_scheme():
+        pytest.skip(f"installed chunker emits {built_scheme}; no cross-scheme index to test")
     repo = _make_git_repo(tmp_path)
     commit = _head_commit(repo)
     repo_info = _make_repo_info(repo, commit)
     index_path = repo_info.index_path
 
     _seed_active_index(index_path, repo)
-    _force_scheme_mismatch(index_path)
+    _force_scheme_mismatch(index_path, built_scheme)
+    # The persisted marker reads as a genuine mismatch, never as compatible.
+    probe = SQLiteStore(str(index_path))
+    status, marker, target = probe.get_chunk_scheme_status()
+    probe.close()
+    assert (status, marker, target) == ("mismatch", built_scheme, current_chunk_id_scheme())
 
     # --- readiness reports the tripped state (not a healthy 'ready') ---
     readiness = ReadinessClassifier.classify_registered(repo_info)

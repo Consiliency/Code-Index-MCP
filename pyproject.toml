@@ -17,6 +17,7 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: Text Processing :: Indexing",
 ]
@@ -27,13 +28,16 @@ dependencies = [
     "mcp>=1.0.0",
     "fastapi>=0.100.0",
     "uvicorn>=0.23.0",
-    "treesitter-chunker>=4,<5",
-    # ABI-paired with treesitter-chunker 4.x: chunker requires tree_sitter>=0.25,<0.26
-    # and tree-sitter-language-pack>=0.9,<0.10 (pre-compiled grammars must match the
-    # tree_sitter ABI). v4 moved the joint window up to the tree_sitter 0.25.x ABI
-    # (3.x was tree_sitter 0.24.x). Grammars load from tree-sitter-language-pack.
-    "tree-sitter>=0.25,<0.26",
-    "tree-sitter-language-pack>=0.9,<0.10",
+    "treesitter-chunker>=6,<7",
+    # ABI-paired with treesitter-chunker 6.x: chunker requires tree_sitter>=0.26,<0.27
+    # and tree-sitter-language-pack>=1.20,<1.21 (parser libraries must match the
+    # tree_sitter ABI). 6.x moved the joint window up to the tree_sitter 0.26.x ABI
+    # (4.x was tree_sitter 0.25.x). Language-pack 1.20 no longer bundles grammars:
+    # it downloads them into a versioned cache on first use, so service, CI and
+    # sandbox images prefetch them with `mcp-index grammars prefetch`
+    # (Consiliency/Code-Index-MCP#115).
+    "tree-sitter>=0.26,<0.27",
+    "tree-sitter-language-pack>=1.20,<1.21",
     "jedi>=0.19.0",
     "watchdog>=3.0.0",
     "pathspec>=1.0.4,<2",

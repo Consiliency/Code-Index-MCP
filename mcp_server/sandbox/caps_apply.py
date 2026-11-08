@@ -7,7 +7,12 @@ ORDERING CONTRACT (matters for correctness):
   1. ``chdir`` into a scratch temp directory (drop CWD reachability).
   2. Close inherited FDs > 2.
   3. Scrub ``os.environ`` down to ``caps.env_allow`` and set HOME to the
-     worker scratch directory when HOME was not explicitly allowed.
+     worker scratch directory when HOME was not explicitly allowed. The host's
+     tree-sitter grammar cache root is resolved first and pinned through
+     ``TREE_SITTER_LANGUAGE_PACK_CACHE_DIR`` so the worker reads the prefetched
+     parser libraries instead of a cold scratch-HOME cache that would trigger a
+     first-use download (Consiliency/Code-Index-MCP#115). It is a path, not a
+     credential.
   4. If ``caps.network is False`` — monkey-patch ``socket`` to forbid connect.
   5. Soft resource limits via :mod:`resource` (best-effort; swallow failures).
   6. If ``caps.sqlite == "none"`` — monkey-patch ``sqlite3.connect`` to raise.
@@ -91,6 +96,27 @@ def _scrub_env(env_allow: frozenset) -> None:
             del os.environ[k]
         except KeyError:
             pass
+
+
+_GRAMMAR_CACHE_ENV = "TREE_SITTER_LANGUAGE_PACK_CACHE_DIR"
+
+
+def _host_grammar_cache_root() -> Optional[Path]:
+    """Resolve the language-pack cache root from the unscrubbed host env.
+
+    Mirrors ``mcp_server.utils.grammar_cache.resolve_cache_root`` without
+    importing the plugin registry into the worker before the scrub.
+    """
+    override = (os.environ.get(_GRAMMAR_CACHE_ENV) or "").strip()
+    if override:
+        return Path(override).expanduser()
+    xdg = (os.environ.get("XDG_CACHE_HOME") or "").strip()
+    if xdg:
+        return Path(xdg).expanduser()
+    home = (os.environ.get("HOME") or "").strip()
+    if home:
+        return Path(home).expanduser() / ".cache"
+    return None
 
 
 def _patch_socket_deny() -> None:
@@ -285,9 +311,13 @@ def apply(caps: CapabilitySet) -> None:
     # 2. close inherited FDs.
     _close_inherited_fds()
 
-    # 3. scrub env.
+    # 3. scrub env, keeping the host's grammar cache root (resolved before the
+    # scrub, since it can derive from HOME/XDG_CACHE_HOME).
+    grammar_cache_root = _host_grammar_cache_root()
     _scrub_env(caps.env_allow)
     os.environ.setdefault("HOME", str(_SCRATCH_DIR))
+    if grammar_cache_root is not None:
+        os.environ[_GRAMMAR_CACHE_ENV] = str(grammar_cache_root)
 
     # 4. network deny.
     if not caps.network:

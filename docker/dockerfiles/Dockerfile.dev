@@ -46,6 +46,14 @@ COPY mcp_server_cli.py .
 # Install the package in development mode
 RUN uv sync --locked --extra dev
 
+# Prefetch every registry grammar (tree-sitter-language-pack 1.20 downloads on
+# first use) into a world-readable cache so containers never download at runtime
+# (Consiliency/Code-Index-MCP#115).
+ENV TREE_SITTER_LANGUAGE_PACK_CACHE_DIR=/opt/tree-sitter-language-pack
+RUN python -m mcp_server.cli.grammar_commands prefetch && \
+    rm -rf /opt/tree-sitter-language-pack/tree-sitter-language-pack/*/bundles && \
+    chmod -R a+rX /opt/tree-sitter-language-pack
+
 # Install any npm dependencies if package.json exists
 COPY package*.json ./
 RUN if [ -f package.json ]; then npm install; fi

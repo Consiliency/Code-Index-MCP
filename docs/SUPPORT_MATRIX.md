@@ -141,6 +141,35 @@ topology, or install-surface support expansion.
 | Unsandboxed or sandbox-disabled plugin path | disabled-by-default | Explicit operator opt-in only | `activation_mode=disabled_by_default`, sandbox docs | Enabling unsandboxed fallback does not widen documented default support |
 | Same-repo sibling worktrees and non-default indexed routing | unsupported | Outside the indexed-routing contract | readiness classifier, v3 topology docs, failure-matrix tests | Use native search or readiness remediation instead of treating this as indexed support |
 
+## Parser stack and grammar cache
+
+The parser stack is treesitter-chunker 6.x, tree-sitter 0.26.x and
+tree-sitter-language-pack 1.20.x (Consiliency/Code-Index-MCP#115). Support
+tiers above are unchanged by the upgrade.
+
+- **Grammar delivery.** Language-pack 1.20 no longer bundles parser libraries.
+  It downloads them on first use into a versioned cache,
+  `<root>/tree-sitter-language-pack/v1.20.0/libs` (about 93 MB for the 47
+  registry grammars). The root is `TREE_SITTER_LANGUAGE_PACK_CACHE_DIR`, else
+  `$XDG_CACHE_HOME`, else `~/.cache`. Run `mcp-index grammars prefetch` while
+  network access is available; `mcp-index grammars check` verifies every
+  grammar loads offline. A cold cache with no network fails with
+  `DownloadError`/`LanguageNotFoundError`. A warm cache works offline and
+  read-only. Container images prefetch into `/opt/tree-sitter-language-pack`,
+  CI prefetches before the agent gate, and sandboxed plugin workers inherit the
+  host cache root even though their environment is scrubbed.
+- **Grammar names.** The public language code `c_sharp` is unchanged; the pack
+  grammar is `csharp`.
+- **Platform floor.** The language-pack Linux wheels need glibc 2.34 or newer.
+- **Index identity.** Chunk ids move to the `treesitter_chunk_id_v6` scheme. An
+  index built with treesitter-chunker 4.x (`treesitter_chunk_id_v4`) reports
+  `scheme_mismatch`, fails closed and needs a full `reindex`; it is never mixed
+  with 6.x ids. Semantic profiles fingerprint the chunker version, so 4.x
+  vectors and summaries read as profile-incompatible until rebuilt.
+- **Python.** The required agent gate runs on Python 3.12, 3.13 and 3.14 in
+  hosted Linux CI. That is CI evidence, not installed-runtime acceptance on
+  those versions.
+
 ## V13 Verification Boundary
 
 Published tiers above are unchanged. The `>=3.12` package requirement and

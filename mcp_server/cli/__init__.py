@@ -8,6 +8,7 @@ including index management, diagnostics, and maintenance operations.
 import click
 
 from .. import __version__
+from .grammar_commands import grammars
 from .server_commands import serve, stdio
 
 
@@ -20,6 +21,7 @@ def cli():
 # Lightweight commands registered eagerly
 cli.add_command(serve)
 cli.add_command(stdio)
+cli.add_command(grammars)
 
 
 def _register_heavy_commands():

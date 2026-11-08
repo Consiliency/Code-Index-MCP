@@ -28,6 +28,14 @@ COPY .coveragerc .
 # Install the package in development mode
 RUN uv sync --locked
 
+# Prefetch every registry grammar (tree-sitter-language-pack 1.20 downloads on
+# first use) into a world-readable cache so containers never download at runtime
+# (Consiliency/Code-Index-MCP#115).
+ENV TREE_SITTER_LANGUAGE_PACK_CACHE_DIR=/opt/tree-sitter-language-pack
+RUN python -m mcp_server.cli.grammar_commands prefetch && \
+    rm -rf /opt/tree-sitter-language-pack/tree-sitter-language-pack/*/bundles && \
+    chmod -R a+rX /opt/tree-sitter-language-pack
+
 # Create volume for code indexing
 VOLUME ["/code"]
 

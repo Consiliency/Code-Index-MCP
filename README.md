@@ -452,6 +452,9 @@ cd Code-Index-MCP
 # Install locked project dependencies
 uv sync --locked
 
+# Prefetch tree-sitter grammars (language-pack 1.20 downloads them on first use)
+uv run mcp-index grammars prefetch
+
 # Verify the canonical CLI entrypoint
 uv run mcp-index --version
 ```
