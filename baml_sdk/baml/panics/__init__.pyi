@@ -25,6 +25,8 @@ import typing
 import typing_extensions
 import pydantic
 
+from ..._invocation_types import BamlOptions as _BamlOptions
+
 
 class DivisionByZero(pydantic.BaseModel):
     dividend: typing.Union[int, int]

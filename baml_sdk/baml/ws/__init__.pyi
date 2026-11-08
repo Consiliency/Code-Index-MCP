@@ -29,12 +29,14 @@ if typing.TYPE_CHECKING:
     from ... import baml
     from ...baml import UNSET as UNSET
 
+from ..._invocation_types import BamlOptions as _BamlOptions
+
 from baml_bridge import BamlPyHandle as _BamlPyHandle
 
 
 class WebSocket(pydantic.BaseModel):
     field_handle: _BamlPyHandle = pydantic.Field(alias="_handle")
-    def send(self, data: typing.Union[str, bytes]) -> None:
+    def send(self, data: typing.Union[str, bytes], *, _baml: _BamlOptions | None = None) -> None:
         """Send one frame: a `string` becomes a text frame, a `uint8array` a
         binary one.
 
@@ -45,7 +47,7 @@ class WebSocket(pydantic.BaseModel):
 
         Raises:
             Io"""
-    async def send_async(self, data: typing.Union[str, bytes]) -> None:
+    async def send_async(self, data: typing.Union[str, bytes], *, _baml: _BamlOptions | None = None) -> None:
         """Send one frame: a `string` becomes a text frame, a `uint8array` a
         binary one.
 
@@ -56,7 +58,7 @@ class WebSocket(pydantic.BaseModel):
 
         Raises:
             Io"""
-    def next(self) -> typing.Union[str, bytes, CloseEvent]:
+    def next(self, *, _baml: _BamlOptions | None = None) -> typing.Union[str, bytes, CloseEvent]:
         """Block until the next frame arrives.
 
         A text frame is a `string` and a binary frame a `uint8array`. Pings are
@@ -71,7 +73,7 @@ class WebSocket(pydantic.BaseModel):
 
         Raises:
             Io"""
-    async def next_async(self) -> typing.Union[str, bytes, CloseEvent]:
+    async def next_async(self, *, _baml: _BamlOptions | None = None) -> typing.Union[str, bytes, CloseEvent]:
         """Block until the next frame arrives.
 
         A text frame is a `string` and a binary frame a `uint8array`. Pings are
@@ -86,7 +88,7 @@ class WebSocket(pydantic.BaseModel):
 
         Raises:
             Io"""
-    def close(self, code: int, reason: str) -> None:
+    def close(self, code: int, reason: str, *, _baml: _BamlOptions | None = None) -> None:
         """Begin the closing handshake, sending `code` and `reason` to the peer.
 
         This returns as soon as the close frame is queued. The connection ends
@@ -101,7 +103,7 @@ class WebSocket(pydantic.BaseModel):
 
         Raises:
             InvalidArgument"""
-    async def close_async(self, code: int, reason: str) -> None:
+    async def close_async(self, code: int, reason: str, *, _baml: _BamlOptions | None = None) -> None:
         """Begin the closing handshake, sending `code` and `reason` to the peer.
 
         This returns as soon as the close frame is queued. The connection ends
@@ -123,7 +125,7 @@ class CloseEvent(pydantic.BaseModel):
     reason: str
 
 
-def connect(url: str, headers: typing.Dict[str, str], *, timeout: typing.Union[baml.time.Duration, UNSET] = UNSET) -> WebSocket:
+def connect(url: str, headers: typing.Dict[str, str], *, timeout: typing.Union[baml.time.Duration, UNSET] = UNSET, _baml: _BamlOptions | None = None) -> WebSocket:
     """Open a WebSocket connection with additional request headers.
 
     # Throws
@@ -133,7 +135,7 @@ def connect(url: str, headers: typing.Dict[str, str], *, timeout: typing.Union[b
 
     Raises:
         Io, Timeout"""
-async def connect_async(url: str, headers: typing.Dict[str, str], *, timeout: typing.Union[baml.time.Duration, UNSET] = UNSET) -> WebSocket:
+async def connect_async(url: str, headers: typing.Dict[str, str], *, timeout: typing.Union[baml.time.Duration, UNSET] = UNSET, _baml: _BamlOptions | None = None) -> WebSocket:
     """Open a WebSocket connection with additional request headers.
 
     # Throws
@@ -145,10 +147,10 @@ async def connect_async(url: str, headers: typing.Dict[str, str], *, timeout: ty
         Io, Timeout"""
 
 
-def _connect(url: str, headers: typing.Dict[str, str], timeout_nanos: int) -> WebSocket:
+def _connect(url: str, headers: typing.Dict[str, str], timeout_nanos: int, *, _baml: _BamlOptions | None = None) -> WebSocket:
     """Raises:
         Io, Timeout"""
-async def _connect_async(url: str, headers: typing.Dict[str, str], timeout_nanos: int) -> WebSocket:
+async def _connect_async(url: str, headers: typing.Dict[str, str], timeout_nanos: int, *, _baml: _BamlOptions | None = None) -> WebSocket:
     """Raises:
         Io, Timeout"""
 

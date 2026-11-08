@@ -401,7 +401,7 @@ uv sync --locked --extra dev  # install locked core + development dependencies
 # Or for a specific extras set:
 uv sync --locked --extra dev --extra semantic
 
-# BAML summarization uses v1 0.20.1. Match the baml-bridge pin and regenerate
+# BAML summarization uses v1 0.23.0. Match the baml-bridge pin and regenerate
 # the checked-in SDK after editing baml_src/; never hand-edit baml_sdk/.
 uv run --locked --extra dev python scripts/generate_baml_sdk.py
 

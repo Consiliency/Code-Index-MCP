@@ -133,7 +133,8 @@ with_timeout.__doc__ = """Run `body` under a deadline.
 
 # Throws
 
-- `baml.errors.Timeout` if `limit` elapses first.
+- `baml.errors.Timeout` if `limit` elapses first, with `duration` set to
+  `limit` and `timeout_type` set to `"limit"`.
 - whatever `body` throws.
 
 # Panics
@@ -148,7 +149,8 @@ with_timeout_async.__doc__ = """Run `body` under a deadline.
 
 # Throws
 
-- `baml.errors.Timeout` if `limit` elapses first.
+- `baml.errors.Timeout` if `limit` elapses first, with `duration` set to
+  `limit` and `timeout_type` set to `"limit"`.
 - whatever `body` throws.
 
 # Panics

@@ -21,6 +21,7 @@
 
 from __future__ import annotations
 
+import enum
 import typing
 import typing_extensions
 import pydantic
@@ -35,13 +36,37 @@ json: typing.TypeAlias = typing.Any
 
 
 
+class Naming(str, enum.Enum):
+    """
+    Which names a class's fields and an enum's variants go by in JSON.
+
+    `decode`, `to`, `from`, `stringify`, and `schema` each take one, and agree
+    on every key when given the same one.
+
+    Members:
+        Declared: The declared names. `@alias` and `@skip` have no effect: every field
+            and variant appears, under the name it is declared with. This is the
+            default everywhere.
+        Aliased: The names a model is shown. A field or variant goes by its `@alias`
+            when it has one, and a `@skip` field or variant does not appear. A
+            `@skip` field read from JSON holds its type's empty value (`null`, `0`,
+            `""`, `[]`, ...), as it does when `baml.sap` parses a model's answer.
+    """
+    Declared = "Declared"
+    Aliased = "Aliased"
+
+
+_aliased       = _define_function("baml.json._aliased", "sync",  ["naming"], binding_name="_aliased", binding_qualname="_aliased", binding_module=__name__)
+_aliased_async = _define_function("baml.json._aliased", "async", ["naming"], binding_name="_aliased_async", binding_qualname="_aliased_async", binding_module=__name__)
+
+
 class ParseError(pydantic.BaseModel):
     """
     A JSON syntax error.
 
-    Only the entry points that read text raise this: `parse`, `from_string<T>`,
-    and `deserialize<T>`. Everything that consumes an already-parsed `json`
-    throws `DecodeError` instead. `message` is the parser's own diagnostic,
+    Only the functions that read text raise this: `parse` and `decode<T>`.
+    Everything that consumes an already-parsed `json` throws `DecodeError`
+    instead. `message` is the parser's own diagnostic,
     locating the offending line and column.
     """
     model_config = pydantic.ConfigDict(
@@ -56,11 +81,9 @@ class DecodeError(pydantic.BaseModel):
     """
     A parsed JSON value that does not fit the expected BAML type.
 
-    `path` locates the offending node in jq-ish notation: `.field` for a class
-    field, `[0]` for an array element, `["key"]` for a map entry. Only
-    `from_string<T>` threads it end to end from the decode root. The
-    override-honoring drivers (`to<T>`, `from_json<T>`, `deserialize<T>`)
-    re-enter per node, so there it is `""` or relative to the failing leaf.
+    `path` locates the offending node from the decode root in jq-ish
+    notation: `.field` for a class field, `[0]` for an array element,
+    `["key"]` for a map entry; `""` is the root itself.
     """
     model_config = pydantic.ConfigDict(
         arbitrary_types_allowed=True,
@@ -76,10 +99,21 @@ class SerializationError(pydantic.BaseModel):
     A BAML value with no JSON form.
 
     `path` locates the offending node in the jq-ish notation `DecodeError`
-    uses. `reason` is a short stable tag for the construct that had no JSON
-    form — `uint8array`, `function`, `future`, `unserializable`, `class`,
-    `enum`, `media`, and so on. Branch on it rather than on `message`, which is
-    prose.
+    uses. `reason` is a short stable tag for what had no JSON form. Branch on
+    it rather than on `message`, which is prose:
+
+    - `uint8array`: a `uint8array`. Encode it explicitly with `to_base64()` or
+      `to_hex()`.
+    - `function`: a function or closure.
+    - `future`: a future.
+    - `non_finite`: a `float` that is NaN or infinite. JSON text cannot write
+      one, so only `stringify` raises this.
+    - `cycle`: a list, map, or class instance that contains itself.
+    - `map_key`: a map whose keys are not strings.
+    - `enum`: an enum variant that is `@skip` under `Naming.Aliased`, which
+      gives it no name.
+    - `indent`: an `indent` that `stringify` does not take.
+    - `unserializable`: any other runtime object with no JSON form.
     """
     model_config = pydantic.ConfigDict(
         arbitrary_types_allowed=True,
@@ -95,12 +129,16 @@ parse       = _define_function("baml.json.parse", "sync",  ["s"], binding_name="
 parse.__doc__ = """Parses one JSON document into an untyped `json` value.
 
 The whole string must be that document; trailing content is a syntax error,
-not a stopping point. To land in a declared type instead, use
-`from_string<T>` (structural) or `deserialize<T>` (override-honoring).
+not a stopping point. To land in a declared type instead, use `decode<T>`.
+
+A number with a fraction or exponent must fit a `float`: `1e400` is a
+syntax error, because JSON has no infinity. An integral number that large
+is a `bigint`.
 
 # Throws
 
-- `baml.json.ParseError` if `s` is not valid JSON.
+- `baml.json.ParseError` if `s` is not valid JSON, or holds a number with
+  a fraction or exponent too large for a `float`.
 
 Raises:
     ParseError"""
@@ -108,152 +146,454 @@ parse_async = _define_function("baml.json.parse", "async", ["s"], binding_name="
 parse_async.__doc__ = """Parses one JSON document into an untyped `json` value.
 
 The whole string must be that document; trailing content is a syntax error,
-not a stopping point. To land in a declared type instead, use
-`from_string<T>` (structural) or `deserialize<T>` (override-honoring).
+not a stopping point. To land in a declared type instead, use `decode<T>`.
+
+A number with a fraction or exponent must fit a `float`: `1e400` is a
+syntax error, because JSON has no infinity. An integral number that large
+is a `bigint`.
 
 # Throws
 
-- `baml.json.ParseError` if `s` is not valid JSON.
+- `baml.json.ParseError` if `s` is not valid JSON, or holds a number with
+  a fraction or exponent too large for a `float`.
 
 Raises:
     ParseError"""
 
 
-stringify       = _define_function("baml.json.stringify", "sync",  ["j"], binding_name="stringify", binding_qualname="stringify", binding_module=__name__)
-stringify_async = _define_function("baml.json.stringify", "async", ["j"], binding_name="stringify_async", binding_qualname="stringify_async", binding_module=__name__)
+decode       = _define_function("baml.json.decode", "sync",  ["s"], ["naming"], binding_name="decode", binding_qualname="decode", binding_module=__name__, type_params=["T"])
+decode.__doc__ = """Parses JSON text and decodes it into `T`.
 
+`decode<T>(s)` is `to<T>(parse(s))`: the text is parsed first, then `T`
+drives the walk by the rules of `to<T>`, `baml.FromJson` overrides
+included. The walk is a shape check rather than a coercion, so
+`decode<int>("\\"5\\"")` fails: a JSON string does not become an `int`.
 
-stringify_pretty       = _define_function("baml.json.stringify_pretty", "sync",  ["j"], binding_name="stringify_pretty", binding_qualname="stringify_pretty", binding_module=__name__)
-stringify_pretty_async = _define_function("baml.json.stringify_pretty", "async", ["j"], binding_name="stringify_pretty_async", binding_qualname="stringify_pretty_async", binding_module=__name__)
+A union decodes as the member the value matches best, as `to<T>` says:
+`decode<float | int>("1")` is the `int` `1`, and a JSON object is the
+class that uses the most of its keys. A class field whose type admits
+`null` may be missing from the text, and is then `null`.
 
-
-to_string       = _define_function("baml.json.to_string", "sync",  ["value"], binding_name="to_string", binding_qualname="to_string", binding_module=__name__)
-to_string.__doc__ = """Serializes any BAML value to its canonical JSON text.
-
-`stringify` composed with `to_json`: dispatch is on the value's runtime
-type, and `baml.ToJson` overrides apply at every depth. Reach for this when
-you want JSON text, and for `from<T>` when you want a `json` value to keep
-working with. Not to be confused with `string.from`, which renders BAML's
-own display form rather than JSON.
+`naming` picks the names fields and variants go by; see `to<T>`.
 
 # Throws
 
-- `baml.json.SerializationError` if any value in the graph has no JSON form
-  — a `uint8array` without explicit encoding, a function, a future. See
-  `from<T>` for the full rendering rules.
+- `baml.json.ParseError` if `s` is not valid JSON, or holds a number with
+  a fraction or exponent too large for a `float`, such as `1e400`.
+- `baml.json.DecodeError` if the parsed JSON does not fit `T`, or if a
+  `baml.FromJson` override rejects it. `path` locates the offending node.
+
+# Examples
+
+```baml
+class User {
+    name: string,
+    age: int,
+}
+
+let user = baml.json.decode<User>(`{"name": "Ada", "age": 36}`);
+assert.equal(user.age, 36);
+```
 
 Raises:
-    SerializationError"""
-to_string_async = _define_function("baml.json.to_string", "async", ["value"], binding_name="to_string_async", binding_qualname="to_string_async", binding_module=__name__)
-to_string_async.__doc__ = """Serializes any BAML value to its canonical JSON text.
+    ParseError, DecodeError"""
+decode_async = _define_function("baml.json.decode", "async", ["s"], ["naming"], binding_name="decode_async", binding_qualname="decode_async", binding_module=__name__, type_params=["T"])
+decode_async.__doc__ = """Parses JSON text and decodes it into `T`.
 
-`stringify` composed with `to_json`: dispatch is on the value's runtime
-type, and `baml.ToJson` overrides apply at every depth. Reach for this when
-you want JSON text, and for `from<T>` when you want a `json` value to keep
-working with. Not to be confused with `string.from`, which renders BAML's
-own display form rather than JSON.
+`decode<T>(s)` is `to<T>(parse(s))`: the text is parsed first, then `T`
+drives the walk by the rules of `to<T>`, `baml.FromJson` overrides
+included. The walk is a shape check rather than a coercion, so
+`decode<int>("\\"5\\"")` fails: a JSON string does not become an `int`.
+
+A union decodes as the member the value matches best, as `to<T>` says:
+`decode<float | int>("1")` is the `int` `1`, and a JSON object is the
+class that uses the most of its keys. A class field whose type admits
+`null` may be missing from the text, and is then `null`.
+
+`naming` picks the names fields and variants go by; see `to<T>`.
 
 # Throws
 
-- `baml.json.SerializationError` if any value in the graph has no JSON form
-  — a `uint8array` without explicit encoding, a function, a future. See
-  `from<T>` for the full rendering rules.
+- `baml.json.ParseError` if `s` is not valid JSON, or holds a number with
+  a fraction or exponent too large for a `float`, such as `1e400`.
+- `baml.json.DecodeError` if the parsed JSON does not fit `T`, or if a
+  `baml.FromJson` override rejects it. `path` locates the offending node.
+
+# Examples
+
+```baml
+class User {
+    name: string,
+    age: int,
+}
+
+let user = baml.json.decode<User>(`{"name": "Ada", "age": 36}`);
+assert.equal(user.age, 36);
+```
+
+Raises:
+    ParseError, DecodeError"""
+
+
+_decode       = _define_function("baml.json._decode", "sync",  ["s", "aliased"], binding_name="_decode", binding_qualname="_decode", binding_module=__name__, type_params=["T"])
+_decode.__doc__ = """(internal) `decode<T>`, with `naming` as a flag: aliased names when
+`aliased` holds.
+
+Raises:
+    ParseError, DecodeError"""
+_decode_async = _define_function("baml.json._decode", "async", ["s", "aliased"], binding_name="_decode_async", binding_qualname="_decode_async", binding_module=__name__, type_params=["T"])
+_decode_async.__doc__ = """(internal) `decode<T>`, with `naming` as a flag: aliased names when
+`aliased` holds.
+
+Raises:
+    ParseError, DecodeError"""
+
+
+_decode_structural       = _define_function("baml.json._decode_structural", "sync",  ["s", "aliased"], binding_name="_decode_structural", binding_qualname="_decode_structural", binding_module=__name__, type_params=["T"])
+_decode_structural.__doc__ = """(internal) `decode<T>` without `baml.FromJson` overrides: every class and
+enum decodes by its fields and variants. Names go by `@alias` when
+`aliased` holds.
+
+Raises:
+    ParseError, DecodeError"""
+_decode_structural_async = _define_function("baml.json._decode_structural", "async", ["s", "aliased"], binding_name="_decode_structural_async", binding_qualname="_decode_structural_async", binding_module=__name__, type_params=["T"])
+_decode_structural_async.__doc__ = """(internal) `decode<T>` without `baml.FromJson` overrides: every class and
+enum decodes by its fields and variants. Names go by `@alias` when
+`aliased` holds.
+
+Raises:
+    ParseError, DecodeError"""
+
+
+stringify       = _define_function("baml.json.stringify", "sync",  ["value"], ["naming", "indent", "omit_nulls"], binding_name="stringify", binding_qualname="stringify", binding_module=__name__)
+stringify.__doc__ = """Writes any BAML value as JSON text.
+
+The value is converted the way `from` converts it, `baml.ToJson`
+overrides included, and then written out. Not to be confused with
+`string.from`, which writes BAML's own display form rather than JSON.
+
+`naming` picks the names fields and variants go by, and `omit_nulls`
+leaves out class fields that hold `null`; see `from`.
+
+`indent` sets the layout. An `int` is a number of spaces per nesting level.
+A `string` is written as-is for each level, for example `"\\t"`. The default,
+`0`, writes compact text with no whitespace at all, and so does `""`.
+
+# Throws
+
+- `baml.json.SerializationError` if any value in the graph has no JSON
+  form; see `from`.
+- `baml.json.SerializationError` with `reason` `"non_finite"` if a `float`
+  anywhere in the value, a `json` value included, is NaN or infinite: JSON
+  text has no way to write it.
+- `baml.json.SerializationError` with `reason` `"indent"` if `indent` is a
+  negative number, a number above 10, a string longer than 10 characters,
+  or a string holding anything other than spaces, tabs, and line breaks.
+  JavaScript's `JSON.stringify` stops at the same width of 10.
+
+# Examples
+
+```baml
+let doc: json = { "name": "Ada", "tags": ["math"] };
+assert.equal(baml.json.stringify(doc), `{"name":"Ada","tags":["math"]}`);
+assert.equal(baml.json.stringify([1], indent = 2), "[\\n  1\\n]");
+```
+
+Raises:
+    SerializationError"""
+stringify_async = _define_function("baml.json.stringify", "async", ["value"], ["naming", "indent", "omit_nulls"], binding_name="stringify_async", binding_qualname="stringify_async", binding_module=__name__)
+stringify_async.__doc__ = """Writes any BAML value as JSON text.
+
+The value is converted the way `from` converts it, `baml.ToJson`
+overrides included, and then written out. Not to be confused with
+`string.from`, which writes BAML's own display form rather than JSON.
+
+`naming` picks the names fields and variants go by, and `omit_nulls`
+leaves out class fields that hold `null`; see `from`.
+
+`indent` sets the layout. An `int` is a number of spaces per nesting level.
+A `string` is written as-is for each level, for example `"\\t"`. The default,
+`0`, writes compact text with no whitespace at all, and so does `""`.
+
+# Throws
+
+- `baml.json.SerializationError` if any value in the graph has no JSON
+  form; see `from`.
+- `baml.json.SerializationError` with `reason` `"non_finite"` if a `float`
+  anywhere in the value, a `json` value included, is NaN or infinite: JSON
+  text has no way to write it.
+- `baml.json.SerializationError` with `reason` `"indent"` if `indent` is a
+  negative number, a number above 10, a string longer than 10 characters,
+  or a string holding anything other than spaces, tabs, and line breaks.
+  JavaScript's `JSON.stringify` stops at the same width of 10.
+
+# Examples
+
+```baml
+let doc: json = { "name": "Ada", "tags": ["math"] };
+assert.equal(baml.json.stringify(doc), `{"name":"Ada","tags":["math"]}`);
+assert.equal(baml.json.stringify([1], indent = 2), "[\\n  1\\n]");
+```
 
 Raises:
     SerializationError"""
 
 
-to_json       = _define_function("baml.json.to_json", "sync",  ["value"], binding_name="to_json", binding_qualname="to_json", binding_module=__name__)
-to_json.__doc__ = """Raises:
+_stringify       = _define_function("baml.json._stringify", "sync",  ["value", "aliased", "indent", "omit_nulls"], binding_name="_stringify", binding_qualname="_stringify", binding_module=__name__)
+_stringify.__doc__ = """(internal) `stringify`, with `naming` as a flag: aliased names when
+`aliased` holds.
+
+Raises:
     SerializationError"""
-to_json_async = _define_function("baml.json.to_json", "async", ["value"], binding_name="to_json_async", binding_qualname="to_json_async", binding_module=__name__)
-to_json_async.__doc__ = """Raises:
+_stringify_async = _define_function("baml.json._stringify", "async", ["value", "aliased", "indent", "omit_nulls"], binding_name="_stringify_async", binding_qualname="_stringify_async", binding_module=__name__)
+_stringify_async.__doc__ = """(internal) `stringify`, with `naming` as a flag: aliased names when
+`aliased` holds.
+
+Raises:
     SerializationError"""
 
 
-from_       = _define_function("baml.json.from", "sync",  ["value"], binding_name="from_", binding_qualname="from_", binding_module=__name__, type_params=["T"])
-from_.__doc__ = """Serializes a value to its `json` representation, honoring `baml.ToJson`
-overrides on classes at every depth.
+from_       = _define_function("baml.json.from", "sync",  ["value"], ["naming", "omit_nulls"], binding_name="from_", binding_qualname="from_", binding_module=__name__)
+from_.__doc__ = """Converts any BAML value to a `json` value.
 
-The json analog of `string.from`. Primitives, lists, and maps render to
-their natural json shape; a class instance becomes `{"field": value}`, an
-enum its variant name, media the tagged form. A `bigint` renders as an
-arbitrary-precision JSON number, and a non-finite `float` renders as `null`.
+The conversion follows the value's runtime type. Primitives, lists, and
+maps take their natural JSON shape. A class instance becomes an object of
+its fields, an enum value its variant's name, and media the tagged object
+`{ kind, source, value, mime, name? }`. A `bigint` becomes an
+arbitrary-precision JSON number. A `float` that is NaN or infinite stays
+as it is: a `json` value holds it, but `stringify` refuses to write it.
 
-A value whose runtime class `implements baml.ToJson` routes through that
-override instead, and an override owns its whole subtree — the walk stops
-descending once it dispatches one. Resolution is on the value's *runtime*
-class, so an override declared in any package is honored, not just one
-visible to this one.
+A value whose runtime class implements `baml.ToJson` with its own
+`to_json` is converted by that method instead, at any depth, and the
+method owns its whole subtree: `naming` and `omit_nulls` do not reach
+inside it. The method is found from the value's runtime class, so one
+declared in any package is honored.
 
-`T` selects nothing. It is the call site's static type and no more; every
-dispatch decision is made on the value in hand.
+`naming` picks the names fields and variants go by. The default,
+`Naming.Declared`, writes every field under its declared name.
+`Naming.Aliased` writes a field or variant under its `@alias`, and leaves
+out a `@skip` field.
 
-This is the caller-facing serializer, and what `v.to_json()` desugars to.
-`to_json` is the same walk behind an `unknown` parameter.
+`omit_nulls` leaves out a class field that holds `null`, so an unset
+optional field writes `{"name": "Ada"}` rather than
+`{"name": "Ada", "nickname": null}`. Nothing else is left out: a `null`
+map value, a `null` list element, and a `null` nested in a `json` value
+stay, because there `null` is data.
 
 # Throws
 
 - `baml.json.SerializationError` if any value in the graph has no JSON
   form: a `uint8array` (encode it explicitly with `to_base64()` or
-  `to_hex()`), a function, a future, or any other opaque runtime object.
-  `reason` names which.
+  `to_hex()`), a function, a future, a map whose keys are not strings, a
+  value that contains itself, or any other opaque runtime object. `reason`
+  names which.
+- `baml.json.SerializationError` if `naming` is `Naming.Aliased` and the
+  value holds a `@skip` enum variant, which then has no name.
 
 Raises:
     SerializationError"""
-from__async = _define_function("baml.json.from", "async", ["value"], binding_name="from__async", binding_qualname="from__async", binding_module=__name__, type_params=["T"])
-from__async.__doc__ = """Serializes a value to its `json` representation, honoring `baml.ToJson`
-overrides on classes at every depth.
+from__async = _define_function("baml.json.from", "async", ["value"], ["naming", "omit_nulls"], binding_name="from__async", binding_qualname="from__async", binding_module=__name__)
+from__async.__doc__ = """Converts any BAML value to a `json` value.
 
-The json analog of `string.from`. Primitives, lists, and maps render to
-their natural json shape; a class instance becomes `{"field": value}`, an
-enum its variant name, media the tagged form. A `bigint` renders as an
-arbitrary-precision JSON number, and a non-finite `float` renders as `null`.
+The conversion follows the value's runtime type. Primitives, lists, and
+maps take their natural JSON shape. A class instance becomes an object of
+its fields, an enum value its variant's name, and media the tagged object
+`{ kind, source, value, mime, name? }`. A `bigint` becomes an
+arbitrary-precision JSON number. A `float` that is NaN or infinite stays
+as it is: a `json` value holds it, but `stringify` refuses to write it.
 
-A value whose runtime class `implements baml.ToJson` routes through that
-override instead, and an override owns its whole subtree — the walk stops
-descending once it dispatches one. Resolution is on the value's *runtime*
-class, so an override declared in any package is honored, not just one
-visible to this one.
+A value whose runtime class implements `baml.ToJson` with its own
+`to_json` is converted by that method instead, at any depth, and the
+method owns its whole subtree: `naming` and `omit_nulls` do not reach
+inside it. The method is found from the value's runtime class, so one
+declared in any package is honored.
 
-`T` selects nothing. It is the call site's static type and no more; every
-dispatch decision is made on the value in hand.
+`naming` picks the names fields and variants go by. The default,
+`Naming.Declared`, writes every field under its declared name.
+`Naming.Aliased` writes a field or variant under its `@alias`, and leaves
+out a `@skip` field.
 
-This is the caller-facing serializer, and what `v.to_json()` desugars to.
-`to_json` is the same walk behind an `unknown` parameter.
+`omit_nulls` leaves out a class field that holds `null`, so an unset
+optional field writes `{"name": "Ada"}` rather than
+`{"name": "Ada", "nickname": null}`. Nothing else is left out: a `null`
+map value, a `null` list element, and a `null` nested in a `json` value
+stay, because there `null` is data.
 
 # Throws
 
 - `baml.json.SerializationError` if any value in the graph has no JSON
   form: a `uint8array` (encode it explicitly with `to_base64()` or
-  `to_hex()`), a function, a future, or any other opaque runtime object.
-  `reason` names which.
+  `to_hex()`), a function, a future, a map whose keys are not strings, a
+  value that contains itself, or any other opaque runtime object. `reason`
+  names which.
+- `baml.json.SerializationError` if `naming` is `Naming.Aliased` and the
+  value holds a `@skip` enum variant, which then has no name.
 
 Raises:
     SerializationError"""
 
 
-from_string       = _define_function("baml.json.from_string", "sync",  ["s"], binding_name="from_string", binding_qualname="from_string", binding_module=__name__, type_params=["T"])
-from_string.__doc__ = """Raises:
-    ParseError, DecodeError"""
-from_string_async = _define_function("baml.json.from_string", "async", ["s"], binding_name="from_string_async", binding_qualname="from_string_async", binding_module=__name__, type_params=["T"])
-from_string_async.__doc__ = """Raises:
-    ParseError, DecodeError"""
+_from       = _define_function("baml.json._from", "sync",  ["value", "aliased", "omit_nulls"], binding_name="_from", binding_qualname="_from", binding_module=__name__)
+_from.__doc__ = """(internal) `from`, with `naming` as a flag: aliased names when `aliased`
+holds.
+
+Raises:
+    SerializationError"""
+_from_async = _define_function("baml.json._from", "async", ["value", "aliased", "omit_nulls"], binding_name="_from_async", binding_qualname="_from_async", binding_module=__name__)
+_from_async.__doc__ = """(internal) `from`, with `naming` as a flag: aliased names when `aliased`
+holds.
+
+Raises:
+    SerializationError"""
 
 
-from_json       = _define_function("baml.json.from_json", "sync",  ["j"], binding_name="from_json", binding_qualname="from_json", binding_module=__name__, type_params=["T"])
-from_json.__doc__ = """Raises:
+to       = _define_function("baml.json.to", "sync",  ["j"], ["naming"], binding_name="to", binding_qualname="to", binding_module=__name__, type_params=["T"])
+to.__doc__ = """Decodes a `json` value into `T`.
+
+`T` drives the walk. Wherever the walk meets a class or enum — at the
+root, as a field, under an optional, in a list, in a map — a type that
+implements `baml.FromJson` with its own `from_json` is built by that
+method, and anything else decodes structurally, field by field, its
+children by the same rule. The method owns its whole subtree: `naming`
+does not reach inside it. It is found from `T`, so one declared in any
+package is honored.
+
+The walk is a shape check rather than a coercion. A JSON string does not
+become an `int`, and a number outside BAML's 63-bit `int` is rejected
+rather than widened to `float`. A `bigint` decodes from an integral JSON
+number, or from a JSON string holding an optional sign and ASCII decimal
+digits; leading zeroes and negative zero are normalized, and fractions,
+exponents, whitespace, and other bases are rejected.
+
+A class field whose type admits `null` may be absent, and then decodes to
+`null`: `T?`, `unknown`, and `json` all admit it. Every other field must
+be present. Unrecognized keys are ignored. A recursive alias decodes as
+its definition. A `float` target takes a NaN or infinite `float` as it
+is.
+
+A union decodes as the member the value matches best by shape, and that
+member then decodes as above, its `baml.FromJson` override included. The
+candidates are the members a value of its JSON kind can be at all: a JSON
+object is never a `string`, and a member no JSON can hold, such as
+`uint8array`, is never a candidate. The most specific candidate wins:
+
+- For an object, the member that uses the most of its keys. A class uses
+  the keys that name its fields under `naming`, and a map every key, so
+  `{"n": 1}` in `Empty | Count` is the `Count`, whose field is `n`.
+- For a number, `int` before `bigint` before `float`, so `1` in
+  `float | int` is the `int` `1`.
+- For a string, a matching literal, then a matching enum variant, then
+  `string`. `"Red"` in `string | Color` is `Color.Red`, and `"purple"` is
+  the string.
+- A literal before its base type, as `1` in `1 | int` is the literal.
+- `json`, `unknown`, and a map of either last: they hold any value, so
+  they win only when nothing more specific decodes.
+
+Ties go to declaration order. When the most specific candidate fails
+deeper in, the next one is tried. A union inside a member resolves by the
+same rule.
+
+`T` matters here in a way it does not for `from`: decoding has only the
+target type to go on, so a wider `T` changes the result, not just its
+static type.
+
+`naming` picks the names fields and variants go by. The default,
+`Naming.Declared`, reads declared names, and `@alias` and `@skip` have no
+effect. `Naming.Aliased` reads the names a model is shown, which
+`schema(t, naming = Naming.Aliased)` describes: a member's `@alias`, and
+no `@skip` member. A `@skip` field then holds its type's empty value
+(`null`, `0`, `""`, `[]`, ...), and is an error when its type has none
+(media, a function, a class that contains itself).
+
+# Throws
+
+- `baml.json.DecodeError` if `j` does not fit `T`, if a `baml.FromJson`
+  override rejects it, or if `j` contains itself. `path` locates the
+  offending node. When no member of a union fits, `message` names each
+  member's misfit, and each member no JSON can hold, with the reason.
+
+Raises:
     DecodeError"""
-from_json_async = _define_function("baml.json.from_json", "async", ["j"], binding_name="from_json_async", binding_qualname="from_json_async", binding_module=__name__, type_params=["T"])
-from_json_async.__doc__ = """Raises:
+to_async = _define_function("baml.json.to", "async", ["j"], ["naming"], binding_name="to_async", binding_qualname="to_async", binding_module=__name__, type_params=["T"])
+to_async.__doc__ = """Decodes a `json` value into `T`.
+
+`T` drives the walk. Wherever the walk meets a class or enum — at the
+root, as a field, under an optional, in a list, in a map — a type that
+implements `baml.FromJson` with its own `from_json` is built by that
+method, and anything else decodes structurally, field by field, its
+children by the same rule. The method owns its whole subtree: `naming`
+does not reach inside it. It is found from `T`, so one declared in any
+package is honored.
+
+The walk is a shape check rather than a coercion. A JSON string does not
+become an `int`, and a number outside BAML's 63-bit `int` is rejected
+rather than widened to `float`. A `bigint` decodes from an integral JSON
+number, or from a JSON string holding an optional sign and ASCII decimal
+digits; leading zeroes and negative zero are normalized, and fractions,
+exponents, whitespace, and other bases are rejected.
+
+A class field whose type admits `null` may be absent, and then decodes to
+`null`: `T?`, `unknown`, and `json` all admit it. Every other field must
+be present. Unrecognized keys are ignored. A recursive alias decodes as
+its definition. A `float` target takes a NaN or infinite `float` as it
+is.
+
+A union decodes as the member the value matches best by shape, and that
+member then decodes as above, its `baml.FromJson` override included. The
+candidates are the members a value of its JSON kind can be at all: a JSON
+object is never a `string`, and a member no JSON can hold, such as
+`uint8array`, is never a candidate. The most specific candidate wins:
+
+- For an object, the member that uses the most of its keys. A class uses
+  the keys that name its fields under `naming`, and a map every key, so
+  `{"n": 1}` in `Empty | Count` is the `Count`, whose field is `n`.
+- For a number, `int` before `bigint` before `float`, so `1` in
+  `float | int` is the `int` `1`.
+- For a string, a matching literal, then a matching enum variant, then
+  `string`. `"Red"` in `string | Color` is `Color.Red`, and `"purple"` is
+  the string.
+- A literal before its base type, as `1` in `1 | int` is the literal.
+- `json`, `unknown`, and a map of either last: they hold any value, so
+  they win only when nothing more specific decodes.
+
+Ties go to declaration order. When the most specific candidate fails
+deeper in, the next one is tried. A union inside a member resolves by the
+same rule.
+
+`T` matters here in a way it does not for `from`: decoding has only the
+target type to go on, so a wider `T` changes the result, not just its
+static type.
+
+`naming` picks the names fields and variants go by. The default,
+`Naming.Declared`, reads declared names, and `@alias` and `@skip` have no
+effect. `Naming.Aliased` reads the names a model is shown, which
+`schema(t, naming = Naming.Aliased)` describes: a member's `@alias`, and
+no `@skip` member. A `@skip` field then holds its type's empty value
+(`null`, `0`, `""`, `[]`, ...), and is an error when its type has none
+(media, a function, a class that contains itself).
+
+# Throws
+
+- `baml.json.DecodeError` if `j` does not fit `T`, if a `baml.FromJson`
+  override rejects it, or if `j` contains itself. `path` locates the
+  offending node. When no member of a union fits, `message` names each
+  member's misfit, and each member no JSON can hold, with the reason.
+
+Raises:
     DecodeError"""
 
 
-to       = _define_function("baml.json.to", "sync",  ["j"], binding_name="to", binding_qualname="to", binding_module=__name__, type_params=["T"])
-to.__doc__ = """Raises:
+_to       = _define_function("baml.json._to", "sync",  ["j", "aliased"], binding_name="_to", binding_qualname="_to", binding_module=__name__, type_params=["T"])
+_to.__doc__ = """(internal) `to<T>`, with `naming` as a flag: aliased names when `aliased`
+holds.
+
+Raises:
     DecodeError"""
-to_async = _define_function("baml.json.to", "async", ["j"], binding_name="to_async", binding_qualname="to_async", binding_module=__name__, type_params=["T"])
-to_async.__doc__ = """Raises:
+_to_async = _define_function("baml.json._to", "async", ["j", "aliased"], binding_name="_to_async", binding_qualname="_to_async", binding_module=__name__, type_params=["T"])
+_to_async.__doc__ = """(internal) `to<T>`, with `naming` as a flag: aliased names when `aliased`
+holds.
+
+Raises:
     DecodeError"""
 
 
@@ -280,25 +620,15 @@ class PathError(pydantic.BaseModel):
     selector: str
 
 
-_path_field       = _define_function("baml.json._path_field", "sync",  ["current", "key", "selector"], binding_name="_path_field", binding_qualname="_path_field", binding_module=__name__)
-_path_field.__doc__ = """(internal) One `.field` step of a `path` walk. Use `path`.
+_path       = _define_function("baml.json._path", "sync",  ["j", "selector"], binding_name="_path", binding_qualname="_path", binding_module=__name__)
+_path.__doc__ = """(internal) The node `selector` picks out of `j`: the walk `path` runs
+before it decodes the leaf. Use `path`.
 
 Raises:
     PathError"""
-_path_field_async = _define_function("baml.json._path_field", "async", ["current", "key", "selector"], binding_name="_path_field_async", binding_qualname="_path_field_async", binding_module=__name__)
-_path_field_async.__doc__ = """(internal) One `.field` step of a `path` walk. Use `path`.
-
-Raises:
-    PathError"""
-
-
-_path_index       = _define_function("baml.json._path_index", "sync",  ["current", "idx", "selector"], binding_name="_path_index", binding_qualname="_path_index", binding_module=__name__)
-_path_index.__doc__ = """(internal) One `[i]` step of a `path` walk. Use `path`.
-
-Raises:
-    PathError"""
-_path_index_async = _define_function("baml.json._path_index", "async", ["current", "idx", "selector"], binding_name="_path_index_async", binding_qualname="_path_index_async", binding_module=__name__)
-_path_index_async.__doc__ = """(internal) One `[i]` step of a `path` walk. Use `path`.
+_path_async = _define_function("baml.json._path", "async", ["j", "selector"], binding_name="_path_async", binding_qualname="_path_async", binding_module=__name__)
+_path_async.__doc__ = """(internal) The node `selector` picks out of `j`: the walk `path` runs
+before it decodes the leaf. Use `path`.
 
 Raises:
     PathError"""
@@ -331,7 +661,7 @@ that will not decode — collapses into one `PathError`, which is what makes
 # Examples
 
 ```baml
-let doc = baml.json.parse("{\\"users\\": [{\\"name\\": \\"Ada\\", \\"age\\": 36}]}");
+let doc: json = { "users": [{ "name": "Ada", "age": 36 }] };
 assert.equal(baml.json.path<string>(doc, ".users[0].name"), "Ada");
 assert.equal(baml.json.path<int>(doc, "[\\"users\\"][0][\\"age\\"]"), 36);
 ```
@@ -365,7 +695,7 @@ that will not decode — collapses into one `PathError`, which is what makes
 # Examples
 
 ```baml
-let doc = baml.json.parse("{\\"users\\": [{\\"name\\": \\"Ada\\", \\"age\\": 36}]}");
+let doc: json = { "users": [{ "name": "Ada", "age": 36 }] };
 assert.equal(baml.json.path<string>(doc, ".users[0].name"), "Ada");
 assert.equal(baml.json.path<int>(doc, "[\\"users\\"][0][\\"age\\"]"), 36);
 ```
@@ -378,153 +708,182 @@ path_or       = _define_function("baml.json.path_or", "sync",  ["j", "selector",
 path_or_async = _define_function("baml.json.path_or", "async", ["j", "selector", "default"], binding_name="path_or_async", binding_qualname="path_or_async", binding_module=__name__, type_params=["T"])
 
 
-schema       = _define_function("baml.json.schema", "sync",  ["t"], binding_name="schema", binding_qualname="schema", binding_module=__name__)
+schema       = _define_function("baml.json.schema", "sync",  ["t"], ["naming"], binding_name="schema", binding_qualname="schema", binding_module=__name__)
 schema.__doc__ = """Lowers a BAML type to ordinary, provider-neutral JSON Schema.
 
 The type-level counterpart to the value conversions above: they move a
 *value* between BAML and `json`, while this describes the *shape* a value
 of `t` would take.
 
-Optional fields are omitted from `required`, maps use schema-valued
+A field whose type admits `null` (`T?`, `json`) is omitted from
+`required`, as the decoder lets it be missing. Maps use schema-valued
 `additionalProperties`, and unions use `anyOf`. Enums lower to a string
-`enum` of their variant names, `uint8array` to `string`, and `unknown` to
-the empty schema `{}`. A nullable type becomes a `["T", "null"]` type list
-where it can, and `anyOf` otherwise.
+`enum` of their variant names. A nullable type becomes a `["T", "null"]`
+type list where it can, and `anyOf` otherwise. A nullable enum also lists
+`null` in its `enum`, and a nullable literal uses `anyOf`, because `enum`
+and `const` restrict the value whatever `type` says.
 
-This pass *does* respect `@alias` and `@skip`, where the value conversions
-do not — a schema is read by something outside BAML, so it must describe
-the wire names. That is also why an enum variant lowers under its alias.
+An `int` carries its range as `minimum` and `maximum`. A `bigint` is a
+decimal string (`"-12"`), because a JSON number that large loses precision
+in most parsers; a bigint literal is that string as a `const`. A media value
+is the tagged object `{ kind, source, value, mime, name? }`, where `source`
+is `"url"` or `"base64"`. A map's key type must be `string`, or string
+literals, which become `propertyNames`.
+
+Some types have values but no JSON form: `uint8array`, functions, futures,
+`reflect.Type`, a class that requires one of those, and a class whose every
+value is cyclic (JSON holds only finite values). Others have no values at
+all: `never`, an enum with no variants, and a class that requires one of
+those. Both kinds are dropped from a union, so `uint8array | int | string`
+lowers as `int | string`, and an optional field of either kind is only
+`null`. They differ inside a list or map:
+
+    never[]                 // only []: { "type": "array", "maxItems": 0 }
+    map<string, never>      // only {}
+    uint8array[]            // no JSON form: the list is dropped like its items
+    map<string, uint8array> // no JSON form
+
+A list of a type with no values is still a list, the empty one. A list of
+`uint8array` is not reduced to `[]`: that would describe only the lists the
+type can hold when they happen to be empty.
+
+A type whose values all lack a JSON form, or that has no values, is
+rejected rather than lowered to a schema nothing can satisfy.
+
+`naming` picks the names fields and variants go by, as it does for
+`decode<T>`, so a schema and the decoder given the same `naming` agree on
+every key. With `Naming.Aliased`, a `@skip` field holds its type's
+empty value, so a class with a `@skip` field whose type has none (media, a
+function, a class that contains itself) has no JSON form.
+
+Documentation becomes `description`, with the text the output format
+shows: a class's or a field's `@description`, then its `///` docstring. A
+field's `description` sits beside the `$ref` when the field is a class. An
+enum's `description` holds its own documentation and one
+`- <variant>: <documentation>` line per documented variant, because JSON
+Schema has no description per `enum` value.
 
 The root type is emitted inline, and every class and named alias beneath it
 goes into `$defs` to be reached by `$ref`. That is what lets a recursive
 graph terminate: a recursive root is emitted both inline and into `$defs`,
-so the `$ref` back to itself resolves.
+so the `$ref` back to itself resolves. Definitions are keyed by name; when
+two share one, the later gets a `_2` (then `_3`, ...) suffix.
 
 # Throws
 
-- `baml.errors.Unsupported` for a type with no JSON Schema form, and for a
-  class, enum, or alias the reflection context cannot resolve.
+- `baml.errors.Unsupported` when no value of `t` has a JSON form, or `t` has
+  no values.
+- `baml.errors.Unsupported` for a type no schema describes exactly:
+  `unknown`, an interface type, media that does not name its kind, a map
+  whose key is not `string` or string literals, and a generic class
+  instance.
+- `baml.errors.Unsupported` for a class, enum, or alias the reflection
+  context cannot resolve.
 
 Raises:
     Unsupported"""
-schema_async = _define_function("baml.json.schema", "async", ["t"], binding_name="schema_async", binding_qualname="schema_async", binding_module=__name__)
+schema_async = _define_function("baml.json.schema", "async", ["t"], ["naming"], binding_name="schema_async", binding_qualname="schema_async", binding_module=__name__)
 schema_async.__doc__ = """Lowers a BAML type to ordinary, provider-neutral JSON Schema.
 
 The type-level counterpart to the value conversions above: they move a
 *value* between BAML and `json`, while this describes the *shape* a value
 of `t` would take.
 
-Optional fields are omitted from `required`, maps use schema-valued
+A field whose type admits `null` (`T?`, `json`) is omitted from
+`required`, as the decoder lets it be missing. Maps use schema-valued
 `additionalProperties`, and unions use `anyOf`. Enums lower to a string
-`enum` of their variant names, `uint8array` to `string`, and `unknown` to
-the empty schema `{}`. A nullable type becomes a `["T", "null"]` type list
-where it can, and `anyOf` otherwise.
+`enum` of their variant names. A nullable type becomes a `["T", "null"]`
+type list where it can, and `anyOf` otherwise. A nullable enum also lists
+`null` in its `enum`, and a nullable literal uses `anyOf`, because `enum`
+and `const` restrict the value whatever `type` says.
 
-This pass *does* respect `@alias` and `@skip`, where the value conversions
-do not — a schema is read by something outside BAML, so it must describe
-the wire names. That is also why an enum variant lowers under its alias.
+An `int` carries its range as `minimum` and `maximum`. A `bigint` is a
+decimal string (`"-12"`), because a JSON number that large loses precision
+in most parsers; a bigint literal is that string as a `const`. A media value
+is the tagged object `{ kind, source, value, mime, name? }`, where `source`
+is `"url"` or `"base64"`. A map's key type must be `string`, or string
+literals, which become `propertyNames`.
+
+Some types have values but no JSON form: `uint8array`, functions, futures,
+`reflect.Type`, a class that requires one of those, and a class whose every
+value is cyclic (JSON holds only finite values). Others have no values at
+all: `never`, an enum with no variants, and a class that requires one of
+those. Both kinds are dropped from a union, so `uint8array | int | string`
+lowers as `int | string`, and an optional field of either kind is only
+`null`. They differ inside a list or map:
+
+    never[]                 // only []: { "type": "array", "maxItems": 0 }
+    map<string, never>      // only {}
+    uint8array[]            // no JSON form: the list is dropped like its items
+    map<string, uint8array> // no JSON form
+
+A list of a type with no values is still a list, the empty one. A list of
+`uint8array` is not reduced to `[]`: that would describe only the lists the
+type can hold when they happen to be empty.
+
+A type whose values all lack a JSON form, or that has no values, is
+rejected rather than lowered to a schema nothing can satisfy.
+
+`naming` picks the names fields and variants go by, as it does for
+`decode<T>`, so a schema and the decoder given the same `naming` agree on
+every key. With `Naming.Aliased`, a `@skip` field holds its type's
+empty value, so a class with a `@skip` field whose type has none (media, a
+function, a class that contains itself) has no JSON form.
+
+Documentation becomes `description`, with the text the output format
+shows: a class's or a field's `@description`, then its `///` docstring. A
+field's `description` sits beside the `$ref` when the field is a class. An
+enum's `description` holds its own documentation and one
+`- <variant>: <documentation>` line per documented variant, because JSON
+Schema has no description per `enum` value.
 
 The root type is emitted inline, and every class and named alias beneath it
 goes into `$defs` to be reached by `$ref`. That is what lets a recursive
 graph terminate: a recursive root is emitted both inline and into `$defs`,
-so the `$ref` back to itself resolves.
+so the `$ref` back to itself resolves. Definitions are keyed by name; when
+two share one, the later gets a `_2` (then `_3`, ...) suffix.
 
 # Throws
 
-- `baml.errors.Unsupported` for a type with no JSON Schema form, and for a
-  class, enum, or alias the reflection context cannot resolve.
+- `baml.errors.Unsupported` when no value of `t` has a JSON form, or `t` has
+  no values.
+- `baml.errors.Unsupported` for a type no schema describes exactly:
+  `unknown`, an interface type, media that does not name its kind, a map
+  whose key is not `string` or string literals, and a generic class
+  instance.
+- `baml.errors.Unsupported` for a class, enum, or alias the reflection
+  context cannot resolve.
 
 Raises:
     Unsupported"""
 
 
-serialize       = _define_function("baml.json.serialize", "sync",  ["v"], binding_name="serialize", binding_qualname="serialize", binding_module=__name__, type_params=["T"])
-serialize.__doc__ = """Serializes `v` to JSON text, honoring `baml.ToJson` overrides on classes
-(via `to_json`). Equivalent to `to_string(v)`.
-
-For a host that wants to print a target's return value as JSON while still
-respecting class-level `to_json` overrides. From BAML, call `to_string`
-directly; nothing here adds behaviour.
-
-# Throws
-
-- `baml.json.SerializationError` if any value in the graph has no JSON
-  form; see `from<T>`.
+_schema       = _define_function("baml.json._schema", "sync",  ["t", "aliased"], binding_name="_schema", binding_qualname="_schema", binding_module=__name__)
+_schema.__doc__ = """`schema`, with `naming` as a flag: aliased names when `aliased` holds.
 
 Raises:
-    SerializationError"""
-serialize_async = _define_function("baml.json.serialize", "async", ["v"], binding_name="serialize_async", binding_qualname="serialize_async", binding_module=__name__, type_params=["T"])
-serialize_async.__doc__ = """Serializes `v` to JSON text, honoring `baml.ToJson` overrides on classes
-(via `to_json`). Equivalent to `to_string(v)`.
-
-For a host that wants to print a target's return value as JSON while still
-respecting class-level `to_json` overrides. From BAML, call `to_string`
-directly; nothing here adds behaviour.
-
-# Throws
-
-- `baml.json.SerializationError` if any value in the graph has no JSON
-  form; see `from<T>`.
+    Unsupported"""
+_schema_async = _define_function("baml.json._schema", "async", ["t", "aliased"], binding_name="_schema_async", binding_qualname="_schema_async", binding_module=__name__)
+_schema_async.__doc__ = """`schema`, with `naming` as a flag: aliased names when `aliased` holds.
 
 Raises:
-    SerializationError"""
-
-
-deserialize       = _define_function("baml.json.deserialize", "sync",  ["s"], binding_name="deserialize", binding_qualname="deserialize", binding_module=__name__, type_params=["T"])
-deserialize.__doc__ = """Parses JSON text into a value of type `T`, honoring `baml.FromJson`
-overrides on classes (via `from_json<T>`). Equivalent to
-`from_json<T>(parse(s))`.
-
-For a host that wants to coerce a JSON-shaped input (such as `--json-args`)
-into a typed BAML value while respecting class-level `from_json` overrides.
-`from_string<T>` is the structural path, which bypasses overrides.
-
-# Throws
-
-- `baml.json.ParseError` if `s` is not valid JSON.
-- `baml.json.DecodeError` if the parsed document does not fit `T`.
-
-Raises:
-    ParseError, DecodeError"""
-deserialize_async = _define_function("baml.json.deserialize", "async", ["s"], binding_name="deserialize_async", binding_qualname="deserialize_async", binding_module=__name__, type_params=["T"])
-deserialize_async.__doc__ = """Parses JSON text into a value of type `T`, honoring `baml.FromJson`
-overrides on classes (via `from_json<T>`). Equivalent to
-`from_json<T>(parse(s))`.
-
-For a host that wants to coerce a JSON-shaped input (such as `--json-args`)
-into a typed BAML value while respecting class-level `from_json` overrides.
-`from_string<T>` is the structural path, which bypasses overrides.
-
-# Throws
-
-- `baml.json.ParseError` if `s` is not valid JSON.
-- `baml.json.DecodeError` if the parsed document does not fit `T`.
-
-Raises:
-    ParseError, DecodeError"""
+    Unsupported"""
 
 
 __all__ = [
     "json",
+    "Naming",
     "ParseError",
     "DecodeError",
     "SerializationError",
     "parse",
     "parse_async",
+    "decode",
+    "decode_async",
     "stringify",
     "stringify_async",
-    "stringify_pretty",
-    "stringify_pretty_async",
-    "to_string",
-    "to_string_async",
-    "to_json",
-    "to_json_async",
     "from_",
     "from__async",
-    "from_string",
-    "from_string_async",
-    "from_json",
-    "from_json_async",
     "to",
     "to_async",
     "field",
@@ -536,8 +895,4 @@ __all__ = [
     "path_or_async",
     "schema",
     "schema_async",
-    "serialize",
-    "serialize_async",
-    "deserialize",
-    "deserialize_async",
 ]

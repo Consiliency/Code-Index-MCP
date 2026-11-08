@@ -100,17 +100,19 @@ credential_sources       = _define_function("ai.wire.credential_sources", "sync"
 credential_sources_async = _define_function("ai.wire.credential_sources", "async", ["cred", "canonical_env"], binding_name="credential_sources_async", binding_qualname="credential_sources_async", binding_module=__name__)
 
 
-send_as       = _define_function("ai.wire.send_as", "sync",  ["req", "provider"], ["request_timeout_ms"], binding_name="send_as", binding_qualname="send_as", binding_module=__name__, type_params=["T"])
+send_as       = _define_function("ai.wire.send_as", "sync",  ["req", "provider"], binding_name="send_as", binding_qualname="send_as", binding_module=__name__, type_params=["T"])
 send_as.__doc__ = """Send, classify non-2xx via `ai.errors.classify_http`, decode the body as T.
 T = json-shaped envelope class; unknown fields are ignored by the decoder.
-A null or non-positive timeout preserves the transport's unbounded default.
+The request runs under its own `timeout` and `connect_timeout` (see
+`baml.http.Request`); a client puts its `ai.LlmTimeoutOptions` there.
 
 Raises:
     Timeout"""
-send_as_async = _define_function("ai.wire.send_as", "async", ["req", "provider"], ["request_timeout_ms"], binding_name="send_as_async", binding_qualname="send_as_async", binding_module=__name__, type_params=["T"])
+send_as_async = _define_function("ai.wire.send_as", "async", ["req", "provider"], binding_name="send_as_async", binding_qualname="send_as_async", binding_module=__name__, type_params=["T"])
 send_as_async.__doc__ = """Send, classify non-2xx via `ai.errors.classify_http`, decode the body as T.
 T = json-shaped envelope class; unknown fields are ignored by the decoder.
-A null or non-positive timeout preserves the transport's unbounded default.
+The request runs under its own `timeout` and `connect_timeout` (see
+`baml.http.Request`); a client puts its `ai.LlmTimeoutOptions` there.
 
 Raises:
     Timeout"""
@@ -124,25 +126,29 @@ class SentAs(pydantic.BaseModel, typing.Generic[T]):
         populate_by_name=True,
     )
     value: T
-    call: ai.events.LLMCall
+    call: ai.events.ModelCall
 
 
-send_as_with_wire       = _define_function("ai.wire.send_as_with_wire", "sync",  ["req", "provider", "client_name"], ["capture_wire", "request_timeout_ms"], binding_name="send_as_with_wire", binding_qualname="send_as_with_wire", binding_module=__name__, type_params=["T"])
-send_as_with_wire.__doc__ = """Same contract as `send_as`, plus the LLMCall wire record. On a non-2xx or
-transport failure this still throws the same classified error `send_as`
-throws — composite clients build failed-leg records from the error itself
-(`_failed_leg_call`), so no record accompanies a throw. `capture_wire`
+send_as_with_wire       = _define_function("ai.wire.send_as_with_wire", "sync",  ["req", "model"], ["capture_wire"], binding_name="send_as_with_wire", binding_qualname="send_as_with_wire", binding_module=__name__, type_params=["T"])
+send_as_with_wire.__doc__ = """Same contract as `send_as`, plus the ModelCall record billed to `model`;
+its `usage` and resolved model are the caller's to fill once it decodes the
+response (`ai.internal.with_own_call`). On a non-2xx or transport failure
+this still throws the same classified error `send_as` throws — composite
+clients build failed attempts from the error itself (`_failed_attempt`),
+so no record accompanies a throw. `capture_wire`
 gates the request/response bodies; status, headers, and timing are always
 recorded. The request URL and captured response body are redacted with
 `redact_url_secrets` before storing.
 
 Raises:
     Timeout"""
-send_as_with_wire_async = _define_function("ai.wire.send_as_with_wire", "async", ["req", "provider", "client_name"], ["capture_wire", "request_timeout_ms"], binding_name="send_as_with_wire_async", binding_qualname="send_as_with_wire_async", binding_module=__name__, type_params=["T"])
-send_as_with_wire_async.__doc__ = """Same contract as `send_as`, plus the LLMCall wire record. On a non-2xx or
-transport failure this still throws the same classified error `send_as`
-throws — composite clients build failed-leg records from the error itself
-(`_failed_leg_call`), so no record accompanies a throw. `capture_wire`
+send_as_with_wire_async = _define_function("ai.wire.send_as_with_wire", "async", ["req", "model"], ["capture_wire"], binding_name="send_as_with_wire_async", binding_qualname="send_as_with_wire_async", binding_module=__name__, type_params=["T"])
+send_as_with_wire_async.__doc__ = """Same contract as `send_as`, plus the ModelCall record billed to `model`;
+its `usage` and resolved model are the caller's to fill once it decodes the
+response (`ai.internal.with_own_call`). On a non-2xx or transport failure
+this still throws the same classified error `send_as` throws — composite
+clients build failed attempts from the error itself (`_failed_attempt`),
+so no record accompanies a throw. `capture_wire`
 gates the request/response bodies; status, headers, and timing are always
 recorded. The request URL and captured response body are redacted with
 `redact_url_secrets` before storing.
@@ -167,8 +173,8 @@ Raises:
 
 class ResolvedMedia(pydantic.BaseModel):
     """
-    Provider-neutral media payload after resolving local files and, when
-    requested, ordinary HTTP(S) URLs. Google Cloud `gs://` URLs remain URLs.
+    Provider-neutral media payload after resolving, when requested, ordinary
+    HTTP(S) URLs. Google Cloud `gs://` URLs remain URLs.
     """
     model_config = pydantic.ConfigDict(
         arbitrary_types_allowed=True,
@@ -182,31 +188,33 @@ class ResolvedMedia(pydantic.BaseModel):
 
 resolve_media       = _define_function("ai.wire.resolve_media", "sync",  ["media", "fetch_url"], binding_name="resolve_media", binding_qualname="resolve_media", binding_module=__name__)
 resolve_media.__doc__ = """Resolve BAML media for provider request lowering. This mirrors the media
-resolution pass in `sys_llm`: local files become base64, existing base64 is
-retained, and URL fetching is selected by the provider.
+resolution pass in `sys_llm`: existing base64 is retained, and URL fetching
+is selected by the provider. Media built from a file already holds its
+content as base64.
 
 Raises:
-    InvalidArgument, Io, Timeout, NetworkFailure"""
+    InvalidArgument, Timeout, NetworkFailure"""
 resolve_media_async = _define_function("ai.wire.resolve_media", "async", ["media", "fetch_url"], binding_name="resolve_media_async", binding_qualname="resolve_media_async", binding_module=__name__)
 resolve_media_async.__doc__ = """Resolve BAML media for provider request lowering. This mirrors the media
-resolution pass in `sys_llm`: local files become base64, existing base64 is
-retained, and URL fetching is selected by the provider.
+resolution pass in `sys_llm`: existing base64 is retained, and URL fetching
+is selected by the provider. Media built from a file already holds its
+content as base64.
 
 Raises:
-    InvalidArgument, Io, Timeout, NetworkFailure"""
+    InvalidArgument, Timeout, NetworkFailure"""
 
 
 resolve_media_preview       = _define_function("ai.wire.resolve_media_preview", "sync",  ["media"], binding_name="resolve_media_preview", binding_qualname="resolve_media_preview", binding_module=__name__)
-resolve_media_preview.__doc__ = """Resolve media for a request preview without reading a file or fetching a
-URL. Existing base64 and `data:` payloads are preserved; provider-specific
-renderers decide whether an ordinary URL is supported on their wire form.
+resolve_media_preview.__doc__ = """Resolve media for a request preview without fetching a URL. Existing base64
+and `data:` payloads are preserved; provider-specific renderers decide
+whether an ordinary URL is supported on their wire form.
 
 Raises:
     PreviewUnsupported"""
 resolve_media_preview_async = _define_function("ai.wire.resolve_media_preview", "async", ["media"], binding_name="resolve_media_preview_async", binding_qualname="resolve_media_preview_async", binding_module=__name__)
-resolve_media_preview_async.__doc__ = """Resolve media for a request preview without reading a file or fetching a
-URL. Existing base64 and `data:` payloads are preserved; provider-specific
-renderers decide whether an ordinary URL is supported on their wire form.
+resolve_media_preview_async.__doc__ = """Resolve media for a request preview without fetching a URL. Existing base64
+and `data:` payloads are preserved; provider-specific renderers decide
+whether an ordinary URL is supported on their wire form.
 
 Raises:
     PreviewUnsupported"""
@@ -220,6 +228,10 @@ prompt_blocks       = _define_function("ai.wire.prompt_blocks", "sync",  ["messa
 prompt_blocks_async = _define_function("ai.wire.prompt_blocks", "async", ["message"], binding_name="prompt_blocks_async", binding_qualname="prompt_blocks_async", binding_module=__name__)
 
 
+prompt_parts       = _define_function("ai.wire.prompt_parts", "sync",  ["message"], ["default_cache_args"], binding_name="prompt_parts", binding_qualname="prompt_parts", binding_module=__name__)
+prompt_parts_async = _define_function("ai.wire.prompt_parts", "async", ["message"], ["default_cache_args"], binding_name="prompt_parts_async", binding_qualname="prompt_parts_async", binding_module=__name__)
+
+
 tool_name       = _define_function("ai.wire.tool_name", "sync",  ["j", "id"], binding_name="tool_name", binding_qualname="tool_name", binding_module=__name__)
 tool_name_async = _define_function("ai.wire.tool_name", "async", ["j", "id"], binding_name="tool_name_async", binding_qualname="tool_name_async", binding_module=__name__)
 
@@ -228,8 +240,8 @@ degrade_tool_media       = _define_function("ai.wire.degrade_tool_media", "sync"
 degrade_tool_media_async = _define_function("ai.wire.degrade_tool_media", "async", ["j", "carries"], binding_name="degrade_tool_media_async", binding_qualname="degrade_tool_media_async", binding_module=__name__)
 
 
-sanitize_for_client       = _define_function("ai.wire.sanitize_for_client", "sync",  ["j", "client_id"], binding_name="sanitize_for_client", binding_qualname="sanitize_for_client", binding_module=__name__)
-sanitize_for_client_async = _define_function("ai.wire.sanitize_for_client", "async", ["j", "client_id"], binding_name="sanitize_for_client_async", binding_qualname="sanitize_for_client_async", binding_module=__name__)
+sanitize_for_client       = _define_function("ai.wire.sanitize_for_client", "sync",  ["j", "provider", "requested_model"], binding_name="sanitize_for_client", binding_qualname="sanitize_for_client", binding_module=__name__)
+sanitize_for_client_async = _define_function("ai.wire.sanitize_for_client", "async", ["j", "provider", "requested_model"], binding_name="sanitize_for_client_async", binding_qualname="sanitize_for_client_async", binding_module=__name__)
 
 
 __all__ = [
@@ -257,6 +269,8 @@ __all__ = [
     "merge_request_body_async",
     "prompt_blocks",
     "prompt_blocks_async",
+    "prompt_parts",
+    "prompt_parts_async",
     "tool_name",
     "tool_name_async",
     "degrade_tool_media",

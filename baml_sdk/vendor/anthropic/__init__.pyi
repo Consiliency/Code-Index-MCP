@@ -32,21 +32,23 @@ if typing.TYPE_CHECKING:
     from ... import baml
     from ...baml import UNSET as UNSET
 
+from ..._invocation_types import BamlOptions as _BamlOptions
+
 
 class ThinkingConfig(pydantic.BaseModel):
     type: str
     budget_tokens: typing.Optional[int] = None
     @staticmethod
-    def enabled(budget_tokens: int) -> ThinkingConfig:
+    def enabled(budget_tokens: int, *, _baml: _BamlOptions | None = None) -> ThinkingConfig:
         """Turns extended thinking on, with `budget_tokens` reserved for it."""
     @staticmethod
-    async def enabled_async(budget_tokens: int) -> ThinkingConfig:
+    async def enabled_async(budget_tokens: int, *, _baml: _BamlOptions | None = None) -> ThinkingConfig:
         """Turns extended thinking on, with `budget_tokens` reserved for it."""
     @staticmethod
-    def disabled() -> ThinkingConfig:
+    def disabled(*, _baml: _BamlOptions | None = None) -> ThinkingConfig:
         """Turns extended thinking off."""
     @staticmethod
-    async def disabled_async() -> ThinkingConfig:
+    async def disabled_async(*, _baml: _BamlOptions | None = None) -> ThinkingConfig:
         """Turns extended thinking off."""
 
 
@@ -55,28 +57,28 @@ class ToolChoice(pydantic.BaseModel):
     name: typing.Optional[str] = None
     disable_parallel_tool_use: typing.Optional[bool] = None
     @staticmethod
-    def auto(*, disable_parallel_tool_use: typing.Union[bool, None, UNSET] = None) -> ToolChoice:
+    def auto(*, disable_parallel_tool_use: typing.Union[bool, None, UNSET] = None, _baml: _BamlOptions | None = None) -> ToolChoice:
         """The model decides whether to call a tool."""
     @staticmethod
-    async def auto_async(*, disable_parallel_tool_use: typing.Union[bool, None, UNSET] = None) -> ToolChoice:
+    async def auto_async(*, disable_parallel_tool_use: typing.Union[bool, None, UNSET] = None, _baml: _BamlOptions | None = None) -> ToolChoice:
         """The model decides whether to call a tool."""
     @staticmethod
-    def any(*, disable_parallel_tool_use: typing.Union[bool, None, UNSET] = None) -> ToolChoice:
+    def any(*, disable_parallel_tool_use: typing.Union[bool, None, UNSET] = None, _baml: _BamlOptions | None = None) -> ToolChoice:
         """The model must call one of the tools, its choice which."""
     @staticmethod
-    async def any_async(*, disable_parallel_tool_use: typing.Union[bool, None, UNSET] = None) -> ToolChoice:
+    async def any_async(*, disable_parallel_tool_use: typing.Union[bool, None, UNSET] = None, _baml: _BamlOptions | None = None) -> ToolChoice:
         """The model must call one of the tools, its choice which."""
     @staticmethod
-    def tool(name: str, *, disable_parallel_tool_use: typing.Union[bool, None, UNSET] = None) -> ToolChoice:
+    def tool(name: str, *, disable_parallel_tool_use: typing.Union[bool, None, UNSET] = None, _baml: _BamlOptions | None = None) -> ToolChoice:
         """The model must call exactly this tool."""
     @staticmethod
-    async def tool_async(name: str, *, disable_parallel_tool_use: typing.Union[bool, None, UNSET] = None) -> ToolChoice:
+    async def tool_async(name: str, *, disable_parallel_tool_use: typing.Union[bool, None, UNSET] = None, _baml: _BamlOptions | None = None) -> ToolChoice:
         """The model must call exactly this tool."""
     @staticmethod
-    def none() -> ToolChoice:
+    def none(*, _baml: _BamlOptions | None = None) -> ToolChoice:
         """The model may not call a tool this turn."""
     @staticmethod
-    async def none_async() -> ToolChoice:
+    async def none_async(*, _baml: _BamlOptions | None = None) -> ToolChoice:
         """The model may not call a tool this turn."""
 
 
@@ -84,8 +86,7 @@ class Client(pydantic.BaseModel):
     model: str
     api_key: typing.Optional[ai.Credential] = None
     base_url: typing.Optional[ai.Credential] = None
-    request_timeout_ms: typing.Optional[int] = None
-    time_to_first_token_timeout_ms: typing.Optional[int] = None
+    timeout: typing.Union[baml.time.Duration, ai.LlmTimeoutOptions, None] = None
     max_tokens: int
     temperature: typing.Optional[float] = None
     top_p: typing.Optional[float] = None
@@ -98,7 +99,7 @@ class Client(pydantic.BaseModel):
     query_params: typing.Optional[typing.Dict[str, str]] = None
     capture_wire: bool
     @staticmethod
-    def new(*, model: typing.Union[str, UNSET] = "claude-haiku-4-5", api_key: typing.Union[ai.Credential, None, UNSET] = None, base_url: typing.Union[ai.Credential, None, UNSET] = None, request_timeout_ms: typing.Union[int, None, UNSET] = None, time_to_first_token_timeout_ms: typing.Union[int, None, UNSET] = None, max_tokens: typing.Union[int, UNSET] = 8192, temperature: typing.Union[float, None, UNSET] = None, top_p: typing.Union[float, None, UNSET] = None, top_k: typing.Union[int, None, UNSET] = None, stop_sequences: typing.Union[typing.List[str], None, UNSET] = None, thinking: typing.Union[ThinkingConfig, None, UNSET] = None, tool_choice: typing.Union[ToolChoice, None, UNSET] = None, request_body: typing.Union[baml.json.json, None, UNSET] = None, headers: typing.Union[typing.Dict[str, str], None, UNSET] = None, query_params: typing.Union[typing.Dict[str, str], None, UNSET] = None, capture_wire: typing.Union[bool, UNSET] = True) -> Client:
+    def new(*, model: typing.Union[str, UNSET] = "claude-haiku-4-5", api_key: typing.Union[ai.Credential, None, UNSET] = None, base_url: typing.Union[ai.Credential, None, UNSET] = None, timeout: typing.Union[baml.time.Duration, ai.LlmTimeoutOptions, None, UNSET] = None, max_tokens: typing.Union[int, UNSET] = 8192, temperature: typing.Union[float, None, UNSET] = None, top_p: typing.Union[float, None, UNSET] = None, top_k: typing.Union[int, None, UNSET] = None, stop_sequences: typing.Union[typing.List[str], None, UNSET] = None, thinking: typing.Union[ThinkingConfig, None, UNSET] = None, tool_choice: typing.Union[ToolChoice, None, UNSET] = None, request_body: typing.Union[baml.json.json, None, UNSET] = None, headers: typing.Union[typing.Dict[str, str], None, UNSET] = None, query_params: typing.Union[typing.Dict[str, str], None, UNSET] = None, capture_wire: typing.Union[bool, UNSET] = True, _baml: _BamlOptions | None = None) -> Client:
         """NOTE: the task spec named "claude-3-5-haiku-latest" as the default, but
         that model was retired (the API 404s on it); claude-haiku-4-5 is the
         current Haiku.
@@ -107,7 +108,7 @@ class Client(pydantic.BaseModel):
         model this client can address supports at least that, and 4096 silently
         truncates ordinary structured answers."""
     @staticmethod
-    async def new_async(*, model: typing.Union[str, UNSET] = "claude-haiku-4-5", api_key: typing.Union[ai.Credential, None, UNSET] = None, base_url: typing.Union[ai.Credential, None, UNSET] = None, request_timeout_ms: typing.Union[int, None, UNSET] = None, time_to_first_token_timeout_ms: typing.Union[int, None, UNSET] = None, max_tokens: typing.Union[int, UNSET] = 8192, temperature: typing.Union[float, None, UNSET] = None, top_p: typing.Union[float, None, UNSET] = None, top_k: typing.Union[int, None, UNSET] = None, stop_sequences: typing.Union[typing.List[str], None, UNSET] = None, thinking: typing.Union[ThinkingConfig, None, UNSET] = None, tool_choice: typing.Union[ToolChoice, None, UNSET] = None, request_body: typing.Union[baml.json.json, None, UNSET] = None, headers: typing.Union[typing.Dict[str, str], None, UNSET] = None, query_params: typing.Union[typing.Dict[str, str], None, UNSET] = None, capture_wire: typing.Union[bool, UNSET] = True) -> Client:
+    async def new_async(*, model: typing.Union[str, UNSET] = "claude-haiku-4-5", api_key: typing.Union[ai.Credential, None, UNSET] = None, base_url: typing.Union[ai.Credential, None, UNSET] = None, timeout: typing.Union[baml.time.Duration, ai.LlmTimeoutOptions, None, UNSET] = None, max_tokens: typing.Union[int, UNSET] = 8192, temperature: typing.Union[float, None, UNSET] = None, top_p: typing.Union[float, None, UNSET] = None, top_k: typing.Union[int, None, UNSET] = None, stop_sequences: typing.Union[typing.List[str], None, UNSET] = None, thinking: typing.Union[ThinkingConfig, None, UNSET] = None, tool_choice: typing.Union[ToolChoice, None, UNSET] = None, request_body: typing.Union[baml.json.json, None, UNSET] = None, headers: typing.Union[typing.Dict[str, str], None, UNSET] = None, query_params: typing.Union[typing.Dict[str, str], None, UNSET] = None, capture_wire: typing.Union[bool, UNSET] = True, _baml: _BamlOptions | None = None) -> Client:
         """NOTE: the task spec named "claude-3-5-haiku-latest" as the default, but
         that model was retired (the API 404s on it); claude-haiku-4-5 is the
         current Haiku.
@@ -115,7 +116,7 @@ class Client(pydantic.BaseModel):
         max_tokens defaults to 8192, not the engine's 4096 (PLAN §5): every
         model this client can address supports at least that, and 4096 silently
         truncates ordinary structured answers."""
-    def resolved_api_key(self) -> str:
+    def resolved_api_key(self, *, _baml: _BamlOptions | None = None) -> str:
         """The request-time credential: an explicit value, else the provider's
         canonical one.
 
@@ -127,7 +128,7 @@ class Client(pydantic.BaseModel):
 
         Raises:
             Io, ParseError, InvalidRequest"""
-    async def resolved_api_key_async(self) -> str:
+    async def resolved_api_key_async(self, *, _baml: _BamlOptions | None = None) -> str:
         """The request-time credential: an explicit value, else the provider's
         canonical one.
 
@@ -139,12 +140,12 @@ class Client(pydantic.BaseModel):
 
         Raises:
             Io, ParseError, InvalidRequest"""
-    def resolved_base_url(self) -> typing.Optional[str]:
+    def resolved_base_url(self, *, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
         """The request-time base URL, or null for the provider default.
 
         Raises:
             Io, ParseError"""
-    async def resolved_base_url_async(self) -> typing.Optional[str]:
+    async def resolved_base_url_async(self, *, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
         """The request-time base URL, or null for the provider default.
 
         Raises:

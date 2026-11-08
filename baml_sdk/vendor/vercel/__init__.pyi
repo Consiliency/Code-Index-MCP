@@ -32,6 +32,8 @@ if typing.TYPE_CHECKING:
     from ... import baml
     from ...baml import UNSET as UNSET
 
+from ..._invocation_types import BamlOptions as _BamlOptions
+
 
 class AiGatewayImageClient(pydantic.BaseModel):
     model: str
@@ -45,17 +47,18 @@ class AiGatewayImageClient(pydantic.BaseModel):
     headers: typing.Optional[typing.Dict[str, str]] = None
     query_params: typing.Optional[typing.Dict[str, str]] = None
     capture_wire: bool
+    timeout: typing.Union[baml.time.Duration, ai.LlmTimeoutOptions, None] = None
     @staticmethod
-    def new(*, model: typing.Union[str, UNSET] = "openai/gpt-image-1", api_key: typing.Union[ai.Credential, None, UNSET] = None, base_url: typing.Union[ai.Credential, None, UNSET] = None, n: typing.Union[int, None, UNSET] = None, size: typing.Union[str, None, UNSET] = None, aspect_ratio: typing.Union[str, None, UNSET] = None, seed: typing.Union[int, None, UNSET] = None, request_body: typing.Union[baml.json.json, None, UNSET] = None, headers: typing.Union[typing.Dict[str, str], None, UNSET] = None, query_params: typing.Union[typing.Dict[str, str], None, UNSET] = None, capture_wire: typing.Union[bool, UNSET] = True) -> AiGatewayImageClient:
+    def new(*, model: typing.Union[str, UNSET] = "openai/gpt-image-1", api_key: typing.Union[ai.Credential, None, UNSET] = None, base_url: typing.Union[ai.Credential, None, UNSET] = None, n: typing.Union[int, None, UNSET] = None, size: typing.Union[str, None, UNSET] = None, aspect_ratio: typing.Union[str, None, UNSET] = None, seed: typing.Union[int, None, UNSET] = None, request_body: typing.Union[baml.json.json, None, UNSET] = None, headers: typing.Union[typing.Dict[str, str], None, UNSET] = None, query_params: typing.Union[typing.Dict[str, str], None, UNSET] = None, capture_wire: typing.Union[bool, UNSET] = True, timeout: typing.Union[baml.time.Duration, ai.LlmTimeoutOptions, None, UNSET] = None, _baml: _BamlOptions | None = None) -> AiGatewayImageClient:
         """Creates a client. Construction reads no environment variable, so
         declaring one is always safe; credentials and endpoints resolve when a
         request is built."""
     @staticmethod
-    async def new_async(*, model: typing.Union[str, UNSET] = "openai/gpt-image-1", api_key: typing.Union[ai.Credential, None, UNSET] = None, base_url: typing.Union[ai.Credential, None, UNSET] = None, n: typing.Union[int, None, UNSET] = None, size: typing.Union[str, None, UNSET] = None, aspect_ratio: typing.Union[str, None, UNSET] = None, seed: typing.Union[int, None, UNSET] = None, request_body: typing.Union[baml.json.json, None, UNSET] = None, headers: typing.Union[typing.Dict[str, str], None, UNSET] = None, query_params: typing.Union[typing.Dict[str, str], None, UNSET] = None, capture_wire: typing.Union[bool, UNSET] = True) -> AiGatewayImageClient:
+    async def new_async(*, model: typing.Union[str, UNSET] = "openai/gpt-image-1", api_key: typing.Union[ai.Credential, None, UNSET] = None, base_url: typing.Union[ai.Credential, None, UNSET] = None, n: typing.Union[int, None, UNSET] = None, size: typing.Union[str, None, UNSET] = None, aspect_ratio: typing.Union[str, None, UNSET] = None, seed: typing.Union[int, None, UNSET] = None, request_body: typing.Union[baml.json.json, None, UNSET] = None, headers: typing.Union[typing.Dict[str, str], None, UNSET] = None, query_params: typing.Union[typing.Dict[str, str], None, UNSET] = None, capture_wire: typing.Union[bool, UNSET] = True, timeout: typing.Union[baml.time.Duration, ai.LlmTimeoutOptions, None, UNSET] = None, _baml: _BamlOptions | None = None) -> AiGatewayImageClient:
         """Creates a client. Construction reads no environment variable, so
         declaring one is always safe; credentials and endpoints resolve when a
         request is built."""
-    def resolved_api_key(self) -> str:
+    def resolved_api_key(self, *, _baml: _BamlOptions | None = None) -> str:
         """The request-time credential: an explicit value, else the gateway's
         conventional variable. (sys_llm had no env default here and required
         `api_key: env.AI_GATEWAY_API_KEY` in every client declaration.)
@@ -64,7 +67,7 @@ class AiGatewayImageClient(pydantic.BaseModel):
 
         Raises:
             Io, ParseError, InvalidRequest"""
-    async def resolved_api_key_async(self) -> str:
+    async def resolved_api_key_async(self, *, _baml: _BamlOptions | None = None) -> str:
         """The request-time credential: an explicit value, else the gateway's
         conventional variable. (sys_llm had no env default here and required
         `api_key: env.AI_GATEWAY_API_KEY` in every client declaration.)
@@ -73,12 +76,12 @@ class AiGatewayImageClient(pydantic.BaseModel):
 
         Raises:
             Io, ParseError, InvalidRequest"""
-    def resolved_base_url(self) -> typing.Optional[str]:
+    def resolved_base_url(self, *, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
         """The request-time base URL, or null for the gateway default.
 
         Raises:
             Io, ParseError"""
-    async def resolved_base_url_async(self) -> typing.Optional[str]:
+    async def resolved_base_url_async(self, *, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
         """The request-time base URL, or null for the gateway default.
 
         Raises:

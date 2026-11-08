@@ -25,19 +25,19 @@ import typing
 import typing_extensions
 import pydantic
 
+from ..._invocation_types import BamlOptions as _BamlOptions
 
-def new(value: typing.Union[str, int, int, bool]) -> Type: ...
-async def new_async(value: typing.Union[str, int, int, bool]) -> Type: ...
+from baml_bridge import BamlPyHandle as _BamlPyHandle
 
 
-class Type(pydantic.BaseModel):
-    field_ty: typing.Any = pydantic.Field(alias="_ty")
-    def value(self) -> typing.Any: ...
-    async def value_async(self) -> typing.Any: ...
+class DefaultHasher(pydantic.BaseModel):
+    field_state: _BamlPyHandle = pydantic.Field(alias="_state")
+    @staticmethod
+    def new(*, _baml: _BamlOptions | None = None) -> DefaultHasher: ...
+    @staticmethod
+    async def new_async(*, _baml: _BamlOptions | None = None) -> DefaultHasher: ...
 
 
 __all__ = [
-    "new",
-    "new_async",
-    "Type",
+    "DefaultHasher",
 ]

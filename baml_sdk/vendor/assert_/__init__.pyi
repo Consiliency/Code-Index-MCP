@@ -24,11 +24,13 @@ from __future__ import annotations
 import typing
 import typing_extensions
 
+from ..._invocation_types import BamlOptions as _BamlOptions
+
 
 T = typing.TypeVar("T")
 
 
-def is_true(condition: bool) -> None:
+def is_true(condition: bool, *, _baml: _BamlOptions | None = None) -> None:
     """Asserts that `condition` is `true`. Panics with a failure message if not.
 
     # Panics
@@ -41,7 +43,7 @@ def is_true(condition: bool) -> None:
     assert.is_true(true)  // no panic
     assert.is_true(false)  // panic
     ```"""
-async def is_true_async(condition: bool) -> None:
+async def is_true_async(condition: bool, *, _baml: _BamlOptions | None = None) -> None:
     """Asserts that `condition` is `true`. Panics with a failure message if not.
 
     # Panics
@@ -56,7 +58,7 @@ async def is_true_async(condition: bool) -> None:
     ```"""
 
 
-def not_null(value: typing.Optional[typing.Any]) -> None:
+def not_null(value: typing.Optional[typing.Any], *, _baml: _BamlOptions | None = None) -> None:
     """Asserts that `value` is not `null`. Panics if it is.
 
     # Panics
@@ -69,7 +71,7 @@ def not_null(value: typing.Optional[typing.Any]) -> None:
     assert.not_null(1)  // no panic
     assert.not_null(null)  // panic
     ```"""
-async def not_null_async(value: typing.Optional[typing.Any]) -> None:
+async def not_null_async(value: typing.Optional[typing.Any], *, _baml: _BamlOptions | None = None) -> None:
     """Asserts that `value` is not `null`. Panics if it is.
 
     # Panics
@@ -84,7 +86,7 @@ async def not_null_async(value: typing.Optional[typing.Any]) -> None:
     ```"""
 
 
-def equal(actual: typing.Any, expected: typing.Any) -> None:
+def equal(actual: typing.Any, expected: typing.Any, *, _baml: _BamlOptions | None = None) -> None:
     """Asserts that `actual` equals `expected` exactly. Panics if they differ.
     Uses the `==` operator (`baml.ops.equals_equals`) to compare values.
 
@@ -99,7 +101,7 @@ def equal(actual: typing.Any, expected: typing.Any) -> None:
     # Panics
 
     - `baml.panics.AssertionFailed` when `actual != expected`."""
-async def equal_async(actual: typing.Any, expected: typing.Any) -> None:
+async def equal_async(actual: typing.Any, expected: typing.Any, *, _baml: _BamlOptions | None = None) -> None:
     """Asserts that `actual` equals `expected` exactly. Panics if they differ.
     Uses the `==` operator (`baml.ops.equals_equals`) to compare values.
 
@@ -116,7 +118,7 @@ async def equal_async(actual: typing.Any, expected: typing.Any) -> None:
     - `baml.panics.AssertionFailed` when `actual != expected`."""
 
 
-def approx_equal(actual: float, expected: float, eps: float) -> None:
+def approx_equal(actual: float, expected: float, eps: float, *, _baml: _BamlOptions | None = None) -> None:
     """Asserts that two floats are within `eps` of each other.
 
     # Parameters
@@ -130,7 +132,7 @@ def approx_equal(actual: float, expected: float, eps: float) -> None:
     - `baml.panics.AssertionFailed` when `eps` is negative or NaN.
     - `baml.panics.AssertionFailed` when the absolute difference exceeds `eps` or cannot be compared
       (for example, when `actual`/`expected` produce NaN deltas)."""
-async def approx_equal_async(actual: float, expected: float, eps: float) -> None:
+async def approx_equal_async(actual: float, expected: float, eps: float, *, _baml: _BamlOptions | None = None) -> None:
     """Asserts that two floats are within `eps` of each other.
 
     # Parameters
@@ -146,7 +148,7 @@ async def approx_equal_async(actual: float, expected: float, eps: float) -> None
       (for example, when `actual`/`expected` produce NaN deltas)."""
 
 
-def contains(haystack: str, needle: str) -> None:
+def contains(haystack: str, needle: str, *, _baml: _BamlOptions | None = None) -> None:
     """Asserts that `haystack` contains `needle` as a substring.
 
     # Parameters
@@ -157,7 +159,7 @@ def contains(haystack: str, needle: str) -> None:
     # Panics
 
     - `baml.panics.AssertionFailed` when `haystack` does not contain `needle` as a substring."""
-async def contains_async(haystack: str, needle: str) -> None:
+async def contains_async(haystack: str, needle: str, *, _baml: _BamlOptions | None = None) -> None:
     """Asserts that `haystack` contains `needle` as a substring.
 
     # Parameters
@@ -170,7 +172,7 @@ async def contains_async(haystack: str, needle: str) -> None:
     - `baml.panics.AssertionFailed` when `haystack` does not contain `needle` as a substring."""
 
 
-def is_type(actual: typing.Any, *, _types: dict[str, typing.Any]) -> T:
+def is_type(actual: typing.Any, *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> T:
     """Asserts that `actual` is of type `T`.
 
     # Returns
@@ -180,7 +182,7 @@ def is_type(actual: typing.Any, *, _types: dict[str, typing.Any]) -> T:
     # Panics
 
     - `baml.panics.AssertionFailed` when `actual` is not of type `T`."""
-async def is_type_async(actual: typing.Any, *, _types: dict[str, typing.Any]) -> T:
+async def is_type_async(actual: typing.Any, *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> T:
     """Asserts that `actual` is of type `T`.
 
     # Returns

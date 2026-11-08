@@ -25,6 +25,8 @@ import typing
 import typing_extensions
 import pydantic
 
+from ... import baml
+
 from baml_bridge import (
     BamlPyHandle as _BamlPyHandle,
     define_function as _define_function,
@@ -93,14 +95,24 @@ class Io(pydantic.BaseModel):
 
 
 class Timeout(pydantic.BaseModel):
-    """An operation exceeded its time limit."""
+    """
+    An operation exceeded its time limit.
+
+    Attributes:
+        message
+        duration: The limit that elapsed, when it is known.
+        timeout_type: Which deadline fired: the name of the field or argument that set it.
+            `baml.http` reports `"timeout"` or `"connect_timeout"`; an LLM client
+            also reports `"first_token_timeout"` or `"stream_token_timeout"`.
+    """
     model_config = pydantic.ConfigDict(
         arbitrary_types_allowed=True,
         extra="ignore",
         populate_by_name=True,
     )
     message: str
-    duration_ms: typing.Optional[int] = None
+    duration: typing.Optional[baml.time.Duration] = None
+    timeout_type: str
 
 
 class Unsupported(pydantic.BaseModel):

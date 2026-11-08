@@ -428,7 +428,7 @@ class Writer(pydantic.BaseModel):
     `bool`, `null`, any enum (written as its variant name),
     `baml.time.Instant`, `baml.time.PlainDate`, and `baml.time.PlainDateTime`.
     A nested class or list is not a cell — serialize it yourself with
-    `baml.json.to_string` and write the string.
+    `baml.json.stringify` and write the string.
 
     Everything that emits output shares three failure modes. A cell that would
     need quoting under `quote_style: "never"`, or a non-finite float, throws
@@ -891,82 +891,132 @@ to_markdown_records_async = _define_function("baml.csv.to_markdown_records", "as
 
 
 _reader       = _define_function("baml.csv._reader", "sync",  ["source", "options", "owns_file"], binding_name="_reader", binding_qualname="_reader", binding_module=__name__)
-_reader.__doc__ = """Raises:
+_reader.__doc__ = """(internal) Construct a reader handle. Do not call directly; use `reader`.
+
+Raises:
     Error"""
 _reader_async = _define_function("baml.csv._reader", "async", ["source", "options", "owns_file"], binding_name="_reader_async", binding_qualname="_reader_async", binding_module=__name__)
-_reader_async.__doc__ = """Raises:
+_reader_async.__doc__ = """(internal) Construct a reader handle. Do not call directly; use `reader`.
+
+Raises:
     Error"""
 
 
 _writer       = _define_function("baml.csv._writer", "sync",  ["file", "options", "owns_file"], binding_name="_writer", binding_qualname="_writer", binding_module=__name__)
-_writer.__doc__ = """Raises:
+_writer.__doc__ = """(internal) Construct a file-backed writer handle. Use `writer`.
+
+Raises:
     Error"""
 _writer_async = _define_function("baml.csv._writer", "async", ["file", "options", "owns_file"], binding_name="_writer_async", binding_qualname="_writer_async", binding_module=__name__)
-_writer_async.__doc__ = """Raises:
+_writer_async.__doc__ = """(internal) Construct a file-backed writer handle. Use `writer`.
+
+Raises:
     Error"""
 
 
 _buffer       = _define_function("baml.csv._buffer", "sync",  ["options"], binding_name="_buffer", binding_qualname="_buffer", binding_module=__name__)
-_buffer.__doc__ = """Raises:
+_buffer.__doc__ = """(internal) Construct a buffer writer handle. Use `buffer`.
+
+Raises:
     Error"""
 _buffer_async = _define_function("baml.csv._buffer", "async", ["options"], binding_name="_buffer_async", binding_qualname="_buffer_async", binding_module=__name__)
-_buffer_async.__doc__ = """Raises:
+_buffer_async.__doc__ = """(internal) Construct a buffer writer handle. Use `buffer`.
+
+Raises:
     Error"""
 
 
 _validate_columns       = _define_function("baml.csv._validate_columns", "sync",  ["r"], binding_name="_validate_columns", binding_qualname="_validate_columns", binding_module=__name__, type_params=["T"])
-_validate_columns.__doc__ = """Raises:
+_validate_columns.__doc__ = """(internal) Check that every non-optional field of `T` is satisfiable by
+the reader's columns. Use `Reader.rows<T>`.
+
+Raises:
     Error"""
 _validate_columns_async = _define_function("baml.csv._validate_columns", "async", ["r"], binding_name="_validate_columns_async", binding_qualname="_validate_columns_async", binding_module=__name__, type_params=["T"])
-_validate_columns_async.__doc__ = """Raises:
+_validate_columns_async.__doc__ = """(internal) Check that every non-optional field of `T` is satisfiable by
+the reader's columns. Use `Reader.rows<T>`.
+
+Raises:
     Error"""
 
 
 _try_decode       = _define_function("baml.csv._try_decode", "sync",  ["rec", "r"], binding_name="_try_decode", binding_qualname="_try_decode", binding_module=__name__, type_params=["T"])
-_try_decode.__doc__ = """Raises:
+_try_decode.__doc__ = """(internal) Decode one record into `T`, honoring the reader's `on_error`
+policy: returns `_Skip` instead of throwing under `"skip"`.
+
+Raises:
     Error"""
 _try_decode_async = _define_function("baml.csv._try_decode", "async", ["rec", "r"], binding_name="_try_decode_async", binding_qualname="_try_decode_async", binding_module=__name__, type_params=["T"])
-_try_decode_async.__doc__ = """Raises:
+_try_decode_async.__doc__ = """(internal) Decode one record into `T`, honoring the reader's `on_error`
+policy: returns `_Skip` instead of throwing under `"skip"`.
+
+Raises:
     Error"""
 
 
 _decode_record       = _define_function("baml.csv._decode_record", "sync",  ["rec"], binding_name="_decode_record", binding_qualname="_decode_record", binding_module=__name__, type_params=["T"])
-_decode_record.__doc__ = """Raises:
+_decode_record.__doc__ = """(internal) Decode one record into `T`, always throwing on failure. Use
+`Record.decode<T>`.
+
+Raises:
     Error"""
 _decode_record_async = _define_function("baml.csv._decode_record", "async", ["rec"], binding_name="_decode_record_async", binding_qualname="_decode_record_async", binding_module=__name__, type_params=["T"])
-_decode_record_async.__doc__ = """Raises:
+_decode_record_async.__doc__ = """(internal) Decode one record into `T`, always throwing on failure. Use
+`Record.decode<T>`.
+
+Raises:
     Error"""
 
 
 _cell_by_name       = _define_function("baml.csv._cell_by_name", "sync",  ["rec", "column"], binding_name="_cell_by_name", binding_qualname="_cell_by_name", binding_module=__name__, type_params=["T"])
-_cell_by_name.__doc__ = """Raises:
+_cell_by_name.__doc__ = """(internal) Convert one cell by header name. Use `Record.get<T>`.
+
+Raises:
     Error"""
 _cell_by_name_async = _define_function("baml.csv._cell_by_name", "async", ["rec", "column"], binding_name="_cell_by_name_async", binding_qualname="_cell_by_name_async", binding_module=__name__, type_params=["T"])
-_cell_by_name_async.__doc__ = """Raises:
+_cell_by_name_async.__doc__ = """(internal) Convert one cell by header name. Use `Record.get<T>`.
+
+Raises:
     Error"""
 
 
 _cell_by_index       = _define_function("baml.csv._cell_by_index", "sync",  ["rec", "index"], binding_name="_cell_by_index", binding_qualname="_cell_by_index", binding_module=__name__, type_params=["T"])
-_cell_by_index.__doc__ = """Raises:
+_cell_by_index.__doc__ = """(internal) Convert one cell by index. Use `Record.get_at<T>`.
+
+Raises:
     Error"""
 _cell_by_index_async = _define_function("baml.csv._cell_by_index", "async", ["rec", "index"], binding_name="_cell_by_index_async", binding_qualname="_cell_by_index_async", binding_module=__name__, type_params=["T"])
-_cell_by_index_async.__doc__ = """Raises:
+_cell_by_index_async.__doc__ = """(internal) Convert one cell by index. Use `Record.get_at<T>`.
+
+Raises:
     Error"""
 
 
 _encode_row       = _define_function("baml.csv._encode_row", "sync",  ["w", "row"], binding_name="_encode_row", binding_qualname="_encode_row", binding_module=__name__, type_params=["T"])
-_encode_row.__doc__ = """Raises:
+_encode_row.__doc__ = """(internal) Encode one typed row (plus auto-header). Use
+`Writer.write_row<T>`.
+
+Raises:
     Error"""
 _encode_row_async = _define_function("baml.csv._encode_row", "async", ["w", "row"], binding_name="_encode_row_async", binding_qualname="_encode_row_async", binding_module=__name__, type_params=["T"])
-_encode_row_async.__doc__ = """Raises:
+_encode_row_async.__doc__ = """(internal) Encode one typed row (plus auto-header). Use
+`Writer.write_row<T>`.
+
+Raises:
     Error"""
 
 
 _encode_rows       = _define_function("baml.csv._encode_rows", "sync",  ["w", "rows"], binding_name="_encode_rows", binding_qualname="_encode_rows", binding_module=__name__, type_params=["T"])
-_encode_rows.__doc__ = """Raises:
+_encode_rows.__doc__ = """(internal) Encode many typed rows (plus auto-header). Use
+`Writer.write_rows<T>`.
+
+Raises:
     Error"""
 _encode_rows_async = _define_function("baml.csv._encode_rows", "async", ["w", "rows"], binding_name="_encode_rows_async", binding_qualname="_encode_rows_async", binding_module=__name__, type_params=["T"])
-_encode_rows_async.__doc__ = """Raises:
+_encode_rows_async.__doc__ = """(internal) Encode many typed rows (plus auto-header). Use
+`Writer.write_rows<T>`.
+
+Raises:
     Error"""
 
 

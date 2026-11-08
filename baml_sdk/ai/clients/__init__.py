@@ -28,7 +28,14 @@ import pydantic
 from ... import ai
 from ... import baml
 
+if typing.TYPE_CHECKING:
+    from ... import vendor
+
 from baml_bridge import define_function as _define_function
+
+
+E = typing.TypeVar("E")
+T = typing.TypeVar("T")
 
 
 resolve       = _define_function("ai.clients.resolve", "sync",  ["selector", "providers", "prefixes"], binding_name="resolve", binding_qualname="resolve", binding_module=__name__)
@@ -83,8 +90,16 @@ Raises:
     Io, ParseError, InvalidRequest"""
 
 
+_may_try_again       = _define_function("ai.clients._may_try_again", "sync",  ["cause"], binding_name="_may_try_again", binding_qualname="_may_try_again", binding_module=__name__)
+_may_try_again_async = _define_function("ai.clients._may_try_again", "async", ["cause"], binding_name="_may_try_again_async", binding_qualname="_may_try_again_async", binding_module=__name__)
+
+
 default_retry_judgment       = _define_function("ai.clients.default_retry_judgment", "sync",  ["f"], binding_name="default_retry_judgment", binding_qualname="default_retry_judgment", binding_module=__name__)
 default_retry_judgment_async = _define_function("ai.clients.default_retry_judgment", "async", ["f"], binding_name="default_retry_judgment_async", binding_qualname="default_retry_judgment_async", binding_module=__name__)
+
+
+_provider_error_retryable       = _define_function("ai.clients._provider_error_retryable", "sync",  ["error"], binding_name="_provider_error_retryable", binding_qualname="_provider_error_retryable", binding_module=__name__)
+_provider_error_retryable_async = _define_function("ai.clients._provider_error_retryable", "async", ["error"], binding_name="_provider_error_retryable_async", binding_qualname="_provider_error_retryable_async", binding_module=__name__)
 
 
 class Backoff(pydantic.BaseModel):
@@ -102,8 +117,37 @@ class Backoff(pydantic.BaseModel):
     delay_ms_async = _define_function("ai.clients.Backoff.delay_ms", "async", ["self", "attempt", "f"], binding_name="delay_ms_async", binding_qualname="Backoff.delay_ms_async", binding_module=__name__)
 
 
-_failed_leg_call       = _define_function("ai.clients._failed_leg_call", "sync",  ["client_name", "f"], binding_name="_failed_leg_call", binding_qualname="_failed_leg_call", binding_module=__name__)
-_failed_leg_call_async = _define_function("ai.clients._failed_leg_call", "async", ["client_name", "f"], binding_name="_failed_leg_call_async", binding_qualname="_failed_leg_call_async", binding_module=__name__)
+_failed_attempt       = _define_function("ai.clients._failed_attempt", "sync",  ["member", "f"], binding_name="_failed_attempt", binding_qualname="_failed_attempt", binding_module=__name__)
+_failed_attempt_async = _define_function("ai.clients._failed_attempt", "async", ["member", "f"], binding_name="_failed_attempt_async", binding_qualname="_failed_attempt_async", binding_module=__name__)
+
+
+_wrapper_turn       = _define_function("ai.clients._wrapper_turn", "sync",  ["attempts"], binding_name="_wrapper_turn", binding_qualname="_wrapper_turn", binding_module=__name__)
+_wrapper_turn_async = _define_function("ai.clients._wrapper_turn", "async", ["attempts"], binding_name="_wrapper_turn_async", binding_qualname="_wrapper_turn_async", binding_module=__name__)
+
+
+retry_attempt       = _define_function("ai.clients.retry_attempt", "sync",  ["attempt", "client", "body"], binding_name="retry_attempt", binding_qualname="retry_attempt", binding_module=__name__, type_params=["T", "E"])
+retry_attempt_async = _define_function("ai.clients.retry_attempt", "async", ["attempt", "client", "body"], binding_name="retry_attempt_async", binding_qualname="retry_attempt_async", binding_module=__name__, type_params=["T", "E"])
+
+
+fallback_attempt       = _define_function("ai.clients.fallback_attempt", "sync",  ["member", "client", "body"], binding_name="fallback_attempt", binding_qualname="fallback_attempt", binding_module=__name__, type_params=["T", "E"])
+fallback_attempt_async = _define_function("ai.clients.fallback_attempt", "async", ["member", "client", "body"], binding_name="fallback_attempt_async", binding_qualname="fallback_attempt_async", binding_module=__name__, type_params=["T", "E"])
+
+
+_attempt_trace       = _define_function("ai.clients._attempt_trace", "sync",  [], binding_name="_attempt_trace", binding_qualname="_attempt_trace", binding_module=__name__)
+_attempt_trace_async = _define_function("ai.clients._attempt_trace", "async", [], binding_name="_attempt_trace_async", binding_qualname="_attempt_trace_async", binding_module=__name__)
+
+
+class RetryCause(pydantic.BaseModel):
+    """
+    (internal) An attempt that failed and may be tried again: kept apart from
+    the turn it would have returned.
+    """
+    model_config = pydantic.ConfigDict(
+        arbitrary_types_allowed=True,
+        extra="ignore",
+        populate_by_name=True,
+    )
+    cause: Retryable
 
 
 class Retry(pydantic.BaseModel):
@@ -118,8 +162,10 @@ class Retry(pydantic.BaseModel):
     backoff: Backoff
     new       = staticmethod(_define_function("ai.clients.Retry.new", "sync",  ["inner"], ["max_attempts", "retry_if", "backoff"], binding_name="new", binding_qualname="Retry.new", binding_module=__name__))
     new_async = staticmethod(_define_function("ai.clients.Retry.new", "async", ["inner"], ["max_attempts", "retry_if", "backoff"], binding_name="new_async", binding_qualname="Retry.new_async", binding_module=__name__))
-    _attempt_       = _define_function("ai.clients.Retry._attempt", "sync",  ["self", "input", "remaining", "failed"], binding_name="_attempt_", binding_qualname="Retry._attempt_", binding_module=__name__)
-    _attempt__async = _define_function("ai.clients.Retry._attempt", "async", ["self", "input", "remaining", "failed"], binding_name="_attempt__async", binding_qualname="Retry._attempt__async", binding_module=__name__)
+    _attempt_       = _define_function("ai.clients.Retry._attempt", "sync",  ["self", "input", "remaining", "attempts"], binding_name="_attempt_", binding_qualname="Retry._attempt_", binding_module=__name__)
+    _attempt__async = _define_function("ai.clients.Retry._attempt", "async", ["self", "input", "remaining", "attempts"], binding_name="_attempt__async", binding_qualname="Retry._attempt__async", binding_module=__name__)
+    _wants_retry_       = _define_function("ai.clients.Retry._wants_retry", "sync",  ["self", "cause"], binding_name="_wants_retry_", binding_qualname="Retry._wants_retry_", binding_module=__name__)
+    _wants_retry__async = _define_function("ai.clients.Retry._wants_retry", "async", ["self", "cause"], binding_name="_wants_retry__async", binding_qualname="Retry._wants_retry__async", binding_module=__name__)
 
 
 class RoundRobin(pydantic.BaseModel):
@@ -145,7 +191,8 @@ class RoundRobin(pydantic.BaseModel):
 class Fallback(pydantic.BaseModel):
     """
     Streaming fallback advances in member order only for a typed, safely
-    retryable failure that occurs before the first text delta is returned.
+    retryable failure or a member timeout that occurs before the first text
+    delta is returned.
     """
     model_config = pydantic.ConfigDict(
         arbitrary_types_allowed=True,
@@ -153,17 +200,21 @@ class Fallback(pydantic.BaseModel):
         populate_by_name=True,
     )
     members: typing.List[typing.Any]
-    _try_       = _define_function("ai.clients.Fallback._try", "sync",  ["self", "input", "index", "failed"], binding_name="_try_", binding_qualname="Fallback._try_", binding_module=__name__)
-    _try__async = _define_function("ai.clients.Fallback._try", "async", ["self", "input", "index", "failed"], binding_name="_try__async", binding_qualname="Fallback._try__async", binding_module=__name__)
+    _try_       = _define_function("ai.clients.Fallback._try", "sync",  ["self", "input", "index", "attempts"], binding_name="_try_", binding_qualname="Fallback._try_", binding_module=__name__)
+    _try__async = _define_function("ai.clients.Fallback._try", "async", ["self", "input", "index", "attempts"], binding_name="_try__async", binding_qualname="Fallback._try__async", binding_module=__name__)
+
+
+_relayed       = _define_function("ai.clients._relayed", "sync",  ["stream", "member"], binding_name="_relayed", binding_qualname="_relayed", binding_module=__name__)
+_relayed_async = _define_function("ai.clients._relayed", "async", ["stream", "member"], binding_name="_relayed_async", binding_qualname="_relayed_async", binding_module=__name__)
 
 
 class StreamRelay(pydantic.BaseModel):
     """
     Pulls one selected stream through a reliability policy. A typed, safely
-    retryable failure may replace the selected stream only before the first text
-    delta has been returned. Once any delta is visible, every later failure is
-    terminal: replaying would duplicate a prefix and there is no resumable-stream
-    contract at the client boundary.
+    retryable failure or a member timeout may replace the selected stream only
+    before the first text delta has been returned. Once any delta is visible,
+    every later failure is terminal: replaying would duplicate a prefix and
+    there is no resumable-stream contract at the client boundary.
     """
     model_config = pydantic.ConfigDict(
         arbitrary_types_allowed=True,
@@ -171,7 +222,8 @@ class StreamRelay(pydantic.BaseModel):
         populate_by_name=True,
     )
     open: typing.Callable[[], ai.stream.TurnStream]
-    retry: typing.Callable[[typing.Any], bool]
+    retry: typing.Callable[[Retryable], bool]
+    member: typing.Callable[[], typing.Any]
     current: typing.Optional[ai.stream.TurnStream] = None
     emitted: bool
     pending_text: typing.List[str]
@@ -179,7 +231,7 @@ class StreamRelay(pydantic.BaseModel):
     terminal: typing.List[ai.stream.Event]
     terminal_cursor: int
     finished: bool
-    calls: typing.List[ai.events.LLMCall]
+    child_turns: typing.List[ai.ModelTurn]
     close_current       = _define_function("ai.clients.StreamRelay.close_current", "sync",  ["self"], binding_name="close_current", binding_qualname="StreamRelay.close_current", binding_module=__name__)
     close_current_async = _define_function("ai.clients.StreamRelay.close_current", "async", ["self"], binding_name="close_current_async", binding_qualname="StreamRelay.close_current_async", binding_module=__name__)
     recover       = _define_function("ai.clients.StreamRelay.recover", "sync",  ["self", "error"], binding_name="recover", binding_qualname="StreamRelay.recover", binding_module=__name__)
@@ -200,16 +252,25 @@ class StreamRelayError(pydantic.BaseModel):
 Selector: typing.TypeAlias = typing.Union[typing.Any, str, baml.env.Ref]
 
 
+Retryable: typing.TypeAlias = typing.Union[typing.Any, baml.errors.Timeout]
+
+
 __all__ = [
     "resolve",
     "resolve_async",
     "default_retry_judgment",
     "default_retry_judgment_async",
     "Backoff",
+    "retry_attempt",
+    "retry_attempt_async",
+    "fallback_attempt",
+    "fallback_attempt_async",
+    "RetryCause",
     "Retry",
     "RoundRobin",
     "Fallback",
     "StreamRelay",
     "StreamRelayError",
     "Selector",
+    "Retryable",
 ]

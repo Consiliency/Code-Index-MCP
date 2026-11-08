@@ -76,18 +76,18 @@ jobs:
           python --version
           mcp-index grammars prefetch --cache-dir "$TREE_SITTER_LANGUAGE_PACK_CACHE_DIR"
 
-      - name: Install pinned BAML 0.20.1 toolchain
+      - name: Install pinned BAML 0.23.0 toolchain
         run: |
           set -euo pipefail
-          curl -fsSL --retry 3 -o "$RUNNER_TEMP/baml.tar.gz" https://github.com/BoundaryML/baml/releases/download/baml-language-0.20.1/baml-language-0.20.1-x86_64-unknown-linux-gnu.tar.gz
-          echo "6067729f14483eca4ab61bfcd3c1921818e9ecc66da035bc64fbbfeb850e2795  $RUNNER_TEMP/baml.tar.gz" | sha256sum -c -
-          mkdir -p "$RUNNER_TEMP/baml-0.20.1"
-          tar -xzf "$RUNNER_TEMP/baml.tar.gz" -C "$RUNNER_TEMP/baml-0.20.1"
-          "$RUNNER_TEMP/baml-0.20.1/bin/baml-cli" --version
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/baml.tar.gz" https://github.com/BoundaryML/baml/releases/download/baml-language-0.23.0/baml-language-0.23.0-x86_64-unknown-linux-gnu.tar.gz
+          echo "a1f5ab12e2d60543945c985e372dca66aefe02221d8c235aa618e62720d8a215  $RUNNER_TEMP/baml.tar.gz" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/baml-0.23.0"
+          tar -xzf "$RUNNER_TEMP/baml.tar.gz" -C "$RUNNER_TEMP/baml-0.23.0"
+          "$RUNNER_TEMP/baml-0.23.0/bin/baml-cli" --version
 
       - name: Run pre-PR agent gate
         env:
-          BAML_TOOLCHAIN: ${{ runner.temp }}/baml-0.20.1/bin/baml-cli
+          BAML_TOOLCHAIN: ${{ runner.temp }}/baml-0.23.0/bin/baml-cli
         run: make agent-gate
 
   agent-gate-passed:

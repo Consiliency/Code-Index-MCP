@@ -6,7 +6,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SDK = ROOT / "baml_sdk"
-VERSION = "0.20.1"
+VERSION = "0.23.0"
 
 
 def main() -> int:
@@ -17,7 +17,12 @@ def main() -> int:
     if not version.endswith(VERSION):
         raise SystemExit(f"BAML toolchain {VERSION} required; found {version}")
 
-    subprocess.run([toolchain, "generate", "--project", str(ROOT)], check=True)
+    # Generation is offline and pinned to this repo; agent-run gates (make
+    # agent-gate) must not depend on the toolchain's editor/agent skill install.
+    subprocess.run(
+        [toolchain, "generate", "--agent-skill-check", "off", "--project", str(ROOT)],
+        check=True,
+    )
     for path in SDK.rglob("*"):
         if path.suffix not in {".py", ".pyi"}:
             continue

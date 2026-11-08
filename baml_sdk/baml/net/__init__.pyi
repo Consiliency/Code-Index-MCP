@@ -29,13 +29,15 @@ if typing.TYPE_CHECKING:
     from ... import baml
     from ...baml import UNSET as UNSET
 
+from ..._invocation_types import BamlOptions as _BamlOptions
+
 from baml_bridge import BamlPyHandle as _BamlPyHandle
 
 
 class TcpStream(pydantic.BaseModel):
     field_handle: _BamlPyHandle = pydantic.Field(alias="_handle")
     @staticmethod
-    def connect(addr: str, *, timeout: typing.Union[baml.time.Duration, None, UNSET] = None) -> TcpStream:
+    def connect(addr: str, *, timeout: typing.Union[baml.time.Duration, None, UNSET] = None, _baml: _BamlOptions | None = None) -> TcpStream:
         """Opens a TCP connection to `addr` (e.g. `"127.0.0.1:8080"`) and returns the stream.
 
         `timeout` bounds how long to wait for the connection to be established;
@@ -45,7 +47,7 @@ class TcpStream(pydantic.BaseModel):
         Raises:
             Io, Timeout"""
     @staticmethod
-    async def connect_async(addr: str, *, timeout: typing.Union[baml.time.Duration, None, UNSET] = None) -> TcpStream:
+    async def connect_async(addr: str, *, timeout: typing.Union[baml.time.Duration, None, UNSET] = None, _baml: _BamlOptions | None = None) -> TcpStream:
         """Opens a TCP connection to `addr` (e.g. `"127.0.0.1:8080"`) and returns the stream.
 
         `timeout` bounds how long to wait for the connection to be established;
@@ -55,23 +57,23 @@ class TcpStream(pydantic.BaseModel):
         Raises:
             Io, Timeout"""
     @staticmethod
-    def _connect_(addr: str, timeout_nanos: int) -> TcpStream:
+    def _connect_(addr: str, timeout_nanos: int, *, _baml: _BamlOptions | None = None) -> TcpStream:
         """(internal)
 
         Raises:
             Io, Timeout"""
     @staticmethod
-    async def _connect__async(addr: str, timeout_nanos: int) -> TcpStream:
+    async def _connect__async(addr: str, timeout_nanos: int, *, _baml: _BamlOptions | None = None) -> TcpStream:
         """(internal)
 
         Raises:
             Io, Timeout"""
-    def close(self) -> None:
+    def close(self, *, _baml: _BamlOptions | None = None) -> None:
         """Closes the connection.
 
         Raises:
             Io"""
-    async def close_async(self) -> None:
+    async def close_async(self, *, _baml: _BamlOptions | None = None) -> None:
         """Closes the connection.
 
         Raises:
@@ -81,33 +83,33 @@ class TcpStream(pydantic.BaseModel):
 class TcpListener(pydantic.BaseModel):
     field_handle: _BamlPyHandle = pydantic.Field(alias="_handle")
     @staticmethod
-    def bind(addr: str) -> TcpListener:
+    def bind(addr: str, *, _baml: _BamlOptions | None = None) -> TcpListener:
         """Binds to `addr` (e.g. `"127.0.0.1:8080"`) and returns a listener ready to
         accept incoming connections.
 
         Raises:
             Io"""
     @staticmethod
-    async def bind_async(addr: str) -> TcpListener:
+    async def bind_async(addr: str, *, _baml: _BamlOptions | None = None) -> TcpListener:
         """Binds to `addr` (e.g. `"127.0.0.1:8080"`) and returns a listener ready to
         accept incoming connections.
 
         Raises:
             Io"""
-    def accept(self) -> TcpStream:
+    def accept(self, *, _baml: _BamlOptions | None = None) -> TcpStream:
         """Waits for the next incoming connection and returns it as a `TcpStream`.
 
         Raises:
             Io"""
-    async def accept_async(self) -> TcpStream:
+    async def accept_async(self, *, _baml: _BamlOptions | None = None) -> TcpStream:
         """Waits for the next incoming connection and returns it as a `TcpStream`.
 
         Raises:
             Io"""
-    def close(self) -> None:
+    def close(self, *, _baml: _BamlOptions | None = None) -> None:
         """Raises:
             Io"""
-    async def close_async(self) -> None:
+    async def close_async(self, *, _baml: _BamlOptions | None = None) -> None:
         """Raises:
             Io"""
 
@@ -115,20 +117,20 @@ class TcpListener(pydantic.BaseModel):
 class UdpSocket(pydantic.BaseModel):
     field_handle: _BamlPyHandle = pydantic.Field(alias="_handle")
     @staticmethod
-    def bind(addr: str) -> UdpSocket:
+    def bind(addr: str, *, _baml: _BamlOptions | None = None) -> UdpSocket:
         """Binds to `addr` (e.g. `"0.0.0.0:0"` for an OS-assigned ephemeral port) and
         returns the socket.
 
         Raises:
             Io"""
     @staticmethod
-    async def bind_async(addr: str) -> UdpSocket:
+    async def bind_async(addr: str, *, _baml: _BamlOptions | None = None) -> UdpSocket:
         """Binds to `addr` (e.g. `"0.0.0.0:0"` for an OS-assigned ephemeral port) and
         returns the socket.
 
         Raises:
             Io"""
-    def send_to(self, data: bytes, addr: str, *, timeout: typing.Union[baml.time.Duration, None, UNSET] = None) -> int:
+    def send_to(self, data: bytes, addr: str, *, timeout: typing.Union[baml.time.Duration, None, UNSET] = None, _baml: _BamlOptions | None = None) -> int:
         """Sends `data` as a single datagram to `addr`. Returns the number of bytes sent.
 
         `timeout` bounds the send; `null` (the default) blocks indefinitely. On
@@ -136,7 +138,7 @@ class UdpSocket(pydantic.BaseModel):
 
         Raises:
             Io, Timeout"""
-    async def send_to_async(self, data: bytes, addr: str, *, timeout: typing.Union[baml.time.Duration, None, UNSET] = None) -> int:
+    async def send_to_async(self, data: bytes, addr: str, *, timeout: typing.Union[baml.time.Duration, None, UNSET] = None, _baml: _BamlOptions | None = None) -> int:
         """Sends `data` as a single datagram to `addr`. Returns the number of bytes sent.
 
         `timeout` bounds the send; `null` (the default) blocks indefinitely. On
@@ -144,17 +146,17 @@ class UdpSocket(pydantic.BaseModel):
 
         Raises:
             Io, Timeout"""
-    def _send_to_(self, data: bytes, addr: str, timeout_nanos: int) -> int:
+    def _send_to_(self, data: bytes, addr: str, timeout_nanos: int, *, _baml: _BamlOptions | None = None) -> int:
         """(internal)
 
         Raises:
             Io, Timeout"""
-    async def _send_to__async(self, data: bytes, addr: str, timeout_nanos: int) -> int:
+    async def _send_to__async(self, data: bytes, addr: str, timeout_nanos: int, *, _baml: _BamlOptions | None = None) -> int:
         """(internal)
 
         Raises:
             Io, Timeout"""
-    def recv_from(self, *, timeout: typing.Union[baml.time.Duration, None, UNSET] = None) -> Datagram:
+    def recv_from(self, *, timeout: typing.Union[baml.time.Duration, None, UNSET] = None, _baml: _BamlOptions | None = None) -> Datagram:
         """Receives a single datagram, returning its payload bytes together with the
         address of the sender.
 
@@ -164,7 +166,7 @@ class UdpSocket(pydantic.BaseModel):
 
         Raises:
             Io, Timeout"""
-    async def recv_from_async(self, *, timeout: typing.Union[baml.time.Duration, None, UNSET] = None) -> Datagram:
+    async def recv_from_async(self, *, timeout: typing.Union[baml.time.Duration, None, UNSET] = None, _baml: _BamlOptions | None = None) -> Datagram:
         """Receives a single datagram, returning its payload bytes together with the
         address of the sender.
 
@@ -174,22 +176,22 @@ class UdpSocket(pydantic.BaseModel):
 
         Raises:
             Io, Timeout"""
-    def _recv_from_(self, timeout_nanos: int) -> Datagram:
+    def _recv_from_(self, timeout_nanos: int, *, _baml: _BamlOptions | None = None) -> Datagram:
         """(internal)
 
         Raises:
             Io, Timeout"""
-    async def _recv_from__async(self, timeout_nanos: int) -> Datagram:
+    async def _recv_from__async(self, timeout_nanos: int, *, _baml: _BamlOptions | None = None) -> Datagram:
         """(internal)
 
         Raises:
             Io, Timeout"""
-    def close(self) -> None:
+    def close(self, *, _baml: _BamlOptions | None = None) -> None:
         """Closes the socket.
 
         Raises:
             Io"""
-    async def close_async(self) -> None:
+    async def close_async(self, *, _baml: _BamlOptions | None = None) -> None:
         """Closes the socket.
 
         Raises:

@@ -232,8 +232,10 @@ registered Git indexing, real SDK queries/refusals and a second STDIO session.
 The container smoke exercises the configured non-root HTTP startup and mounted
 Git fixture, not only health. A failing node blocks distribution acceptance;
 actual results belong in `docs/validation/v13/DIST.json`, not this description.
-BAML generation and runtime are pinned together at 0.20.1; regeneration is
+BAML generation and runtime are pinned together at 0.23.0; regeneration is
 offline and does not call the inference client declared in the source contract.
+BAML run recording (local `BAML_HOME` files and Boundary upload) is off by
+default; `MCP_BAML_TELEMETRY=low|medium|high` opts in.
 V13 has historical accepted DIST, STATE, SAFETY, DATA and PILOT receipts bound
 to their recorded source commits, not to subsequent PREP repairs. The historical
 PILOT proves its independently installed candidate through PMCP 2.7.3, MCP

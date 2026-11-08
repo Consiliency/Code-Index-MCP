@@ -25,13 +25,14 @@ from baml_bridge import BamlRuntime, set_type_map
 from . import _inlinedbaml
 from ._typemap import _TYPE_MAP
 
-BamlRuntime.initialize_runtime_from_bytecode(_inlinedbaml.BYTECODE, _inlinedbaml.EMBEDDED_BAML_TOML)
+BamlRuntime.initialize_runtime_from_blob(_inlinedbaml.BYTECODE, _inlinedbaml.EMBEDDED_BAML_TOML)
 
 def get_baml_source_files() -> dict[str, str]:
     from ._baml_sources import FILES
     return FILES
 
 set_type_map(_TYPE_MAP)
+from ._invocation_types import BamlOptions as BamlOptions
 
 _LAZY_CHILDREN = frozenset({
     "ai",
@@ -41,6 +42,12 @@ _LAZY_CHILDREN = frozenset({
 })
 
 def __getattr__(name):
+    if name == "experimental" and __name__ == "baml_sdk":
+        import importlib
+        return importlib.import_module(".experimental", __name__)
+    if name == "trace" and __name__ == "baml_sdk":
+        import importlib
+        return importlib.import_module(".vendor.trace", __name__)
     if name in _LAZY_CHILDREN:
         import importlib
         return importlib.import_module(f".{name}", __name__)
@@ -91,10 +98,10 @@ class FileSummaryResult(pydantic.BaseModel):
 
 SummarizeFileChunks       = _define_function("user.SummarizeFileChunks", "sync",  ["language", "file_path", "file_content", "chunks"], ["on_event"], binding_name="SummarizeFileChunks", binding_qualname="SummarizeFileChunks", binding_module=__name__)
 SummarizeFileChunks.__doc__ = """Raises:
-    InvalidArgument, Io, ParseError, Timeout, UnknownError, CompilationError"""
+    CompilationError, InvalidArgument, Io, ParseError, Timeout, UnknownError"""
 SummarizeFileChunks_async = _define_function("user.SummarizeFileChunks", "async", ["language", "file_path", "file_content", "chunks"], ["on_event"], binding_name="SummarizeFileChunks_async", binding_qualname="SummarizeFileChunks_async", binding_module=__name__)
 SummarizeFileChunks_async.__doc__ = """Raises:
-    InvalidArgument, Io, ParseError, Timeout, UnknownError, CompilationError"""
+    CompilationError, InvalidArgument, Io, ParseError, Timeout, UnknownError"""
 SummarizeFileChunks_spec       = _define_function("user.SummarizeFileChunks@spec", "sync",  ["language", "file_path", "file_content", "chunks"], binding_name="SummarizeFileChunks_spec", binding_qualname="SummarizeFileChunks_spec", binding_module=__name__)
 SummarizeFileChunks_spec.__doc__ = """Raises:
     InvalidArgument, Io, ParseError, InvalidRequest"""
@@ -103,18 +110,18 @@ SummarizeFileChunks_spec_async.__doc__ = """Raises:
     InvalidArgument, Io, ParseError, InvalidRequest"""
 SummarizeFileChunks_stream       = _define_function("user.SummarizeFileChunks@stream", "sync",  ["language", "file_path", "file_content", "chunks"], ["on_event"], binding_name="SummarizeFileChunks_stream", binding_qualname="SummarizeFileChunks_stream", binding_module=__name__)
 SummarizeFileChunks_stream.__doc__ = """Raises:
-    InvalidArgument, Io, ParseError, Timeout, UnknownError, CompilationError"""
+    CompilationError, SpanError, InvalidArgument, Io, ParseError, Timeout, UnknownError"""
 SummarizeFileChunks_stream_async = _define_function("user.SummarizeFileChunks@stream", "async", ["language", "file_path", "file_content", "chunks"], ["on_event"], binding_name="SummarizeFileChunks_stream_async", binding_qualname="SummarizeFileChunks_stream_async", binding_module=__name__)
 SummarizeFileChunks_stream_async.__doc__ = """Raises:
-    InvalidArgument, Io, ParseError, Timeout, UnknownError, CompilationError"""
+    CompilationError, SpanError, InvalidArgument, Io, ParseError, Timeout, UnknownError"""
 
 
 SummarizeChunkAlone       = _define_function("user.SummarizeChunkAlone", "sync",  ["language", "symbol", "line_start", "line_end", "content", "parent_context", "file_context"], ["on_event"], binding_name="SummarizeChunkAlone", binding_qualname="SummarizeChunkAlone", binding_module=__name__)
 SummarizeChunkAlone.__doc__ = """Raises:
-    InvalidArgument, Io, ParseError, Timeout, UnknownError, CompilationError"""
+    CompilationError, InvalidArgument, Io, ParseError, Timeout, UnknownError"""
 SummarizeChunkAlone_async = _define_function("user.SummarizeChunkAlone", "async", ["language", "symbol", "line_start", "line_end", "content", "parent_context", "file_context"], ["on_event"], binding_name="SummarizeChunkAlone_async", binding_qualname="SummarizeChunkAlone_async", binding_module=__name__)
 SummarizeChunkAlone_async.__doc__ = """Raises:
-    InvalidArgument, Io, ParseError, Timeout, UnknownError, CompilationError"""
+    CompilationError, InvalidArgument, Io, ParseError, Timeout, UnknownError"""
 SummarizeChunkAlone_spec       = _define_function("user.SummarizeChunkAlone@spec", "sync",  ["language", "symbol", "line_start", "line_end", "content", "parent_context", "file_context"], binding_name="SummarizeChunkAlone_spec", binding_qualname="SummarizeChunkAlone_spec", binding_module=__name__)
 SummarizeChunkAlone_spec.__doc__ = """Raises:
     InvalidArgument, Io, ParseError, InvalidRequest"""
@@ -123,10 +130,10 @@ SummarizeChunkAlone_spec_async.__doc__ = """Raises:
     InvalidArgument, Io, ParseError, InvalidRequest"""
 SummarizeChunkAlone_stream       = _define_function("user.SummarizeChunkAlone@stream", "sync",  ["language", "symbol", "line_start", "line_end", "content", "parent_context", "file_context"], ["on_event"], binding_name="SummarizeChunkAlone_stream", binding_qualname="SummarizeChunkAlone_stream", binding_module=__name__)
 SummarizeChunkAlone_stream.__doc__ = """Raises:
-    InvalidArgument, Io, ParseError, Timeout, UnknownError, CompilationError"""
+    CompilationError, SpanError, InvalidArgument, Io, ParseError, Timeout, UnknownError"""
 SummarizeChunkAlone_stream_async = _define_function("user.SummarizeChunkAlone@stream", "async", ["language", "symbol", "line_start", "line_end", "content", "parent_context", "file_context"], ["on_event"], binding_name="SummarizeChunkAlone_stream_async", binding_qualname="SummarizeChunkAlone_stream_async", binding_module=__name__)
 SummarizeChunkAlone_stream_async.__doc__ = """Raises:
-    InvalidArgument, Io, ParseError, Timeout, UnknownError, CompilationError"""
+    CompilationError, SpanError, InvalidArgument, Io, ParseError, Timeout, UnknownError"""
 
 
 __all__ = [
@@ -149,3 +156,5 @@ __all__ = [
 
 # BEP-066 host reflection surface.
 from . import reflect as reflect
+
+__all__ = list(globals().get("__all__", [])) + ["BamlOptions", "experimental", "trace"]

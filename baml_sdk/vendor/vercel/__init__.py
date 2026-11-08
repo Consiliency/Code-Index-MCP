@@ -26,6 +26,12 @@ _LAZY_CHILDREN = frozenset({
 })
 
 def __getattr__(name):
+    if name == "experimental" and __name__ == "baml_sdk":
+        import importlib
+        return importlib.import_module(".experimental", __name__)
+    if name == "trace" and __name__ == "baml_sdk":
+        import importlib
+        return importlib.import_module(".vendor.trace", __name__)
     if name in _LAZY_CHILDREN:
         import importlib
         return importlib.import_module(f".{name}", __name__)
@@ -84,8 +90,9 @@ class AiGatewayImageClient(pydantic.BaseModel):
     headers: typing.Optional[typing.Dict[str, str]] = None
     query_params: typing.Optional[typing.Dict[str, str]] = None
     capture_wire: bool
-    new       = staticmethod(_define_function("vercel.AiGatewayImageClient.new", "sync",  [], ["model", "api_key", "base_url", "n", "size", "aspect_ratio", "seed", "request_body", "headers", "query_params", "capture_wire"], binding_name="new", binding_qualname="AiGatewayImageClient.new", binding_module=__name__))
-    new_async = staticmethod(_define_function("vercel.AiGatewayImageClient.new", "async", [], ["model", "api_key", "base_url", "n", "size", "aspect_ratio", "seed", "request_body", "headers", "query_params", "capture_wire"], binding_name="new_async", binding_qualname="AiGatewayImageClient.new_async", binding_module=__name__))
+    timeout: typing.Union[baml.time.Duration, ai.LlmTimeoutOptions, None] = None
+    new       = staticmethod(_define_function("vercel.AiGatewayImageClient.new", "sync",  [], ["model", "api_key", "base_url", "n", "size", "aspect_ratio", "seed", "request_body", "headers", "query_params", "capture_wire", "timeout"], binding_name="new", binding_qualname="AiGatewayImageClient.new", binding_module=__name__))
+    new_async = staticmethod(_define_function("vercel.AiGatewayImageClient.new", "async", [], ["model", "api_key", "base_url", "n", "size", "aspect_ratio", "seed", "request_body", "headers", "query_params", "capture_wire", "timeout"], binding_name="new_async", binding_qualname="AiGatewayImageClient.new_async", binding_module=__name__))
     resolved_api_key       = _define_function("vercel.AiGatewayImageClient.resolved_api_key", "sync",  ["self"], binding_name="resolved_api_key", binding_qualname="AiGatewayImageClient.resolved_api_key", binding_module=__name__)
     resolved_api_key_async = _define_function("vercel.AiGatewayImageClient.resolved_api_key", "async", ["self"], binding_name="resolved_api_key_async", binding_qualname="AiGatewayImageClient.resolved_api_key_async", binding_module=__name__)
     resolved_base_url       = _define_function("vercel.AiGatewayImageClient.resolved_base_url", "sync",  ["self"], binding_name="resolved_base_url", binding_qualname="AiGatewayImageClient.resolved_base_url", binding_module=__name__)

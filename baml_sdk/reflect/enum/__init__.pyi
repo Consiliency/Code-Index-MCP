@@ -27,7 +27,8 @@ import pydantic
 
 if typing.TYPE_CHECKING:
     from ... import reflect
-    from ...baml import UNSET as UNSET
+
+from ..._invocation_types import BamlOptions as _BamlOptions
 
 
 class Value(pydantic.BaseModel):
@@ -35,45 +36,6 @@ class Value(pydantic.BaseModel):
     meta: reflect.Meta
 
 
-def value(name: str, *, alias: typing.Union[str, None, UNSET] = None, description: typing.Union[str, None, UNSET] = None, docstring: typing.Union[str, None, UNSET] = None, other: typing.Union[typing.Dict[str, str], None, UNSET] = None) -> Value: ...
-async def value_async(name: str, *, alias: typing.Union[str, None, UNSET] = None, description: typing.Union[str, None, UNSET] = None, docstring: typing.Union[str, None, UNSET] = None, other: typing.Union[typing.Dict[str, str], None, UNSET] = None) -> Value: ...
-
-
-def new(name: str, values: typing.List[typing.Union[str, Value]]) -> Type:
-    """Raises:
-        CompilationError"""
-async def new_async(name: str, values: typing.List[typing.Union[str, Value]]) -> Type:
-    """Raises:
-        CompilationError"""
-
-
-def get_value(value: typing.Any) -> str:
-    """Raises:
-        InvalidArgument"""
-async def get_value_async(value: typing.Any) -> str:
-    """Raises:
-        InvalidArgument"""
-
-
-class Type(pydantic.BaseModel):
-    field_ty: typing.Any = pydantic.Field(alias="_ty")
-    def values(self) -> typing.List[Value]:
-        """The enum's variants, in declaration order."""
-    async def values_async(self) -> typing.List[Value]:
-        """The enum's variants, in declaration order."""
-    def meta(self) -> reflect.Meta:
-        """The enum declaration's own schema metadata."""
-    async def meta_async(self) -> reflect.Meta:
-        """The enum declaration's own schema metadata."""
-
-
 __all__ = [
     "Value",
-    "value",
-    "value_async",
-    "new",
-    "new_async",
-    "get_value",
-    "get_value_async",
-    "Type",
 ]

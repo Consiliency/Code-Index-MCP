@@ -25,6 +25,8 @@ import typing
 import typing_extensions
 import pydantic
 
+from ..._invocation_types import BamlOptions as _BamlOptions
+
 from baml_bridge import BamlPyHandle as _BamlPyHandle
 
 
@@ -39,31 +41,31 @@ class ScanOptions(pydantic.BaseModel):
 
 class Glob(pydantic.BaseModel):
     field_handle: _BamlPyHandle = pydantic.Field(alias="_handle")
-    def scan(self, root: typing.Union[str, ScanOptions]) -> typing.List[str]:
+    def scan(self, start: typing.Union[str, ScanOptions], *, _baml: _BamlOptions | None = None) -> typing.List[str]:
         """Scans the filesystem and returns all paths matching this glob pattern.
-        Pass a `string` root path or a `ScanOptions` object for more control.
+        Pass a `string` start path or a `ScanOptions` object for more control.
 
         Raises:
             Io"""
-    async def scan_async(self, root: typing.Union[str, ScanOptions]) -> typing.List[str]:
+    async def scan_async(self, start: typing.Union[str, ScanOptions], *, _baml: _BamlOptions | None = None) -> typing.List[str]:
         """Scans the filesystem and returns all paths matching this glob pattern.
-        Pass a `string` root path or a `ScanOptions` object for more control.
+        Pass a `string` start path or a `ScanOptions` object for more control.
 
         Raises:
             Io"""
-    def matches(self, path: str) -> bool:
+    def matches(self, path: str, *, _baml: _BamlOptions | None = None) -> bool:
         """Returns `true` if `path` matches this glob pattern.
 
         Pure pattern matching against the already-compiled pattern — it touches
         no filesystem, so there is nothing for it to throw."""
-    async def matches_async(self, path: str) -> bool:
+    async def matches_async(self, path: str, *, _baml: _BamlOptions | None = None) -> bool:
         """Returns `true` if `path` matches this glob pattern.
 
         Pure pattern matching against the already-compiled pattern — it touches
         no filesystem, so there is nothing for it to throw."""
 
 
-def new(pattern: str) -> Glob:
+def new(pattern: str, *, _baml: _BamlOptions | None = None) -> Glob:
     """Compiles a glob `pattern` and returns a `Glob` object for scanning or matching.
 
     # Throws
@@ -72,7 +74,7 @@ def new(pattern: str) -> Glob:
 
     Raises:
         ParseError"""
-async def new_async(pattern: str) -> Glob:
+async def new_async(pattern: str, *, _baml: _BamlOptions | None = None) -> Glob:
     """Compiles a glob `pattern` and returns a `Glob` object for scanning or matching.
 
     # Throws

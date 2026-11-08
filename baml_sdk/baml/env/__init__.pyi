@@ -25,8 +25,10 @@ import typing
 import typing_extensions
 import pydantic
 
+from ..._invocation_types import BamlOptions as _BamlOptions
 
-def get(key: str) -> typing.Optional[str]:
+
+def get(key: str, *, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
     """Returns the value of the environment variable `key`, or `null` if not set.
 
     # Throws
@@ -36,7 +38,7 @@ def get(key: str) -> typing.Optional[str]:
 
     Raises:
         Io, ParseError"""
-async def get_async(key: str) -> typing.Optional[str]:
+async def get_async(key: str, *, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
     """Returns the value of the environment variable `key`, or `null` if not set.
 
     # Throws
@@ -48,12 +50,12 @@ async def get_async(key: str) -> typing.Optional[str]:
         Io, ParseError"""
 
 
-def get_or_panic(key: str) -> str:
+def get_or_panic(key: str, *, _baml: _BamlOptions | None = None) -> str:
     """Returns the value of the environment variable `key`. Panics if not set.
 
     Raises:
         Io, ParseError"""
-async def get_or_panic_async(key: str) -> str:
+async def get_or_panic_async(key: str, *, _baml: _BamlOptions | None = None) -> str:
     """Returns the value of the environment variable `key`. Panics if not set.
 
     Raises:
@@ -62,51 +64,51 @@ async def get_or_panic_async(key: str) -> str:
 
 class Ref(pydantic.BaseModel):
     name: str
-    def get(self) -> typing.Optional[str]:
+    def get(self, *, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
         """Read the variable now, or `null` when it is not set.
 
         Raises:
             Io, ParseError"""
-    async def get_async(self) -> typing.Optional[str]:
+    async def get_async(self, *, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
         """Read the variable now, or `null` when it is not set.
 
         Raises:
             Io, ParseError"""
-    def get_or_panic(self) -> str:
+    def get_or_panic(self, *, _baml: _BamlOptions | None = None) -> str:
         """Read the variable now. Panics, naming the variable, when it is not set.
 
         Raises:
             Io, ParseError"""
-    async def get_or_panic_async(self) -> str:
+    async def get_or_panic_async(self, *, _baml: _BamlOptions | None = None) -> str:
         """Read the variable now. Panics, naming the variable, when it is not set.
 
         Raises:
             Io, ParseError"""
-    def or_(self, fallback: str) -> str:
+    def or_(self, fallback: str, *, _baml: _BamlOptions | None = None) -> str:
         """Read the variable now, falling back to `fallback` when it is not set.
 
         Raises:
             Io, ParseError"""
-    async def or__async(self, fallback: str) -> str:
+    async def or__async(self, fallback: str, *, _baml: _BamlOptions | None = None) -> str:
         """Read the variable now, falling back to `fallback` when it is not set.
 
         Raises:
             Io, ParseError"""
 
 
-def ref(name: str) -> Ref:
+def ref(name: str, *, _baml: _BamlOptions | None = None) -> Ref:
     """Construct a late-bound reference to the environment variable `name`.
 
     This is what `env.NAME` sugar desugars to. It performs no io: the variable
     is read when the returned `Ref` is used, not here."""
-async def ref_async(name: str) -> Ref:
+async def ref_async(name: str, *, _baml: _BamlOptions | None = None) -> Ref:
     """Construct a late-bound reference to the environment variable `name`.
 
     This is what `env.NAME` sugar desugars to. It performs no io: the variable
     is read when the returned `Ref` is used, not here."""
 
 
-def get_or_panic_lenient(key: str, lenient: bool) -> str:
+def get_or_panic_lenient(key: str, lenient: bool, *, _baml: _BamlOptions | None = None) -> str:
     """Like `get_or_panic`, but tolerant of a missing variable when `lenient` is
     true: a missing variable yields the empty string instead of panicking.
 
@@ -117,7 +119,7 @@ def get_or_panic_lenient(key: str, lenient: bool) -> str:
 
     Raises:
         Io, ParseError"""
-async def get_or_panic_lenient_async(key: str, lenient: bool) -> str:
+async def get_or_panic_lenient_async(key: str, lenient: bool, *, _baml: _BamlOptions | None = None) -> str:
     """Like `get_or_panic`, but tolerant of a missing variable when `lenient` is
     true: a missing variable yields the empty string instead of panicking.
 

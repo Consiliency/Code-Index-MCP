@@ -31,6 +31,8 @@ if typing.TYPE_CHECKING:
     from ... import baml
     from ...baml import UNSET as UNSET
 
+from ..._invocation_types import BamlOptions as _BamlOptions
+
 
 class ClaudeCodeClient(pydantic.BaseModel):
     executable: str
@@ -42,12 +44,12 @@ class ClaudeCodeClient(pydantic.BaseModel):
     mcp_servers: typing.Dict[str, baml.json.json]
     capture_wire: bool
     @staticmethod
-    def new(*, model: typing.Union[str, UNSET] = "haiku", executable: typing.Union[str, UNSET] = "claude", cwd: typing.Union[str, None, UNSET] = None, timeout_ms: typing.Union[int, UNSET] = 240000, permission_mode: typing.Union[str, UNSET] = "default", harness_tools: typing.Union[typing.List[str], UNSET] = [], mcp_servers: typing.Union[typing.Dict[str, baml.json.json], None, UNSET] = None, capture_wire: typing.Union[bool, UNSET] = True) -> ClaudeCodeClient:
+    def new(*, model: typing.Union[str, UNSET] = "haiku", executable: typing.Union[str, UNSET] = "claude", cwd: typing.Union[str, None, UNSET] = None, timeout_ms: typing.Union[int, UNSET] = 240000, permission_mode: typing.Union[str, UNSET] = "default", harness_tools: typing.Union[typing.List[str], UNSET] = [], mcp_servers: typing.Union[typing.Dict[str, baml.json.json], None, UNSET] = None, capture_wire: typing.Union[bool, UNSET] = True, _baml: _BamlOptions | None = None) -> ClaudeCodeClient:
         """Creates a client. Construction reads no environment variable, so
         declaring one is always safe; credentials and endpoints resolve when a
         request is built."""
     @staticmethod
-    async def new_async(*, model: typing.Union[str, UNSET] = "haiku", executable: typing.Union[str, UNSET] = "claude", cwd: typing.Union[str, None, UNSET] = None, timeout_ms: typing.Union[int, UNSET] = 240000, permission_mode: typing.Union[str, UNSET] = "default", harness_tools: typing.Union[typing.List[str], UNSET] = [], mcp_servers: typing.Union[typing.Dict[str, baml.json.json], None, UNSET] = None, capture_wire: typing.Union[bool, UNSET] = True) -> ClaudeCodeClient:
+    async def new_async(*, model: typing.Union[str, UNSET] = "haiku", executable: typing.Union[str, UNSET] = "claude", cwd: typing.Union[str, None, UNSET] = None, timeout_ms: typing.Union[int, UNSET] = 240000, permission_mode: typing.Union[str, UNSET] = "default", harness_tools: typing.Union[typing.List[str], UNSET] = [], mcp_servers: typing.Union[typing.Dict[str, baml.json.json], None, UNSET] = None, capture_wire: typing.Union[bool, UNSET] = True, _baml: _BamlOptions | None = None) -> ClaudeCodeClient:
         """Creates a client. Construction reads no environment variable, so
         declaring one is always safe; credentials and endpoints resolve when a
         request is built."""

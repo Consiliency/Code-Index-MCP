@@ -28,6 +28,8 @@ import pydantic
 if typing.TYPE_CHECKING:
     from ... import baml
 
+from ..._invocation_types import BamlOptions as _BamlOptions
+
 
 T = typing.TypeVar("T")
 
@@ -36,17 +38,57 @@ class ParseError(pydantic.BaseModel):
     message: str
 
 
-def parse(s: str) -> baml.json.json:
-    """Raises:
+def parse(s: str, *, _baml: _BamlOptions | None = None) -> baml.json.json:
+    """Parses a single YAML document into JSON-compatible BAML values.
+
+    YAML features outside `baml.json.json` are rejected rather than converted
+    lossily. The accepted values are null, bool, int, finite float, string,
+    sequences, and mappings with string keys. `baml.json.parse` reads an
+    integer outside the BAML `int` range as a `bigint`; an out-of-range YAML
+    integer is rejected instead.
+
+    The input is a YAML *stream*, and this reads exactly one document from it.
+    An empty stream is not malformed and parses to `null`. A second document —
+    a `---` separator with content after it — is an error rather than a
+    silently discarded remainder.
+
+    # Throws
+
+    - `baml.yaml.ParseError` if `s` is not well-formed YAML, if the stream
+      holds more than one document, if a mapping key is not a string, if a node
+      carries an explicit tag, if an integer falls outside the BAML `int`
+      range, or if a float is not finite.
+
+    Raises:
         ParseError"""
-async def parse_async(s: str) -> baml.json.json:
-    """Raises:
+async def parse_async(s: str, *, _baml: _BamlOptions | None = None) -> baml.json.json:
+    """Parses a single YAML document into JSON-compatible BAML values.
+
+    YAML features outside `baml.json.json` are rejected rather than converted
+    lossily. The accepted values are null, bool, int, finite float, string,
+    sequences, and mappings with string keys. `baml.json.parse` reads an
+    integer outside the BAML `int` range as a `bigint`; an out-of-range YAML
+    integer is rejected instead.
+
+    The input is a YAML *stream*, and this reads exactly one document from it.
+    An empty stream is not malformed and parses to `null`. A second document —
+    a `---` separator with content after it — is an error rather than a
+    silently discarded remainder.
+
+    # Throws
+
+    - `baml.yaml.ParseError` if `s` is not well-formed YAML, if the stream
+      holds more than one document, if a mapping key is not a string, if a node
+      carries an explicit tag, if an integer falls outside the BAML `int`
+      range, or if a float is not finite.
+
+    Raises:
         ParseError"""
 
 
-def deserialize(s: str, *, _types: dict[str, typing.Any]) -> T:
+def decode(s: str, *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> T:
     """Parses YAML text and decodes it into `T`, honoring `baml.FromJson`
-    overrides. The YAML counterpart of `baml.json.deserialize<T>`.
+    overrides. The YAML counterpart of `baml.json.decode<T>`.
 
     `parse` lands in `baml.json.json` first, so the decode rules are exactly
     `baml.json`'s — see `baml.json.to<T>`.
@@ -60,9 +102,9 @@ def deserialize(s: str, *, _types: dict[str, typing.Any]) -> T:
 
     Raises:
         ParseError, DecodeError"""
-async def deserialize_async(s: str, *, _types: dict[str, typing.Any]) -> T:
+async def decode_async(s: str, *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> T:
     """Parses YAML text and decodes it into `T`, honoring `baml.FromJson`
-    overrides. The YAML counterpart of `baml.json.deserialize<T>`.
+    overrides. The YAML counterpart of `baml.json.decode<T>`.
 
     `parse` lands in `baml.json.json` first, so the decode rules are exactly
     `baml.json`'s — see `baml.json.to<T>`.
@@ -82,6 +124,6 @@ __all__ = [
     "ParseError",
     "parse",
     "parse_async",
-    "deserialize",
-    "deserialize_async",
+    "decode",
+    "decode_async",
 ]

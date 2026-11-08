@@ -32,6 +32,8 @@ if typing.TYPE_CHECKING:
     from ... import baml
     from ...baml import UNSET as UNSET
 
+from ..._invocation_types import BamlOptions as _BamlOptions
+
 
 class BedrockClient(pydantic.BaseModel):
     model: str
@@ -53,24 +55,25 @@ class BedrockClient(pydantic.BaseModel):
     headers: typing.Optional[typing.Dict[str, str]] = None
     query_params: typing.Optional[typing.Dict[str, str]] = None
     capture_wire: bool
+    timeout: typing.Union[baml.time.Duration, ai.LlmTimeoutOptions, None] = None
     @staticmethod
-    def new(model: str, *, region: typing.Union[str, None, UNSET] = None, profile: typing.Union[str, None, UNSET] = None, access_key_id: typing.Union[str, None, UNSET] = None, secret_access_key: typing.Union[str, None, UNSET] = None, session_token: typing.Union[str, None, UNSET] = None, endpoint_url: typing.Union[ai.Credential, None, UNSET] = None, max_tokens: typing.Union[int, None, UNSET] = None, temperature: typing.Union[float, None, UNSET] = None, top_p: typing.Union[float, None, UNSET] = None, stop_sequences: typing.Union[typing.List[str], None, UNSET] = None, tool_choice: typing.Union[str, None, UNSET] = None, cache_system_prompt: typing.Union[bool, UNSET] = False, cache_tools: typing.Union[bool, UNSET] = False, additional_model_request_fields: typing.Union[baml.json.json, None, UNSET] = None, request_body: typing.Union[baml.json.json, None, UNSET] = None, headers: typing.Union[typing.Dict[str, str], None, UNSET] = None, query_params: typing.Union[typing.Dict[str, str], None, UNSET] = None, capture_wire: typing.Union[bool, UNSET] = True) -> BedrockClient:
+    def new(model: str, *, region: typing.Union[str, None, UNSET] = None, profile: typing.Union[str, None, UNSET] = None, access_key_id: typing.Union[str, None, UNSET] = None, secret_access_key: typing.Union[str, None, UNSET] = None, session_token: typing.Union[str, None, UNSET] = None, endpoint_url: typing.Union[ai.Credential, None, UNSET] = None, max_tokens: typing.Union[int, None, UNSET] = None, temperature: typing.Union[float, None, UNSET] = None, top_p: typing.Union[float, None, UNSET] = None, stop_sequences: typing.Union[typing.List[str], None, UNSET] = None, tool_choice: typing.Union[str, None, UNSET] = None, cache_system_prompt: typing.Union[bool, UNSET] = False, cache_tools: typing.Union[bool, UNSET] = False, additional_model_request_fields: typing.Union[baml.json.json, None, UNSET] = None, request_body: typing.Union[baml.json.json, None, UNSET] = None, headers: typing.Union[typing.Dict[str, str], None, UNSET] = None, query_params: typing.Union[typing.Dict[str, str], None, UNSET] = None, capture_wire: typing.Union[bool, UNSET] = True, timeout: typing.Union[baml.time.Duration, ai.LlmTimeoutOptions, None, UNSET] = None, _baml: _BamlOptions | None = None) -> BedrockClient:
         """Creates a client. Construction reads no environment variable, so
         declaring one is always safe; credentials and endpoints resolve when a
         request is built."""
     @staticmethod
-    async def new_async(model: str, *, region: typing.Union[str, None, UNSET] = None, profile: typing.Union[str, None, UNSET] = None, access_key_id: typing.Union[str, None, UNSET] = None, secret_access_key: typing.Union[str, None, UNSET] = None, session_token: typing.Union[str, None, UNSET] = None, endpoint_url: typing.Union[ai.Credential, None, UNSET] = None, max_tokens: typing.Union[int, None, UNSET] = None, temperature: typing.Union[float, None, UNSET] = None, top_p: typing.Union[float, None, UNSET] = None, stop_sequences: typing.Union[typing.List[str], None, UNSET] = None, tool_choice: typing.Union[str, None, UNSET] = None, cache_system_prompt: typing.Union[bool, UNSET] = False, cache_tools: typing.Union[bool, UNSET] = False, additional_model_request_fields: typing.Union[baml.json.json, None, UNSET] = None, request_body: typing.Union[baml.json.json, None, UNSET] = None, headers: typing.Union[typing.Dict[str, str], None, UNSET] = None, query_params: typing.Union[typing.Dict[str, str], None, UNSET] = None, capture_wire: typing.Union[bool, UNSET] = True) -> BedrockClient:
+    async def new_async(model: str, *, region: typing.Union[str, None, UNSET] = None, profile: typing.Union[str, None, UNSET] = None, access_key_id: typing.Union[str, None, UNSET] = None, secret_access_key: typing.Union[str, None, UNSET] = None, session_token: typing.Union[str, None, UNSET] = None, endpoint_url: typing.Union[ai.Credential, None, UNSET] = None, max_tokens: typing.Union[int, None, UNSET] = None, temperature: typing.Union[float, None, UNSET] = None, top_p: typing.Union[float, None, UNSET] = None, stop_sequences: typing.Union[typing.List[str], None, UNSET] = None, tool_choice: typing.Union[str, None, UNSET] = None, cache_system_prompt: typing.Union[bool, UNSET] = False, cache_tools: typing.Union[bool, UNSET] = False, additional_model_request_fields: typing.Union[baml.json.json, None, UNSET] = None, request_body: typing.Union[baml.json.json, None, UNSET] = None, headers: typing.Union[typing.Dict[str, str], None, UNSET] = None, query_params: typing.Union[typing.Dict[str, str], None, UNSET] = None, capture_wire: typing.Union[bool, UNSET] = True, timeout: typing.Union[baml.time.Duration, ai.LlmTimeoutOptions, None, UNSET] = None, _baml: _BamlOptions | None = None) -> BedrockClient:
         """Creates a client. Construction reads no environment variable, so
         declaring one is always safe; credentials and endpoints resolve when a
         request is built."""
-    def resolved_endpoint_url(self) -> typing.Optional[str]:
+    def resolved_endpoint_url(self, *, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
         """The request-time endpoint override: the explicit value (a literal, or
         the value of the variable an `env.NAME` ref points at), else null
         (build the regional host). Bedrock has no canonical endpoint variable.
 
         Raises:
             Io, ParseError"""
-    async def resolved_endpoint_url_async(self) -> typing.Optional[str]:
+    async def resolved_endpoint_url_async(self, *, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
         """The request-time endpoint override: the explicit value (a literal, or
         the value of the variable an `env.NAME` ref points at), else null
         (build the regional host). Bedrock has no canonical endpoint variable.

@@ -25,12 +25,14 @@ import typing
 import typing_extensions
 import pydantic
 
+from ..._invocation_types import BamlOptions as _BamlOptions
+
 from baml_bridge import BamlPyHandle as _BamlPyHandle
 
 
 class File(pydantic.BaseModel):
     field_handle: _BamlPyHandle = pydantic.Field(alias="_handle")
-    def text(self) -> str:
+    def text(self, *, _baml: _BamlOptions | None = None) -> str:
         """Reads the entire remaining file contents as a UTF-8 string.
 
         # Throws
@@ -40,7 +42,7 @@ class File(pydantic.BaseModel):
 
         Raises:
             Io, ParseError"""
-    async def text_async(self) -> str:
+    async def text_async(self, *, _baml: _BamlOptions | None = None) -> str:
         """Reads the entire remaining file contents as a UTF-8 string.
 
         # Throws
@@ -50,7 +52,7 @@ class File(pydantic.BaseModel):
 
         Raises:
             Io, ParseError"""
-    def bytes(self) -> bytes:
+    def bytes(self, *, _baml: _BamlOptions | None = None) -> bytes:
         """Reads the entire remaining file contents as raw bytes.
 
         # Throws
@@ -59,7 +61,7 @@ class File(pydantic.BaseModel):
 
         Raises:
             Io"""
-    async def bytes_async(self) -> bytes:
+    async def bytes_async(self, *, _baml: _BamlOptions | None = None) -> bytes:
         """Reads the entire remaining file contents as raw bytes.
 
         # Throws
@@ -68,7 +70,7 @@ class File(pydantic.BaseModel):
 
         Raises:
             Io"""
-    def close(self) -> None:
+    def close(self, *, _baml: _BamlOptions | None = None) -> None:
         """Closes the file handle, flushing any pending writes.
         Closing is an idempotent operation: calling `close()` multiple times is safe.
 
@@ -78,7 +80,7 @@ class File(pydantic.BaseModel):
 
         Raises:
             Io"""
-    async def close_async(self) -> None:
+    async def close_async(self, *, _baml: _BamlOptions | None = None) -> None:
         """Closes the file handle, flushing any pending writes.
         Closing is an idempotent operation: calling `close()` multiple times is safe.
 
@@ -88,7 +90,7 @@ class File(pydantic.BaseModel):
 
         Raises:
             Io"""
-    def seek_from(self, whence: typing.Union[typing.Literal["start"], typing.Literal["current"], typing.Literal["end"]], offset: int) -> int:
+    def seek_from(self, whence: typing.Union[typing.Literal["start"], typing.Literal["current"], typing.Literal["end"]], offset: int, *, _baml: _BamlOptions | None = None) -> int:
         """Moves the file cursor. `whence` is `"start"`, `"current"`, or `"end"`. Returns the new cursor position in bytes.
 
         Throws `InvalidArgument` if `offset` is negative when paired with
@@ -96,7 +98,7 @@ class File(pydantic.BaseModel):
 
         Raises:
             Io, InvalidArgument"""
-    async def seek_from_async(self, whence: typing.Union[typing.Literal["start"], typing.Literal["current"], typing.Literal["end"]], offset: int) -> int:
+    async def seek_from_async(self, whence: typing.Union[typing.Literal["start"], typing.Literal["current"], typing.Literal["end"]], offset: int, *, _baml: _BamlOptions | None = None) -> int:
         """Moves the file cursor. `whence` is `"start"`, `"current"`, or `"end"`. Returns the new cursor position in bytes.
 
         Throws `InvalidArgument` if `offset` is negative when paired with
@@ -104,7 +106,7 @@ class File(pydantic.BaseModel):
 
         Raises:
             Io, InvalidArgument"""
-    def write(self, data: typing.Union[str, bytes]) -> int:
+    def write(self, data: typing.Union[str, bytes], *, _baml: _BamlOptions | None = None) -> int:
         """Writes all of `data` to the file at the current cursor position.
         Returns the encoded byte count.
 
@@ -115,7 +117,7 @@ class File(pydantic.BaseModel):
 
         Raises:
             Io"""
-    async def write_async(self, data: typing.Union[str, bytes]) -> int:
+    async def write_async(self, data: typing.Union[str, bytes], *, _baml: _BamlOptions | None = None) -> int:
         """Writes all of `data` to the file at the current cursor position.
         Returns the encoded byte count.
 
@@ -128,7 +130,7 @@ class File(pydantic.BaseModel):
             Io"""
 
 
-def open(path: str, mode: typing.Union[typing.Literal["r"], typing.Literal["r+"], typing.Literal["w"], typing.Literal["w+"], typing.Literal["a"], typing.Literal["a+"]]) -> File:
+def open(path: str, mode: typing.Union[typing.Literal["r"], typing.Literal["r+"], typing.Literal["w"], typing.Literal["w+"], typing.Literal["a"], typing.Literal["a+"]], *, _baml: _BamlOptions | None = None) -> File:
     """Opens the file at `path` with the given `mode`.
 
     Mode values: `"r"` (read), `"r+"` (read/write), `"w"` (write/truncate),
@@ -136,7 +138,7 @@ def open(path: str, mode: typing.Union[typing.Literal["r"], typing.Literal["r+"]
 
     Raises:
         Io, InvalidArgument"""
-async def open_async(path: str, mode: typing.Union[typing.Literal["r"], typing.Literal["r+"], typing.Literal["w"], typing.Literal["w+"], typing.Literal["a"], typing.Literal["a+"]]) -> File:
+async def open_async(path: str, mode: typing.Union[typing.Literal["r"], typing.Literal["r+"], typing.Literal["w"], typing.Literal["w+"], typing.Literal["a"], typing.Literal["a+"]], *, _baml: _BamlOptions | None = None) -> File:
     """Opens the file at `path` with the given `mode`.
 
     Mode values: `"r"` (read), `"r+"` (read/write), `"w"` (write/truncate),
@@ -146,19 +148,19 @@ async def open_async(path: str, mode: typing.Union[typing.Literal["r"], typing.L
         Io, InvalidArgument"""
 
 
-def exists(path: str) -> bool:
+def exists(path: str, *, _baml: _BamlOptions | None = None) -> bool:
     """Returns `true` if a file or directory exists at `path`.
 
     Raises:
         Io"""
-async def exists_async(path: str) -> bool:
+async def exists_async(path: str, *, _baml: _BamlOptions | None = None) -> bool:
     """Returns `true` if a file or directory exists at `path`.
 
     Raises:
         Io"""
 
 
-def remove(path: str) -> None:
+def remove(path: str, *, _baml: _BamlOptions | None = None) -> None:
     """Removes the file at `path`. Throws `Io` if the file does not exist or cannot be deleted.
 
     This handles regular files only. To delete a directory use `remove_dir`
@@ -166,7 +168,7 @@ def remove(path: str) -> None:
 
     Raises:
         Io"""
-async def remove_async(path: str) -> None:
+async def remove_async(path: str, *, _baml: _BamlOptions | None = None) -> None:
     """Removes the file at `path`. Throws `Io` if the file does not exist or cannot be deleted.
 
     This handles regular files only. To delete a directory use `remove_dir`
@@ -176,25 +178,25 @@ async def remove_async(path: str) -> None:
         Io"""
 
 
-def size(path: str) -> int:
+def size(path: str, *, _baml: _BamlOptions | None = None) -> int:
     """Returns the size of the file at `path` in bytes.
 
     Raises:
         Io"""
-async def size_async(path: str) -> int:
+async def size_async(path: str, *, _baml: _BamlOptions | None = None) -> int:
     """Returns the size of the file at `path` in bytes.
 
     Raises:
         Io"""
 
 
-def read(path: str) -> str:
+def read(path: str, *, _baml: _BamlOptions | None = None) -> str:
     """Reads the entire contents of the file at `path` as a UTF-8 string.
     Throws `ParseError` if the file's bytes are not valid UTF-8.
 
     Raises:
         Io, ParseError"""
-async def read_async(path: str) -> str:
+async def read_async(path: str, *, _baml: _BamlOptions | None = None) -> str:
     """Reads the entire contents of the file at `path` as a UTF-8 string.
     Throws `ParseError` if the file's bytes are not valid UTF-8.
 
@@ -202,24 +204,24 @@ async def read_async(path: str) -> str:
         Io, ParseError"""
 
 
-def write(path: str, content: str) -> int:
+def write(path: str, content: str, *, _baml: _BamlOptions | None = None) -> int:
     """Writes `content` to the file at `path`, creating or truncating it. Returns the number of bytes written.
 
     Raises:
         Io"""
-async def write_async(path: str, content: str) -> int:
+async def write_async(path: str, content: str, *, _baml: _BamlOptions | None = None) -> int:
     """Writes `content` to the file at `path`, creating or truncating it. Returns the number of bytes written.
 
     Raises:
         Io"""
 
 
-def write_bytes(path: str, content: bytes) -> int:
+def write_bytes(path: str, content: bytes, *, _baml: _BamlOptions | None = None) -> int:
     """Writes raw bytes `content` to the file at `path`, creating or truncating it. Returns the number of bytes written.
 
     Raises:
         Io"""
-async def write_bytes_async(path: str, content: bytes) -> int:
+async def write_bytes_async(path: str, content: bytes, *, _baml: _BamlOptions | None = None) -> int:
     """Writes raw bytes `content` to the file at `path`, creating or truncating it. Returns the number of bytes written.
 
     Raises:
@@ -237,37 +239,37 @@ class MkdirOptions(pydantic.BaseModel):
     recursive: bool
 
 
-def read_dir(path: str) -> typing.List[DirEntry]:
+def read_dir(path: str, *, _baml: _BamlOptions | None = None) -> typing.List[DirEntry]:
     """Returns an array of directory entries for the directory at `path`.
 
     Raises:
         Io"""
-async def read_dir_async(path: str) -> typing.List[DirEntry]:
+async def read_dir_async(path: str, *, _baml: _BamlOptions | None = None) -> typing.List[DirEntry]:
     """Returns an array of directory entries for the directory at `path`.
 
     Raises:
         Io"""
 
 
-def mkdir(path: str, options: MkdirOptions) -> None:
+def mkdir(path: str, options: MkdirOptions, *, _baml: _BamlOptions | None = None) -> None:
     """Creates the directory at `path`. Pass `MkdirOptions { recursive: true }` to create parent directories.
 
     Raises:
         Io"""
-async def mkdir_async(path: str, options: MkdirOptions) -> None:
+async def mkdir_async(path: str, options: MkdirOptions, *, _baml: _BamlOptions | None = None) -> None:
     """Creates the directory at `path`. Pass `MkdirOptions { recursive: true }` to create parent directories.
 
     Raises:
         Io"""
 
 
-def remove_dir(path: str) -> None:
+def remove_dir(path: str, *, _baml: _BamlOptions | None = None) -> None:
     """Removes the empty directory at `path`. Throws `Io` if `path` is not a
     directory, is not empty, or does not exist. Mirrors Bun's `fs.promises.rmdir`.
 
     Raises:
         Io"""
-async def remove_dir_async(path: str) -> None:
+async def remove_dir_async(path: str, *, _baml: _BamlOptions | None = None) -> None:
     """Removes the empty directory at `path`. Throws `Io` if `path` is not a
     directory, is not empty, or does not exist. Mirrors Bun's `fs.promises.rmdir`.
 
@@ -275,7 +277,7 @@ async def remove_dir_async(path: str) -> None:
         Io"""
 
 
-def remove_dir_all(path: str) -> None:
+def remove_dir_all(path: str, *, _baml: _BamlOptions | None = None) -> None:
     """Recursively removes the directory at `path` and all of its contents.
     Idempotent: returns successfully if `path` does not exist. Like Bun's
     `fs.promises.rm(path, { recursive: true, force: true })` for directory trees
@@ -284,7 +286,7 @@ def remove_dir_all(path: str) -> None:
 
     Raises:
         Io"""
-async def remove_dir_all_async(path: str) -> None:
+async def remove_dir_all_async(path: str, *, _baml: _BamlOptions | None = None) -> None:
     """Recursively removes the directory at `path` and all of its contents.
     Idempotent: returns successfully if `path` does not exist. Like Bun's
     `fs.promises.rm(path, { recursive: true, force: true })` for directory trees
@@ -295,7 +297,7 @@ async def remove_dir_all_async(path: str) -> None:
         Io"""
 
 
-def chmod(path: str, mode: int) -> None:
+def chmod(path: str, mode: int, *, _baml: _BamlOptions | None = None) -> None:
     """Changes the permissions of the file at `path` to `mode`.
 
     `mode` is the POSIX (unix) mode octal permissions value:
@@ -318,7 +320,7 @@ def chmod(path: str, mode: int) -> None:
 
     Raises:
         Io, InvalidArgument"""
-async def chmod_async(path: str, mode: int) -> None:
+async def chmod_async(path: str, mode: int, *, _baml: _BamlOptions | None = None) -> None:
     """Changes the permissions of the file at `path` to `mode`.
 
     `mode` is the POSIX (unix) mode octal permissions value:
@@ -343,7 +345,7 @@ async def chmod_async(path: str, mode: int) -> None:
         Io, InvalidArgument"""
 
 
-def symlink(target: str, path: str) -> None:
+def symlink(target: str, path: str, *, _baml: _BamlOptions | None = None) -> None:
     """Creates a symbolic link at `path` that points to `target`.
 
     `target` is stored verbatim and need not exist: a dangling link is created
@@ -360,7 +362,7 @@ def symlink(target: str, path: str) -> None:
 
     Raises:
         Io"""
-async def symlink_async(target: str, path: str) -> None:
+async def symlink_async(target: str, path: str, *, _baml: _BamlOptions | None = None) -> None:
     """Creates a symbolic link at `path` that points to `target`.
 
     `target` is stored verbatim and need not exist: a dangling link is created

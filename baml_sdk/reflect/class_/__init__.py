@@ -41,17 +41,18 @@ class Field(pydantic.BaseModel):
     One field of a class: its name, its declared type, and its schema
     metadata.
 
-    A descriptor from `reflect.AnyClass.list_fields` or `get_field` is bound
-    to the instance it came from, so `value` can read it; one from
-    `Type.fields()` describes the type only and is ownerless.
+    A descriptor from `reflect.AnyClass.list_fields`, `get_field` or
+    `find_field` is bound to the instance it came from, so `value` can read
+    it; one from `reflect.Class.fields()` describes the type only and is
+    ownerless.
 
     Attributes:
         name
         type
         meta
-        field_owner: Present only for handles returned from `reflect.AnyClass.list_fields` or
-            `get_field`. Type-side descriptors returned by `Type.fields()` are
-            intentionally ownerless.
+        field_owner: Present only for handles returned from `reflect.AnyClass.list_fields`,
+            `get_field` or `find_field`. Type-side descriptors returned by
+            `reflect.Class.fields()` are intentionally ownerless.
     """
     model_config = pydantic.ConfigDict(
         arbitrary_types_allowed=True,
@@ -59,37 +60,13 @@ class Field(pydantic.BaseModel):
         populate_by_name=True,
     )
     name: str
-    type: typing.Optional[typing.Any] = None
+    type: typing.Any
     meta: reflect.Meta
     field_owner: typing.Optional[typing.Any] = pydantic.Field(default=None, alias="_owner")
     metadata       = _define_function("reflect.class.Field.metadata", "sync",  ["self"], binding_name="metadata", binding_qualname="Field.metadata", binding_module=__name__)
     metadata_async = _define_function("reflect.class.Field.metadata", "async", ["self"], binding_name="metadata_async", binding_qualname="Field.metadata_async", binding_module=__name__)
     value       = _define_function("reflect.class.Field.value", "sync",  ["self"], binding_name="value", binding_qualname="Field.value", binding_module=__name__, type_params=["T"])
     value_async = _define_function("reflect.class.Field.value", "async", ["self"], binding_name="value_async", binding_qualname="Field.value_async", binding_module=__name__, type_params=["T"])
-
-
-new       = _define_function("reflect.class.new", "sync",  ["name", "fields"], ["implementations"], binding_name="new", binding_qualname="new", binding_module=__name__)
-new.__doc__ = """Construct a closed runtime class. Map iteration order is definition order.
-
-Raises:
-    CompilationError"""
-new_async = _define_function("reflect.class.new", "async", ["name", "fields"], ["implementations"], binding_name="new_async", binding_qualname="new_async", binding_module=__name__)
-new_async.__doc__ = """Construct a closed runtime class. Map iteration order is definition order.
-
-Raises:
-    CompilationError"""
-
-
-_new       = _define_function("reflect.class._new", "sync",  ["name", "fields", "implementations"], binding_name="_new", binding_qualname="_new", binding_module=__name__)
-_new.__doc__ = """Raises:
-    CompilationError"""
-_new_async = _define_function("reflect.class._new", "async", ["name", "fields", "implementations"], binding_name="_new_async", binding_qualname="_new_async", binding_module=__name__)
-_new_async.__doc__ = """Raises:
-    CompilationError"""
-
-
-builder       = _define_function("reflect.class.builder", "sync",  ["name"], binding_name="builder", binding_qualname="builder", binding_module=__name__)
-builder_async = _define_function("reflect.class.builder", "async", ["name"], binding_name="builder_async", binding_qualname="builder_async", binding_module=__name__)
 
 
 class Builder(pydantic.BaseModel):
@@ -108,6 +85,10 @@ class Builder(pydantic.BaseModel):
     field_resolved: typing.Optional[typing.Any] = pydantic.Field(default=None, alias="_resolved")
     field       = _define_function("reflect.class.Builder.field", "sync",  ["self", "name", "ty"], binding_name="field", binding_qualname="Builder.field", binding_module=__name__)
     field_async = _define_function("reflect.class.Builder.field", "async", ["self", "name", "ty"], binding_name="field_async", binding_qualname="Builder.field_async", binding_module=__name__)
+    _field_       = _define_function("reflect.class.Builder._field", "sync",  ["self", "name", "ty"], binding_name="_field_", binding_qualname="Builder._field_", binding_module=__name__)
+    _field__async = _define_function("reflect.class.Builder._field", "async", ["self", "name", "ty"], binding_name="_field__async", binding_qualname="Builder._field__async", binding_module=__name__)
+    fields_from       = _define_function("reflect.class.Builder.fields_from", "sync",  ["self", "some_class"], binding_name="fields_from", binding_qualname="Builder.fields_from", binding_module=__name__)
+    fields_from_async = _define_function("reflect.class.Builder.fields_from", "async", ["self", "some_class"], binding_name="fields_from_async", binding_qualname="Builder.fields_from_async", binding_module=__name__)
     type       = _define_function("reflect.class.Builder.type", "sync",  ["self"], binding_name="type", binding_qualname="Builder.type", binding_module=__name__)
     type_async = _define_function("reflect.class.Builder.type", "async", ["self"], binding_name="type_async", binding_qualname="Builder.type_async", binding_module=__name__)
     build       = _define_function("reflect.class.Builder.build", "sync",  ["self"], ["implementations"], binding_name="build", binding_qualname="Builder.build", binding_module=__name__)
@@ -135,50 +116,16 @@ class PendingType(pydantic.BaseModel):
     optional_async = _define_function("reflect.class.PendingType.optional", "async", ["self"], binding_name="optional_async", binding_qualname="PendingType.optional_async", binding_module=__name__)
     union       = _define_function("reflect.class.PendingType.union", "sync",  ["self", "others"], binding_name="union", binding_qualname="PendingType.union", binding_module=__name__)
     union_async = _define_function("reflect.class.PendingType.union", "async", ["self", "others"], binding_name="union_async", binding_qualname="PendingType.union_async", binding_module=__name__)
+    _union_       = _define_function("reflect.class.PendingType._union", "sync",  ["self", "others"], binding_name="_union_", binding_qualname="PendingType._union_", binding_module=__name__)
+    _union__async = _define_function("reflect.class.PendingType._union", "async", ["self", "others"], binding_name="_union__async", binding_qualname="PendingType._union__async", binding_module=__name__)
     resolved       = _define_function("reflect.class.PendingType.resolved", "sync",  ["self"], binding_name="resolved", binding_qualname="PendingType.resolved", binding_module=__name__)
     resolved_async = _define_function("reflect.class.PendingType.resolved", "async", ["self"], binding_name="resolved_async", binding_qualname="PendingType.resolved_async", binding_module=__name__)
     meta       = _define_function("reflect.class.PendingType.meta", "sync",  ["self"], ["alias", "description", "docstring", "other"], binding_name="meta", binding_qualname="PendingType.meta", binding_module=__name__)
     meta_async = _define_function("reflect.class.PendingType.meta", "async", ["self"], ["alias", "description", "docstring", "other"], binding_name="meta_async", binding_qualname="PendingType.meta_async", binding_module=__name__)
 
 
-get_field       = _define_function("reflect.class.get_field", "sync",  ["value", "name"], binding_name="get_field", binding_qualname="get_field", binding_module=__name__, type_params=["T"])
-get_field.__doc__ = """Raises:
-    CompilationError"""
-get_field_async = _define_function("reflect.class.get_field", "async", ["value", "name"], binding_name="get_field_async", binding_qualname="get_field_async", binding_module=__name__, type_params=["T"])
-get_field_async.__doc__ = """Raises:
-    CompilationError"""
-
-
-class Type(pydantic.BaseModel):
-    """
-    A class-kind view of a `type` value. Users never construct this class.
-
-    Attributes:
-        field_ty: The wrapped `type` value. Private by invariant: reflection natives are
-            its only readers, and each kind method panics if the held type no longer
-            classifies as this view's kind.
-    """
-    model_config = pydantic.ConfigDict(
-        arbitrary_types_allowed=True,
-        extra="ignore",
-        populate_by_name=True,
-    )
-    field_ty: typing.Any = pydantic.Field(alias="_ty")
-    fields       = _define_function("reflect.class.Type.fields", "sync",  ["self"], binding_name="fields", binding_qualname="Type.fields", binding_module=__name__)
-    fields_async = _define_function("reflect.class.Type.fields", "async", ["self"], binding_name="fields_async", binding_qualname="Type.fields_async", binding_module=__name__)
-    meta       = _define_function("reflect.class.Type.meta", "sync",  ["self"], binding_name="meta", binding_qualname="Type.meta", binding_module=__name__)
-    meta_async = _define_function("reflect.class.Type.meta", "async", ["self"], binding_name="meta_async", binding_qualname="Type.meta_async", binding_module=__name__)
-
-
 __all__ = [
     "Field",
-    "new",
-    "new_async",
-    "builder",
-    "builder_async",
     "Builder",
     "PendingType",
-    "get_field",
-    "get_field_async",
-    "Type",
 ]

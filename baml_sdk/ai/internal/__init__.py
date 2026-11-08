@@ -122,10 +122,10 @@ _from_shorthand.__doc__ = """(internal) Construct the client a `"provider/model"
 `providers` maps a prefix and model to the constructed client, or `null`
 for an unknown prefix, and `prefixes` lists every prefix it knows (for
 error messages). This package cannot build either: every provider package
-implements `root.Client`, so `ai` sits below them in the package graph. The
+implements `ai.Client`, so `ai` sits below them in the package graph. The
 compiler synthesizes both from its own provider table (the same one a
 literal `client "provider/model"` lowers through) at each
-`root.clients.resolve` call.
+`ai.clients.resolve` call.
 
 Raises:
     InvalidRequest"""
@@ -135,10 +135,10 @@ _from_shorthand_async.__doc__ = """(internal) Construct the client a `"provider/
 `providers` maps a prefix and model to the constructed client, or `null`
 for an unknown prefix, and `prefixes` lists every prefix it knows (for
 error messages). This package cannot build either: every provider package
-implements `root.Client`, so `ai` sits below them in the package graph. The
+implements `ai.Client`, so `ai` sits below them in the package graph. The
 compiler synthesizes both from its own provider table (the same one a
 literal `client "provider/model"` lowers through) at each
-`root.clients.resolve` call.
+`ai.clients.resolve` call.
 
 Raises:
     InvalidRequest"""
@@ -146,16 +146,46 @@ Raises:
 
 _schema_for_signature       = _define_function("ai.internal._schema_for_signature", "sync",  ["handler"], binding_name="_schema_for_signature", binding_qualname="_schema_for_signature", binding_module=__name__)
 _schema_for_signature.__doc__ = """(internal) One JSON Schema object for a function's parameters, derived from the
-signature: every parameter typed via baml.json.schema.
+signature: every parameter typed via baml.json.schema, under the aliased
+names `baml.sap.coerce` reads the arguments by (`ai.tools._typed_arguments`).
+
+An `unknown` parameter receives its argument as the model sent it, which is
+parsed JSON (`ai.tools._typed_arguments`), so its schema is that of
+`baml.json.json`. `baml.json.schema` rejects `unknown` itself: everywhere
+else, `unknown` holds values no schema describes.
+
+`baml.json.schema` puts the classes and aliases a type reaches in `$defs`
+at the root of the schema it returns, and its `$ref`s point there
+(`#/$defs/Name`). A parameter's schema is a property of this object, so
+its `$defs` move to this object's root, where those `$ref`s resolve. A
+parameter scopes its definitions and references, because distinct types
+reached by different parameters can have the same display name.
 
 Raises:
-    Unsupported"""
+    Unsupported, DecodeError"""
 _schema_for_signature_async = _define_function("ai.internal._schema_for_signature", "async", ["handler"], binding_name="_schema_for_signature_async", binding_qualname="_schema_for_signature_async", binding_module=__name__)
 _schema_for_signature_async.__doc__ = """(internal) One JSON Schema object for a function's parameters, derived from the
-signature: every parameter typed via baml.json.schema.
+signature: every parameter typed via baml.json.schema, under the aliased
+names `baml.sap.coerce` reads the arguments by (`ai.tools._typed_arguments`).
+
+An `unknown` parameter receives its argument as the model sent it, which is
+parsed JSON (`ai.tools._typed_arguments`), so its schema is that of
+`baml.json.json`. `baml.json.schema` rejects `unknown` itself: everywhere
+else, `unknown` holds values no schema describes.
+
+`baml.json.schema` puts the classes and aliases a type reaches in `$defs`
+at the root of the schema it returns, and its `$ref`s point there
+(`#/$defs/Name`). A parameter's schema is a property of this object, so
+its `$defs` move to this object's root, where those `$ref`s resolve. A
+parameter scopes its definitions and references, because distinct types
+reached by different parameters can have the same display name.
 
 Raises:
-    Unsupported"""
+    Unsupported, DecodeError"""
+
+
+_scope_schema_refs       = _define_function("ai.internal._scope_schema_refs", "sync",  ["schema", "prefix"], binding_name="_scope_schema_refs", binding_qualname="_scope_schema_refs", binding_module=__name__)
+_scope_schema_refs_async = _define_function("ai.internal._scope_schema_refs", "async", ["schema", "prefix"], binding_name="_scope_schema_refs_async", binding_qualname="_scope_schema_refs_async", binding_module=__name__)
 
 
 class SpecCtx(pydantic.BaseModel):
@@ -181,6 +211,18 @@ assemble_llm_prompt       = _define_function("ai.internal.assemble_llm_prompt", 
 assemble_llm_prompt_async = _define_function("ai.internal.assemble_llm_prompt", "async", ["parts", "values"], binding_name="assemble_llm_prompt_async", binding_qualname="assemble_llm_prompt_async", binding_module=__name__)
 
 
+total_input_tokens       = _define_function("ai.internal.total_input_tokens", "sync",  ["uncached", "cached", "cache_write"], binding_name="total_input_tokens", binding_qualname="total_input_tokens", binding_module=__name__)
+total_input_tokens_async = _define_function("ai.internal.total_input_tokens", "async", ["uncached", "cached", "cache_write"], binding_name="total_input_tokens_async", binding_qualname="total_input_tokens_async", binding_module=__name__)
+
+
+uncached_input_tokens       = _define_function("ai.internal.uncached_input_tokens", "sync",  ["total", "cached"], ["cache_write"], binding_name="uncached_input_tokens", binding_qualname="uncached_input_tokens", binding_module=__name__)
+uncached_input_tokens_async = _define_function("ai.internal.uncached_input_tokens", "async", ["total", "cached"], ["cache_write"], binding_name="uncached_input_tokens_async", binding_qualname="uncached_input_tokens_async", binding_module=__name__)
+
+
+with_own_call       = _define_function("ai.internal.with_own_call", "sync",  ["turn", "call", "usage", "requested_model", "resolved_model"], binding_name="with_own_call", binding_qualname="with_own_call", binding_module=__name__)
+with_own_call_async = _define_function("ai.internal.with_own_call", "async", ["turn", "call", "usage", "requested_model", "resolved_model"], binding_name="with_own_call_async", binding_qualname="with_own_call_async", binding_module=__name__)
+
+
 _header       = _define_function("ai.internal._header", "sync",  ["headers", "lower", "canonical"], binding_name="_header", binding_qualname="_header", binding_module=__name__)
 _header_async = _define_function("ai.internal._header", "async", ["headers", "lower", "canonical"], binding_name="_header_async", binding_qualname="_header_async", binding_module=__name__)
 
@@ -203,13 +245,13 @@ _media_shape_async = _define_function("ai.internal._media_shape", "async", ["t"]
 
 _media_envelope       = _define_function("ai.internal._media_envelope", "sync",  ["m"], binding_name="_media_envelope", binding_qualname="_media_envelope", binding_module=__name__)
 _media_envelope.__doc__ = """(internal) A media block's payload as its BEP-038 `{kind, source, value, mime}`
-envelope — the form `baml.json.from_json<Out>` decodes media back from.
+envelope — the form `baml.json.to<Out>` decodes media back from.
 
 Raises:
     UnknownError"""
 _media_envelope_async = _define_function("ai.internal._media_envelope", "async", ["m"], binding_name="_media_envelope_async", binding_qualname="_media_envelope_async", binding_module=__name__)
 _media_envelope_async.__doc__ = """(internal) A media block's payload as its BEP-038 `{kind, source, value, mime}`
-envelope — the form `baml.json.from_json<Out>` decodes media back from.
+envelope — the form `baml.json.to<Out>` decodes media back from.
 
 Raises:
     UnknownError"""
@@ -265,29 +307,23 @@ Raises:
     ParseFailed"""
 
 
-_media_mime_type       = _define_function("ai.internal._media_mime_type", "sync",  ["explicit", "source_value", "kind"], binding_name="_media_mime_type", binding_qualname="_media_mime_type", binding_module=__name__)
-_media_mime_type_async = _define_function("ai.internal._media_mime_type", "async", ["explicit", "source_value", "kind"], binding_name="_media_mime_type_async", binding_qualname="_media_mime_type_async", binding_module=__name__)
-
-
-_resolve_media_content       = _define_function("ai.internal._resolve_media_content", "sync",  ["url", "file", "inline", "mime", "fetch_url"], binding_name="_resolve_media_content", binding_qualname="_resolve_media_content", binding_module=__name__)
+_resolve_media_content       = _define_function("ai.internal._resolve_media_content", "sync",  ["url", "inline", "mime", "fetch_url"], binding_name="_resolve_media_content", binding_qualname="_resolve_media_content", binding_module=__name__)
 _resolve_media_content.__doc__ = """Raises:
-    InvalidArgument, Io, Timeout, NetworkFailure"""
-_resolve_media_content_async = _define_function("ai.internal._resolve_media_content", "async", ["url", "file", "inline", "mime", "fetch_url"], binding_name="_resolve_media_content_async", binding_qualname="_resolve_media_content_async", binding_module=__name__)
+    InvalidArgument, Timeout, NetworkFailure"""
+_resolve_media_content_async = _define_function("ai.internal._resolve_media_content", "async", ["url", "inline", "mime", "fetch_url"], binding_name="_resolve_media_content_async", binding_qualname="_resolve_media_content_async", binding_module=__name__)
 _resolve_media_content_async.__doc__ = """Raises:
-    InvalidArgument, Io, Timeout, NetworkFailure"""
+    InvalidArgument, Timeout, NetworkFailure"""
 
 
-_resolve_media_preview_content       = _define_function("ai.internal._resolve_media_preview_content", "sync",  ["url", "file", "inline", "mime"], binding_name="_resolve_media_preview_content", binding_qualname="_resolve_media_preview_content", binding_module=__name__)
-_resolve_media_preview_content.__doc__ = """(internal) Preview-only counterpart to `_resolve_media_content`. The file branch is
-rejected before opening anything, and ordinary URLs remain references rather
-than being passed to `baml.http.fetch`.
+_resolve_media_preview_content       = _define_function("ai.internal._resolve_media_preview_content", "sync",  ["url", "inline", "mime"], binding_name="_resolve_media_preview_content", binding_qualname="_resolve_media_preview_content", binding_module=__name__)
+_resolve_media_preview_content.__doc__ = """(internal) Preview-only counterpart to `_resolve_media_content`. Ordinary URLs
+remain references rather than being passed to `baml.http.fetch`.
 
 Raises:
     PreviewUnsupported"""
-_resolve_media_preview_content_async = _define_function("ai.internal._resolve_media_preview_content", "async", ["url", "file", "inline", "mime"], binding_name="_resolve_media_preview_content_async", binding_qualname="_resolve_media_preview_content_async", binding_module=__name__)
-_resolve_media_preview_content_async.__doc__ = """(internal) Preview-only counterpart to `_resolve_media_content`. The file branch is
-rejected before opening anything, and ordinary URLs remain references rather
-than being passed to `baml.http.fetch`.
+_resolve_media_preview_content_async = _define_function("ai.internal._resolve_media_preview_content", "async", ["url", "inline", "mime"], binding_name="_resolve_media_preview_content_async", binding_qualname="_resolve_media_preview_content_async", binding_module=__name__)
+_resolve_media_preview_content_async.__doc__ = """(internal) Preview-only counterpart to `_resolve_media_content`. Ordinary URLs
+remain references rather than being passed to `baml.http.fetch`.
 
 Raises:
     PreviewUnsupported"""
@@ -311,6 +347,30 @@ render_output_format       = _define_function("ai.internal.render_output_format"
 render_output_format_async = _define_function("ai.internal.render_output_format", "async", ["return_type"], binding_name="render_output_format_async", binding_qualname="render_output_format_async", binding_module=__name__)
 
 
+reaches_media       = _define_function("ai.internal.reaches_media", "sync",  ["t"], binding_name="reaches_media", binding_qualname="reaches_media", binding_module=__name__)
+reaches_media.__doc__ = """Whether a value of `t` can hold media anywhere a model's JSON answer fills:
+in a union member, a list element, a map value, a class field that is not
+`@skip`, or behind a recursive alias. A `@skip` field is not in the JSON, so
+its value never comes from the model, and neither is a union member with
+no JSON form, which `baml.json.schema` drops. A model returns the media it
+generates as content of its own, never inside its text, so a client that
+holds the answer to a JSON Schema rejects an output type that can.
+
+Raises:
+    Unsupported"""
+reaches_media_async = _define_function("ai.internal.reaches_media", "async", ["t"], binding_name="reaches_media_async", binding_qualname="reaches_media_async", binding_module=__name__)
+reaches_media_async.__doc__ = """Whether a value of `t` can hold media anywhere a model's JSON answer fills:
+in a union member, a list element, a map value, a class field that is not
+`@skip`, or behind a recursive alias. A `@skip` field is not in the JSON, so
+its value never comes from the model, and neither is a union member with
+no JSON form, which `baml.json.schema` drops. A model returns the media it
+generates as content of its own, never inside its text, so a client that
+holds the answer to a JSON Schema rejects an output type that can.
+
+Raises:
+    Unsupported"""
+
+
 build_output_format       = _define_function("ai.internal.build_output_format", "sync",  ["return_type"], binding_name="build_output_format", binding_qualname="build_output_format", binding_module=__name__)
 build_output_format_async = _define_function("ai.internal.build_output_format", "async", ["return_type"], binding_name="build_output_format_async", binding_qualname="build_output_format_async", binding_module=__name__)
 
@@ -323,8 +383,12 @@ class OutputFormatDefault(str, enum.Enum):
     Auto = "Auto"
 
 
-make_role       = _define_function("ai.internal.make_role", "sync",  ["name"], binding_name="make_role", binding_qualname="make_role", binding_module=__name__)
-make_role_async = _define_function("ai.internal.make_role", "async", ["name"], binding_name="make_role_async", binding_qualname="make_role_async", binding_module=__name__)
+make_role       = _define_function("ai.internal.make_role", "sync",  ["name"], ["metadata"], binding_name="make_role", binding_qualname="make_role", binding_module=__name__)
+make_role_async = _define_function("ai.internal.make_role", "async", ["name"], ["metadata"], binding_name="make_role_async", binding_qualname="make_role_async", binding_module=__name__)
+
+
+make_cache       = _define_function("ai.internal.make_cache", "sync",  [], ["args"], binding_name="make_cache", binding_qualname="make_cache", binding_module=__name__)
+make_cache_async = _define_function("ai.internal.make_cache", "async", [], ["args"], binding_name="make_cache_async", binding_qualname="make_cache_async", binding_module=__name__)
 
 
 get_return_type       = _define_function("ai.internal.get_return_type", "sync",  ["function_name"], binding_name="get_return_type", binding_qualname="get_return_type", binding_module=__name__)
@@ -378,15 +442,25 @@ __all__ = [
     "assemble_prompt_async",
     "assemble_llm_prompt",
     "assemble_llm_prompt_async",
+    "total_input_tokens",
+    "total_input_tokens_async",
+    "uncached_input_tokens",
+    "uncached_input_tokens_async",
+    "with_own_call",
+    "with_own_call_async",
     "validate_output_type",
     "validate_output_type_async",
     "render_output_format",
     "render_output_format_async",
+    "reaches_media",
+    "reaches_media_async",
     "build_output_format",
     "build_output_format_async",
     "OutputFormatDefault",
     "make_role",
     "make_role_async",
+    "make_cache",
+    "make_cache_async",
     "get_return_type",
     "get_return_type_async",
     "OutputFormat",

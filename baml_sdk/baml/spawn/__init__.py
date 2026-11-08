@@ -31,78 +31,29 @@ from baml_bridge import (
 )
 
 
+ApplyError = typing.TypeVar("ApplyError")
 E = typing.TypeVar("E")
+Error = typing.TypeVar("Error")
+Output = typing.TypeVar("Output")
 T = typing.TypeVar("T")
-
-
-class Params(pydantic.BaseModel, typing.Generic[T, E]):
-    """
-    The parameters for spawning a new green thread.
-
-    Every `spawn` implicitly constructs a `Params` from its name and
-    body; the `with` pipeline transforms it left-to-right before the runtime
-    creates the future. Each transformer is an ordinary function
-    `(Params<T, E>) -> Params<U, F>` — it may set config fields,
-    wrap `body` (retry, timing), or replace it entirely (type-changing
-    transformers like a fallback that erases the error type).
-    """
-    model_config = pydantic.ConfigDict(
-        arbitrary_types_allowed=True,
-        extra="ignore",
-        populate_by_name=True,
-    )
-    body: typing.Callable[[], T]
-    name: typing.Optional[str] = None
-    group: typing.Optional[TaskGroup] = None
-    cancel: typing.Optional[CancelToken] = None
-    detach: bool
-
-
-class TaskGroup(pydantic.BaseModel):
-    """
-    A logical group of green threads.
-
-    These have three primary purposes:
-    - Task groups limit how many spawns referencing it run concurrently. Excess spawns queue
-      FIFO and start as earlier ones settle; the `spawn` still returns its
-      `Future` immediately, so queueing is invisible.
-    - Shared cancellation: calling `cancel` on a group cancels all tasks in the group.
-    - Debugging: task groups have an optional name and provide logical grouping of tasks.
-    """
-    model_config = pydantic.ConfigDict(
-        arbitrary_types_allowed=True,
-        extra="ignore",
-        populate_by_name=True,
-    )
-    field_handle: _BamlPyHandle = pydantic.Field(alias="_handle")
-    new       = staticmethod(_define_function("baml.spawn.TaskGroup.new", "sync",  ["limit"], ["name"], binding_name="new", binding_qualname="TaskGroup.new", binding_module=__name__))
-    new_async = staticmethod(_define_function("baml.spawn.TaskGroup.new", "async", ["limit"], ["name"], binding_name="new_async", binding_qualname="TaskGroup.new_async", binding_module=__name__))
-    cancel       = _define_function("baml.spawn.TaskGroup.cancel", "sync",  ["self"], ["pending", "active"], binding_name="cancel", binding_qualname="TaskGroup.cancel", binding_module=__name__)
-    cancel_async = _define_function("baml.spawn.TaskGroup.cancel", "async", ["self"], ["pending", "active"], binding_name="cancel_async", binding_qualname="TaskGroup.cancel_async", binding_module=__name__)
-    set_limit       = _define_function("baml.spawn.TaskGroup.set_limit", "sync",  ["self", "limit"], binding_name="set_limit", binding_qualname="TaskGroup.set_limit", binding_module=__name__)
-    set_limit_async = _define_function("baml.spawn.TaskGroup.set_limit", "async", ["self", "limit"], binding_name="set_limit_async", binding_qualname="TaskGroup.set_limit_async", binding_module=__name__)
-    limit       = _define_function("baml.spawn.TaskGroup.limit", "sync",  ["self"], binding_name="limit", binding_qualname="TaskGroup.limit", binding_module=__name__)
-    limit_async = _define_function("baml.spawn.TaskGroup.limit", "async", ["self"], binding_name="limit_async", binding_qualname="TaskGroup.limit_async", binding_module=__name__)
-    name       = _define_function("baml.spawn.TaskGroup.name", "sync",  ["self"], binding_name="name", binding_qualname="TaskGroup.name", binding_module=__name__)
-    name_async = _define_function("baml.spawn.TaskGroup.name", "async", ["self"], binding_name="name_async", binding_qualname="TaskGroup.name_async", binding_module=__name__)
-    active_count       = _define_function("baml.spawn.TaskGroup.active_count", "sync",  ["self"], binding_name="active_count", binding_qualname="TaskGroup.active_count", binding_module=__name__)
-    active_count_async = _define_function("baml.spawn.TaskGroup.active_count", "async", ["self"], binding_name="active_count_async", binding_qualname="TaskGroup.active_count_async", binding_module=__name__)
-    queued_count       = _define_function("baml.spawn.TaskGroup.queued_count", "sync",  ["self"], binding_name="queued_count", binding_qualname="TaskGroup.queued_count", binding_module=__name__)
-    queued_count_async = _define_function("baml.spawn.TaskGroup.queued_count", "async", ["self"], binding_name="queued_count_async", binding_qualname="TaskGroup.queued_count_async", binding_module=__name__)
 
 
 class CancelToken(pydantic.BaseModel):
     """
-    A one-shot cancellation handle backed by a runtime
-    cancellation token. Passing one via `options(cancel = ...)` links it into a
-    spawned task's effective token: once fired, the task's next `await` panics with
-    `baml.panics.Cancelled`. Once cancelled, a token stays cancelled forever.
+    A one-shot cancellation handle backed by a runtime cancellation token.
+
+    Using one as a spawn modifier links it into the task: once fired, the
+    task's next checkpoint (an `await` or an IO call) panics with
+    `baml.panics.Cancelled`, and so does that of every task it spawns other
+    than a `Root` one, even after the task itself has finished. Once cancelled,
+    a token stays cancelled forever, and a task spawned with it after that
+    never starts: its future settles `Cancelled`.
 
     # Examples
 
     ```baml
     let token = baml.spawn.CancelToken.new()
-    spawn with baml.spawn.options(cancel = token) {
+    spawn with token {
         baml.sys.sleep(baml.time.Duration.from_seconds(5)); // cancellation triggers here inside `sleep`
         baml.io.println("sleep finished");
     }
@@ -125,14 +76,115 @@ class CancelToken(pydantic.BaseModel):
     is_cancelled_async = _define_function("baml.spawn.CancelToken.is_cancelled", "async", ["self"], binding_name="is_cancelled_async", binding_qualname="CancelToken.is_cancelled_async", binding_module=__name__)
 
 
-options       = _define_function("baml.spawn.options", "sync",  [], ["group", "cancel", "detach"], binding_name="options", binding_qualname="options", binding_module=__name__, type_params=["T", "E"])
-options_async = _define_function("baml.spawn.options", "async", [], ["group", "cancel", "detach"], binding_name="options_async", binding_qualname="options_async", binding_module=__name__, type_params=["T", "E"])
+class Plan(pydantic.BaseModel, typing.Generic[T, E]):
+    """
+    What a `spawn` starts: the task's body, and what its modifiers have added
+    to it.
+
+    A `spawn` builds a plan from its body and name, passes it through each
+    `with` modifier in turn, and starts the plan the last one returns.
+
+    Attributes:
+        body: What the task runs.
+        name: The task's name in traces and error reports.
+        limits: The limits the task waits on. It starts once every one of them has
+            room, and holds none of them while it waits.
+        cancel_tokens: Cancelling any of these tokens cancels the task.
+        root: Whether the task keeps running when its spawner is cancelled.
+    """
+    model_config = pydantic.ConfigDict(
+        arbitrary_types_allowed=True,
+        extra="ignore",
+        populate_by_name=True,
+    )
+    body: typing.Callable[[], T]
+    name: typing.Optional[str] = None
+    limits: typing.List[Limit]
+    cancel_tokens: typing.List[CancelToken]
+    root: bool
+    new       = staticmethod(_define_function("baml.spawn.Plan.new", "sync",  ["body"], ["name"], binding_name="new", binding_qualname="Plan.new", binding_module=__name__))
+    new_async = staticmethod(_define_function("baml.spawn.Plan.new", "async", ["body"], ["name"], binding_name="new_async", binding_qualname="Plan.new_async", binding_module=__name__))
+    wrap       = _define_function("baml.spawn.Plan.wrap", "sync",  ["self", "wrapper"], binding_name="wrap", binding_qualname="Plan.wrap", binding_module=__name__, type_params=["Output", "Error"], class_type_params=["T", "E"])
+    wrap_async = _define_function("baml.spawn.Plan.wrap", "async", ["self", "wrapper"], binding_name="wrap_async", binding_qualname="Plan.wrap_async", binding_module=__name__, type_params=["Output", "Error"], class_type_params=["T", "E"])
+    with_       = _define_function("baml.spawn.Plan.with", "sync",  ["self", "modifier"], binding_name="with_", binding_qualname="Plan.with_", binding_module=__name__, type_params=["Output", "Error", "ApplyError"], class_type_params=["T", "E"])
+    with__async = _define_function("baml.spawn.Plan.with", "async", ["self", "modifier"], binding_name="with__async", binding_qualname="Plan.with__async", binding_module=__name__, type_params=["Output", "Error", "ApplyError"], class_type_params=["T", "E"])
+
+
+class Limit(pydantic.BaseModel):
+    """
+    Caps how many tasks spawned `with` it run at once.
+
+    Tasks over the cap wait in line; the `spawn` still returns its `Future` at
+    once. A waiting task can be cancelled. A task spawned with several limits
+    starts once every one of them has room, and holds none of them while it
+    waits. Two spawns share a cap only if they use the same `Limit` value, and
+    a spawn that lists the same limit twice takes one slot.
+
+    # Examples
+
+    ```baml
+    let provider = baml.spawn.Limit.new(8);
+    let futures = ids.map((id) -> { spawn with provider { fetch(id) } });
+    ```
+    """
+    model_config = pydantic.ConfigDict(
+        arbitrary_types_allowed=True,
+        extra="ignore",
+        populate_by_name=True,
+    )
+    field_handle: _BamlPyHandle = pydantic.Field(alias="_handle")
+    new       = staticmethod(_define_function("baml.spawn.Limit.new", "sync",  ["capacity"], binding_name="new", binding_qualname="Limit.new", binding_module=__name__))
+    new_async = staticmethod(_define_function("baml.spawn.Limit.new", "async", ["capacity"], binding_name="new_async", binding_qualname="Limit.new_async", binding_module=__name__))
+    capacity       = _define_function("baml.spawn.Limit.capacity", "sync",  ["self"], binding_name="capacity", binding_qualname="Limit.capacity", binding_module=__name__)
+    capacity_async = _define_function("baml.spawn.Limit.capacity", "async", ["self"], binding_name="capacity_async", binding_qualname="Limit.capacity_async", binding_module=__name__)
+    active_count       = _define_function("baml.spawn.Limit.active_count", "sync",  ["self"], binding_name="active_count", binding_qualname="Limit.active_count", binding_module=__name__)
+    active_count_async = _define_function("baml.spawn.Limit.active_count", "async", ["self"], binding_name="active_count_async", binding_qualname="Limit.active_count_async", binding_module=__name__)
+    queued_count       = _define_function("baml.spawn.Limit.queued_count", "sync",  ["self"], binding_name="queued_count", binding_qualname="Limit.queued_count", binding_module=__name__)
+    queued_count_async = _define_function("baml.spawn.Limit.queued_count", "async", ["self"], binding_name="queued_count_async", binding_qualname="Limit.queued_count_async", binding_module=__name__)
+
+
+class Root(pydantic.BaseModel):
+    """
+    Spawns a task whose cancellation parent is the runtime, not the spawning
+    task: cancelling the spawner no longer cancels it.
+
+    Nothing else changes. The `Future` still reports the task's outcome and can
+    still cancel it, and an error nobody observes is still reported.
+    """
+    model_config = pydantic.ConfigDict(
+        arbitrary_types_allowed=True,
+        extra="ignore",
+        populate_by_name=True,
+    )
+    new       = staticmethod(_define_function("baml.spawn.Root.new", "sync",  [], binding_name="new", binding_qualname="Root.new", binding_module=__name__))
+    new_async = staticmethod(_define_function("baml.spawn.Root.new", "async", [], binding_name="new_async", binding_qualname="Root.new_async", binding_module=__name__))
+
+
+__spawn       = _define_function("baml.spawn.__spawn", "sync",  ["plan"], binding_name="__spawn", binding_qualname="__spawn", binding_module=__name__, type_params=["T", "E"])
+__spawn_async = _define_function("baml.spawn.__spawn", "async", ["plan"], binding_name="__spawn_async", binding_qualname="__spawn_async", binding_module=__name__, type_params=["T", "E"])
 
 
 __all__ = [
-    "Params",
-    "TaskGroup",
     "CancelToken",
-    "options",
-    "options_async",
+    "Plan",
+    "Limit",
+    "Root",
 ]
+
+class Modifier:
+    """Erased runtime token for BAML interface `baml.spawn.Modifier`."""
+    __baml_interface_fqn__ = "baml.spawn.Modifier"
+
+    def __new__(cls, *args, **kwargs):
+        raise TypeError("BAML interface tokens cannot be instantiated")
+
+    @classmethod
+    def __class_getitem__(cls, args):
+        import types
+        return types.GenericAlias(cls, args)
+
+
+try:
+    __all__.extend(["Modifier"])
+except NameError:
+    __all__ = ["Modifier"]

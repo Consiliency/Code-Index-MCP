@@ -25,6 +25,8 @@ import typing
 import typing_extensions
 import pydantic
 
+from ..._invocation_types import BamlOptions as _BamlOptions
+
 
 Outcome: typing.TypeAlias = typing.Union[typing.Literal["pass"], typing.Literal["fail"], typing.Literal["error"]]
 
@@ -53,49 +55,49 @@ class TestCollector(pydantic.BaseModel):
     tests: typing.List[TestRegistration]
     testsets: typing.List[TestSetRegistration]
     @staticmethod
-    def new(prefix: str) -> TestCollector: ...
+    def new(prefix: str, *, _baml: _BamlOptions | None = None) -> TestCollector: ...
     @staticmethod
-    async def new_async(prefix: str) -> TestCollector: ...
-    def register_test(self, name: str, body: TestBody, runner: typing.Optional[TestRunner]) -> None:
+    async def new_async(prefix: str, *, _baml: _BamlOptions | None = None) -> TestCollector: ...
+    def register_test(self, name: str, body: TestBody, runner: typing.Optional[TestRunner], *, _baml: _BamlOptions | None = None) -> None:
         """Raises:
             InvalidTestName"""
-    async def register_test_async(self, name: str, body: TestBody, runner: typing.Optional[TestRunner]) -> None:
+    async def register_test_async(self, name: str, body: TestBody, runner: typing.Optional[TestRunner], *, _baml: _BamlOptions | None = None) -> None:
         """Raises:
             InvalidTestName"""
-    def register_test_set(self, name: str, collector: TestSetBody, runner: typing.Optional[TestSetRunner]) -> None:
+    def register_test_set(self, name: str, collector: TestSetBody, runner: typing.Optional[TestSetRunner], *, _baml: _BamlOptions | None = None) -> None:
         """Raises:
             InvalidTestName"""
-    async def register_test_set_async(self, name: str, collector: TestSetBody, runner: typing.Optional[TestSetRunner]) -> None:
+    async def register_test_set_async(self, name: str, collector: TestSetBody, runner: typing.Optional[TestSetRunner], *, _baml: _BamlOptions | None = None) -> None:
         """Raises:
             InvalidTestName"""
-    def register_test_at(self, owner: str, name: str, body: TestBody, runner: typing.Optional[TestRunner]) -> None:
+    def register_test_at(self, owner: str, name: str, body: TestBody, runner: typing.Optional[TestRunner], *, _baml: _BamlOptions | None = None) -> None:
         """Compiler-only top-level registration entry points. The owner is derived
         from the declaring file (`root` plus its BAML namespaces); nested items use
         the ordinary methods above and inherit this canonical prefix.
 
         Raises:
             InvalidTestName"""
-    async def register_test_at_async(self, owner: str, name: str, body: TestBody, runner: typing.Optional[TestRunner]) -> None:
+    async def register_test_at_async(self, owner: str, name: str, body: TestBody, runner: typing.Optional[TestRunner], *, _baml: _BamlOptions | None = None) -> None:
         """Compiler-only top-level registration entry points. The owner is derived
         from the declaring file (`root` plus its BAML namespaces); nested items use
         the ordinary methods above and inherit this canonical prefix.
 
         Raises:
             InvalidTestName"""
-    def register_test_set_at(self, owner: str, name: str, collector: TestSetBody, runner: typing.Optional[TestSetRunner]) -> None:
+    def register_test_set_at(self, owner: str, name: str, collector: TestSetBody, runner: typing.Optional[TestSetRunner], *, _baml: _BamlOptions | None = None) -> None:
         """Raises:
             InvalidTestName"""
-    async def register_test_set_at_async(self, owner: str, name: str, collector: TestSetBody, runner: typing.Optional[TestSetRunner]) -> None:
+    async def register_test_set_at_async(self, owner: str, name: str, collector: TestSetBody, runner: typing.Optional[TestSetRunner], *, _baml: _BamlOptions | None = None) -> None:
         """Raises:
             InvalidTestName"""
-    def _find_testset_(self, name: str) -> TestSetRegistration: ...
-    async def _find_testset__async(self, name: str) -> TestSetRegistration: ...
-    def _find_test_(self, name: str) -> TestRegistration: ...
-    async def _find_test__async(self, name: str) -> TestRegistration: ...
+    def _find_testset_(self, name: str, *, _baml: _BamlOptions | None = None) -> TestSetRegistration: ...
+    async def _find_testset__async(self, name: str, *, _baml: _BamlOptions | None = None) -> TestSetRegistration: ...
+    def _find_test_(self, name: str, *, _baml: _BamlOptions | None = None) -> TestRegistration: ...
+    async def _find_test__async(self, name: str, *, _baml: _BamlOptions | None = None) -> TestRegistration: ...
 
 
-def _invoke_collector(collector: TestSetBody, c: TestCollector) -> None: ...
-async def _invoke_collector_async(collector: TestSetBody, c: TestCollector) -> None: ...
+def _invoke_collector(collector: TestSetBody, c: TestCollector, *, _baml: _BamlOptions | None = None) -> None: ...
+async def _invoke_collector_async(collector: TestSetBody, c: TestCollector, *, _baml: _BamlOptions | None = None) -> None: ...
 
 
 class SerializedTest(pydantic.BaseModel):
@@ -114,36 +116,36 @@ class TestRegistry(pydantic.BaseModel):
     expansions: typing.Dict[str, TestRegistry]
     loading_time_ms: int
     @staticmethod
-    def new(collector: TestCollector) -> TestRegistry: ...
+    def new(collector: TestCollector, *, _baml: _BamlOptions | None = None) -> TestRegistry: ...
     @staticmethod
-    async def new_async(collector: TestCollector) -> TestRegistry: ...
-    def serialize(self) -> typing.List[SerializedTestDef]:
+    async def new_async(collector: TestCollector, *, _baml: _BamlOptions | None = None) -> TestRegistry: ...
+    def serialize(self, *, _baml: _BamlOptions | None = None) -> typing.List[SerializedTestDef]:
         """Serialize registry to pure-data list for the UI.
         Checks expansions map to determine lazy vs expanded for each testset.
 
         Tests are serialized before testsets by design — tests are leaf items,
         testsets are containers."""
-    async def serialize_async(self) -> typing.List[SerializedTestDef]:
+    async def serialize_async(self, *, _baml: _BamlOptions | None = None) -> typing.List[SerializedTestDef]:
         """Serialize registry to pure-data list for the UI.
         Checks expansions map to determine lazy vs expanded for each testset.
 
         Tests are serialized before testsets by design — tests are leaf items,
         testsets are containers."""
-    def run_test(self, name: str) -> TestReport:
+    def run_test(self, name: str, *, _baml: _BamlOptions | None = None) -> TestReport:
         """Find test by name in root collector, then recurse into expanded sub-registries."""
-    async def run_test_async(self, name: str) -> TestReport:
+    async def run_test_async(self, name: str, *, _baml: _BamlOptions | None = None) -> TestReport:
         """Find test by name in root collector, then recurse into expanded sub-registries."""
-    def run_testset(self, name: str) -> TestSetReport: ...
-    async def run_testset_async(self, name: str) -> TestSetReport: ...
-    def run_all(self) -> TestSetReport: ...
-    async def run_all_async(self) -> TestSetReport: ...
-    def _run_all_pooled_(self, pool: _TestPool) -> TestSetReport: ...
-    async def _run_all_pooled__async(self, pool: _TestPool) -> TestSetReport: ...
-    def _run_selected_(self, names: typing.List[str]) -> TestSetReport: ...
-    async def _run_selected__async(self, names: typing.List[str]) -> TestSetReport: ...
-    def _run_selected_pooled_(self, names: typing.List[str], pool: _TestPool) -> TestSetReport: ...
-    async def _run_selected_pooled__async(self, names: typing.List[str], pool: _TestPool) -> TestSetReport: ...
-    def run_filtered(self, profile_include: typing.List[str], profile_exclude: typing.List[str], cli_include: typing.List[str], cli_exclude: typing.List[str], max_concurrency: int) -> FlatTestReport:
+    def run_testset(self, name: str, *, _baml: _BamlOptions | None = None) -> TestSetReport: ...
+    async def run_testset_async(self, name: str, *, _baml: _BamlOptions | None = None) -> TestSetReport: ...
+    def run_all(self, *, _baml: _BamlOptions | None = None) -> TestSetReport: ...
+    async def run_all_async(self, *, _baml: _BamlOptions | None = None) -> TestSetReport: ...
+    def _run_all_pooled_(self, pool: _TestPool, *, _baml: _BamlOptions | None = None) -> TestSetReport: ...
+    async def _run_all_pooled__async(self, pool: _TestPool, *, _baml: _BamlOptions | None = None) -> TestSetReport: ...
+    def _run_selected_(self, names: typing.List[str], *, _baml: _BamlOptions | None = None) -> TestSetReport: ...
+    async def _run_selected__async(self, names: typing.List[str], *, _baml: _BamlOptions | None = None) -> TestSetReport: ...
+    def _run_selected_pooled_(self, names: typing.List[str], pool: _TestPool, *, _baml: _BamlOptions | None = None) -> TestSetReport: ...
+    async def _run_selected_pooled__async(self, names: typing.List[str], pool: _TestPool, *, _baml: _BamlOptions | None = None) -> TestSetReport: ...
+    def run_filtered(self, profile_include: typing.List[str], profile_exclude: typing.List[str], cli_include: typing.List[str], cli_exclude: typing.List[str], max_concurrency: int, timeout_ms: int, *, _baml: _BamlOptions | None = None) -> FlatTestReport:
         """CLI entry point: glob-filter in BAML, run (honoring testset runners), and
         flatten into a tolerated-aware flat report the Rust driver prints directly.
           * no filters -> run_all (whole tree)
@@ -152,7 +154,7 @@ class TestRegistry(pydantic.BaseModel):
 
         Raises:
             InvalidTestName"""
-    async def run_filtered_async(self, profile_include: typing.List[str], profile_exclude: typing.List[str], cli_include: typing.List[str], cli_exclude: typing.List[str], max_concurrency: int) -> FlatTestReport:
+    async def run_filtered_async(self, profile_include: typing.List[str], profile_exclude: typing.List[str], cli_include: typing.List[str], cli_exclude: typing.List[str], max_concurrency: int, timeout_ms: int, *, _baml: _BamlOptions | None = None) -> FlatTestReport:
         """CLI entry point: glob-filter in BAML, run (honoring testset runners), and
         flatten into a tolerated-aware flat report the Rust driver prints directly.
           * no filters -> run_all (whole tree)
@@ -161,99 +163,110 @@ class TestRegistry(pydantic.BaseModel):
 
         Raises:
             InvalidTestName"""
-    def list_filtered(self, profile_include: typing.List[str], profile_exclude: typing.List[str], cli_include: typing.List[str], cli_exclude: typing.List[str]) -> typing.List[str]:
+    def list_filtered(self, profile_include: typing.List[str], profile_exclude: typing.List[str], cli_include: typing.List[str], cli_exclude: typing.List[str], *, _baml: _BamlOptions | None = None) -> typing.List[str]:
         """CLI `--list` support: the selected leaf names, without running anything.
 
         Raises:
             InvalidTestName"""
-    async def list_filtered_async(self, profile_include: typing.List[str], profile_exclude: typing.List[str], cli_include: typing.List[str], cli_exclude: typing.List[str]) -> typing.List[str]:
+    async def list_filtered_async(self, profile_include: typing.List[str], profile_exclude: typing.List[str], cli_include: typing.List[str], cli_exclude: typing.List[str], *, _baml: _BamlOptions | None = None) -> typing.List[str]:
         """CLI `--list` support: the selected leaf names, without running anything.
 
         Raises:
             InvalidTestName"""
-    def expand_set(self, name: str) -> typing.List[SerializedTestDef]:
+    def expand_set(self, name: str, *, _baml: _BamlOptions | None = None) -> typing.List[SerializedTestDef]:
         """Expand a lazy testset by name. Searches recursively through expanded
         sub-registries so nested testsets can be expanded too."""
-    async def expand_set_async(self, name: str) -> typing.List[SerializedTestDef]:
+    async def expand_set_async(self, name: str, *, _baml: _BamlOptions | None = None) -> typing.List[SerializedTestDef]:
         """Expand a lazy testset by name. Searches recursively through expanded
         sub-registries so nested testsets can be expanded too."""
-    def _expand_testset_registry_(self, ts: TestSetRegistration) -> TestRegistry: ...
-    async def _expand_testset_registry__async(self, ts: TestSetRegistration) -> TestRegistry: ...
+    def _expand_testset_registry_(self, ts: TestSetRegistration, *, _baml: _BamlOptions | None = None) -> TestRegistry: ...
+    async def _expand_testset_registry__async(self, ts: TestSetRegistration, *, _baml: _BamlOptions | None = None) -> TestRegistry: ...
 
 
-def _testset_children(registry: TestRegistry, pool: _TestPool) -> typing.List[TestSetChild]: ...
-async def _testset_children_async(registry: TestRegistry, pool: _TestPool) -> typing.List[TestSetChild]: ...
+def _testset_children(registry: TestRegistry, pool: _TestPool, *, _baml: _BamlOptions | None = None) -> typing.List[TestSetChild]: ...
+async def _testset_children_async(registry: TestRegistry, pool: _TestPool, *, _baml: _BamlOptions | None = None) -> typing.List[TestSetChild]: ...
 
 
-def _testset_children_selected(registry: TestRegistry, names: typing.List[str], pool: _TestPool) -> typing.List[TestSetChild]: ...
-async def _testset_children_selected_async(registry: TestRegistry, names: typing.List[str], pool: _TestPool) -> typing.List[TestSetChild]: ...
+def _testset_children_selected(registry: TestRegistry, names: typing.List[str], pool: _TestPool, *, _baml: _BamlOptions | None = None) -> typing.List[TestSetChild]: ...
+async def _testset_children_selected_async(registry: TestRegistry, names: typing.List[str], pool: _TestPool, *, _baml: _BamlOptions | None = None) -> typing.List[TestSetChild]: ...
 
 
-def _test_child(name: str, body: TestBody, runner: typing.Optional[TestRunner]) -> TestSetChild: ...
-async def _test_child_async(name: str, body: TestBody, runner: typing.Optional[TestRunner]) -> TestSetChild: ...
+def _test_child(name: str, body: TestBody, runner: typing.Optional[TestRunner], timeout_ms: int, *, _baml: _BamlOptions | None = None) -> TestSetChild: ...
+async def _test_child_async(name: str, body: TestBody, runner: typing.Optional[TestRunner], timeout_ms: int, *, _baml: _BamlOptions | None = None) -> TestSetChild: ...
 
 
-def _testset_child(registry: TestRegistry, ts: TestSetRegistration, pool: _TestPool) -> TestSetChild: ...
-async def _testset_child_async(registry: TestRegistry, ts: TestSetRegistration, pool: _TestPool) -> TestSetChild: ...
+def _testset_child(registry: TestRegistry, ts: TestSetRegistration, pool: _TestPool, *, _baml: _BamlOptions | None = None) -> TestSetChild: ...
+async def _testset_child_async(registry: TestRegistry, ts: TestSetRegistration, pool: _TestPool, *, _baml: _BamlOptions | None = None) -> TestSetChild: ...
 
 
-def _testset_child_selected(registry: TestRegistry, ts: TestSetRegistration, names: typing.List[str], pool: _TestPool) -> TestSetChild: ...
-async def _testset_child_selected_async(registry: TestRegistry, ts: TestSetRegistration, names: typing.List[str], pool: _TestPool) -> TestSetChild: ...
+def _testset_child_selected(registry: TestRegistry, ts: TestSetRegistration, names: typing.List[str], pool: _TestPool, *, _baml: _BamlOptions | None = None) -> TestSetChild: ...
+async def _testset_child_selected_async(registry: TestRegistry, ts: TestSetRegistration, names: typing.List[str], pool: _TestPool, *, _baml: _BamlOptions | None = None) -> TestSetChild: ...
 
 
-def _aggregate_reports(named_results: typing.List[_NamedChildReport]) -> TestSetReport: ...
-async def _aggregate_reports_async(named_results: typing.List[_NamedChildReport]) -> TestSetReport: ...
+def _aggregate_reports(named_results: typing.List[_NamedChildReport], *, _baml: _BamlOptions | None = None) -> TestSetReport: ...
+async def _aggregate_reports_async(named_results: typing.List[_NamedChildReport], *, _baml: _BamlOptions | None = None) -> TestSetReport: ...
 
 
 class _TestPool(pydantic.BaseModel):
     tokens: typing.List[int]
-    def acquire(self) -> None: ...
-    async def acquire_async(self) -> None: ...
-    def release(self) -> None: ...
-    async def release_async(self) -> None: ...
+    timeout_ms: int
+    def acquire(self, *, _baml: _BamlOptions | None = None) -> None: ...
+    async def acquire_async(self, *, _baml: _BamlOptions | None = None) -> None: ...
+    def release(self, *, _baml: _BamlOptions | None = None) -> None: ...
+    async def release_async(self, *, _baml: _BamlOptions | None = None) -> None: ...
 
 
-def _test_pool(max_concurrency: int) -> _TestPool:
-    """(internal) A pool admitting `max_concurrency` leaves at once. Zero or negative means
+def _default_test_timeout_ms(*, _baml: _BamlOptions | None = None) -> int:
+    """(internal) The per-test deadline when the caller does not choose one: 5 minutes."""
+async def _default_test_timeout_ms_async(*, _baml: _BamlOptions | None = None) -> int:
+    """(internal) The per-test deadline when the caller does not choose one: 5 minutes."""
+
+
+def _test_pool(max_concurrency: int, timeout_ms: int, *, _baml: _BamlOptions | None = None) -> _TestPool:
+    """(internal) A pool admitting `max_concurrency` leaves at once, each with a
+    `timeout_ms` deadline. A zero or negative `max_concurrency` means
     "no explicit budget": fall back to a bound that keeps a pathological
     fan-out from creating thousands of live VM threads while staying above any
     real machine's core count (the CLI always passes an explicit budget)."""
-async def _test_pool_async(max_concurrency: int) -> _TestPool:
-    """(internal) A pool admitting `max_concurrency` leaves at once. Zero or negative means
+async def _test_pool_async(max_concurrency: int, timeout_ms: int, *, _baml: _BamlOptions | None = None) -> _TestPool:
+    """(internal) A pool admitting `max_concurrency` leaves at once, each with a
+    `timeout_ms` deadline. A zero or negative `max_concurrency` means
     "no explicit budget": fall back to a bound that keeps a pathological
     fan-out from creating thousands of live VM threads while staying above any
     real machine's core count (the CLI always passes an explicit budget)."""
 
 
-def _run_children_parallel(children: typing.List[TestSetChild], pool: _TestPool) -> TestSetReport: ...
-async def _run_children_parallel_async(children: typing.List[TestSetChild], pool: _TestPool) -> TestSetReport: ...
+def _run_children_parallel(children: typing.List[TestSetChild], pool: _TestPool, *, _baml: _BamlOptions | None = None) -> TestSetReport: ...
+async def _run_children_parallel_async(children: typing.List[TestSetChild], pool: _TestPool, *, _baml: _BamlOptions | None = None) -> TestSetReport: ...
 
 
-def _run_test(body: TestBody, runner: typing.Optional[TestRunner]) -> TestReport:
+def _run_test(body: TestBody, runner: typing.Optional[TestRunner], timeout_ms: int, *, _baml: _BamlOptions | None = None) -> TestReport:
     """(internal) Run a single test with error handling and optional runner middleware.
-    Every test races against a deadline (default 5 minutes; override with the
-    BAML_TEST_TIMEOUT_MS env var): a hung test — a stalled network read, a
+    Every test races against a `timeout_ms` deadline (a non-positive value
+    means no deadline, so no timer is spawned; the CLI defaults it to 5
+    minutes and `--test-timeout` overrides): a hung test — a stalled network read, a
     deadlocked await — becomes a FAIL with a "timed out" message instead of
     hanging the whole run. `baml.future.race` cancels the losers when one
     side settles (BEP-034), so a timed-out body is actively cancelled and a
     finished test's leftover timer doesn't linger."""
-async def _run_test_async(body: TestBody, runner: typing.Optional[TestRunner]) -> TestReport:
+async def _run_test_async(body: TestBody, runner: typing.Optional[TestRunner], timeout_ms: int, *, _baml: _BamlOptions | None = None) -> TestReport:
     """(internal) Run a single test with error handling and optional runner middleware.
-    Every test races against a deadline (default 5 minutes; override with the
-    BAML_TEST_TIMEOUT_MS env var): a hung test — a stalled network read, a
+    Every test races against a `timeout_ms` deadline (a non-positive value
+    means no deadline, so no timer is spawned; the CLI defaults it to 5
+    minutes and `--test-timeout` overrides): a hung test — a stalled network read, a
     deadlocked await — becomes a FAIL with a "timed out" message instead of
     hanging the whole run. `baml.future.race` cancels the losers when one
     side settles (BEP-034), so a timed-out body is actively cancelled and a
     finished test's leftover timer doesn't linger."""
 
 
-def _run_testset(children: typing.List[TestSetChild], runner: typing.Optional[TestSetRunner], pool: _TestPool) -> TestSetReport:
+def _run_testset(children: typing.List[TestSetChild], runner: typing.Optional[TestSetRunner], pool: _TestPool, *, _baml: _BamlOptions | None = None) -> TestSetReport:
     """(internal) Run all children of a testset with optional runner middleware.
 
     A custom `TestSetRunner` receives the children as a plain closure and runs
     them however it likes, outside the pool's budget — the built-in runners are
     sequential (inherently capped) or take a local fallback pool (`PassRate`)."""
-async def _run_testset_async(children: typing.List[TestSetChild], runner: typing.Optional[TestSetRunner], pool: _TestPool) -> TestSetReport:
+async def _run_testset_async(children: typing.List[TestSetChild], runner: typing.Optional[TestSetRunner], pool: _TestPool, *, _baml: _BamlOptions | None = None) -> TestSetReport:
     """(internal) Run all children of a testset with optional runner middleware.
 
     A custom `TestSetRunner` receives the children as a plain closure and runs
@@ -261,79 +274,79 @@ async def _run_testset_async(children: typing.List[TestSetChild], runner: typing
     sequential (inherently capped) or take a local fallback pool (`PassRate`)."""
 
 
-def _expansion_error_report(name: str) -> TestSetReport:
+def _expansion_error_report(name: str, *, _baml: _BamlOptions | None = None) -> TestSetReport:
     """(internal) The report for a testset that errored (e.g. its generator threw or panicked
     during expansion): one error with no per-leaf detail."""
-async def _expansion_error_report_async(name: str) -> TestSetReport:
+async def _expansion_error_report_async(name: str, *, _baml: _BamlOptions | None = None) -> TestSetReport:
     """(internal) The report for a testset that errored (e.g. its generator threw or panicked
     during expansion): one error with no per-leaf detail."""
 
 
-def _glob_match(subject: str, pattern: str) -> bool:
+def _glob_match(subject: str, pattern: str, *, _baml: _BamlOptions | None = None) -> bool:
     """(internal) Match a CLI selector against a canonical test id. Plain selectors are
     case-sensitive substrings. A selector containing '*' is an anchored glob
     where '*' matches any run of characters (including '::')."""
-async def _glob_match_async(subject: str, pattern: str) -> bool:
+async def _glob_match_async(subject: str, pattern: str, *, _baml: _BamlOptions | None = None) -> bool:
     """(internal) Match a CLI selector against a canonical test id. Plain selectors are
     case-sensitive substrings. A selector containing '*' is an anchored glob
     where '*' matches any run of characters (including '::')."""
 
 
-def _any_pattern_matches(pats: typing.List[str], canonical_id: str) -> bool: ...
-async def _any_pattern_matches_async(pats: typing.List[str], canonical_id: str) -> bool: ...
+def _any_pattern_matches(pats: typing.List[str], canonical_id: str, *, _baml: _BamlOptions | None = None) -> bool: ...
+async def _any_pattern_matches_async(pats: typing.List[str], canonical_id: str, *, _baml: _BamlOptions | None = None) -> bool: ...
 
 
-def _leaf_selected(name: str, include: typing.List[str], exclude: typing.List[str]) -> bool:
+def _leaf_selected(name: str, include: typing.List[str], exclude: typing.List[str], *, _baml: _BamlOptions | None = None) -> bool:
     """(internal) Replicates TestFilter::includes: exclude wins; with includes present only
     included leaves are selected; with no includes everything not excluded is."""
-async def _leaf_selected_async(name: str, include: typing.List[str], exclude: typing.List[str]) -> bool:
+async def _leaf_selected_async(name: str, include: typing.List[str], exclude: typing.List[str], *, _baml: _BamlOptions | None = None) -> bool:
     """(internal) Replicates TestFilter::includes: exclude wins; with includes present only
     included leaves are selected; with no includes everything not excluded is."""
 
 
-def _leaf_selected_layered(name: str, profile_include: typing.List[str], profile_exclude: typing.List[str], cli_include: typing.List[str], cli_exclude: typing.List[str]) -> bool:
+def _leaf_selected_layered(name: str, profile_include: typing.List[str], profile_exclude: typing.List[str], cli_include: typing.List[str], cli_exclude: typing.List[str], *, _baml: _BamlOptions | None = None) -> bool:
     """(internal) Apply a profile and an explicit CLI layer independently. This is deliberately
     not equivalent to concatenating their include arrays: profile AND CLI is the
     contract, while includes within either layer remain OR."""
-async def _leaf_selected_layered_async(name: str, profile_include: typing.List[str], profile_exclude: typing.List[str], cli_include: typing.List[str], cli_exclude: typing.List[str]) -> bool:
+async def _leaf_selected_layered_async(name: str, profile_include: typing.List[str], profile_exclude: typing.List[str], cli_include: typing.List[str], cli_exclude: typing.List[str], *, _baml: _BamlOptions | None = None) -> bool:
     """(internal) Apply a profile and an explicit CLI layer independently. This is deliberately
     not equivalent to concatenating their include arrays: profile AND CLI is the
     contract, while includes within either layer remain OR."""
 
 
-def _subtree_excluded(prefix: str, excludes: typing.List[str]) -> bool:
+def _subtree_excluded(prefix: str, excludes: typing.List[str], *, _baml: _BamlOptions | None = None) -> bool:
     """(internal) A trailing-star exclusion that matches the canonical descendant prefix proves
     that every leaf below a lazy testset is excluded. This intentionally handles
     only the provable/common case and otherwise expands conservatively."""
-async def _subtree_excluded_async(prefix: str, excludes: typing.List[str]) -> bool:
+async def _subtree_excluded_async(prefix: str, excludes: typing.List[str], *, _baml: _BamlOptions | None = None) -> bool:
     """(internal) A trailing-star exclusion that matches the canonical descendant prefix proves
     that every leaf below a lazy testset is excluded. This intentionally handles
     only the provable/common case and otherwise expands conservatively."""
 
 
-def _pattern_may_match_descendant(pattern: str, prefix: str) -> bool:
+def _pattern_may_match_descendant(pattern: str, prefix: str, *, _baml: _BamlOptions | None = None) -> bool:
     """(internal) Whether an include selector could match at least one leaf below `prefix`.
     A plain substring can always occur in a future leaf name, so it expands
     conservatively. For an explicit glob, the literal portion before the first
     `*` must be compatible with the canonical descendant prefix."""
-async def _pattern_may_match_descendant_async(pattern: str, prefix: str) -> bool:
+async def _pattern_may_match_descendant_async(pattern: str, prefix: str, *, _baml: _BamlOptions | None = None) -> bool:
     """(internal) Whether an include selector could match at least one leaf below `prefix`.
     A plain substring can always occur in a future leaf name, so it expands
     conservatively. For an explicit glob, the literal portion before the first
     `*` must be compatible with the canonical descendant prefix."""
 
 
-def _subtree_may_be_selected(prefix: str, include: typing.List[str], exclude: typing.List[str]) -> bool: ...
-async def _subtree_may_be_selected_async(prefix: str, include: typing.List[str], exclude: typing.List[str]) -> bool: ...
+def _subtree_may_be_selected(prefix: str, include: typing.List[str], exclude: typing.List[str], *, _baml: _BamlOptions | None = None) -> bool: ...
+async def _subtree_may_be_selected_async(prefix: str, include: typing.List[str], exclude: typing.List[str], *, _baml: _BamlOptions | None = None) -> bool: ...
 
 
-def _select_names_layered(registry: TestRegistry, profile_include: typing.List[str], profile_exclude: typing.List[str], cli_include: typing.List[str], cli_exclude: typing.List[str]) -> typing.List[str]:
+def _select_names_layered(registry: TestRegistry, profile_include: typing.List[str], profile_exclude: typing.List[str], cli_include: typing.List[str], cli_exclude: typing.List[str], *, _baml: _BamlOptions | None = None) -> typing.List[str]:
     """(internal) Glob-filter the registry while traversing it. Profile-excluded lazy subtrees
     are pruned before their executable testset collectors are invoked.
 
     Raises:
         InvalidTestName"""
-async def _select_names_layered_async(registry: TestRegistry, profile_include: typing.List[str], profile_exclude: typing.List[str], cli_include: typing.List[str], cli_exclude: typing.List[str]) -> typing.List[str]:
+async def _select_names_layered_async(registry: TestRegistry, profile_include: typing.List[str], profile_exclude: typing.List[str], cli_include: typing.List[str], cli_exclude: typing.List[str], *, _baml: _BamlOptions | None = None) -> typing.List[str]:
     """(internal) Glob-filter the registry while traversing it. Profile-excluded lazy subtrees
     are pruned before their executable testset collectors are invoked.
 
@@ -341,31 +354,31 @@ async def _select_names_layered_async(registry: TestRegistry, profile_include: t
         InvalidTestName"""
 
 
-def _select_names(registry: TestRegistry, include: typing.List[str], exclude: typing.List[str]) -> typing.List[str]:
+def _select_names(registry: TestRegistry, include: typing.List[str], exclude: typing.List[str], *, _baml: _BamlOptions | None = None) -> typing.List[str]:
     """(internal) Compatibility helper for internal callers: one ordinary filter layer.
 
     Raises:
         InvalidTestName"""
-async def _select_names_async(registry: TestRegistry, include: typing.List[str], exclude: typing.List[str]) -> typing.List[str]:
+async def _select_names_async(registry: TestRegistry, include: typing.List[str], exclude: typing.List[str], *, _baml: _BamlOptions | None = None) -> typing.List[str]:
     """(internal) Compatibility helper for internal callers: one ordinary filter layer.
 
     Raises:
         InvalidTestName"""
 
 
-def _collect_leaf_names(registry: TestRegistry) -> typing.List[str]:
+def _collect_leaf_names(registry: TestRegistry, *, _baml: _BamlOptions | None = None) -> typing.List[str]:
     """(internal) Fully expand the registry and collect every leaf test's canonical id.
 
     Raises:
         InvalidTestName"""
-async def _collect_leaf_names_async(registry: TestRegistry) -> typing.List[str]:
+async def _collect_leaf_names_async(registry: TestRegistry, *, _baml: _BamlOptions | None = None) -> typing.List[str]:
     """(internal) Fully expand the registry and collect every leaf test's canonical id.
 
     Raises:
         InvalidTestName"""
 
 
-def _collect_subtree_names(registry: TestRegistry, ts: TestSetRegistration) -> typing.List[str]:
+def _collect_subtree_names(registry: TestRegistry, ts: TestSetRegistration, *, _baml: _BamlOptions | None = None) -> typing.List[str]:
     """(internal) Expand one testset to its leaf names, containing failures: a testset whose
     generator throws or panics during expansion is represented by a sentinel leaf
     *under* its own path ("root::suite::(failed to expand)") so canonical-id
@@ -374,7 +387,7 @@ def _collect_subtree_names(registry: TestRegistry, ts: TestSetRegistration) -> t
 
     Raises:
         InvalidTestName"""
-async def _collect_subtree_names_async(registry: TestRegistry, ts: TestSetRegistration) -> typing.List[str]:
+async def _collect_subtree_names_async(registry: TestRegistry, ts: TestSetRegistration, *, _baml: _BamlOptions | None = None) -> typing.List[str]:
     """(internal) Expand one testset to its leaf names, containing failures: a testset whose
     generator throws or panics during expansion is represented by a sentinel leaf
     *under* its own path ("root::suite::(failed to expand)") so canonical-id
@@ -385,10 +398,10 @@ async def _collect_subtree_names_async(registry: TestRegistry, ts: TestSetRegist
         InvalidTestName"""
 
 
-def _collect_subtree_names_layered(registry: TestRegistry, ts: TestSetRegistration, profile_include: typing.List[str], profile_exclude: typing.List[str], cli_include: typing.List[str], cli_exclude: typing.List[str]) -> typing.List[str]:
+def _collect_subtree_names_layered(registry: TestRegistry, ts: TestSetRegistration, profile_include: typing.List[str], profile_exclude: typing.List[str], cli_include: typing.List[str], cli_exclude: typing.List[str], *, _baml: _BamlOptions | None = None) -> typing.List[str]:
     """Raises:
         InvalidTestName"""
-async def _collect_subtree_names_layered_async(registry: TestRegistry, ts: TestSetRegistration, profile_include: typing.List[str], profile_exclude: typing.List[str], cli_include: typing.List[str], cli_exclude: typing.List[str]) -> typing.List[str]:
+async def _collect_subtree_names_layered_async(registry: TestRegistry, ts: TestSetRegistration, profile_include: typing.List[str], profile_exclude: typing.List[str], cli_include: typing.List[str], cli_exclude: typing.List[str], *, _baml: _BamlOptions | None = None) -> typing.List[str]:
     """Raises:
         InvalidTestName"""
 
@@ -409,61 +422,75 @@ class _LeafIdentities(pydantic.BaseModel):
     tolerated_ms: typing.List[int]
 
 
-def _count_leaves(results: typing.List[ChildReport], tolerated_by_parent: bool) -> _LeafCounts:
+def _count_leaves(results: typing.List[ChildReport], tolerated_by_parent: bool, *, _baml: _BamlOptions | None = None) -> _LeafCounts:
     """(internal) Classify each leaf in a child-report list as passed / hard-failed /
     tolerated. A failing leaf is tolerated iff some enclosing testset's runner
     passed (tolerated_by_parent flows down). Replaces the Rust extract_leaf_summary."""
-async def _count_leaves_async(results: typing.List[ChildReport], tolerated_by_parent: bool) -> _LeafCounts:
+async def _count_leaves_async(results: typing.List[ChildReport], tolerated_by_parent: bool, *, _baml: _BamlOptions | None = None) -> _LeafCounts:
     """(internal) Classify each leaf in a child-report list as passed / hard-failed /
     tolerated. A failing leaf is tolerated iff some enclosing testset's runner
     passed (tolerated_by_parent flows down). Replaces the Rust extract_leaf_summary."""
 
 
-def _flatten_with_tolerated(report: TestSetReport, selected_names: typing.List[str]) -> FlatTestReport:
+def _flatten_with_tolerated(report: TestSetReport, selected_names: typing.List[str], *, _baml: _BamlOptions | None = None) -> FlatTestReport:
     """(internal) Flatten a run_all()/run_selected() TestSetReport into the CLI flat report.
     Aggregate outcome is preserved (honoring testset runners); counts split hard
     vs tolerated failures; failed_names are the report's (hard) failed names; and
     failure messages are gathered from every failing run."""
-async def _flatten_with_tolerated_async(report: TestSetReport, selected_names: typing.List[str]) -> FlatTestReport:
+async def _flatten_with_tolerated_async(report: TestSetReport, selected_names: typing.List[str], *, _baml: _BamlOptions | None = None) -> FlatTestReport:
     """(internal) Flatten a run_all()/run_selected() TestSetReport into the CLI flat report.
     Aggregate outcome is preserved (honoring testset runners); counts split hard
     vs tolerated failures; failed_names are the report's (hard) failed names; and
     failure messages are gathered from every failing run."""
 
 
-def _classify_selected_names(selected_names: typing.List[str], hard_failed_names: typing.List[str], all_failed_names: typing.List[str]) -> _LeafIdentities: ...
-async def _classify_selected_names_async(selected_names: typing.List[str], hard_failed_names: typing.List[str], all_failed_names: typing.List[str]) -> _LeafIdentities: ...
+def _classify_selected_names(selected_names: typing.List[str], hard_failed_names: typing.List[str], all_failed_names: typing.List[str], *, _baml: _BamlOptions | None = None) -> _LeafIdentities: ...
+async def _classify_selected_names_async(selected_names: typing.List[str], hard_failed_names: typing.List[str], all_failed_names: typing.List[str], *, _baml: _BamlOptions | None = None) -> _LeafIdentities: ...
 
 
-def _name_in(name: str, names: typing.List[str]) -> bool: ...
-async def _name_in_async(name: str, names: typing.List[str]) -> bool: ...
+def _name_in(name: str, names: typing.List[str], *, _baml: _BamlOptions | None = None) -> bool: ...
+async def _name_in_async(name: str, names: typing.List[str], *, _baml: _BamlOptions | None = None) -> bool: ...
 
 
-def _failure_matches_selected(selected: str, failed_names: typing.List[str]) -> bool: ...
-async def _failure_matches_selected_async(selected: str, failed_names: typing.List[str]) -> bool: ...
+def _failure_matches_selected(selected: str, failed_names: typing.List[str], *, _baml: _BamlOptions | None = None) -> bool: ...
+async def _failure_matches_selected_async(selected: str, failed_names: typing.List[str], *, _baml: _BamlOptions | None = None) -> bool: ...
 
 
-def _collect_leaf_identities(report: TestSetReport, tolerated_by_parent: bool, selected_names: typing.List[str], out: _LeafIdentities) -> None: ...
-async def _collect_leaf_identities_async(report: TestSetReport, tolerated_by_parent: bool, selected_names: typing.List[str], out: _LeafIdentities) -> None: ...
+def _collect_leaf_identities(report: TestSetReport, tolerated_by_parent: bool, selected_names: typing.List[str], out: _LeafIdentities, *, _baml: _BamlOptions | None = None) -> None: ...
+async def _collect_leaf_identities_async(report: TestSetReport, tolerated_by_parent: bool, selected_names: typing.List[str], out: _LeafIdentities, *, _baml: _BamlOptions | None = None) -> None: ...
 
 
-def _collect_all_failed_names(report: TestSetReport, out: typing.List[str]) -> None:
+def _collect_all_failed_names(report: TestSetReport, out: typing.List[str], *, _baml: _BamlOptions | None = None) -> None:
     """(internal) Collect failures from every nested report, including failures hidden from a
     parent aggregate because a testset runner tolerated them."""
-async def _collect_all_failed_names_async(report: TestSetReport, out: typing.List[str]) -> None:
+async def _collect_all_failed_names_async(report: TestSetReport, out: typing.List[str], *, _baml: _BamlOptions | None = None) -> None:
     """(internal) Collect failures from every nested report, including failures hidden from a
     parent aggregate because a testset runner tolerated them."""
 
 
-def _collect_leaf_messages(results: typing.List[ChildReport], out: typing.List[str]) -> None:
+def _collect_leaf_messages(results: typing.List[ChildReport], out: typing.List[str], *, _baml: _BamlOptions | None = None) -> None:
     """(internal) Gather failure messages from every failing run of every leaf, recursing into
     nested testsets."""
-async def _collect_leaf_messages_async(results: typing.List[ChildReport], out: typing.List[str]) -> None:
+async def _collect_leaf_messages_async(results: typing.List[ChildReport], out: typing.List[str], *, _baml: _BamlOptions | None = None) -> None:
     """(internal) Gather failure messages from every failing run of every leaf, recursing into
     nested testsets."""
 
 
-def Quorum(n: int, m: int) -> TestRunner:
+def _test_name_count(entries: typing.List[TestRegistration], full_name: str, *, _baml: _BamlOptions | None = None) -> int:
+    """(internal) Count the current names that the registration suffix rule treats
+    as duplicates. Registration records and their arrays are publicly mutable,
+    so these scans deliberately read the current data instead of caching names."""
+async def _test_name_count_async(entries: typing.List[TestRegistration], full_name: str, *, _baml: _BamlOptions | None = None) -> int:
+    """(internal) Count the current names that the registration suffix rule treats
+    as duplicates. Registration records and their arrays are publicly mutable,
+    so these scans deliberately read the current data instead of caching names."""
+
+
+def _testset_name_count(entries: typing.List[TestSetRegistration], full_name: str, *, _baml: _BamlOptions | None = None) -> int: ...
+async def _testset_name_count_async(entries: typing.List[TestSetRegistration], full_name: str, *, _baml: _BamlOptions | None = None) -> int: ...
+
+
+def Quorum(n: int, m: int, *, _baml: _BamlOptions | None = None) -> TestRunner:
     """Creates a test runner that runs the body `n` times and passes when at
     least `m` of those runs passed.
 
@@ -477,7 +504,7 @@ def Quorum(n: int, m: int) -> TestRunner:
     # Panics
 
     - `baml.panics.UserPanic` if `n <= 0`, or `m` is outside `[0, n]`."""
-async def Quorum_async(n: int, m: int) -> TestRunner:
+async def Quorum_async(n: int, m: int, *, _baml: _BamlOptions | None = None) -> TestRunner:
     """Creates a test runner that runs the body `n` times and passes when at
     least `m` of those runs passed.
 
@@ -493,43 +520,43 @@ async def Quorum_async(n: int, m: int) -> TestRunner:
     - `baml.panics.UserPanic` if `n <= 0`, or `m` is outside `[0, n]`."""
 
 
-def Retry(max_attempts: int) -> TestRunner:
+def Retry(max_attempts: int, *, _baml: _BamlOptions | None = None) -> TestRunner:
     """Creates a test runner that retries a test up to `max_attempts` times.
     Tests fail if there are no passes after `max_attempts` attempts."""
-async def Retry_async(max_attempts: int) -> TestRunner:
+async def Retry_async(max_attempts: int, *, _baml: _BamlOptions | None = None) -> TestRunner:
     """Creates a test runner that retries a test up to `max_attempts` times.
     Tests fail if there are no passes after `max_attempts` attempts."""
 
 
-def PassRate(threshold: float) -> TestSetRunner:
+def PassRate(threshold: float, *, _baml: _BamlOptions | None = None) -> TestSetRunner:
     """Creates a test runner that requires a pass rate of at least `threshold` to pass."""
-async def PassRate_async(threshold: float) -> TestSetRunner:
+async def PassRate_async(threshold: float, *, _baml: _BamlOptions | None = None) -> TestSetRunner:
     """Creates a test runner that requires a pass rate of at least `threshold` to pass."""
 
 
-def Sequential() -> TestSetRunner:
+def Sequential(*, _baml: _BamlOptions | None = None) -> TestSetRunner:
     """Creates a testset runner that runs children one at a time, in
     registration order, instead of in parallel."""
-async def Sequential_async() -> TestSetRunner:
+async def Sequential_async(*, _baml: _BamlOptions | None = None) -> TestSetRunner:
     """Creates a testset runner that runs children one at a time, in
     registration order, instead of in parallel."""
 
 
-def FailFast() -> TestSetRunner:
+def FailFast(*, _baml: _BamlOptions | None = None) -> TestSetRunner:
     """Creates a testset runner that runs children in registration order and
     abandons the testset at the first child that does not pass.
 
     The children after it are never run, so they appear in no report."""
-async def FailFast_async() -> TestSetRunner:
+async def FailFast_async(*, _baml: _BamlOptions | None = None) -> TestSetRunner:
     """Creates a testset runner that runs children in registration order and
     abandons the testset at the first child that does not pass.
 
     The children after it are never run, so they appear in no report."""
 
 
-def _run_children_sequential(children: typing.List[TestSetChild], fail_fast: bool) -> TestSetReport:
+def _run_children_sequential(children: typing.List[TestSetChild], fail_fast: bool, *, _baml: _BamlOptions | None = None) -> TestSetReport:
     """(internal)"""
-async def _run_children_sequential_async(children: typing.List[TestSetChild], fail_fast: bool) -> TestSetReport:
+async def _run_children_sequential_async(children: typing.List[TestSetChild], fail_fast: bool, *, _baml: _BamlOptions | None = None) -> TestSetReport:
     """(internal)"""
 
 

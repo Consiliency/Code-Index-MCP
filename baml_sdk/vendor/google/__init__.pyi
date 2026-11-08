@@ -32,16 +32,18 @@ if typing.TYPE_CHECKING:
     from ... import baml
     from ...baml import UNSET as UNSET
 
+from ..._invocation_types import BamlOptions as _BamlOptions
+
 
 class SafetySetting(pydantic.BaseModel):
     category: str
     threshold: str
     @staticmethod
-    def new(category: str, threshold: str) -> SafetySetting:
+    def new(category: str, threshold: str, *, _baml: _BamlOptions | None = None) -> SafetySetting:
         """Creates a safety setting pairing a harm `category` with a blocking
         `threshold`. Both strings go on the wire verbatim."""
     @staticmethod
-    async def new_async(category: str, threshold: str) -> SafetySetting:
+    async def new_async(category: str, threshold: str, *, _baml: _BamlOptions | None = None) -> SafetySetting:
         """Creates a safety setting pairing a harm `category` with a blocking
         `threshold`. Both strings go on the wire verbatim."""
 
@@ -61,17 +63,18 @@ class GeminiClient(pydantic.BaseModel):
     response_modalities: typing.Optional[typing.List[str]] = None
     safety_settings: typing.Optional[typing.List[SafetySetting]] = None
     capture_wire: bool
+    timeout: typing.Union[baml.time.Duration, ai.LlmTimeoutOptions, None] = None
     @staticmethod
-    def new(*, model: typing.Union[str, UNSET] = "gemini-2.5-flash", api_key: typing.Union[ai.Credential, None, UNSET] = None, base_url: typing.Union[ai.Credential, None, UNSET] = None, request_body: typing.Union[baml.json.json, None, UNSET] = None, headers: typing.Union[typing.Dict[str, str], None, UNSET] = None, query_params: typing.Union[typing.Dict[str, str], None, UNSET] = None, temperature: typing.Union[float, None, UNSET] = None, max_output_tokens: typing.Union[int, None, UNSET] = None, top_p: typing.Union[float, None, UNSET] = None, top_k: typing.Union[int, None, UNSET] = None, stop_sequences: typing.Union[typing.List[str], None, UNSET] = None, response_modalities: typing.Union[typing.List[str], None, UNSET] = None, safety_settings: typing.Union[typing.List[SafetySetting], None, UNSET] = None, capture_wire: typing.Union[bool, UNSET] = True) -> GeminiClient:
+    def new(*, model: typing.Union[str, UNSET] = "gemini-2.5-flash", api_key: typing.Union[ai.Credential, None, UNSET] = None, base_url: typing.Union[ai.Credential, None, UNSET] = None, request_body: typing.Union[baml.json.json, None, UNSET] = None, headers: typing.Union[typing.Dict[str, str], None, UNSET] = None, query_params: typing.Union[typing.Dict[str, str], None, UNSET] = None, temperature: typing.Union[float, None, UNSET] = None, max_output_tokens: typing.Union[int, None, UNSET] = None, top_p: typing.Union[float, None, UNSET] = None, top_k: typing.Union[int, None, UNSET] = None, stop_sequences: typing.Union[typing.List[str], None, UNSET] = None, response_modalities: typing.Union[typing.List[str], None, UNSET] = None, safety_settings: typing.Union[typing.List[SafetySetting], None, UNSET] = None, capture_wire: typing.Union[bool, UNSET] = True, timeout: typing.Union[baml.time.Duration, ai.LlmTimeoutOptions, None, UNSET] = None, _baml: _BamlOptions | None = None) -> GeminiClient:
         """Creates a client. Construction reads no environment variable, so
         declaring one is always safe; credentials and endpoints resolve when a
         request is built."""
     @staticmethod
-    async def new_async(*, model: typing.Union[str, UNSET] = "gemini-2.5-flash", api_key: typing.Union[ai.Credential, None, UNSET] = None, base_url: typing.Union[ai.Credential, None, UNSET] = None, request_body: typing.Union[baml.json.json, None, UNSET] = None, headers: typing.Union[typing.Dict[str, str], None, UNSET] = None, query_params: typing.Union[typing.Dict[str, str], None, UNSET] = None, temperature: typing.Union[float, None, UNSET] = None, max_output_tokens: typing.Union[int, None, UNSET] = None, top_p: typing.Union[float, None, UNSET] = None, top_k: typing.Union[int, None, UNSET] = None, stop_sequences: typing.Union[typing.List[str], None, UNSET] = None, response_modalities: typing.Union[typing.List[str], None, UNSET] = None, safety_settings: typing.Union[typing.List[SafetySetting], None, UNSET] = None, capture_wire: typing.Union[bool, UNSET] = True) -> GeminiClient:
+    async def new_async(*, model: typing.Union[str, UNSET] = "gemini-2.5-flash", api_key: typing.Union[ai.Credential, None, UNSET] = None, base_url: typing.Union[ai.Credential, None, UNSET] = None, request_body: typing.Union[baml.json.json, None, UNSET] = None, headers: typing.Union[typing.Dict[str, str], None, UNSET] = None, query_params: typing.Union[typing.Dict[str, str], None, UNSET] = None, temperature: typing.Union[float, None, UNSET] = None, max_output_tokens: typing.Union[int, None, UNSET] = None, top_p: typing.Union[float, None, UNSET] = None, top_k: typing.Union[int, None, UNSET] = None, stop_sequences: typing.Union[typing.List[str], None, UNSET] = None, response_modalities: typing.Union[typing.List[str], None, UNSET] = None, safety_settings: typing.Union[typing.List[SafetySetting], None, UNSET] = None, capture_wire: typing.Union[bool, UNSET] = True, timeout: typing.Union[baml.time.Duration, ai.LlmTimeoutOptions, None, UNSET] = None, _baml: _BamlOptions | None = None) -> GeminiClient:
         """Creates a client. Construction reads no environment variable, so
         declaring one is always safe; credentials and endpoints resolve when a
         request is built."""
-    def resolved_api_key(self) -> str:
+    def resolved_api_key(self, *, _baml: _BamlOptions | None = None) -> str:
         """The request-time credential: an explicit value, else the provider's
         canonical one. A missing key is a CATCHABLE configuration error, not a
         panic: `baml.env.get_or_panic` unwinds past the `catch_all` +
@@ -80,7 +83,7 @@ class GeminiClient(pydantic.BaseModel):
 
         Raises:
             Io, ParseError, InvalidRequest"""
-    async def resolved_api_key_async(self) -> str:
+    async def resolved_api_key_async(self, *, _baml: _BamlOptions | None = None) -> str:
         """The request-time credential: an explicit value, else the provider's
         canonical one. A missing key is a CATCHABLE configuration error, not a
         panic: `baml.env.get_or_panic` unwinds past the `catch_all` +
@@ -89,12 +92,12 @@ class GeminiClient(pydantic.BaseModel):
 
         Raises:
             Io, ParseError, InvalidRequest"""
-    def resolved_base_url(self) -> typing.Optional[str]:
+    def resolved_base_url(self, *, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
         """The request-time base URL, or null for the provider default.
 
         Raises:
             Io, ParseError"""
-    async def resolved_base_url_async(self) -> typing.Optional[str]:
+    async def resolved_base_url_async(self, *, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
         """The request-time base URL, or null for the provider default.
 
         Raises:
@@ -109,8 +112,7 @@ class VertexClient(pydantic.BaseModel):
     credentials_file: typing.Optional[str] = None
     api_key: typing.Optional[ai.Credential] = None
     base_url: typing.Optional[ai.Credential] = None
-    request_timeout_ms: typing.Optional[int] = None
-    time_to_first_token_timeout_ms: typing.Optional[int] = None
+    timeout: typing.Union[baml.time.Duration, ai.LlmTimeoutOptions, None] = None
     request_body: typing.Optional[baml.json.json] = None
     headers: typing.Optional[typing.Dict[str, str]] = None
     query_params: typing.Optional[typing.Dict[str, str]] = None
@@ -123,33 +125,33 @@ class VertexClient(pydantic.BaseModel):
     safety_settings: typing.Optional[typing.List[SafetySetting]] = None
     capture_wire: bool
     @staticmethod
-    def new(*, model: typing.Union[str, UNSET] = "gemini-2.5-flash", project_id: typing.Union[ai.Credential, None, UNSET] = None, location: typing.Union[str, None, UNSET] = None, credentials_json: typing.Union[str, None, UNSET] = None, credentials_file: typing.Union[str, None, UNSET] = None, api_key: typing.Union[ai.Credential, None, UNSET] = None, base_url: typing.Union[ai.Credential, None, UNSET] = None, request_timeout_ms: typing.Union[int, None, UNSET] = None, time_to_first_token_timeout_ms: typing.Union[int, None, UNSET] = None, request_body: typing.Union[baml.json.json, None, UNSET] = None, headers: typing.Union[typing.Dict[str, str], None, UNSET] = None, query_params: typing.Union[typing.Dict[str, str], None, UNSET] = None, temperature: typing.Union[float, None, UNSET] = None, max_output_tokens: typing.Union[int, None, UNSET] = None, top_p: typing.Union[float, None, UNSET] = None, top_k: typing.Union[int, None, UNSET] = None, stop_sequences: typing.Union[typing.List[str], None, UNSET] = None, response_modalities: typing.Union[typing.List[str], None, UNSET] = None, safety_settings: typing.Union[typing.List[SafetySetting], None, UNSET] = None, capture_wire: typing.Union[bool, UNSET] = True) -> VertexClient:
+    def new(*, model: typing.Union[str, UNSET] = "gemini-2.5-flash", project_id: typing.Union[ai.Credential, None, UNSET] = None, location: typing.Union[str, None, UNSET] = None, credentials_json: typing.Union[str, None, UNSET] = None, credentials_file: typing.Union[str, None, UNSET] = None, api_key: typing.Union[ai.Credential, None, UNSET] = None, base_url: typing.Union[ai.Credential, None, UNSET] = None, timeout: typing.Union[baml.time.Duration, ai.LlmTimeoutOptions, None, UNSET] = None, request_body: typing.Union[baml.json.json, None, UNSET] = None, headers: typing.Union[typing.Dict[str, str], None, UNSET] = None, query_params: typing.Union[typing.Dict[str, str], None, UNSET] = None, temperature: typing.Union[float, None, UNSET] = None, max_output_tokens: typing.Union[int, None, UNSET] = None, top_p: typing.Union[float, None, UNSET] = None, top_k: typing.Union[int, None, UNSET] = None, stop_sequences: typing.Union[typing.List[str], None, UNSET] = None, response_modalities: typing.Union[typing.List[str], None, UNSET] = None, safety_settings: typing.Union[typing.List[SafetySetting], None, UNSET] = None, capture_wire: typing.Union[bool, UNSET] = True, _baml: _BamlOptions | None = None) -> VertexClient:
         """Creates a client. Construction reads no environment variable, so
         declaring one is always safe; credentials and endpoints resolve when a
         request is built."""
     @staticmethod
-    async def new_async(*, model: typing.Union[str, UNSET] = "gemini-2.5-flash", project_id: typing.Union[ai.Credential, None, UNSET] = None, location: typing.Union[str, None, UNSET] = None, credentials_json: typing.Union[str, None, UNSET] = None, credentials_file: typing.Union[str, None, UNSET] = None, api_key: typing.Union[ai.Credential, None, UNSET] = None, base_url: typing.Union[ai.Credential, None, UNSET] = None, request_timeout_ms: typing.Union[int, None, UNSET] = None, time_to_first_token_timeout_ms: typing.Union[int, None, UNSET] = None, request_body: typing.Union[baml.json.json, None, UNSET] = None, headers: typing.Union[typing.Dict[str, str], None, UNSET] = None, query_params: typing.Union[typing.Dict[str, str], None, UNSET] = None, temperature: typing.Union[float, None, UNSET] = None, max_output_tokens: typing.Union[int, None, UNSET] = None, top_p: typing.Union[float, None, UNSET] = None, top_k: typing.Union[int, None, UNSET] = None, stop_sequences: typing.Union[typing.List[str], None, UNSET] = None, response_modalities: typing.Union[typing.List[str], None, UNSET] = None, safety_settings: typing.Union[typing.List[SafetySetting], None, UNSET] = None, capture_wire: typing.Union[bool, UNSET] = True) -> VertexClient:
+    async def new_async(*, model: typing.Union[str, UNSET] = "gemini-2.5-flash", project_id: typing.Union[ai.Credential, None, UNSET] = None, location: typing.Union[str, None, UNSET] = None, credentials_json: typing.Union[str, None, UNSET] = None, credentials_file: typing.Union[str, None, UNSET] = None, api_key: typing.Union[ai.Credential, None, UNSET] = None, base_url: typing.Union[ai.Credential, None, UNSET] = None, timeout: typing.Union[baml.time.Duration, ai.LlmTimeoutOptions, None, UNSET] = None, request_body: typing.Union[baml.json.json, None, UNSET] = None, headers: typing.Union[typing.Dict[str, str], None, UNSET] = None, query_params: typing.Union[typing.Dict[str, str], None, UNSET] = None, temperature: typing.Union[float, None, UNSET] = None, max_output_tokens: typing.Union[int, None, UNSET] = None, top_p: typing.Union[float, None, UNSET] = None, top_k: typing.Union[int, None, UNSET] = None, stop_sequences: typing.Union[typing.List[str], None, UNSET] = None, response_modalities: typing.Union[typing.List[str], None, UNSET] = None, safety_settings: typing.Union[typing.List[SafetySetting], None, UNSET] = None, capture_wire: typing.Union[bool, UNSET] = True, _baml: _BamlOptions | None = None) -> VertexClient:
         """Creates a client. Construction reads no environment variable, so
         declaring one is always safe; credentials and endpoints resolve when a
         request is built."""
-    def resolved_api_key(self) -> typing.Optional[str]:
+    def resolved_api_key(self, *, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
         """The express-mode key, or null for OAuth2. Unlike the other providers
         this may legitimately be absent: credentials are the normal path.
 
         Raises:
             Io, ParseError"""
-    async def resolved_api_key_async(self) -> typing.Optional[str]:
+    async def resolved_api_key_async(self, *, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
         """The express-mode key, or null for OAuth2. Unlike the other providers
         this may legitimately be absent: credentials are the normal path.
 
         Raises:
             Io, ParseError"""
-    def resolved_base_url(self) -> typing.Optional[str]:
+    def resolved_base_url(self, *, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
         """The request-time base URL, or null to build one from project + location.
 
         Raises:
             Io, ParseError"""
-    async def resolved_base_url_async(self) -> typing.Optional[str]:
+    async def resolved_base_url_async(self, *, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
         """The request-time base URL, or null to build one from project + location.
 
         Raises:

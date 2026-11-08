@@ -21,6 +21,22 @@
 
 from __future__ import annotations
 
+_LAZY_CHILDREN = frozenset({
+    "decisions",
+})
+
+def __getattr__(name):
+    if name == "experimental" and __name__ == "baml_sdk":
+        import importlib
+        return importlib.import_module(".experimental", __name__)
+    if name == "trace" and __name__ == "baml_sdk":
+        import importlib
+        return importlib.import_module(".vendor.trace", __name__)
+    if name in _LAZY_CHILDREN:
+        import importlib
+        return importlib.import_module(f".{name}", __name__)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 import enum
 import typing
 import typing_extensions
@@ -41,6 +57,14 @@ _reject_async = _define_function("openai.internal._reject", "async", ["provider"
 
 _azure_reject       = _define_function("openai.internal._azure_reject", "sync",  ["detail"], binding_name="_azure_reject", binding_qualname="_azure_reject", binding_module=__name__)
 _azure_reject_async = _define_function("openai.internal._azure_reject", "async", ["detail"], binding_name="_azure_reject_async", binding_qualname="_azure_reject_async", binding_module=__name__)
+
+
+_rejects_cache_breakpoint       = _define_function("openai.internal._rejects_cache_breakpoint", "sync",  ["model"], binding_name="_rejects_cache_breakpoint", binding_qualname="_rejects_cache_breakpoint", binding_module=__name__)
+_rejects_cache_breakpoint_async = _define_function("openai.internal._rejects_cache_breakpoint", "async", ["model"], binding_name="_rejects_cache_breakpoint_async", binding_qualname="_rejects_cache_breakpoint_async", binding_module=__name__)
+
+
+default_cache_breakpoint       = _define_function("openai.internal.default_cache_breakpoint", "sync",  ["model"], binding_name="default_cache_breakpoint", binding_qualname="default_cache_breakpoint", binding_module=__name__)
+default_cache_breakpoint_async = _define_function("openai.internal.default_cache_breakpoint", "async", ["model"], binding_name="default_cache_breakpoint_async", binding_qualname="default_cache_breakpoint_async", binding_module=__name__)
 
 
 class ChatAuth(str, enum.Enum):
@@ -77,8 +101,10 @@ class ChatCompat(pydantic.BaseModel):
     default_max_tokens: typing.Optional[int] = None
     default_role: str
     compat_query: typing.Dict[str, str]
-    new       = staticmethod(_define_function("openai.internal.ChatCompat.new", "sync",  ["provider", "base_url"], ["path", "auth", "api_key_env", "api_key_required", "collapse_text_content", "inline_image_urls", "send_stream_options", "max_tokens_key", "default_max_tokens", "default_role", "compat_query"], binding_name="new", binding_qualname="ChatCompat.new", binding_module=__name__))
-    new_async = staticmethod(_define_function("openai.internal.ChatCompat.new", "async", ["provider", "base_url"], ["path", "auth", "api_key_env", "api_key_required", "collapse_text_content", "inline_image_urls", "send_stream_options", "max_tokens_key", "default_max_tokens", "default_role", "compat_query"], binding_name="new_async", binding_qualname="ChatCompat.new_async", binding_module=__name__))
+    cache_breakpoints: bool
+    default_cache_args: baml.json.json = None
+    new       = staticmethod(_define_function("openai.internal.ChatCompat.new", "sync",  ["provider", "base_url"], ["path", "auth", "api_key_env", "api_key_required", "collapse_text_content", "inline_image_urls", "send_stream_options", "max_tokens_key", "default_max_tokens", "default_role", "compat_query", "cache_breakpoints", "default_cache_args"], binding_name="new", binding_qualname="ChatCompat.new", binding_module=__name__))
+    new_async = staticmethod(_define_function("openai.internal.ChatCompat.new", "async", ["provider", "base_url"], ["path", "auth", "api_key_env", "api_key_required", "collapse_text_content", "inline_image_urls", "send_stream_options", "max_tokens_key", "default_max_tokens", "default_role", "compat_query", "cache_breakpoints", "default_cache_args"], binding_name="new_async", binding_qualname="ChatCompat.new_async", binding_module=__name__))
 
 
 class ChatParams(pydantic.BaseModel):
@@ -103,12 +129,9 @@ class ChatParams(pydantic.BaseModel):
     headers: typing.Optional[typing.Dict[str, str]] = None
     query_params: typing.Optional[typing.Dict[str, str]] = None
     request_body: typing.Optional[baml.json.json] = None
-    new       = staticmethod(_define_function("openai.internal.ChatParams.new", "sync",  ["model"], ["api_key", "temperature", "max_tokens", "max_completion_tokens", "top_p", "stop", "seed", "headers", "query_params", "request_body"], binding_name="new", binding_qualname="ChatParams.new", binding_module=__name__))
-    new_async = staticmethod(_define_function("openai.internal.ChatParams.new", "async", ["model"], ["api_key", "temperature", "max_tokens", "max_completion_tokens", "top_p", "stop", "seed", "headers", "query_params", "request_body"], binding_name="new_async", binding_qualname="ChatParams.new_async", binding_module=__name__))
-
-
-chat_client_id       = _define_function("openai.internal.chat_client_id", "sync",  ["compat", "params"], binding_name="chat_client_id", binding_qualname="chat_client_id", binding_module=__name__)
-chat_client_id_async = _define_function("openai.internal.chat_client_id", "async", ["compat", "params"], binding_name="chat_client_id_async", binding_qualname="chat_client_id_async", binding_module=__name__)
+    structured_output: bool
+    new       = staticmethod(_define_function("openai.internal.ChatParams.new", "sync",  ["model"], ["api_key", "temperature", "max_tokens", "max_completion_tokens", "top_p", "stop", "seed", "headers", "query_params", "request_body", "structured_output"], binding_name="new", binding_qualname="ChatParams.new", binding_module=__name__))
+    new_async = staticmethod(_define_function("openai.internal.ChatParams.new", "async", ["model"], ["api_key", "temperature", "max_tokens", "max_completion_tokens", "top_p", "stop", "seed", "headers", "query_params", "request_body", "structured_output"], binding_name="new_async", binding_qualname="ChatParams.new_async", binding_module=__name__))
 
 
 class ChatTextPart(pydantic.BaseModel):
@@ -183,26 +206,20 @@ class ChatFilePart(pydantic.BaseModel):
 
 class ChatExtraPart(pydantic.BaseModel):
     """
-    A content part carrying the per-message provider directives authored on
-    `${ai.Role { name: …, metadata: { … } }}`. Chat completions places
-    such directives ON A CONTENT PART (`prompt_cache_breakpoint` for OpenAI,
-    OpenRouter's Anthropic-style `cache_control`), while the authored directive
-    lives on the MESSAGE — so, exactly as the Anthropic client does, the metadata
-    attaches to the message's LAST part and everything up to and including it is
-    the cached prefix.
+    A content part carrying extra keys beside its own, which is how a
+    `${cache(args)}` in the prompt reaches the wire: chat completions places a
+    cache breakpoint ON A CONTENT PART (`prompt_cache_breakpoint`), while the
+    delimiter sits BETWEEN parts — so the breakpoint goes on the part before the
+    delimiter, and everything up to and including that part is the cached
+    prefix (`_chat_apply_cache_delimiter`).
 
-    The keys are forwarded VERBATIM: this file does not maintain an allow-list of
-    which directives an OpenAI-compatible endpoint understands, and "verbatim"
-    includes an explicitly authored `null`.
-
-    Getting that last part right is why `to_json` PARKS the directives under
-    `_chat_directives_key()` rather than splatting them onto the part: the body
-    then goes through `_chat_prune_nulls`, whose job is to drop the CLIENT's
-    unset options, and it would take an authored `{"cache_control": null}` with
-    them. The parked key is opaque to that pass and `_chat_apply_directives`
-    splices it back onto the part immediately afterwards, so the key never
-    reaches the wire. (The sibling Responses client gets the same result by
-    applying its directives to the serialized body after its own prune.)
+    `args` is sent AS WRITTEN, including a `null` nested inside it. That is why
+    `to_json` PARKS the extra keys under `_chat_directives_key()` rather than
+    splatting them onto the part: the body then goes through
+    `_chat_prune_nulls`, whose job is to drop the CLIENT's unset options, and it
+    would take an authored `{"ttl": null}` with them. The parked key is opaque
+    to that pass and `_chat_apply_directives` splices it back onto the part
+    immediately afterwards, so the key never reaches the wire.
     """
     model_config = pydantic.ConfigDict(
         arbitrary_types_allowed=True,
@@ -281,6 +298,29 @@ class ChatStreamOptions(pydantic.BaseModel):
     include_usage: bool
 
 
+class ChatJsonSchema(pydantic.BaseModel):
+    """`response_format.json_schema`."""
+    model_config = pydantic.ConfigDict(
+        arbitrary_types_allowed=True,
+        extra="ignore",
+        populate_by_name=True,
+    )
+    name: str
+    strict: bool
+    schema: baml.json.json = None
+
+
+class ChatResponseFormat(pydantic.BaseModel):
+    """`{"type": "json_schema", "json_schema": {…}}`."""
+    model_config = pydantic.ConfigDict(
+        arbitrary_types_allowed=True,
+        extra="ignore",
+        populate_by_name=True,
+    )
+    type: str
+    json_schema: ChatJsonSchema
+
+
 class ChatRequest(pydantic.BaseModel):
     """
     The complete request body. Null-valued fields are pruned before the body is
@@ -303,6 +343,7 @@ class ChatRequest(pydantic.BaseModel):
     tool_choice: typing.Optional[str] = None
     stream: typing.Optional[bool] = None
     stream_options: typing.Optional[ChatStreamOptions] = None
+    response_format: typing.Optional[ChatResponseFormat] = None
 
 
 class CcFunctionCall(pydantic.BaseModel):
@@ -415,6 +456,7 @@ class CcPromptTokensDetails(pydantic.BaseModel):
         populate_by_name=True,
     )
     cached_tokens: typing.Optional[int] = None
+    cache_write_tokens: typing.Optional[int] = None
 
 
 class CcCompletionTokensDetails(pydantic.BaseModel):
@@ -439,12 +481,28 @@ class CcUsage(pydantic.BaseModel):
     completion_tokens_details: typing.Optional[CcCompletionTokensDetails] = None
 
 
+class CcError(pydantic.BaseModel):
+    model_config = pydantic.ConfigDict(
+        arbitrary_types_allowed=True,
+        extra="ignore",
+        populate_by_name=True,
+    )
+    message: typing.Optional[str] = None
+    type: typing.Optional[str] = None
+    code: typing.Union[str, int, None] = None
+
+
+_chat_provider_error       = _define_function("openai.internal._chat_provider_error", "sync",  ["error", "provider", "raw"], binding_name="_chat_provider_error", binding_qualname="_chat_provider_error", binding_module=__name__)
+_chat_provider_error_async = _define_function("openai.internal._chat_provider_error", "async", ["error", "provider", "raw"], binding_name="_chat_provider_error_async", binding_qualname="_chat_provider_error_async", binding_module=__name__)
+
+
 class CcResponse(pydantic.BaseModel):
     model_config = pydantic.ConfigDict(
         arbitrary_types_allowed=True,
         extra="ignore",
         populate_by_name=True,
     )
+    error: typing.Optional[CcError] = None
     id: typing.Optional[str] = None
     model: typing.Optional[str] = None
     choices: typing.Optional[typing.List[CcChoice]] = None
@@ -483,14 +541,14 @@ role: the chat endpoint imposes no role restriction (the engine imposes none
 either; sys_llm's hard error was stricter than the API).
 
 Raises:
-    InvalidArgument, Io, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+    InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
 _chat_media_part_async = _define_function("openai.internal._chat_media_part", "async", ["media", "compat"], ["preview"], binding_name="_chat_media_part_async", binding_qualname="_chat_media_part_async", binding_module=__name__)
 _chat_media_part_async.__doc__ = """(internal) One media prompt part -> one typed content part. Media is allowed in any
 role: the chat endpoint imposes no role restriction (the engine imposes none
 either; sys_llm's hard error was stricter than the API).
 
 Raises:
-    InvalidArgument, Io, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+    InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
 
 
 _chat_lower_block       = _define_function("openai.internal._chat_lower_block", "sync",  ["block", "compat"], ["preview"], binding_name="_chat_lower_block", binding_qualname="_chat_lower_block", binding_module=__name__)
@@ -507,7 +565,7 @@ media in a tool result degrades into a user turn after the run of results
   tool_result | Accept | Degrade | Degrade | Degrade | Reject
 
 Raises:
-    InvalidArgument, Io, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+    InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
 _chat_lower_block_async = _define_function("openai.internal._chat_lower_block", "async", ["block", "compat"], ["preview"], binding_name="_chat_lower_block_async", binding_qualname="_chat_lower_block_async", binding_module=__name__)
 _chat_lower_block_async.__doc__ = """(internal) One content block -> one typed content part. Chat completions imposes no
 role restriction on media, so every position accepts what the endpoint
@@ -522,19 +580,43 @@ media in a tool result degrades into a user turn after the run of results
   tool_result | Accept | Degrade | Degrade | Degrade | Reject
 
 Raises:
-    InvalidArgument, Io, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+    InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
 
 
 _chat_lower_blocks       = _define_function("openai.internal._chat_lower_blocks", "sync",  ["blocks", "compat"], ["preview"], binding_name="_chat_lower_blocks", binding_qualname="_chat_lower_blocks", binding_module=__name__)
 _chat_lower_blocks.__doc__ = """Raises:
-    InvalidArgument, Io, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+    InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
 _chat_lower_blocks_async = _define_function("openai.internal._chat_lower_blocks", "async", ["blocks", "compat"], ["preview"], binding_name="_chat_lower_blocks_async", binding_qualname="_chat_lower_blocks_async", binding_module=__name__)
 _chat_lower_blocks_async.__doc__ = """Raises:
-    InvalidArgument, Io, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+    InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
 
 
-_chat_apply_metadata       = _define_function("openai.internal._chat_apply_metadata", "sync",  ["parts", "metadata"], binding_name="_chat_apply_metadata", binding_qualname="_chat_apply_metadata", binding_module=__name__)
-_chat_apply_metadata_async = _define_function("openai.internal._chat_apply_metadata", "async", ["parts", "metadata"], binding_name="_chat_apply_metadata_async", binding_qualname="_chat_apply_metadata_async", binding_module=__name__)
+_chat_apply_cache_delimiter       = _define_function("openai.internal._chat_apply_cache_delimiter", "sync",  ["parts", "delimiter"], binding_name="_chat_apply_cache_delimiter", binding_qualname="_chat_apply_cache_delimiter", binding_module=__name__)
+_chat_apply_cache_delimiter_async = _define_function("openai.internal._chat_apply_cache_delimiter", "async", ["parts", "delimiter"], binding_name="_chat_apply_cache_delimiter_async", binding_qualname="_chat_apply_cache_delimiter_async", binding_module=__name__)
+
+
+_chat_prompt_parts       = _define_function("openai.internal._chat_prompt_parts", "sync",  ["message", "compat"], ["preview"], binding_name="_chat_prompt_parts", binding_qualname="_chat_prompt_parts", binding_module=__name__)
+_chat_prompt_parts.__doc__ = """(internal) One prompt message as content parts. With `compat.cache_breakpoints` a
+`${cache(args)}` becomes a breakpoint on the part before it, with the text on
+either side trimmed where it faces the delimiter (`ai.wire.prompt_parts`);
+without, the
+delimiter is dropped and the text around it is one part again
+(`ai.wire.prompt_blocks`), so the request is the one the prompt would
+produce without it.
+
+Raises:
+    InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+_chat_prompt_parts_async = _define_function("openai.internal._chat_prompt_parts", "async", ["message", "compat"], ["preview"], binding_name="_chat_prompt_parts_async", binding_qualname="_chat_prompt_parts_async", binding_module=__name__)
+_chat_prompt_parts_async.__doc__ = """(internal) One prompt message as content parts. With `compat.cache_breakpoints` a
+`${cache(args)}` becomes a breakpoint on the part before it, with the text on
+either side trimmed where it faces the delimiter (`ai.wire.prompt_parts`);
+without, the
+delimiter is dropped and the text around it is one part again
+(`ai.wire.prompt_blocks`), so the request is the one the prompt would
+produce without it.
+
+Raises:
+    InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
 
 
 _chat_all_text       = _define_function("openai.internal._chat_all_text", "sync",  ["parts"], binding_name="_chat_all_text", binding_qualname="_chat_all_text", binding_module=__name__)
@@ -550,28 +632,30 @@ chat_lower_prompt.__doc__ = """A rendered structural prompt becomes chat-complet
 message takes the compat's default role; an authored `tool` role becomes user
 content, because a wire `tool` message must answer a specific `tool_call_id`
 and only the journal path has one. Adjacent same-role messages merge, as both
-prior implementations did. A message's authored `metadata` rides on its last
-content part (see `ChatExtraPart`).
+prior implementations did. A `${cache(args)}` in a message becomes a
+breakpoint on the part before it, when the endpoint takes one
+(`_chat_prompt_parts`).
 
 Raises:
-    InvalidArgument, Io, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+    InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
 chat_lower_prompt_async = _define_function("openai.internal.chat_lower_prompt", "async", ["prompt", "compat"], ["preview"], binding_name="chat_lower_prompt_async", binding_qualname="chat_lower_prompt_async", binding_module=__name__)
 chat_lower_prompt_async.__doc__ = """A rendered structural prompt becomes chat-completions messages. A role-less
 message takes the compat's default role; an authored `tool` role becomes user
 content, because a wire `tool` message must answer a specific `tool_call_id`
 and only the journal path has one. Adjacent same-role messages merge, as both
-prior implementations did. A message's authored `metadata` rides on its last
-content part (see `ChatExtraPart`).
+prior implementations did. A `${cache(args)}` in a message becomes a
+breakpoint on the part before it, when the endpoint takes one
+(`_chat_prompt_parts`).
 
 Raises:
-    InvalidArgument, Io, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+    InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
 
 
 chat_lower_journal       = _define_function("openai.internal.chat_lower_journal", "sync",  ["j", "compat"], ["preview"], binding_name="chat_lower_journal", binding_qualname="chat_lower_journal", binding_module=__name__)
 chat_lower_journal.__doc__ = """`ai.Journal` -> chat-completions messages. Assistant turns carry their text
 in `content` and their calls in `tool_calls`; each result comes back as its
 own `role: "tool"` message keyed by `tool_call_id`. Journal-only events
-(`RunStarted`, `ToolRequested`, `Usage`, `FinalProduced`) and reasoning
+(`RunStarted`, `ToolRequested`, `FinalProduced`) and reasoning
 blocks lower to nothing.
 
 Callers pass the journal through `ai.wire.sanitize_for_client` first, so
@@ -580,15 +664,15 @@ foreign reasoning, empty turns and unanswered tool calls are already handled.
 A journal turn's text always collapses to a bare string (`_chat_content`
 with `collapse = true`): a text-only turn was always sent that way, and a
 bare string is the one content shape every compatible server accepts. A
-turn carrying media, or a user turn carrying `metadata`, is a part list.
+turn carrying media is a part list.
 
 Raises:
-    InvalidArgument, Io, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+    InvalidArgument, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported"""
 chat_lower_journal_async = _define_function("openai.internal.chat_lower_journal", "async", ["j", "compat"], ["preview"], binding_name="chat_lower_journal_async", binding_qualname="chat_lower_journal_async", binding_module=__name__)
 chat_lower_journal_async.__doc__ = """`ai.Journal` -> chat-completions messages. Assistant turns carry their text
 in `content` and their calls in `tool_calls`; each result comes back as its
 own `role: "tool"` message keyed by `tool_call_id`. Journal-only events
-(`RunStarted`, `ToolRequested`, `Usage`, `FinalProduced`) and reasoning
+(`RunStarted`, `ToolRequested`, `FinalProduced`) and reasoning
 blocks lower to nothing.
 
 Callers pass the journal through `ai.wire.sanitize_for_client` first, so
@@ -597,10 +681,10 @@ foreign reasoning, empty turns and unanswered tool calls are already handled.
 A journal turn's text always collapses to a bare string (`_chat_content`
 with `collapse = true`): a text-only turn was always sent that way, and a
 bare string is the one content shape every compatible server accepts. A
-turn carrying media, or a user turn carrying `metadata`, is a part list.
+turn carrying media is a part list.
 
 Raises:
-    InvalidArgument, Io, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+    InvalidArgument, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported"""
 
 
 _chat_is_opaque_key       = _define_function("openai.internal._chat_is_opaque_key", "sync",  ["key"], binding_name="_chat_is_opaque_key", binding_qualname="_chat_is_opaque_key", binding_module=__name__)
@@ -653,18 +737,32 @@ Raises:
     SerializationError"""
 
 
-chat_build_request       = _define_function("openai.internal.chat_build_request", "sync",  ["compat", "params", "input", "stream"], ["preview"], binding_name="chat_build_request", binding_qualname="chat_build_request", binding_module=__name__)
+chat_build_request       = _define_function("openai.internal.chat_build_request", "sync",  ["compat", "params", "input", "structured", "stream"], ["preview"], binding_name="chat_build_request", binding_qualname="chat_build_request", binding_module=__name__)
 chat_build_request.__doc__ = """The typed body for one turn. Separate from the HTTP framing so tests (and a
 future Azure/Vertex-style reuse) can assert on the request object itself.
 
 Raises:
-    InvalidArgument, Io, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
-chat_build_request_async = _define_function("openai.internal.chat_build_request", "async", ["compat", "params", "input", "stream"], ["preview"], binding_name="chat_build_request_async", binding_qualname="chat_build_request_async", binding_module=__name__)
+    InvalidArgument, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
+chat_build_request_async = _define_function("openai.internal.chat_build_request", "async", ["compat", "params", "input", "structured", "stream"], ["preview"], binding_name="chat_build_request_async", binding_qualname="chat_build_request_async", binding_module=__name__)
 chat_build_request_async.__doc__ = """The typed body for one turn. Separate from the HTTP framing so tests (and a
 future Azure/Vertex-style reuse) can assert on the request object itself.
 
 Raises:
-    InvalidArgument, Io, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
+    InvalidArgument, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
+
+
+chat_structured_output       = _define_function("openai.internal.chat_structured_output", "sync",  ["compat", "params", "input"], binding_name="chat_structured_output", binding_qualname="chat_structured_output", binding_module=__name__)
+chat_structured_output.__doc__ = """(internal) The structured output a chat request carries: null unless the client
+turned structured outputs on.
+
+Raises:
+    InvalidRequest"""
+chat_structured_output_async = _define_function("openai.internal.chat_structured_output", "async", ["compat", "params", "input"], binding_name="chat_structured_output_async", binding_qualname="chat_structured_output_async", binding_module=__name__)
+chat_structured_output_async.__doc__ = """(internal) The structured output a chat request carries: null unless the client
+turned structured outputs on.
+
+Raises:
+    InvalidRequest"""
 
 
 chat_render_body       = _define_function("openai.internal.chat_render_body", "sync",  ["compat", "params", "request"], binding_name="chat_render_body", binding_qualname="chat_render_body", binding_module=__name__)
@@ -681,30 +779,30 @@ Raises:
     SerializationError"""
 
 
-chat_render       = _define_function("openai.internal.chat_render", "sync",  ["compat", "params", "input", "stream"], binding_name="chat_render", binding_qualname="chat_render", binding_module=__name__)
+chat_render       = _define_function("openai.internal.chat_render", "sync",  ["compat", "params", "input", "structured", "stream"], binding_name="chat_render", binding_qualname="chat_render", binding_module=__name__)
 chat_render.__doc__ = """`ai.ModelTurnInput` -> one chat-completions HTTP request.
 
 Raises:
-    InvalidArgument, Io, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
-chat_render_async = _define_function("openai.internal.chat_render", "async", ["compat", "params", "input", "stream"], binding_name="chat_render_async", binding_qualname="chat_render_async", binding_module=__name__)
+    InvalidArgument, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
+chat_render_async = _define_function("openai.internal.chat_render", "async", ["compat", "params", "input", "structured", "stream"], binding_name="chat_render_async", binding_qualname="chat_render_async", binding_module=__name__)
 chat_render_async.__doc__ = """`ai.ModelTurnInput` -> one chat-completions HTTP request.
 
 Raises:
-    InvalidArgument, Io, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
+    InvalidArgument, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
 
 
 chat_preview       = _define_function("openai.internal.chat_preview", "sync",  ["compat", "params", "input"], binding_name="chat_preview", binding_qualname="chat_preview", binding_module=__name__)
 chat_preview.__doc__ = """The request one chat `render` would send. Media is lowered through the
-preview-only resolver and never reads files or downloads URLs.
+preview-only resolver and never downloads URLs.
 
 Raises:
-    InvalidArgument, Io, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
+    InvalidArgument, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
 chat_preview_async = _define_function("openai.internal.chat_preview", "async", ["compat", "params", "input"], binding_name="chat_preview_async", binding_qualname="chat_preview_async", binding_module=__name__)
 chat_preview_async.__doc__ = """The request one chat `render` would send. Media is lowered through the
-preview-only resolver and never reads files or downloads URLs.
+preview-only resolver and never downloads URLs.
 
 Raises:
-    InvalidArgument, Io, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
+    InvalidArgument, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
 
 
 chat_stop_reason       = _define_function("openai.internal.chat_stop_reason", "sync",  ["reason"], binding_name="chat_stop_reason", binding_qualname="chat_stop_reason", binding_module=__name__)
@@ -744,9 +842,9 @@ _chat_push_tool_uses_async.__doc__ = """Raises:
 
 
 chat_parse       = _define_function("openai.internal.chat_parse", "sync",  ["response", "provider", "raw"], ["audio_mime"], binding_name="chat_parse", binding_qualname="chat_parse", binding_module=__name__)
-chat_parse.__doc__ = """One decoded response -> canonical content blocks, stop reason and usage.
+chat_parse.__doc__ = """One decoded response -> canonical content blocks and stop reason.
 
-`raw` is the response text, used only to populate `ai.errors.ParseFailed`
+`raw` is the response text, used to populate `ai.errors.InvalidResponse`
 when the envelope carries no usable choice.
 
 Divergence from both prior implementations, deliberate: more than one choice
@@ -755,11 +853,11 @@ passthrough, and rejecting the response the caller asked for would be
 hostile; the first choice is used and the rest ignored.
 
 Raises:
-    ParseFailed"""
+    InvalidResponse, ParseFailed, ProviderError"""
 chat_parse_async = _define_function("openai.internal.chat_parse", "async", ["response", "provider", "raw"], ["audio_mime"], binding_name="chat_parse_async", binding_qualname="chat_parse_async", binding_module=__name__)
-chat_parse_async.__doc__ = """One decoded response -> canonical content blocks, stop reason and usage.
+chat_parse_async.__doc__ = """One decoded response -> canonical content blocks and stop reason.
 
-`raw` is the response text, used only to populate `ai.errors.ParseFailed`
+`raw` is the response text, used to populate `ai.errors.InvalidResponse`
 when the envelope carries no usable choice.
 
 Divergence from both prior implementations, deliberate: more than one choice
@@ -768,39 +866,43 @@ passthrough, and rejecting the response the caller asked for would be
 hostile; the first choice is used and the rest ignored.
 
 Raises:
-    ParseFailed"""
+    InvalidResponse, ParseFailed, ProviderError"""
 
 
-_chat_send       = _define_function("openai.internal._chat_send", "sync",  ["request", "provider", "client_name"], ["capture_wire", "audio_mime", "request_timeout_ms"], binding_name="_chat_send", binding_qualname="_chat_send", binding_module=__name__)
+chat_usage       = _define_function("openai.internal.chat_usage", "sync",  ["usage"], binding_name="chat_usage", binding_qualname="chat_usage", binding_module=__name__)
+chat_usage_async = _define_function("openai.internal.chat_usage", "async", ["usage"], binding_name="chat_usage_async", binding_qualname="chat_usage_async", binding_module=__name__)
+
+
+_chat_send       = _define_function("openai.internal._chat_send", "sync",  ["request", "provider", "requested_model"], ["capture_wire", "audio_mime"], binding_name="_chat_send", binding_qualname="_chat_send", binding_module=__name__)
 _chat_send.__doc__ = """(internal) Transport + classification for the non-streaming path. This mirrors
 `ai.wire.send_as_with_wire` but decodes through `baml.json.to`, which honours
 the `baml.FromJson` override that maps the `function` wire key onto
-`CcToolCall.fn` — so the LLMCall wire record is built inline here with the
+`CcToolCall.fn` — so the ModelCall wire record is built inline here with the
 same shape `send_as_with_wire` produces.
 
 Raises:
     Timeout"""
-_chat_send_async = _define_function("openai.internal._chat_send", "async", ["request", "provider", "client_name"], ["capture_wire", "audio_mime", "request_timeout_ms"], binding_name="_chat_send_async", binding_qualname="_chat_send_async", binding_module=__name__)
+_chat_send_async = _define_function("openai.internal._chat_send", "async", ["request", "provider", "requested_model"], ["capture_wire", "audio_mime"], binding_name="_chat_send_async", binding_qualname="_chat_send_async", binding_module=__name__)
 _chat_send_async.__doc__ = """(internal) Transport + classification for the non-streaming path. This mirrors
 `ai.wire.send_as_with_wire` but decodes through `baml.json.to`, which honours
 the `baml.FromJson` override that maps the `function` wire key onto
-`CcToolCall.fn` — so the LLMCall wire record is built inline here with the
+`CcToolCall.fn` — so the ModelCall wire record is built inline here with the
 same shape `send_as_with_wire` produces.
 
 Raises:
     Timeout"""
 
 
-chat_invoke       = _define_function("openai.internal.chat_invoke", "sync",  ["compat", "params", "input"], ["capture_wire", "request_timeout_ms"], binding_name="chat_invoke", binding_qualname="chat_invoke", binding_module=__name__)
+chat_invoke       = _define_function("openai.internal.chat_invoke", "sync",  ["compat", "params", "input"], ["capture_wire", "timeout_options"], binding_name="chat_invoke", binding_qualname="chat_invoke", binding_module=__name__)
 chat_invoke.__doc__ = """The one internal entry point: render, send, normalize — one model turn.
 
 Raises:
-    InvalidArgument, Io, Timeout, SerializationError"""
-chat_invoke_async = _define_function("openai.internal.chat_invoke", "async", ["compat", "params", "input"], ["capture_wire", "request_timeout_ms"], binding_name="chat_invoke_async", binding_qualname="chat_invoke_async", binding_module=__name__)
+    InvalidArgument, Timeout, SerializationError"""
+chat_invoke_async = _define_function("openai.internal.chat_invoke", "async", ["compat", "params", "input"], ["capture_wire", "timeout_options"], binding_name="chat_invoke_async", binding_qualname="chat_invoke_async", binding_module=__name__)
 chat_invoke_async.__doc__ = """The one internal entry point: render, send, normalize — one model turn.
 
 Raises:
-    InvalidArgument, Io, Timeout, SerializationError"""
+    InvalidArgument, Timeout, SerializationError"""
 
 
 class CcDelta(pydantic.BaseModel):
@@ -833,6 +935,7 @@ class CcStreamChunk(pydantic.BaseModel):
         extra="ignore",
         populate_by_name=True,
     )
+    error: typing.Optional[CcError] = None
     id: typing.Optional[str] = None
     model: typing.Optional[str] = None
     choices: typing.Optional[typing.List[CcStreamChoice]] = None
@@ -895,18 +998,18 @@ _chat_stream_open_failure_async.__doc__ = """Raises:
     Timeout"""
 
 
-chat_invoke_stream       = _define_function("openai.internal.chat_invoke_stream", "sync",  ["compat", "params", "input"], ["capture_wire", "request_timeout_ms", "time_to_first_token_timeout_ms"], binding_name="chat_invoke_stream", binding_qualname="chat_invoke_stream", binding_module=__name__)
+chat_invoke_stream       = _define_function("openai.internal.chat_invoke_stream", "sync",  ["compat", "params", "input"], ["capture_wire", "timeout_options"], binding_name="chat_invoke_stream", binding_qualname="chat_invoke_stream", binding_module=__name__)
 chat_invoke_stream.__doc__ = """The streaming entry point: the same request as `chat_invoke` with
 `stream: true`, wrapped in an `ai.stream.TurnStream` over the SSE connection.
 
 Raises:
-    InvalidArgument, Io, Timeout, SerializationError"""
-chat_invoke_stream_async = _define_function("openai.internal.chat_invoke_stream", "async", ["compat", "params", "input"], ["capture_wire", "request_timeout_ms", "time_to_first_token_timeout_ms"], binding_name="chat_invoke_stream_async", binding_qualname="chat_invoke_stream_async", binding_module=__name__)
+    InvalidArgument, Timeout, SerializationError"""
+chat_invoke_stream_async = _define_function("openai.internal.chat_invoke_stream", "async", ["compat", "params", "input"], ["capture_wire", "timeout_options"], binding_name="chat_invoke_stream_async", binding_qualname="chat_invoke_stream_async", binding_module=__name__)
 chat_invoke_stream_async.__doc__ = """The streaming entry point: the same request as `chat_invoke` with
 `stream: true`, wrapped in an `ai.stream.TurnStream` over the SSE connection.
 
 Raises:
-    InvalidArgument, Io, Timeout, SerializationError"""
+    InvalidArgument, Timeout, SerializationError"""
 
 
 class OaImagesRequest(pydantic.BaseModel):
@@ -1004,10 +1107,6 @@ class OaImagesResponse(pydantic.BaseModel):
     size: typing.Optional[str] = None
     quality: typing.Optional[str] = None
     usage: typing.Optional[OaImagesUsage] = None
-
-
-_oai_images_client_id       = _define_function("openai.internal._oai_images_client_id", "sync",  ["c"], binding_name="_oai_images_client_id", binding_qualname="_oai_images_client_id", binding_module=__name__)
-_oai_images_client_id_async = _define_function("openai.internal._oai_images_client_id", "async", ["c"], binding_name="_oai_images_client_id_async", binding_qualname="_oai_images_client_id_async", binding_module=__name__)
 
 
 _oai_images_drop_nulls       = _define_function("openai.internal._oai_images_drop_nulls", "sync",  ["value"], binding_name="_oai_images_drop_nulls", binding_qualname="_oai_images_drop_nulls", binding_module=__name__)
@@ -1142,14 +1241,18 @@ produces no text and never stops early, so the stop reason is always
 Complete; `usage` is present for the GPT image models only.
 
 Raises:
-    Io, Timeout, NetworkFailure, ParseFailed"""
+    Io, Timeout, SerializationError, InvalidResponse, NetworkFailure"""
 images_parse_async = _define_function("openai.internal.images_parse", "async", ["c", "resp"], binding_name="images_parse_async", binding_qualname="images_parse_async", binding_module=__name__)
 images_parse_async.__doc__ = """One decoded response -> one model turn of media blocks. An image endpoint
 produces no text and never stops early, so the stop reason is always
 Complete; `usage` is present for the GPT image models only.
 
 Raises:
-    Io, Timeout, NetworkFailure, ParseFailed"""
+    Io, Timeout, SerializationError, InvalidResponse, NetworkFailure"""
+
+
+images_usage       = _define_function("openai.internal.images_usage", "sync",  ["resp"], binding_name="images_usage", binding_qualname="images_usage", binding_module=__name__)
+images_usage_async = _define_function("openai.internal.images_usage", "async", ["resp"], binding_name="images_usage_async", binding_qualname="images_usage_async", binding_module=__name__)
 
 
 images_invoke       = _define_function("openai.internal.images_invoke", "sync",  ["c", "input"], binding_name="images_invoke", binding_qualname="images_invoke", binding_module=__name__)
@@ -1321,13 +1424,30 @@ class OaReasoningParams(pydantic.BaseModel):
 
 
 class OaTextParams(pydantic.BaseModel):
-    """`text` carries `verbosity` only: `text.format` stays unset by design (G15)."""
+    """
+    `text.verbosity`, and `text.format` when the client sends Structured
+    Outputs (`ResponsesClient.structured_output`).
+    """
     model_config = pydantic.ConfigDict(
         arbitrary_types_allowed=True,
         extra="ignore",
         populate_by_name=True,
     )
     verbosity: typing.Optional[str] = None
+    format: typing.Optional[OaTextFormat] = None
+
+
+class OaTextFormat(pydantic.BaseModel):
+    """`text.format`: `{"type": "json_schema", "name", "strict", "schema"}`."""
+    model_config = pydantic.ConfigDict(
+        arbitrary_types_allowed=True,
+        extra="ignore",
+        populate_by_name=True,
+    )
+    type: str
+    name: str
+    strict: bool
+    schema: baml.json.json = None
 
 
 class OaResponsesRequest(pydantic.BaseModel):
@@ -1375,6 +1495,7 @@ class OaOutputItem(pydantic.BaseModel):
     arguments: typing.Optional[str] = None
     content: typing.Optional[typing.List[OaContentPart]] = None
     summary: typing.Optional[typing.List[OaContentPart]] = None
+    phase: typing.Optional[str] = None
     result: typing.Optional[str] = None
     revised_prompt: typing.Optional[str] = None
     output_format: typing.Optional[str] = None
@@ -1387,6 +1508,7 @@ class OaInputTokenDetails(pydantic.BaseModel):
         populate_by_name=True,
     )
     cached_tokens: typing.Optional[int] = None
+    cache_write_tokens: typing.Optional[int] = None
 
 
 class OaOutputTokenDetails(pydantic.BaseModel):
@@ -1495,7 +1617,7 @@ audio, so audio in a tool result degrades into a user turn after the run of resu
 (`lower_journal`). There is no video input part at all.
 
 Raises:
-    InvalidArgument, Io, Timeout"""
+    InvalidArgument, Timeout"""
 _lower_block_async = _define_function("openai.internal._lower_block", "async", ["block", "position"], ["preview"], binding_name="_lower_block_async", binding_qualname="_lower_block_async", binding_module=__name__)
 _lower_block_async.__doc__ = """(internal) One content block at `position` -> its typed input part. The Responses
 API's input modalities, per position:
@@ -1513,71 +1635,96 @@ audio, so audio in a tool result degrades into a user turn after the run of resu
 (`lower_journal`). There is no video input part at all.
 
 Raises:
-    InvalidArgument, Io, Timeout"""
+    InvalidArgument, Timeout"""
 
 
 _lower_blocks       = _define_function("openai.internal._lower_blocks", "sync",  ["blocks", "position"], ["preview"], binding_name="_lower_blocks", binding_qualname="_lower_blocks", binding_module=__name__)
 _lower_blocks.__doc__ = """Raises:
-    InvalidArgument, Io, Timeout"""
+    InvalidArgument, Timeout"""
 _lower_blocks_async = _define_function("openai.internal._lower_blocks", "async", ["blocks", "position"], ["preview"], binding_name="_lower_blocks_async", binding_qualname="_lower_blocks_async", binding_module=__name__)
 _lower_blocks_async.__doc__ = """Raises:
-    InvalidArgument, Io, Timeout"""
+    InvalidArgument, Timeout"""
 
 
-lower_prompt       = _define_function("openai.internal.lower_prompt", "sync",  ["prompt"], ["preview"], binding_name="lower_prompt", binding_qualname="lower_prompt", binding_module=__name__)
+class OaCacheBreakpoint(pydantic.BaseModel):
+    """
+    (internal) Where one `${cache(args)}` in the prompt lands on the wire: content part
+    `part` of input item `item`, which gets `prompt_cache_breakpoint: args`.
+    """
+    model_config = pydantic.ConfigDict(
+        arbitrary_types_allowed=True,
+        extra="ignore",
+        populate_by_name=True,
+    )
+    item: int
+    part: int
+    args: baml.json.json = None
+
+
+lower_prompt       = _define_function("openai.internal.lower_prompt", "sync",  ["prompt", "breakpoints"], ["default_cache_args", "preview"], binding_name="lower_prompt", binding_qualname="lower_prompt", binding_module=__name__)
 lower_prompt.__doc__ = """Role-less content uses the ordinary user role; `tool` is not a valid
 free-standing Responses message role, so authored tool context is user
 content (actual tool outputs come from the journal path below).
 
+A `${cache(args)}` in a message becomes a cache breakpoint on the content
+part before it: the Responses API places a breakpoint ON a part, while the
+delimiter sits BETWEEN parts, so everything up to and including that part
+is the cached prefix. The typed parts have no slot for it and `args` is
+sent as written, so the position is recorded in `breakpoints` and
+`_apply_cache_breakpoints` writes the key onto the serialized body. The text
+on either side is trimmed where it faces the delimiter
+(`ai.wire.prompt_parts`). A `${cache()}` carries `default_cache_args`.
+Nothing is recorded when no part precedes the delimiter in its message, or
+when the delimiter has no args and there is no default.
+
 Raises:
-    InvalidArgument, Io, Timeout"""
-lower_prompt_async = _define_function("openai.internal.lower_prompt", "async", ["prompt"], ["preview"], binding_name="lower_prompt_async", binding_qualname="lower_prompt_async", binding_module=__name__)
+    InvalidArgument, Timeout"""
+lower_prompt_async = _define_function("openai.internal.lower_prompt", "async", ["prompt", "breakpoints"], ["default_cache_args", "preview"], binding_name="lower_prompt_async", binding_qualname="lower_prompt_async", binding_module=__name__)
 lower_prompt_async.__doc__ = """Role-less content uses the ordinary user role; `tool` is not a valid
 free-standing Responses message role, so authored tool context is user
 content (actual tool outputs come from the journal path below).
 
+A `${cache(args)}` in a message becomes a cache breakpoint on the content
+part before it: the Responses API places a breakpoint ON a part, while the
+delimiter sits BETWEEN parts, so everything up to and including that part
+is the cached prefix. The typed parts have no slot for it and `args` is
+sent as written, so the position is recorded in `breakpoints` and
+`_apply_cache_breakpoints` writes the key onto the serialized body. The text
+on either side is trimmed where it faces the delimiter
+(`ai.wire.prompt_parts`). A `${cache()}` carries `default_cache_args`.
+Nothing is recorded when no part precedes the delimiter in its message, or
+when the delimiter has no args and there is no default.
+
 Raises:
-    InvalidArgument, Io, Timeout"""
+    InvalidArgument, Timeout"""
 
 
-prompt_metadata       = _define_function("openai.internal.prompt_metadata", "sync",  ["prompt"], binding_name="prompt_metadata", binding_qualname="prompt_metadata", binding_module=__name__)
-prompt_metadata_async = _define_function("openai.internal.prompt_metadata", "async", ["prompt"], binding_name="prompt_metadata_async", binding_qualname="prompt_metadata_async", binding_module=__name__)
+_set_cache_breakpoint       = _define_function("openai.internal._set_cache_breakpoint", "sync",  ["item", "breakpoint"], binding_name="_set_cache_breakpoint", binding_qualname="_set_cache_breakpoint", binding_module=__name__)
+_set_cache_breakpoint_async = _define_function("openai.internal._set_cache_breakpoint", "async", ["item", "breakpoint"], binding_name="_set_cache_breakpoint_async", binding_qualname="_set_cache_breakpoint_async", binding_module=__name__)
 
 
-_merge_onto_last_part       = _define_function("openai.internal._merge_onto_last_part", "sync",  ["item", "directives"], binding_name="_merge_onto_last_part", binding_qualname="_merge_onto_last_part", binding_module=__name__)
-_merge_onto_last_part_async = _define_function("openai.internal._merge_onto_last_part", "async", ["item", "directives"], binding_name="_merge_onto_last_part_async", binding_qualname="_merge_onto_last_part_async", binding_module=__name__)
-
-
-_apply_message_metadata       = _define_function("openai.internal._apply_message_metadata", "sync",  ["body", "metadata"], binding_name="_apply_message_metadata", binding_qualname="_apply_message_metadata", binding_module=__name__)
-_apply_message_metadata_async = _define_function("openai.internal._apply_message_metadata", "async", ["body", "metadata"], binding_name="_apply_message_metadata_async", binding_qualname="_apply_message_metadata_async", binding_module=__name__)
+_apply_cache_breakpoints       = _define_function("openai.internal._apply_cache_breakpoints", "sync",  ["body", "breakpoints"], binding_name="_apply_cache_breakpoints", binding_qualname="_apply_cache_breakpoints", binding_module=__name__)
+_apply_cache_breakpoints_async = _define_function("openai.internal._apply_cache_breakpoints", "async", ["body", "breakpoints"], binding_name="_apply_cache_breakpoints_async", binding_qualname="_apply_cache_breakpoints_async", binding_module=__name__)
 
 
 _tool_output       = _define_function("openai.internal._tool_output", "sync",  ["parts"], binding_name="_tool_output", binding_qualname="_tool_output", binding_module=__name__)
 _tool_output_async = _define_function("openai.internal._tool_output", "async", ["parts"], binding_name="_tool_output_async", binding_qualname="_tool_output_async", binding_module=__name__)
 
 
-lower_journal       = _define_function("openai.internal.lower_journal", "sync",  ["j", "metadata"], ["preview"], binding_name="lower_journal", binding_qualname="lower_journal", binding_module=__name__)
+lower_journal       = _define_function("openai.internal.lower_journal", "sync",  ["j"], ["preview"], binding_name="lower_journal", binding_qualname="lower_journal", binding_module=__name__)
 lower_journal.__doc__ = """ai.Journal -> Responses API input items. Only promptable events lower;
 ai.RunStarted, ai.ToolRequested, ai.Usage, and ai.FinalProduced are
 journal-only. Callers pass the SANITIZED journal (see _request).
 
-`metadata` is the per-item directive list `_apply_message_metadata` walks:
-one map is appended per item produced here (a user turn's own, an empty
-one for everything else) so it stays aligned one-to-one with `input`.
-
 Raises:
-    InvalidArgument, Io, Timeout, SerializationError"""
-lower_journal_async = _define_function("openai.internal.lower_journal", "async", ["j", "metadata"], ["preview"], binding_name="lower_journal_async", binding_qualname="lower_journal_async", binding_module=__name__)
+    InvalidArgument, Timeout, SerializationError"""
+lower_journal_async = _define_function("openai.internal.lower_journal", "async", ["j"], ["preview"], binding_name="lower_journal_async", binding_qualname="lower_journal_async", binding_module=__name__)
 lower_journal_async.__doc__ = """ai.Journal -> Responses API input items. Only promptable events lower;
 ai.RunStarted, ai.ToolRequested, ai.Usage, and ai.FinalProduced are
 journal-only. Callers pass the SANITIZED journal (see _request).
 
-`metadata` is the per-item directive list `_apply_message_metadata` walks:
-one map is appended per item produced here (a user turn's own, an empty
-one for everything else) so it stays aligned one-to-one with `input`.
-
 Raises:
-    InvalidArgument, Io, Timeout, SerializationError"""
+    InvalidArgument, Timeout, SerializationError"""
 
 
 _wants_image       = _define_function("openai.internal._wants_image", "sync",  ["output_type"], binding_name="_wants_image", binding_qualname="_wants_image", binding_module=__name__)
@@ -1600,8 +1747,26 @@ _reasoning       = _define_function("openai.internal._reasoning", "sync",  ["c"]
 _reasoning_async = _define_function("openai.internal._reasoning", "async", ["c"], binding_name="_reasoning_async", binding_qualname="_reasoning_async", binding_module=__name__)
 
 
-_text       = _define_function("openai.internal._text", "sync",  ["c"], binding_name="_text", binding_qualname="_text", binding_module=__name__)
-_text_async = _define_function("openai.internal._text", "async", ["c"], binding_name="_text_async", binding_qualname="_text_async", binding_module=__name__)
+_text       = _define_function("openai.internal._text", "sync",  ["c", "structured"], binding_name="_text", binding_qualname="_text", binding_module=__name__)
+_text_async = _define_function("openai.internal._text", "async", ["c", "structured"], binding_name="_text_async", binding_qualname="_text_async", binding_module=__name__)
+
+
+_restore_format_schema       = _define_function("openai.internal._restore_format_schema", "sync",  ["body", "structured"], binding_name="_restore_format_schema", binding_qualname="_restore_format_schema", binding_module=__name__)
+_restore_format_schema_async = _define_function("openai.internal._restore_format_schema", "async", ["body", "structured"], binding_name="_restore_format_schema_async", binding_qualname="_restore_format_schema_async", binding_module=__name__)
+
+
+_structured_output       = _define_function("openai.internal._structured_output", "sync",  ["c", "input"], binding_name="_structured_output", binding_qualname="_structured_output", binding_module=__name__)
+_structured_output.__doc__ = """(internal) The structured output a request carries: null unless the client turned
+structured outputs on.
+
+Raises:
+    InvalidRequest"""
+_structured_output_async = _define_function("openai.internal._structured_output", "async", ["c", "input"], binding_name="_structured_output_async", binding_qualname="_structured_output_async", binding_module=__name__)
+_structured_output_async.__doc__ = """(internal) The structured output a request carries: null unless the client turned
+structured outputs on.
+
+Raises:
+    InvalidRequest"""
 
 
 _headers       = _define_function("openai.internal._headers", "sync",  ["c"], ["preview"], binding_name="_headers", binding_qualname="_headers", binding_module=__name__)
@@ -1639,26 +1804,26 @@ Raises:
 
 
 preview       = _define_function("openai.internal.preview", "sync",  ["c", "input"], binding_name="preview", binding_qualname="preview", binding_module=__name__)
-preview.__doc__ = """The request one `render` would send. This path never reads local media or
-downloads URLs; provider-unsupported URL forms return PreviewUnsupported.
+preview.__doc__ = """The request one `render` would send. This path never downloads URLs;
+provider-unsupported URL forms return PreviewUnsupported.
 
 Raises:
     InvalidArgument, Io, ParseError, Timeout, SerializationError"""
 preview_async = _define_function("openai.internal.preview", "async", ["c", "input"], binding_name="preview_async", binding_qualname="preview_async", binding_module=__name__)
-preview_async.__doc__ = """The request one `render` would send. This path never reads local media or
-downloads URLs; provider-unsupported URL forms return PreviewUnsupported.
+preview_async.__doc__ = """The request one `render` would send. This path never downloads URLs;
+provider-unsupported URL forms return PreviewUnsupported.
 
 Raises:
     InvalidArgument, Io, ParseError, Timeout, SerializationError"""
 
 
-_request       = _define_function("openai.internal._request", "sync",  ["c", "input", "stream"], ["preview"], binding_name="_request", binding_qualname="_request", binding_module=__name__)
+_request       = _define_function("openai.internal._request", "sync",  ["c", "input", "structured", "stream"], ["preview"], binding_name="_request", binding_qualname="_request", binding_module=__name__)
 _request.__doc__ = """(internal) The shared request builder: identical body for both paths, plus the
 `stream: true` flag on the streaming one.
 
 Raises:
     InvalidArgument, Io, ParseError, Timeout, SerializationError"""
-_request_async = _define_function("openai.internal._request", "async", ["c", "input", "stream"], ["preview"], binding_name="_request_async", binding_qualname="_request_async", binding_module=__name__)
+_request_async = _define_function("openai.internal._request", "async", ["c", "input", "structured", "stream"], ["preview"], binding_name="_request_async", binding_qualname="_request_async", binding_module=__name__)
 _request_async.__doc__ = """(internal) The shared request builder: identical body for both paths, plus the
 `stream: true` flag on the streaming one.
 
@@ -1670,21 +1835,13 @@ _image_mime       = _define_function("openai.internal._image_mime", "sync",  ["o
 _image_mime_async = _define_function("openai.internal._image_mime", "async", ["output_format"], binding_name="_image_mime_async", binding_qualname="_image_mime_async", binding_module=__name__)
 
 
-_transient_code       = _define_function("openai.internal._transient_code", "sync",  ["code"], binding_name="_transient_code", binding_qualname="_transient_code", binding_module=__name__)
-_transient_code_async = _define_function("openai.internal._transient_code", "async", ["code"], binding_name="_transient_code_async", binding_qualname="_transient_code_async", binding_module=__name__)
-
-
 _error_failure       = _define_function("openai.internal._error_failure", "sync",  ["err"], binding_name="_error_failure", binding_qualname="_error_failure", binding_module=__name__)
-_error_failure.__doc__ = """(internal) A provider-reported error becomes the precise ai.errors class, never a
-blanket NetworkFailure: a retry-safe classification on a 400-shaped failure
-is what makes a Retry policy replay an invalid request forever.
+_error_failure.__doc__ = """(internal) Preserve a valid provider-reported failure as structured data.
 
 Raises:
     SerializationError"""
 _error_failure_async = _define_function("openai.internal._error_failure", "async", ["err"], binding_name="_error_failure_async", binding_qualname="_error_failure_async", binding_module=__name__)
-_error_failure_async.__doc__ = """(internal) A provider-reported error becomes the precise ai.errors class, never a
-blanket NetworkFailure: a retry-safe classification on a 400-shaped failure
-is what makes a Retry policy replay an invalid request forever.
+_error_failure_async.__doc__ = """(internal) Preserve a valid provider-reported failure as structured data.
 
 Raises:
     SerializationError"""
@@ -1710,15 +1867,27 @@ Raises:
     SerializationError"""
 
 
-invoke       = _define_function("openai.internal.invoke", "sync",  ["c", "input"], binding_name="invoke", binding_qualname="invoke", binding_module=__name__)
-invoke.__doc__ = """The one internal entry point: render, send, normalize — one model turn.
+usage       = _define_function("openai.internal.usage", "sync",  ["resp"], binding_name="usage", binding_qualname="usage", binding_module=__name__)
+usage_async = _define_function("openai.internal.usage", "async", ["resp"], binding_name="usage_async", binding_qualname="usage_async", binding_module=__name__)
 
-Raises:
+
+_accepts_any_text       = _define_function("openai.internal._accepts_any_text", "sync",  ["t"], binding_name="_accepts_any_text", binding_qualname="_accepts_any_text", binding_module=__name__)
+_accepts_any_text_async = _define_function("openai.internal._accepts_any_text", "async", ["t"], binding_name="_accepts_any_text_async", binding_qualname="_accepts_any_text_async", binding_module=__name__)
+
+
+_parse_output       = _define_function("openai.internal._parse_output", "sync",  ["output_type", "text"], binding_name="_parse_output", binding_qualname="_parse_output", binding_module=__name__)
+_parse_output_async = _define_function("openai.internal._parse_output", "async", ["output_type", "text"], binding_name="_parse_output_async", binding_qualname="_parse_output_async", binding_module=__name__)
+
+
+_commentary_output       = _define_function("openai.internal._commentary_output", "sync",  ["resp", "output_type"], binding_name="_commentary_output", binding_qualname="_commentary_output", binding_module=__name__)
+_commentary_output_async = _define_function("openai.internal._commentary_output", "async", ["resp", "output_type"], binding_name="_commentary_output_async", binding_qualname="_commentary_output_async", binding_module=__name__)
+
+
+invoke       = _define_function("openai.internal.invoke", "sync",  ["c", "input"], binding_name="invoke", binding_qualname="invoke", binding_module=__name__)
+invoke.__doc__ = """Raises:
     InvalidArgument, Io, ParseError, Timeout, SerializationError"""
 invoke_async = _define_function("openai.internal.invoke", "async", ["c", "input"], binding_name="invoke_async", binding_qualname="invoke_async", binding_module=__name__)
-invoke_async.__doc__ = """The one internal entry point: render, send, normalize — one model turn.
-
-Raises:
+invoke_async.__doc__ = """Raises:
     InvalidArgument, Io, ParseError, Timeout, SerializationError"""
 
 
@@ -1822,6 +1991,113 @@ Raises:
     InvalidArgument, Io, ParseError, Timeout, SerializationError"""
 
 
+class StructuredOutput(pydantic.BaseModel):
+    """
+    (internal) Structured output for one output type: the schema a request
+    carries, and how the answer is read back.
+
+    Attributes:
+        output_type
+        schema: The strict JSON Schema.
+        wrapped: Strict mode wants an object at the root. Any other output type is sent
+            as the one property `value` of an object, and read back out of it.
+    """
+    model_config = pydantic.ConfigDict(
+        arbitrary_types_allowed=True,
+        extra="ignore",
+        populate_by_name=True,
+    )
+    output_type: typing.Any
+    schema: baml.json.json = None
+    wrapped: bool
+    name       = _define_function("openai.internal.StructuredOutput.name", "sync",  ["self"], binding_name="name", binding_qualname="StructuredOutput.name", binding_module=__name__)
+    name_async = _define_function("openai.internal.StructuredOutput.name", "async", ["self"], binding_name="name_async", binding_qualname="StructuredOutput.name_async", binding_module=__name__)
+    decode       = _define_function("openai.internal.StructuredOutput.decode", "sync",  ["self", "provider", "text"], binding_name="decode", binding_qualname="StructuredOutput.decode", binding_module=__name__)
+    decode_async = _define_function("openai.internal.StructuredOutput.decode", "async", ["self", "provider", "text"], binding_name="decode_async", binding_qualname="StructuredOutput.decode_async", binding_module=__name__)
+
+
+structured_output       = _define_function("openai.internal.structured_output", "sync",  ["output_type", "provider"], binding_name="structured_output", binding_qualname="structured_output", binding_module=__name__)
+structured_output.__doc__ = """(internal) The structured output for `output_type`. A type strict mode cannot hold
+is rejected here, before a request is sent, as `ai.errors.InvalidRequest`:
+one with no JSON form (`baml.json.schema` says why), one that can hold
+media, and one with a map in it.
+
+Raises:
+    InvalidRequest"""
+structured_output_async = _define_function("openai.internal.structured_output", "async", ["output_type", "provider"], binding_name="structured_output_async", binding_qualname="structured_output_async", binding_module=__name__)
+structured_output_async.__doc__ = """(internal) The structured output for `output_type`. A type strict mode cannot hold
+is rejected here, before a request is sent, as `ai.errors.InvalidRequest`:
+one with no JSON form (`baml.json.schema` says why), one that can hold
+media, and one with a map in it.
+
+Raises:
+    InvalidRequest"""
+
+
+_is_object_schema       = _define_function("openai.internal._is_object_schema", "sync",  ["schema"], binding_name="_is_object_schema", binding_qualname="_is_object_schema", binding_module=__name__)
+_is_object_schema_async = _define_function("openai.internal._is_object_schema", "async", ["schema"], binding_name="_is_object_schema_async", binding_qualname="_is_object_schema_async", binding_module=__name__)
+
+
+_strict       = _define_function("openai.internal._strict", "sync",  ["schema", "type_name", "provider"], binding_name="_strict", binding_qualname="_strict", binding_module=__name__)
+_strict.__doc__ = """(internal) `schema`, from `baml.json.schema`, rewritten to the subset OpenAI's strict
+mode accepts:
+
+  * every object lists all its properties in `required` and sets
+    `additionalProperties: false`. A property that may be absent is one
+    whose schema already admits `null`, and strict mode spells "optional"
+    exactly that way;
+  * a `$ref` with a `description` beside it becomes a one-member `anyOf`,
+    because strict mode rejects keywords beside `$ref`;
+  * a map (an object with schema-valued `additionalProperties`, or
+    `propertyNames`) is rejected: strict mode has no form for one.
+
+Only the keywords that hold schemas are walked. `enum` and `const` hold
+values, and are copied as they are.
+
+Raises:
+    InvalidRequest"""
+_strict_async = _define_function("openai.internal._strict", "async", ["schema", "type_name", "provider"], binding_name="_strict_async", binding_qualname="_strict_async", binding_module=__name__)
+_strict_async.__doc__ = """(internal) `schema`, from `baml.json.schema`, rewritten to the subset OpenAI's strict
+mode accepts:
+
+  * every object lists all its properties in `required` and sets
+    `additionalProperties: false`. A property that may be absent is one
+    whose schema already admits `null`, and strict mode spells "optional"
+    exactly that way;
+  * a `$ref` with a `description` beside it becomes a one-member `anyOf`,
+    because strict mode rejects keywords beside `$ref`;
+  * a map (an object with schema-valued `additionalProperties`, or
+    `propertyNames`) is rejected: strict mode has no form for one.
+
+Only the keywords that hold schemas are walked. `enum` and `const` hold
+values, and are copied as they are.
+
+Raises:
+    InvalidRequest"""
+
+
+_is_object_type       = _define_function("openai.internal._is_object_type", "sync",  ["kind"], binding_name="_is_object_type", binding_qualname="_is_object_type", binding_module=__name__)
+_is_object_type_async = _define_function("openai.internal._is_object_type", "async", ["kind"], binding_name="_is_object_type_async", binding_qualname="_is_object_type_async", binding_module=__name__)
+
+
+with_structured_output       = _define_function("openai.internal.with_structured_output", "sync",  ["turn", "structured", "provider"], binding_name="with_structured_output", binding_qualname="with_structured_output", binding_module=__name__)
+with_structured_output.__doc__ = """(internal) `turn` with its answer read through `structured`. A turn that calls
+tools, was cut short, or refused holds no answer to read, and goes to the
+runner as it is; any other turn's last text must decode, or this throws.
+So `parsed_output` is never left for the runner to fill with SAP.
+
+Raises:
+    SerializationError, ParseFailed"""
+with_structured_output_async = _define_function("openai.internal.with_structured_output", "async", ["turn", "structured", "provider"], binding_name="with_structured_output_async", binding_qualname="with_structured_output_async", binding_module=__name__)
+with_structured_output_async.__doc__ = """(internal) `turn` with its answer read through `structured`. A turn that calls
+tools, was cut short, or refused holds no answer to read, and goes to the
+runner as it is; any other turn's last text must decode, or this throws.
+So `parsed_output` is never left for the runner to fill with SAP.
+
+Raises:
+    SerializationError, ParseFailed"""
+
+
 ChatContentPart: typing.TypeAlias = typing.Union[ChatTextPart, ChatImagePart, ChatAudioPart, ChatFilePart, ChatExtraPart]
 
 
@@ -1838,11 +2114,11 @@ OaTool: typing.TypeAlias = typing.Union[OaFunctionTool, OaBuiltinTool]
 
 
 __all__ = [
+    "default_cache_breakpoint",
+    "default_cache_breakpoint_async",
     "ChatAuth",
     "ChatCompat",
     "ChatParams",
-    "chat_client_id",
-    "chat_client_id_async",
     "ChatTextPart",
     "ChatImageUrl",
     "ChatImagePart",
@@ -1857,6 +2133,8 @@ __all__ = [
     "ChatToolFunction",
     "ChatTool",
     "ChatStreamOptions",
+    "ChatJsonSchema",
+    "ChatResponseFormat",
     "ChatRequest",
     "CcFunctionCall",
     "CcToolCall",
@@ -1869,6 +2147,7 @@ __all__ = [
     "CcPromptTokensDetails",
     "CcCompletionTokensDetails",
     "CcUsage",
+    "CcError",
     "CcResponse",
     "ChatPromptMessage",
     "chat_lower_prompt",
@@ -1877,6 +2156,8 @@ __all__ = [
     "chat_lower_journal_async",
     "chat_build_request",
     "chat_build_request_async",
+    "chat_structured_output",
+    "chat_structured_output_async",
     "chat_render_body",
     "chat_render_body_async",
     "chat_render",
@@ -1887,6 +2168,8 @@ __all__ = [
     "chat_stop_reason_async",
     "chat_parse",
     "chat_parse_async",
+    "chat_usage",
+    "chat_usage_async",
     "chat_invoke",
     "chat_invoke_async",
     "CcDelta",
@@ -1905,6 +2188,8 @@ __all__ = [
     "images_render_async",
     "images_parse",
     "images_parse_async",
+    "images_usage",
+    "images_usage_async",
     "images_invoke",
     "images_invoke_async",
     "OaInputText",
@@ -1921,6 +2206,7 @@ __all__ = [
     "OaToolChoiceObject",
     "OaReasoningParams",
     "OaTextParams",
+    "OaTextFormat",
     "OaResponsesRequest",
     "OaContentPart",
     "OaOutputItem",
@@ -1930,10 +2216,9 @@ __all__ = [
     "OaIncompleteDetails",
     "OaErrorBody",
     "OaResponse",
+    "OaCacheBreakpoint",
     "lower_prompt",
     "lower_prompt_async",
-    "prompt_metadata",
-    "prompt_metadata_async",
     "lower_journal",
     "lower_journal_async",
     "render",
@@ -1942,12 +2227,19 @@ __all__ = [
     "preview_async",
     "parse",
     "parse_async",
+    "usage",
+    "usage_async",
     "invoke",
     "invoke_async",
     "OaStreamEvent",
     "OaStreamState",
     "invoke_stream",
     "invoke_stream_async",
+    "StructuredOutput",
+    "structured_output",
+    "structured_output_async",
+    "with_structured_output",
+    "with_structured_output_async",
     "ChatContentPart",
     "ChatMessageContent",
     "OaInputPart",

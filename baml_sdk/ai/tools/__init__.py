@@ -50,16 +50,54 @@ class Tool(pydantic.BaseModel):
     call_async = _define_function("ai.tools.Tool.call", "async", ["self", "args"], binding_name="call_async", binding_qualname="Tool.call_async", binding_module=__name__)
 
 
+_typed_arguments       = _define_function("ai.tools._typed_arguments", "sync",  ["tool", "handler", "args"], binding_name="_typed_arguments", binding_qualname="_typed_arguments", binding_module=__name__)
+_typed_arguments.__doc__ = """(internal) The arguments of a tool call as `reflect.call_any` takes them.
+
+A provider hands over a model's arguments as parsed JSON: a class is a
+map, an enum a string, a list a list of json. `reflect.call_any` takes
+values of the parameter types, and the only JSON values that are such
+values are the scalars. So the parameters that were sent JSON are read as
+the fields of one class, the JSON is aligned to that class as any other
+model output is (`baml.sap.coerce`), and the fields of the result are
+the arguments.
+
+An argument passes as it arrived when it names no parameter, and when it is
+already a value of its parameter's type: that is what BAML code passes when
+it calls a tool itself, and it is every value of an `unknown` parameter.
+`reflect.call_any` judges every argument that passed.
+
+Raises:
+    InvalidArgument"""
+_typed_arguments_async = _define_function("ai.tools._typed_arguments", "async", ["tool", "handler", "args"], binding_name="_typed_arguments_async", binding_qualname="_typed_arguments_async", binding_module=__name__)
+_typed_arguments_async.__doc__ = """(internal) The arguments of a tool call as `reflect.call_any` takes them.
+
+A provider hands over a model's arguments as parsed JSON: a class is a
+map, an enum a string, a list a list of json. `reflect.call_any` takes
+values of the parameter types, and the only JSON values that are such
+values are the scalars. So the parameters that were sent JSON are read as
+the fields of one class, the JSON is aligned to that class as any other
+model output is (`baml.sap.coerce`), and the fields of the result are
+the arguments.
+
+An argument passes as it arrived when it names no parameter, and when it is
+already a value of its parameter's type: that is what BAML code passes when
+it calls a tool itself, and it is every value of an `unknown` parameter.
+`reflect.call_any` judges every argument that passed.
+
+Raises:
+    InvalidArgument"""
+
+
 tool       = _define_function("ai.tools.tool", "sync",  ["handler"], ["name", "description", "on_error"], binding_name="tool", binding_qualname="tool", binding_module=__name__)
 tool.__doc__ = """The explicit constructor. `tools: [f]` normalizes through this.
 
 Raises:
-    InvalidArgument, Unsupported"""
+    InvalidArgument, Unsupported, DecodeError"""
 tool_async = _define_function("ai.tools.tool", "async", ["handler"], ["name", "description", "on_error"], binding_name="tool_async", binding_qualname="tool_async", binding_module=__name__)
 tool_async.__doc__ = """The explicit constructor. `tools: [f]` normalizes through this.
 
 Raises:
-    InvalidArgument, Unsupported"""
+    InvalidArgument, Unsupported, DecodeError"""
 
 
 raw_tool       = _define_function("ai.tools.raw_tool", "sync",  ["name", "description", "input_schema", "handler"], ["on_error"], binding_name="raw_tool", binding_qualname="raw_tool", binding_module=__name__)

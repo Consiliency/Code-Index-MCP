@@ -31,6 +31,8 @@ if typing.TYPE_CHECKING:
     from .... import vendor
     from ....baml import UNSET as UNSET
 
+from ...._invocation_types import BamlOptions as _BamlOptions
+
 
 class SignOptions(pydantic.BaseModel):
     region: typing.Optional[str] = None
@@ -41,7 +43,7 @@ class SignOptions(pydantic.BaseModel):
     service: str
 
 
-def sign_request(req: baml.http.Request, opts: SignOptions) -> baml.http.Request:
+def sign_request(req: baml.http.Request, opts: SignOptions, *, _baml: _BamlOptions | None = None) -> baml.http.Request:
     """SigV4-signs `req` and returns it with the signature headers applied
     (`authorization`, `x-amz-date`, and `x-amz-security-token` for session
     credentials). Raises if no credentials or no region can be resolved.
@@ -58,7 +60,7 @@ def sign_request(req: baml.http.Request, opts: SignOptions) -> baml.http.Request
 
     Raises:
         AccessError, Io"""
-async def sign_request_async(req: baml.http.Request, opts: SignOptions) -> baml.http.Request:
+async def sign_request_async(req: baml.http.Request, opts: SignOptions, *, _baml: _BamlOptions | None = None) -> baml.http.Request:
     """SigV4-signs `req` and returns it with the signature headers applied
     (`authorization`, `x-amz-date`, and `x-amz-security-token` for session
     credentials). Raises if no credentials or no region can be resolved.
@@ -77,25 +79,25 @@ async def sign_request_async(req: baml.http.Request, opts: SignOptions) -> baml.
         AccessError, Io"""
 
 
-def resolve_region(region: typing.Optional[str], profile: typing.Optional[str]) -> typing.Optional[str]:
+def resolve_region(region: typing.Optional[str], profile: typing.Optional[str], *, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
     """Resolves the AWS region: `region` when set, else `AWS_REGION`,
     `AWS_DEFAULT_REGION`, or the active profile's `region` key. `null` means
     "not discoverable" — the caller decides how to report it (endpoint
     construction usually needs it before signing does)."""
-async def resolve_region_async(region: typing.Optional[str], profile: typing.Optional[str]) -> typing.Optional[str]:
+async def resolve_region_async(region: typing.Optional[str], profile: typing.Optional[str], *, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
     """Resolves the AWS region: `region` when set, else `AWS_REGION`,
     `AWS_DEFAULT_REGION`, or the active profile's `region` key. `null` means
     "not discoverable" — the caller decides how to report it (endpoint
     construction usually needs it before signing does)."""
 
 
-def _is_unreserved_byte(byte: int) -> bool:
+def _is_unreserved_byte(byte: int, *, _baml: _BamlOptions | None = None) -> bool:
     """(internal) True for the RFC 3986 unreserved characters, which never need escaping."""
-async def _is_unreserved_byte_async(byte: int) -> bool:
+async def _is_unreserved_byte_async(byte: int, *, _baml: _BamlOptions | None = None) -> bool:
     """(internal) True for the RFC 3986 unreserved characters, which never need escaping."""
 
 
-def encode_path_label(value: str) -> str:
+def encode_path_label(value: str, *, _baml: _BamlOptions | None = None) -> str:
     """Percent-encode `value` as a single URI path label: `/` becomes `%2F` and
     `:` becomes `%3A`, so a Bedrock ARN or inference-profile id survives as one
     path segment. Also used for query-parameter keys and values, whose SigV4
@@ -103,7 +105,7 @@ def encode_path_label(value: str) -> str:
 
     Raises:
         InvalidArgument"""
-async def encode_path_label_async(value: str) -> str:
+async def encode_path_label_async(value: str, *, _baml: _BamlOptions | None = None) -> str:
     """Percent-encode `value` as a single URI path label: `/` becomes `%2F` and
     `:` becomes `%3A`, so a Bedrock ARN or inference-profile id survives as one
     path segment. Also used for query-parameter keys and values, whose SigV4
@@ -113,13 +115,15 @@ async def encode_path_label_async(value: str) -> str:
         InvalidArgument"""
 
 
-def converse_model_path(model_id: str) -> str:
-    """The Converse request path for a model id, inference-profile id, or ARN.
+def converse_model_path(model_id: str, *, stream: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> str:
+    """The Converse request path for a model id, inference-profile id, or ARN;
+    with `stream`, the ConverseStream path.
 
     Raises:
         InvalidArgument"""
-async def converse_model_path_async(model_id: str) -> str:
-    """The Converse request path for a model id, inference-profile id, or ARN.
+async def converse_model_path_async(model_id: str, *, stream: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> str:
+    """The Converse request path for a model id, inference-profile id, or ARN;
+    with `stream`, the ConverseStream path.
 
     Raises:
         InvalidArgument"""
@@ -160,6 +164,14 @@ class CachePointBlock(pydantic.BaseModel):
     type: str
 
 
+def _default_cache_point(*, _baml: _BamlOptions | None = None) -> baml.json.json:
+    """(internal) The checkpoint the client's own `cache_system_prompt` option
+    places, as the JSON a content block's `cachePoint` member carries."""
+async def _default_cache_point_async(*, _baml: _BamlOptions | None = None) -> baml.json.json:
+    """(internal) The checkpoint the client's own `cache_system_prompt` option
+    places, as the JSON a content block's `cachePoint` member carries."""
+
+
 class ToolUseBlock(pydantic.BaseModel):
     toolUseId: str
     name: str
@@ -180,56 +192,64 @@ class ContentBlock(pydantic.BaseModel):
     audio: typing.Optional[AudioBlock] = None
     toolUse: typing.Optional[ToolUseBlock] = None
     toolResult: typing.Optional[ToolResultBlock] = None
-    cachePoint: typing.Optional[CachePointBlock] = None
+    cachePoint: typing.Optional[baml.json.json] = None
     @staticmethod
-    def of_text(text: str) -> ContentBlock: ...
+    def of_text(text: str, *, _baml: _BamlOptions | None = None) -> ContentBlock: ...
     @staticmethod
-    async def of_text_async(text: str) -> ContentBlock: ...
+    async def of_text_async(text: str, *, _baml: _BamlOptions | None = None) -> ContentBlock: ...
     @staticmethod
-    def of_image(image: ImageBlock) -> ContentBlock: ...
+    def of_image(image: ImageBlock, *, _baml: _BamlOptions | None = None) -> ContentBlock: ...
     @staticmethod
-    async def of_image_async(image: ImageBlock) -> ContentBlock: ...
+    async def of_image_async(image: ImageBlock, *, _baml: _BamlOptions | None = None) -> ContentBlock: ...
     @staticmethod
-    def of_video(video: VideoBlock) -> ContentBlock: ...
+    def of_video(video: VideoBlock, *, _baml: _BamlOptions | None = None) -> ContentBlock: ...
     @staticmethod
-    async def of_video_async(video: VideoBlock) -> ContentBlock: ...
+    async def of_video_async(video: VideoBlock, *, _baml: _BamlOptions | None = None) -> ContentBlock: ...
     @staticmethod
-    def of_document(document: DocumentBlock) -> ContentBlock: ...
+    def of_document(document: DocumentBlock, *, _baml: _BamlOptions | None = None) -> ContentBlock: ...
     @staticmethod
-    async def of_document_async(document: DocumentBlock) -> ContentBlock: ...
+    async def of_document_async(document: DocumentBlock, *, _baml: _BamlOptions | None = None) -> ContentBlock: ...
     @staticmethod
-    def of_audio(audio: AudioBlock) -> ContentBlock: ...
+    def of_audio(audio: AudioBlock, *, _baml: _BamlOptions | None = None) -> ContentBlock: ...
     @staticmethod
-    async def of_audio_async(audio: AudioBlock) -> ContentBlock: ...
+    async def of_audio_async(audio: AudioBlock, *, _baml: _BamlOptions | None = None) -> ContentBlock: ...
     @staticmethod
-    def of_tool_use(tool_use: ToolUseBlock) -> ContentBlock: ...
+    def of_tool_use(tool_use: ToolUseBlock, *, _baml: _BamlOptions | None = None) -> ContentBlock: ...
     @staticmethod
-    async def of_tool_use_async(tool_use: ToolUseBlock) -> ContentBlock: ...
+    async def of_tool_use_async(tool_use: ToolUseBlock, *, _baml: _BamlOptions | None = None) -> ContentBlock: ...
     @staticmethod
-    def of_tool_result(tool_result: ToolResultBlock) -> ContentBlock: ...
+    def of_tool_result(tool_result: ToolResultBlock, *, _baml: _BamlOptions | None = None) -> ContentBlock: ...
     @staticmethod
-    async def of_tool_result_async(tool_result: ToolResultBlock) -> ContentBlock: ...
+    async def of_tool_result_async(tool_result: ToolResultBlock, *, _baml: _BamlOptions | None = None) -> ContentBlock: ...
     @staticmethod
-    def of_cache_point() -> ContentBlock: ...
+    def of_cache_delimiter(args: baml.json.json, *, _baml: _BamlOptions | None = None) -> ContentBlock:
+        """A `cachePoint` block carrying `args` exactly as the prompt wrote it."""
     @staticmethod
-    async def of_cache_point_async() -> ContentBlock: ...
+    async def of_cache_delimiter_async(args: baml.json.json, *, _baml: _BamlOptions | None = None) -> ContentBlock:
+        """A `cachePoint` block carrying `args` exactly as the prompt wrote it."""
 
 
-def _empty_content_block() -> ContentBlock: ...
-async def _empty_content_block_async() -> ContentBlock: ...
+def _empty_content_block(*, _baml: _BamlOptions | None = None) -> ContentBlock: ...
+async def _empty_content_block_async(*, _baml: _BamlOptions | None = None) -> ContentBlock: ...
 
 
 class SystemContentBlock(pydantic.BaseModel):
     text: typing.Optional[str] = None
-    cachePoint: typing.Optional[CachePointBlock] = None
+    cachePoint: typing.Optional[baml.json.json] = None
     @staticmethod
-    def of_text(text: str) -> SystemContentBlock: ...
+    def of_text(text: str, *, _baml: _BamlOptions | None = None) -> SystemContentBlock: ...
     @staticmethod
-    async def of_text_async(text: str) -> SystemContentBlock: ...
+    async def of_text_async(text: str, *, _baml: _BamlOptions | None = None) -> SystemContentBlock: ...
     @staticmethod
-    def of_cache_point() -> SystemContentBlock: ...
+    def of_cache_point(*, _baml: _BamlOptions | None = None) -> SystemContentBlock: ...
     @staticmethod
-    async def of_cache_point_async() -> SystemContentBlock: ...
+    async def of_cache_point_async(*, _baml: _BamlOptions | None = None) -> SystemContentBlock: ...
+    @staticmethod
+    def of_cache_delimiter(args: baml.json.json, *, _baml: _BamlOptions | None = None) -> SystemContentBlock:
+        """A `cachePoint` block carrying `args` exactly as the prompt wrote it."""
+    @staticmethod
+    async def of_cache_delimiter_async(args: baml.json.json, *, _baml: _BamlOptions | None = None) -> SystemContentBlock:
+        """A `cachePoint` block carrying `args` exactly as the prompt wrote it."""
 
 
 class Message(pydantic.BaseModel):
@@ -258,13 +278,13 @@ class ToolEntry(pydantic.BaseModel):
     toolSpec: typing.Optional[ToolSpec] = None
     cachePoint: typing.Optional[CachePointBlock] = None
     @staticmethod
-    def of_spec(spec: ToolSpec) -> ToolEntry: ...
+    def of_spec(spec: ToolSpec, *, _baml: _BamlOptions | None = None) -> ToolEntry: ...
     @staticmethod
-    async def of_spec_async(spec: ToolSpec) -> ToolEntry: ...
+    async def of_spec_async(spec: ToolSpec, *, _baml: _BamlOptions | None = None) -> ToolEntry: ...
     @staticmethod
-    def of_cache_point() -> ToolEntry: ...
+    def of_cache_point(*, _baml: _BamlOptions | None = None) -> ToolEntry: ...
     @staticmethod
-    async def of_cache_point_async() -> ToolEntry: ...
+    async def of_cache_point_async(*, _baml: _BamlOptions | None = None) -> ToolEntry: ...
 
 
 class SpecificToolChoice(pydantic.BaseModel):
@@ -290,15 +310,15 @@ class ConverseRequest(pydantic.BaseModel):
     additionalModelRequestFields: typing.Optional[baml.json.json] = None
 
 
-def _is_opaque_key(key: str) -> bool: ...
-async def _is_opaque_key_async(key: str) -> bool: ...
+def _is_opaque_key(key: str, *, _baml: _BamlOptions | None = None) -> bool: ...
+async def _is_opaque_key_async(key: str, *, _baml: _BamlOptions | None = None) -> bool: ...
 
 
-def _prune_nulls(value: baml.json.json) -> baml.json.json: ...
-async def _prune_nulls_async(value: baml.json.json) -> baml.json.json: ...
+def _prune_nulls(value: baml.json.json, *, _baml: _BamlOptions | None = None) -> baml.json.json: ...
+async def _prune_nulls_async(value: baml.json.json, *, _baml: _BamlOptions | None = None) -> baml.json.json: ...
 
 
-def _reject(detail: str) -> ai.errors.InvalidRequest:
+def _reject(detail: str, *, _baml: _BamlOptions | None = None) -> ai.errors.InvalidRequest:
     """(internal) Every LOCAL, pre-send rejection in this file throws ONE error identity:
     `ai.errors.InvalidRequest` with a null status code — the same class
     `converse_url` and `sign` already throw for an unresolvable region or
@@ -306,7 +326,7 @@ def _reject(detail: str) -> ai.errors.InvalidRequest:
     `baml.errors.InvalidArgument` it survives `BedrockClient.invoke`'s
     `ai.errors.normalize` with its identity (and its `RetrySafety`) intact
     instead of being flattened into an untyped `baml.errors.UnknownError`."""
-async def _reject_async(detail: str) -> ai.errors.InvalidRequest:
+async def _reject_async(detail: str, *, _baml: _BamlOptions | None = None) -> ai.errors.InvalidRequest:
     """(internal) Every LOCAL, pre-send rejection in this file throws ONE error identity:
     `ai.errors.InvalidRequest` with a null status code — the same class
     `converse_url` and `sign` already throw for an unresolvable region or
@@ -316,26 +336,26 @@ async def _reject_async(detail: str) -> ai.errors.InvalidRequest:
     instead of being flattened into an untyped `baml.errors.UnknownError`."""
 
 
-def _is_s3_url(url: typing.Optional[str]) -> bool: ...
-async def _is_s3_url_async(url: typing.Optional[str]) -> bool: ...
+def _is_s3_url(url: typing.Optional[str], *, _baml: _BamlOptions | None = None) -> bool: ...
+async def _is_s3_url_async(url: typing.Optional[str], *, _baml: _BamlOptions | None = None) -> bool: ...
 
 
-def _image_format(mime: str) -> str:
+def _image_format(mime: str, *, _baml: _BamlOptions | None = None) -> str:
     """Raises:
         InvalidRequest"""
-async def _image_format_async(mime: str) -> str:
+async def _image_format_async(mime: str, *, _baml: _BamlOptions | None = None) -> str:
     """Raises:
         InvalidRequest"""
 
 
-def _video_format(mime: str) -> str:
+def _video_format(mime: str, *, _baml: _BamlOptions | None = None) -> str:
     """(internal) `VideoBlock.format`: mkv | mov | mp4 | webm | flv | mpeg | mpg | wmv |
     three_gp. sys_llm's map (`build_request/bedrock.rs:280-292`) predates `mpg`
     and `wmv`; both are carried here.
 
     Raises:
         InvalidRequest"""
-async def _video_format_async(mime: str) -> str:
+async def _video_format_async(mime: str, *, _baml: _BamlOptions | None = None) -> str:
     """(internal) `VideoBlock.format`: mkv | mov | mp4 | webm | flv | mpeg | mpg | wmv |
     three_gp. sys_llm's map (`build_request/bedrock.rs:280-292`) predates `mpg`
     and `wmv`; both are carried here.
@@ -344,7 +364,7 @@ async def _video_format_async(mime: str) -> str:
         InvalidRequest"""
 
 
-def _audio_format(mime: str) -> str:
+def _audio_format(mime: str, *, _baml: _BamlOptions | None = None) -> str:
     """(internal) `AudioBlock.format`: mp3 | opus | wav | aac | flac | mp4 | ogg | mkv | mka |
     x-aac | m4a | mpeg | mpga | pcm | webm. sys_llm carried five of them
     (`build_request/bedrock.rs:267-278`); the enum has widened since, so the
@@ -352,7 +372,7 @@ def _audio_format(mime: str) -> str:
 
     Raises:
         InvalidRequest"""
-async def _audio_format_async(mime: str) -> str:
+async def _audio_format_async(mime: str, *, _baml: _BamlOptions | None = None) -> str:
     """(internal) `AudioBlock.format`: mp3 | opus | wav | aac | flac | mp4 | ogg | mkv | mka |
     x-aac | m4a | mpeg | mpga | pcm | webm. sys_llm carried five of them
     (`build_request/bedrock.rs:267-278`); the enum has widened since, so the
@@ -362,13 +382,13 @@ async def _audio_format_async(mime: str) -> str:
         InvalidRequest"""
 
 
-def _media_source(resolved: ai.wire.ResolvedMedia, kind: str, *, preview: typing.Union[bool, UNSET] = False) -> MediaSource:
+def _media_source(resolved: ai.wire.ResolvedMedia, kind: str, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> MediaSource:
     """(internal) base64 bytes, else an s3:// location. Any other URL is a hard error: Bedrock
     reads media from the request body or from S3, never from an arbitrary host.
 
     Raises:
         InvalidRequest, PreviewUnsupported"""
-async def _media_source_async(resolved: ai.wire.ResolvedMedia, kind: str, *, preview: typing.Union[bool, UNSET] = False) -> MediaSource:
+async def _media_source_async(resolved: ai.wire.ResolvedMedia, kind: str, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> MediaSource:
     """(internal) base64 bytes, else an s3:// location. Any other URL is a hard error: Bedrock
     reads media from the request body or from S3, never from an arbitrary host.
 
@@ -376,36 +396,36 @@ async def _media_source_async(resolved: ai.wire.ResolvedMedia, kind: str, *, pre
         InvalidRequest, PreviewUnsupported"""
 
 
-def _image_block(image: baml.media.Image, *, preview: typing.Union[bool, UNSET] = False) -> ContentBlock:
+def _image_block(image: baml.media.Image, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> ContentBlock:
     """Raises:
-        InvalidArgument, Io, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
-async def _image_block_async(image: baml.media.Image, *, preview: typing.Union[bool, UNSET] = False) -> ContentBlock:
+        InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+async def _image_block_async(image: baml.media.Image, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> ContentBlock:
     """Raises:
-        InvalidArgument, Io, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+        InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
 
 
-def _video_block(video: baml.media.Video, *, preview: typing.Union[bool, UNSET] = False) -> ContentBlock:
+def _video_block(video: baml.media.Video, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> ContentBlock:
     """Raises:
-        InvalidArgument, Io, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
-async def _video_block_async(video: baml.media.Video, *, preview: typing.Union[bool, UNSET] = False) -> ContentBlock:
+        InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+async def _video_block_async(video: baml.media.Video, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> ContentBlock:
     """Raises:
-        InvalidArgument, Io, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+        InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
 
 
-def _document_block(pdf: baml.media.Pdf, *, preview: typing.Union[bool, UNSET] = False) -> ContentBlock:
+def _document_block(pdf: baml.media.Pdf, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> ContentBlock:
     """Raises:
-        InvalidArgument, Io, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
-async def _document_block_async(pdf: baml.media.Pdf, *, preview: typing.Union[bool, UNSET] = False) -> ContentBlock:
+        InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+async def _document_block_async(pdf: baml.media.Pdf, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> ContentBlock:
     """Raises:
-        InvalidArgument, Io, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+        InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
 
 
-def _audio_block(audio: baml.media.Audio, *, preview: typing.Union[bool, UNSET] = False) -> ContentBlock:
+def _audio_block(audio: baml.media.Audio, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> ContentBlock:
     """Raises:
-        InvalidArgument, Io, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
-async def _audio_block_async(audio: baml.media.Audio, *, preview: typing.Union[bool, UNSET] = False) -> ContentBlock:
+        InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+async def _audio_block_async(audio: baml.media.Audio, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> ContentBlock:
     """Raises:
-        InvalidArgument, Io, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+        InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
 
 
 class BedrockPrompt(pydantic.BaseModel):
@@ -413,7 +433,7 @@ class BedrockPrompt(pydantic.BaseModel):
     messages: typing.List[Message]
 
 
-def _lower_block(block: ai.content.Block, *, preview: typing.Union[bool, UNSET] = False) -> typing.Optional[ContentBlock]:
+def _lower_block(block: ai.content.Block, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> typing.Optional[ContentBlock]:
     """(internal) One content block -> its Converse `ContentBlock`, or null when it lowers to
     nothing. Converse takes every media kind in a conversation message; a tool
     result carries `text`, `image`, `document` and `video` but has no audio
@@ -427,8 +447,8 @@ def _lower_block(block: ai.content.Block, *, preview: typing.Union[bool, UNSET] 
       tool_result | Accept | Accept | Accept | Degrade | Accept
 
     Raises:
-        InvalidArgument, Io, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
-async def _lower_block_async(block: ai.content.Block, *, preview: typing.Union[bool, UNSET] = False) -> typing.Optional[ContentBlock]:
+        InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+async def _lower_block_async(block: ai.content.Block, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> typing.Optional[ContentBlock]:
     """(internal) One content block -> its Converse `ContentBlock`, or null when it lowers to
     nothing. Converse takes every media kind in a conversation message; a tool
     result carries `text`, `image`, `document` and `video` but has no audio
@@ -442,24 +462,24 @@ async def _lower_block_async(block: ai.content.Block, *, preview: typing.Union[b
       tool_result | Accept | Accept | Accept | Degrade | Accept
 
     Raises:
-        InvalidArgument, Io, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+        InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
 
 
-def _lower_blocks(blocks: typing.List[ai.content.Block], *, preview: typing.Union[bool, UNSET] = False) -> typing.List[ContentBlock]:
+def _lower_blocks(blocks: typing.List[ai.content.Block], *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> typing.List[ContentBlock]:
     """Raises:
-        InvalidArgument, Io, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
-async def _lower_blocks_async(blocks: typing.List[ai.content.Block], *, preview: typing.Union[bool, UNSET] = False) -> typing.List[ContentBlock]:
+        InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+async def _lower_blocks_async(blocks: typing.List[ai.content.Block], *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> typing.List[ContentBlock]:
     """Raises:
-        InvalidArgument, Io, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+        InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
 
 
-def _prompt_system(message: ai.PromptMessage) -> typing.List[SystemContentBlock]:
+def _prompt_system(message: ai.PromptMessage, default_cache_args: baml.json.json, *, _baml: _BamlOptions | None = None) -> typing.List[SystemContentBlock]:
     """(internal) System content is text-only; a media part in a system message is rejected
     rather than silently dropped (`build_request/bedrock.rs:174-176`).
 
     Raises:
         InvalidRequest"""
-async def _prompt_system_async(message: ai.PromptMessage) -> typing.List[SystemContentBlock]:
+async def _prompt_system_async(message: ai.PromptMessage, default_cache_args: baml.json.json, *, _baml: _BamlOptions | None = None) -> typing.List[SystemContentBlock]:
     """(internal) System content is text-only; a media part in a system message is rejected
     rather than silently dropped (`build_request/bedrock.rs:174-176`).
 
@@ -467,46 +487,62 @@ async def _prompt_system_async(message: ai.PromptMessage) -> typing.List[SystemC
         InvalidRequest"""
 
 
-def _wants_cache_point(metadata: typing.Dict[str, baml.json.json]) -> bool:
-    """(internal) The per-message metadata key that requests a Bedrock prompt-caching
-    checkpoint after the message's content.
+def _takes_cache_point(previous: typing.Optional[baml.json.json], lowered: int, delimiter: ai.CacheDelimiter, *, _baml: _BamlOptions | None = None) -> bool:
+    """(internal) Whether a `${cache(args)}` becomes a `cachePoint` block at this
+    position. `lowered` is how many blocks its message has produced so far and
+    `previous` is the `cachePoint` member of the last of them.
 
-    The engine emits `{"cachePoint":{"type":"default"}}` whenever a message
-    carries `cache_control` metadata
-    (`engine/.../aws_client.rs:123-155`). BAML's neutral spelling of that is a
-    `ai.PromptMessage.metadata` entry, and Bedrock's own name for the feature
-    is a cache *point*, so the key is `cache_point` — any non-null value
-    (`true` is the idiomatic one) turns the checkpoint on.
+      * Nothing lowered yet: there is no content before the delimiter to cache,
+        and a `cachePoint` that leads a message is a ValidationException.
+      * The last block is already a `cachePoint`: two in a row mark the same
+        prefix, and each one counts against the four a request may carry.
+      * Null `args`: there is no value to embed, and a null member is dropped
+        from the body, which would leave an empty block behind.
+        (`ai.wire.prompt_parts` has already given a `${cache()}` the client's
+        default, or removed it when there is none; this is the backstop.)"""
+async def _takes_cache_point_async(previous: typing.Optional[baml.json.json], lowered: int, delimiter: ai.CacheDelimiter, *, _baml: _BamlOptions | None = None) -> bool:
+    """(internal) Whether a `${cache(args)}` becomes a `cachePoint` block at this
+    position. `lowered` is how many blocks its message has produced so far and
+    `previous` is the `cachePoint` member of the last of them.
 
-    NOTE: `ai.internal.make_role` currently builds every role marker with empty
-    metadata, so nothing populates this yet from the prompt DSL. Until that
-    lands, use the client's `cache_system_prompt` / `cache_tools` options,
-    which do not depend on per-message metadata."""
-async def _wants_cache_point_async(metadata: typing.Dict[str, baml.json.json]) -> bool:
-    """(internal) The per-message metadata key that requests a Bedrock prompt-caching
-    checkpoint after the message's content.
-
-    The engine emits `{"cachePoint":{"type":"default"}}` whenever a message
-    carries `cache_control` metadata
-    (`engine/.../aws_client.rs:123-155`). BAML's neutral spelling of that is a
-    `ai.PromptMessage.metadata` entry, and Bedrock's own name for the feature
-    is a cache *point*, so the key is `cache_point` — any non-null value
-    (`true` is the idiomatic one) turns the checkpoint on.
-
-    NOTE: `ai.internal.make_role` currently builds every role marker with empty
-    metadata, so nothing populates this yet from the prompt DSL. Until that
-    lands, use the client's `cache_system_prompt` / `cache_tools` options,
-    which do not depend on per-message metadata."""
+      * Nothing lowered yet: there is no content before the delimiter to cache,
+        and a `cachePoint` that leads a message is a ValidationException.
+      * The last block is already a `cachePoint`: two in a row mark the same
+        prefix, and each one counts against the four a request may carry.
+      * Null `args`: there is no value to embed, and a null member is dropped
+        from the body, which would leave an empty block behind.
+        (`ai.wire.prompt_parts` has already given a `${cache()}` the client's
+        default, or removed it when there is none; this is the backstop.)"""
 
 
-def _conversation_role(role: str) -> str:
+def _prompt_content(message: ai.PromptMessage, default_cache_args: baml.json.json, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> typing.List[ContentBlock]:
+    """(internal) One non-system prompt message as Converse content blocks. Text
+    and media lower exactly as they do for a journal turn; a `${cache(args)}`
+    becomes a `cachePoint` block at the position it was written, with `args`
+    embedded as written, and the text on either side of it is trimmed where it
+    faces the checkpoint (`ai.wire.prompt_parts`).
+
+    Raises:
+        InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+async def _prompt_content_async(message: ai.PromptMessage, default_cache_args: baml.json.json, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> typing.List[ContentBlock]:
+    """(internal) One non-system prompt message as Converse content blocks. Text
+    and media lower exactly as they do for a journal turn; a `${cache(args)}`
+    becomes a `cachePoint` block at the position it was written, with `args`
+    embedded as written, and the text on either side of it is trimmed where it
+    faces the checkpoint (`ai.wire.prompt_parts`).
+
+    Raises:
+        InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+
+
+def _conversation_role(role: str, *, _baml: _BamlOptions | None = None) -> str:
     """(internal) The Converse conversation roles are `user` and `assistant` only. `system`
     is hoisted out above; every other authored role (including the role-less
     default and `tool`) becomes `user`, matching the native Anthropic client and
     PLAN §5's role-less default. sys_llm hard-errored on unknown roles instead
     (`build_request/bedrock.rs:143-151`); collapsing keeps the four native
     clients consistent with one another."""
-async def _conversation_role_async(role: str) -> str:
+async def _conversation_role_async(role: str, *, _baml: _BamlOptions | None = None) -> str:
     """(internal) The Converse conversation roles are `user` and `assistant` only. `system`
     is hoisted out above; every other authored role (including the role-less
     default and `tool`) becomes `user`, matching the native Anthropic client and
@@ -515,7 +551,7 @@ async def _conversation_role_async(role: str) -> str:
     clients consistent with one another."""
 
 
-def _lower_prompt(prompt: ai.Prompt, *, preview: typing.Union[bool, UNSET] = False) -> BedrockPrompt:
+def _lower_prompt(prompt: ai.Prompt, default_cache_args: baml.json.json, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> BedrockPrompt:
     """(internal) MULTI-SYSTEM: every `system` message merges into the one top-level `system`
     array, deliberately diverging from PLAN §5's "others: demote 2nd+ to user"
     row. That row exists for providers whose wire format has room for exactly
@@ -526,8 +562,8 @@ def _lower_prompt(prompt: ai.Prompt, *, preview: typing.Union[bool, UNSET] = Fal
     reason.
 
     Raises:
-        InvalidArgument, Io, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
-async def _lower_prompt_async(prompt: ai.Prompt, *, preview: typing.Union[bool, UNSET] = False) -> BedrockPrompt:
+        InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+async def _lower_prompt_async(prompt: ai.Prompt, default_cache_args: baml.json.json, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> BedrockPrompt:
     """(internal) MULTI-SYSTEM: every `system` message merges into the one top-level `system`
     array, deliberately diverging from PLAN §5's "others: demote 2nd+ to user"
     row. That row exists for providers whose wire format has room for exactly
@@ -538,7 +574,7 @@ async def _lower_prompt_async(prompt: ai.Prompt, *, preview: typing.Union[bool, 
     reason.
 
     Raises:
-        InvalidArgument, Io, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+        InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
 
 
 class PendingMessage(pydantic.BaseModel):
@@ -546,7 +582,7 @@ class PendingMessage(pydantic.BaseModel):
     tool_results: bool
 
 
-def _supports_tool_result_status(model: str) -> bool:
+def _supports_tool_result_status(model: str, *, _baml: _BamlOptions | None = None) -> bool:
     """(internal) `ToolResultBlock.status` "is only supported by Amazon Nova and Anthropic
     Claude 3 and 4 models" (API_runtime_ToolResultBlock). Sending it to any
     other family ships a member that model does not accept, so it is gated on a
@@ -557,7 +593,7 @@ def _supports_tool_result_status(model: str) -> bool:
     custom-model ARN, a provisioned-throughput ARN, Mistral/Llama/DeepSeek)
     omits the field; the result's text still carries the error message, so only
     the flag is lost."""
-async def _supports_tool_result_status_async(model: str) -> bool:
+async def _supports_tool_result_status_async(model: str, *, _baml: _BamlOptions | None = None) -> bool:
     """(internal) `ToolResultBlock.status` "is only supported by Amazon Nova and Anthropic
     Claude 3 and 4 models" (API_runtime_ToolResultBlock). Sending it to any
     other family ships a member that model does not accept, so it is gated on a
@@ -570,63 +606,85 @@ async def _supports_tool_result_status_async(model: str) -> bool:
     the flag is lost."""
 
 
-def _push_tool_result(pending: typing.List[PendingMessage], id: str, content: typing.List[ContentBlock], is_error: bool, with_status: bool) -> None:
+def _supports_cache_point(model: str, *, _baml: _BamlOptions | None = None) -> bool:
+    """(internal) Whether a `${cache()}` sends a `cachePoint` to this model. Converse
+    accepts a checkpoint for Anthropic Claude and Amazon Nova, and answers 403
+    ("You invoked an unsupported model or your request did not allow prompt
+    caching") for the other families it serves — Llama, Mistral, DeepSeek and
+    gpt-oss were checked. So the default is given only to what is known to
+    take one, by the same substring test as `_supports_tool_result_status`. An
+    unrecognized id (an application inference profile ARN, a custom model)
+    gets none; its author writes `${cache({ "type": "default" })}`, which is
+    always sent."""
+async def _supports_cache_point_async(model: str, *, _baml: _BamlOptions | None = None) -> bool:
+    """(internal) Whether a `${cache()}` sends a `cachePoint` to this model. Converse
+    accepts a checkpoint for Anthropic Claude and Amazon Nova, and answers 403
+    ("You invoked an unsupported model or your request did not allow prompt
+    caching") for the other families it serves — Llama, Mistral, DeepSeek and
+    gpt-oss were checked. So the default is given only to what is known to
+    take one, by the same substring test as `_supports_tool_result_status`. An
+    unrecognized id (an application inference profile ARN, a custom model)
+    gets none; its author writes `${cache({ "type": "default" })}`, which is
+    always sent."""
+
+
+def _push_tool_result(pending: typing.List[PendingMessage], id: str, content: typing.List[ContentBlock], is_error: bool, with_status: bool, *, _baml: _BamlOptions | None = None) -> None:
     """(internal) Append one toolResult block, extending the trailing group when it is open."""
-async def _push_tool_result_async(pending: typing.List[PendingMessage], id: str, content: typing.List[ContentBlock], is_error: bool, with_status: bool) -> None:
+async def _push_tool_result_async(pending: typing.List[PendingMessage], id: str, content: typing.List[ContentBlock], is_error: bool, with_status: bool, *, _baml: _BamlOptions | None = None) -> None:
     """(internal) Append one toolResult block, extending the trailing group when it is open."""
 
 
-def _lower_journal(journal: ai.Journal, with_status: bool, *, preview: typing.Union[bool, UNSET] = False) -> typing.List[Message]:
+def _lower_journal(journal: ai.Journal, with_status: bool, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> typing.List[Message]:
     """(internal) `ai.RunStarted` / `ai.ToolRequested` / `ai.Usage` / `ai.FinalProduced` are
     journal-only and skip; skipping never closes an open tool-result group.
 
     Raises:
-        InvalidArgument, Io, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
-async def _lower_journal_async(journal: ai.Journal, with_status: bool, *, preview: typing.Union[bool, UNSET] = False) -> typing.List[Message]:
+        InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+async def _lower_journal_async(journal: ai.Journal, with_status: bool, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> typing.List[Message]:
     """(internal) `ai.RunStarted` / `ai.ToolRequested` / `ai.Usage` / `ai.FinalProduced` are
     journal-only and skip; skipping never closes an open tool-result group.
 
     Raises:
-        InvalidArgument, Io, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+        InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
 
 
-def _tool_choice(choice: str) -> ToolChoice:
+def _tool_choice(choice: str, *, _baml: _BamlOptions | None = None) -> ToolChoice:
     """(internal) `tool_choice` option -> the Converse union. "auto" and "any" are the two
     documented modes; anything else names a specific tool."""
-async def _tool_choice_async(choice: str) -> ToolChoice:
+async def _tool_choice_async(choice: str, *, _baml: _BamlOptions | None = None) -> ToolChoice:
     """(internal) `tool_choice` option -> the Converse union. "auto" and "any" are the two
     documented modes; anything else names a specific tool."""
 
 
-def _tool_config(toolbox: ai.tools.Toolbox, tool_choice: typing.Optional[str], cache_tools: bool) -> typing.Optional[ToolConfig]:
+def _tool_config(toolbox: ai.tools.Toolbox, tool_choice: typing.Optional[str], cache_tools: bool, *, _baml: _BamlOptions | None = None) -> typing.Optional[ToolConfig]:
     """Raises:
         SerializationError"""
-async def _tool_config_async(toolbox: ai.tools.Toolbox, tool_choice: typing.Optional[str], cache_tools: bool) -> typing.Optional[ToolConfig]:
+async def _tool_config_async(toolbox: ai.tools.Toolbox, tool_choice: typing.Optional[str], cache_tools: bool, *, _baml: _BamlOptions | None = None) -> typing.Optional[ToolConfig]:
     """Raises:
         SerializationError"""
 
 
-def _inference_config(client: vendor.aws.BedrockClient) -> typing.Optional[InferenceConfig]:
+def _inference_config(client: vendor.aws.BedrockClient, *, _baml: _BamlOptions | None = None) -> typing.Optional[InferenceConfig]:
     """Raises:
         InvalidRequest"""
-async def _inference_config_async(client: vendor.aws.BedrockClient) -> typing.Optional[InferenceConfig]:
+async def _inference_config_async(client: vendor.aws.BedrockClient, *, _baml: _BamlOptions | None = None) -> typing.Optional[InferenceConfig]:
     """Raises:
         InvalidRequest"""
 
 
-def _system_as_user(system: typing.List[SystemContentBlock]) -> Message:
+def _system_as_user(system: typing.List[SystemContentBlock], *, _baml: _BamlOptions | None = None) -> Message:
     """(internal) A system-only or assistant-first prompt has no leading user message, which
     Converse rejects ("A conversation must start with a user message"). Fold the
     system blocks into a leading user message in that case — the same fallback
     the Anthropic client uses (`anthropic/ns_internal/messages.baml:270-289`)."""
-async def _system_as_user_async(system: typing.List[SystemContentBlock]) -> Message:
+async def _system_as_user_async(system: typing.List[SystemContentBlock], *, _baml: _BamlOptions | None = None) -> Message:
     """(internal) A system-only or assistant-first prompt has no leading user message, which
     Converse rejects ("A conversation must start with a user message"). Fold the
     system blocks into a leading user message in that case — the same fallback
     the Anthropic client uses (`anthropic/ns_internal/messages.baml:270-289`)."""
 
 
-def _merge_adjacent_roles(messages: typing.List[Message]) -> typing.List[Message]:
+def _merge_adjacent_roles(messages: typing.List[Message], *, _baml: _BamlOptions | None = None) -> typing.List[Message]:
     """(internal) Converse requires strict user/assistant alternation, and several paths here
     can put two same-role messages side by side: a dropped assistant turn (a
     reasoning-only reply lowers to no content) leaves the user turns that
@@ -639,7 +697,7 @@ def _merge_adjacent_roles(messages: typing.List[Message]) -> typing.List[Message
     preserved and messages are joined in order, so a `cachePoint` still sits
     after exactly the blocks it was marking. `_push_tool_result`'s grouping
     becomes a special case of this."""
-async def _merge_adjacent_roles_async(messages: typing.List[Message]) -> typing.List[Message]:
+async def _merge_adjacent_roles_async(messages: typing.List[Message], *, _baml: _BamlOptions | None = None) -> typing.List[Message]:
     """(internal) Converse requires strict user/assistant alternation, and several paths here
     can put two same-role messages side by side: a dropped assistant turn (a
     reasoning-only reply lowers to no content) leaves the user turns that
@@ -654,26 +712,26 @@ async def _merge_adjacent_roles_async(messages: typing.List[Message]) -> typing.
     becomes a special case of this."""
 
 
-def converse_request(client: vendor.aws.BedrockClient, input: ai.ModelTurnInput, *, preview: typing.Union[bool, UNSET] = False) -> ConverseRequest:
+def converse_request(client: vendor.aws.BedrockClient, input: ai.ModelTurnInput, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> ConverseRequest:
     """The typed Converse body for one model turn, before serialization.
 
     Raises:
-        InvalidArgument, Io, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
-async def converse_request_async(client: vendor.aws.BedrockClient, input: ai.ModelTurnInput, *, preview: typing.Union[bool, UNSET] = False) -> ConverseRequest:
+        InvalidArgument, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
+async def converse_request_async(client: vendor.aws.BedrockClient, input: ai.ModelTurnInput, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> ConverseRequest:
     """The typed Converse body for one model turn, before serialization.
 
     Raises:
-        InvalidArgument, Io, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
+        InvalidArgument, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
 
 
-def converse_url(client: vendor.aws.BedrockClient, *, preview: typing.Union[bool, UNSET] = False) -> str:
+def converse_url(client: vendor.aws.BedrockClient, *, preview: typing.Union[bool, UNSET] = False, stream: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> str:
     """The Converse endpoint for this client: the `endpoint_url` override when set
     (which bypasses region resolution entirely), else
     `https://bedrock-runtime.<region>.amazonaws.com`.
 
     Raises:
         InvalidArgument, Io, ParseError, InvalidRequest"""
-async def converse_url_async(client: vendor.aws.BedrockClient, *, preview: typing.Union[bool, UNSET] = False) -> str:
+async def converse_url_async(client: vendor.aws.BedrockClient, *, preview: typing.Union[bool, UNSET] = False, stream: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> str:
     """The Converse endpoint for this client: the `endpoint_url` override when set
     (which bypasses region resolution entirely), else
     `https://bedrock-runtime.<region>.amazonaws.com`.
@@ -682,23 +740,23 @@ async def converse_url_async(client: vendor.aws.BedrockClient, *, preview: typin
         InvalidArgument, Io, ParseError, InvalidRequest"""
 
 
-def _merge_headers(base: typing.Dict[str, str], extra: typing.Optional[typing.Dict[str, str]]) -> typing.Dict[str, str]:
+def _merge_headers(base: typing.Dict[str, str], extra: typing.Optional[typing.Dict[str, str]], *, _baml: _BamlOptions | None = None) -> typing.Dict[str, str]:
     """(internal) `base` with `extra` applied over it, header names lowercased so a user
     override replaces the client's own header instead of duplicating it (SigV4
     canonicalizes on the lowercased name)."""
-async def _merge_headers_async(base: typing.Dict[str, str], extra: typing.Optional[typing.Dict[str, str]]) -> typing.Dict[str, str]:
+async def _merge_headers_async(base: typing.Dict[str, str], extra: typing.Optional[typing.Dict[str, str]], *, _baml: _BamlOptions | None = None) -> typing.Dict[str, str]:
     """(internal) `base` with `extra` applied over it, header names lowercased so a user
     override replaces the client's own header instead of duplicating it (SigV4
     canonicalizes on the lowercased name)."""
 
 
-def _apply_query(url: str, params: typing.Optional[typing.Dict[str, str]]) -> str:
+def _apply_query(url: str, params: typing.Optional[typing.Dict[str, str]], *, _baml: _BamlOptions | None = None) -> str:
     """(internal) Query parameters are percent-encoded with the same unreserved set SigV4's
     canonical query uses, so signing them round-trips.
 
     Raises:
         InvalidArgument"""
-async def _apply_query_async(url: str, params: typing.Optional[typing.Dict[str, str]]) -> str:
+async def _apply_query_async(url: str, params: typing.Optional[typing.Dict[str, str]], *, _baml: _BamlOptions | None = None) -> str:
     """(internal) Query parameters are percent-encoded with the same unreserved set SigV4's
     canonical query uses, so signing them round-trips.
 
@@ -706,31 +764,37 @@ async def _apply_query_async(url: str, params: typing.Optional[typing.Dict[str, 
         InvalidArgument"""
 
 
-def build_request(client: vendor.aws.BedrockClient, input: ai.ModelTurnInput, *, preview: typing.Union[bool, UNSET] = False) -> baml.http.Request:
+def build_request(client: vendor.aws.BedrockClient, input: ai.ModelTurnInput, *, preview: typing.Union[bool, UNSET] = False, stream: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> baml.http.Request:
     """The complete, UNSIGNED Converse request: typed body -> JSON -> null-pruned
     -> `request_body` passthrough merged in, plus the user's headers and query
     parameters. Signing must come after this and nothing may touch the request
     afterwards, so this is the seam request-shape tests assert on.
 
+    `stream` targets ConverseStream: same body, the `/converse-stream` path,
+    and an event-stream `accept`.
+
     Raises:
         InvalidArgument, Io, ParseError, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
-async def build_request_async(client: vendor.aws.BedrockClient, input: ai.ModelTurnInput, *, preview: typing.Union[bool, UNSET] = False) -> baml.http.Request:
+async def build_request_async(client: vendor.aws.BedrockClient, input: ai.ModelTurnInput, *, preview: typing.Union[bool, UNSET] = False, stream: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> baml.http.Request:
     """The complete, UNSIGNED Converse request: typed body -> JSON -> null-pruned
     -> `request_body` passthrough merged in, plus the user's headers and query
     parameters. Signing must come after this and nothing may touch the request
     afterwards, so this is the seam request-shape tests assert on.
 
+    `stream` targets ConverseStream: same body, the `/converse-stream` path,
+    and an event-stream `accept`.
+
     Raises:
         InvalidArgument, Io, ParseError, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
 
 
-def sign(client: vendor.aws.BedrockClient, request: baml.http.Request) -> baml.http.Request:
+def sign(client: vendor.aws.BedrockClient, request: baml.http.Request, *, _baml: _BamlOptions | None = None) -> baml.http.Request:
     """SigV4-sign the request. This is the LAST mutation: the signature covers the
     method, URL, headers and body exactly as built above.
 
     Raises:
         InvalidRequest"""
-async def sign_async(client: vendor.aws.BedrockClient, request: baml.http.Request) -> baml.http.Request:
+async def sign_async(client: vendor.aws.BedrockClient, request: baml.http.Request, *, _baml: _BamlOptions | None = None) -> baml.http.Request:
     """SigV4-sign the request. This is the LAST mutation: the signature covers the
     method, URL, headers and body exactly as built above.
 
@@ -789,45 +853,35 @@ class ConverseResponse(pydantic.BaseModel):
     additionalModelResponseFields: typing.Optional[baml.json.json] = None
 
 
-def _is_malformed_stop(raw: str) -> bool:
+def _is_malformed_stop(raw: str, *, _baml: _BamlOptions | None = None) -> bool:
     """(internal) True for the two `stopReason` values that say the turn's own content is
     unusable: `malformed_model_output` (the model emitted something the service
     could not assemble into a message) and `malformed_tool_use` (it emitted a
     tool call the service could not assemble into a `toolUse` block).
 
-    Neither is a stop *reason* in the `ai.content.StopReason` sense — there is
-    no answer to stop on — so `parse_response` throws `ai.errors.ParseFailed`
-    with the whole response as `raw_output` instead of returning a turn. That
-    is the honest identity (it IS a failure to produce parseable output), it is
-    `RetrySafety.Safe` so a Retry policy re-asks, and it keeps the raw bytes
-    for the caller. `MaxTokens` would falsely blame the token limit and
-    `Refused` would falsely claim the model declined."""
-async def _is_malformed_stop_async(raw: str) -> bool:
+    Neither is a successful stop reason: the provider explicitly reported
+    unusable generation. The response is delivered as ai.errors.ProviderError."""
+async def _is_malformed_stop_async(raw: str, *, _baml: _BamlOptions | None = None) -> bool:
     """(internal) True for the two `stopReason` values that say the turn's own content is
     unusable: `malformed_model_output` (the model emitted something the service
     could not assemble into a message) and `malformed_tool_use` (it emitted a
     tool call the service could not assemble into a `toolUse` block).
 
-    Neither is a stop *reason* in the `ai.content.StopReason` sense — there is
-    no answer to stop on — so `parse_response` throws `ai.errors.ParseFailed`
-    with the whole response as `raw_output` instead of returning a turn. That
-    is the honest identity (it IS a failure to produce parseable output), it is
-    `RetrySafety.Safe` so a Retry policy re-asks, and it keeps the raw bytes
-    for the caller. `MaxTokens` would falsely blame the token limit and
-    `Refused` would falsely claim the model declined."""
+    Neither is a successful stop reason: the provider explicitly reported
+    unusable generation. The response is delivered as ai.errors.ProviderError."""
 
 
-def stop_reason(raw: str) -> ai.content.StopReason:
+def stop_reason(raw: str, *, _baml: _BamlOptions | None = None) -> ai.content.StopReason:
     """One wire `stopReason` -> the canonical stop reason
     (`parse_response/bedrock.rs:110-116`, extended with the guardrail and
     failure reasons the Converse API documents)."""
-async def stop_reason_async(raw: str) -> ai.content.StopReason:
+async def stop_reason_async(raw: str, *, _baml: _BamlOptions | None = None) -> ai.content.StopReason:
     """One wire `stopReason` -> the canonical stop reason
     (`parse_response/bedrock.rs:110-116`, extended with the guardrail and
     failure reasons the Converse API documents)."""
 
 
-def parse_response(response: ConverseResponse) -> ai.ModelTurn:
+def parse_response(response: ConverseResponse, *, _baml: _BamlOptions | None = None) -> ai.ModelTurn:
     """Decode one Converse response into canonical content blocks.
 
     Unlike sys_llm (`parse_response/bedrock.rs:74-104`) this does NOT error on
@@ -837,8 +891,8 @@ def parse_response(response: ConverseResponse) -> ai.ModelTurn:
     that response is malformed, not empty.
 
     Raises:
-        SerializationError, ParseFailed"""
-async def parse_response_async(response: ConverseResponse) -> ai.ModelTurn:
+        SerializationError, InvalidResponse, ProviderError"""
+async def parse_response_async(response: ConverseResponse, *, _baml: _BamlOptions | None = None) -> ai.ModelTurn:
     """Decode one Converse response into canonical content blocks.
 
     Unlike sys_llm (`parse_response/bedrock.rs:74-104`) this does NOT error on
@@ -848,15 +902,208 @@ async def parse_response_async(response: ConverseResponse) -> ai.ModelTurn:
     that response is malformed, not empty.
 
     Raises:
-        SerializationError, ParseFailed"""
+        SerializationError, InvalidResponse, ProviderError"""
 
 
-def invoke(client: vendor.aws.BedrockClient, input: ai.ModelTurnInput) -> ai.ModelTurn:
+def converse_usage(usage: typing.Optional[ConverseUsage], *, _baml: _BamlOptions | None = None) -> typing.Optional[ai.events.Usage]:
+    """A response's or stream metadata event's usage, null when it reported none."""
+async def converse_usage_async(usage: typing.Optional[ConverseUsage], *, _baml: _BamlOptions | None = None) -> typing.Optional[ai.events.Usage]:
+    """A response's or stream metadata event's usage, null when it reported none."""
+
+
+def invoke(client: vendor.aws.BedrockClient, input: ai.ModelTurnInput, *, _baml: _BamlOptions | None = None) -> ai.ModelTurn:
     """Raises:
         InvalidArgument, Io, ParseError, Timeout, SerializationError"""
-async def invoke_async(client: vendor.aws.BedrockClient, input: ai.ModelTurnInput) -> ai.ModelTurn:
+async def invoke_async(client: vendor.aws.BedrockClient, input: ai.ModelTurnInput, *, _baml: _BamlOptions | None = None) -> ai.ModelTurn:
     """Raises:
         InvalidArgument, Io, ParseError, Timeout, SerializationError"""
+
+
+class MessageStartEvent(pydantic.BaseModel):
+    role: typing.Optional[str] = None
+
+
+class ToolUseBlockStart(pydantic.BaseModel):
+    toolUseId: typing.Optional[str] = None
+    name: typing.Optional[str] = None
+
+
+class ContentBlockStart(pydantic.BaseModel):
+    toolUse: typing.Optional[ToolUseBlockStart] = None
+
+
+class ContentBlockStartEvent(pydantic.BaseModel):
+    start: typing.Optional[ContentBlockStart] = None
+    contentBlockIndex: typing.Optional[int] = None
+
+
+class ToolUseBlockDelta(pydantic.BaseModel):
+    input: typing.Optional[str] = None
+
+
+class ReasoningContentBlockDelta(pydantic.BaseModel):
+    text: typing.Optional[str] = None
+    redactedContent: typing.Optional[str] = None
+    signature: typing.Optional[str] = None
+
+
+class CitationSourceContentDelta(pydantic.BaseModel):
+    text: typing.Optional[str] = None
+
+
+class DocumentCharLocation(pydantic.BaseModel):
+    documentIndex: typing.Optional[int] = None
+    start: typing.Optional[int] = None
+    end: typing.Optional[int] = None
+
+
+class DocumentPageLocation(pydantic.BaseModel):
+    documentIndex: typing.Optional[int] = None
+    start: typing.Optional[int] = None
+    end: typing.Optional[int] = None
+
+
+class DocumentChunkLocation(pydantic.BaseModel):
+    documentIndex: typing.Optional[int] = None
+    start: typing.Optional[int] = None
+    end: typing.Optional[int] = None
+
+
+class CitationLocation(pydantic.BaseModel):
+    documentChar: typing.Optional[DocumentCharLocation] = None
+    documentPage: typing.Optional[DocumentPageLocation] = None
+    documentChunk: typing.Optional[DocumentChunkLocation] = None
+
+
+class CitationsDelta(pydantic.BaseModel):
+    title: typing.Optional[str] = None
+    sourceContent: typing.Optional[typing.List[CitationSourceContentDelta]] = None
+    location: typing.Optional[CitationLocation] = None
+
+
+class ContentBlockDelta(pydantic.BaseModel):
+    text: typing.Optional[str] = None
+    toolUse: typing.Optional[ToolUseBlockDelta] = None
+    reasoningContent: typing.Optional[ReasoningContentBlockDelta] = None
+    citation: typing.Optional[CitationsDelta] = None
+
+
+class ContentBlockDeltaEvent(pydantic.BaseModel):
+    delta: typing.Optional[ContentBlockDelta] = None
+    contentBlockIndex: typing.Optional[int] = None
+
+
+class ContentBlockStopEvent(pydantic.BaseModel):
+    contentBlockIndex: typing.Optional[int] = None
+
+
+class MessageStopEvent(pydantic.BaseModel):
+    stopReason: typing.Optional[str] = None
+    additionalModelResponseFields: typing.Optional[baml.json.json] = None
+
+
+class ConverseStreamMetrics(pydantic.BaseModel):
+    latencyMs: typing.Optional[int] = None
+
+
+class PerformanceConfiguration(pydantic.BaseModel):
+    latency: typing.Optional[str] = None
+
+
+class ConverseStreamMetadataEvent(pydantic.BaseModel):
+    usage: typing.Optional[ConverseUsage] = None
+    metrics: typing.Optional[ConverseStreamMetrics] = None
+    trace: typing.Optional[baml.json.json] = None
+    performanceConfig: typing.Optional[PerformanceConfiguration] = None
+
+
+def decode_stream_event(event_type: str, data: str, *, _baml: _BamlOptions | None = None) -> typing.Optional[ConverseStreamEvent]:
+    """Decode one event payload by its `:event-type`; `null` for an event type
+    this model does not know.
+
+    Raises:
+        DecodeError, ParseError"""
+async def decode_stream_event_async(event_type: str, data: str, *, _baml: _BamlOptions | None = None) -> typing.Optional[ConverseStreamEvent]:
+    """Decode one event payload by its `:event-type`; `null` for an event type
+    this model does not know.
+
+    Raises:
+        DecodeError, ParseError"""
+
+
+class InternalServerException(pydantic.BaseModel):
+    message: typing.Optional[str] = None
+
+
+class ModelStreamErrorException(pydantic.BaseModel):
+    message: typing.Optional[str] = None
+    originalStatusCode: typing.Optional[int] = None
+    originalMessage: typing.Optional[str] = None
+
+
+class ValidationException(pydantic.BaseModel):
+    message: typing.Optional[str] = None
+
+
+class ThrottlingException(pydantic.BaseModel):
+    message: typing.Optional[str] = None
+
+
+class ServiceUnavailableException(pydantic.BaseModel):
+    message: typing.Optional[str] = None
+
+
+def _stream_provider_error(kind: str, data: str, *, _baml: _BamlOptions | None = None) -> typing.Any: ...
+async def _stream_provider_error_async(kind: str, data: str, *, _baml: _BamlOptions | None = None) -> typing.Any: ...
+
+
+def decode_stream_batch(batch: str, *, _baml: _BamlOptions | None = None) -> typing.List[ai.stream.Event]:
+    """One `SseStream.next()` batch -> the stream events it contains. Tool-use and
+    reasoning deltas are skipped: streaming runs no tool loop, and the
+    non-streaming path does not surface reasoning as text either.
+
+    Raises:
+        DecodeError, ParseError"""
+async def decode_stream_batch_async(batch: str, *, _baml: _BamlOptions | None = None) -> typing.List[ai.stream.Event]:
+    """One `SseStream.next()` batch -> the stream events it contains. Tool-use and
+    reasoning deltas are skipped: streaming runs no tool loop, and the
+    non-streaming path does not surface reasoning as text either.
+
+    Raises:
+        DecodeError, ParseError"""
+
+
+def _stream_open_failure(error: typing.Union[baml.errors.Io, baml.errors.Timeout], *, _baml: _BamlOptions | None = None) -> None:
+    """(internal) `send_sse` fails a non-2xx status itself ("SSE request failed
+    with status 403: …"). Route the status through the classifier the
+    non-streaming path uses, so a 4xx is never a retry-safe NetworkFailure.
+
+    Raises:
+        Timeout"""
+async def _stream_open_failure_async(error: typing.Union[baml.errors.Io, baml.errors.Timeout], *, _baml: _BamlOptions | None = None) -> None:
+    """(internal) `send_sse` fails a non-2xx status itself ("SSE request failed
+    with status 403: …"). Route the status through the classifier the
+    non-streaming path uses, so a 4xx is never a retry-safe NetworkFailure.
+
+    Raises:
+        Timeout"""
+
+
+def invoke_stream(client: vendor.aws.BedrockClient, input: ai.ModelTurnInput, *, _baml: _BamlOptions | None = None) -> ai.stream.TurnStream:
+    """The streaming entry point: the signed ConverseStream request, wrapped in a
+    TurnStream over the decoded event stream.
+
+    Raises:
+        InvalidArgument, Io, ParseError, Timeout, SerializationError"""
+async def invoke_stream_async(client: vendor.aws.BedrockClient, input: ai.ModelTurnInput, *, _baml: _BamlOptions | None = None) -> ai.stream.TurnStream:
+    """The streaming entry point: the signed ConverseStream request, wrapped in a
+    TurnStream over the decoded event stream.
+
+    Raises:
+        InvalidArgument, Io, ParseError, Timeout, SerializationError"""
+
+
+ConverseStreamEvent: typing.TypeAlias = typing.Union[MessageStartEvent, ContentBlockStartEvent, ContentBlockDeltaEvent, ContentBlockStopEvent, MessageStopEvent, ConverseStreamMetadataEvent]
 
 
 __all__ = [
@@ -912,6 +1159,39 @@ __all__ = [
     "stop_reason_async",
     "parse_response",
     "parse_response_async",
+    "converse_usage",
+    "converse_usage_async",
     "invoke",
     "invoke_async",
+    "MessageStartEvent",
+    "ToolUseBlockStart",
+    "ContentBlockStart",
+    "ContentBlockStartEvent",
+    "ToolUseBlockDelta",
+    "ReasoningContentBlockDelta",
+    "CitationSourceContentDelta",
+    "DocumentCharLocation",
+    "DocumentPageLocation",
+    "DocumentChunkLocation",
+    "CitationLocation",
+    "CitationsDelta",
+    "ContentBlockDelta",
+    "ContentBlockDeltaEvent",
+    "ContentBlockStopEvent",
+    "MessageStopEvent",
+    "ConverseStreamMetrics",
+    "PerformanceConfiguration",
+    "ConverseStreamMetadataEvent",
+    "decode_stream_event",
+    "decode_stream_event_async",
+    "InternalServerException",
+    "ModelStreamErrorException",
+    "ValidationException",
+    "ThrottlingException",
+    "ServiceUnavailableException",
+    "decode_stream_batch",
+    "decode_stream_batch_async",
+    "invoke_stream",
+    "invoke_stream_async",
+    "ConverseStreamEvent",
 ]

@@ -32,6 +32,8 @@ if typing.TYPE_CHECKING:
     from ... import reflect
     from ...baml import UNSET as UNSET
 
+from ..._invocation_types import BamlOptions as _BamlOptions
+
 
 class RetrySafety(str, enum.Enum):
     Safe = "Safe"
@@ -39,7 +41,7 @@ class RetrySafety(str, enum.Enum):
     Unsafe = "Unsafe"
 
 
-def normalize(error: RaisedInClient) -> InvokeError:
+def normalize(error: RaisedInClient, *, _baml: _BamlOptions | None = None) -> InvokeError:
     """The classifying gate at every client boundary. Nothing is wrapped in
     UnknownError here: each raw infrastructure type maps to a typed Failure,
     and UnknownError only passes through when a host boundary already
@@ -48,10 +50,10 @@ def normalize(error: RaisedInClient) -> InvokeError:
       Unsupported -> InvalidRequest
         (request construction or client configuration bug; not retryable)
       Io -> NetworkFailure (transport-adjacent; safely retryable)
-      baml.json.ParseError / baml.json.DecodeError -> NetworkFailure
-        (malformed provider wire payload; safely retryable)
+      baml.json.ParseError / baml.json.DecodeError -> InvalidResponse
+        (malformed provider wire payload)
       Timeout / CompilationError / Failure / UnknownError -> as-is"""
-async def normalize_async(error: RaisedInClient) -> InvokeError:
+async def normalize_async(error: RaisedInClient, *, _baml: _BamlOptions | None = None) -> InvokeError:
     """The classifying gate at every client boundary. Nothing is wrapped in
     UnknownError here: each raw infrastructure type maps to a typed Failure,
     and UnknownError only passes through when a host boundary already
@@ -60,14 +62,14 @@ async def normalize_async(error: RaisedInClient) -> InvokeError:
       Unsupported -> InvalidRequest
         (request construction or client configuration bug; not retryable)
       Io -> NetworkFailure (transport-adjacent; safely retryable)
-      baml.json.ParseError / baml.json.DecodeError -> NetworkFailure
-        (malformed provider wire payload; safely retryable)
+      baml.json.ParseError / baml.json.DecodeError -> InvalidResponse
+        (malformed provider wire payload)
       Timeout / CompilationError / Failure / UnknownError -> as-is"""
 
 
-def normalize_invoke(error: RaisedInClient) -> InvokeError:
+def normalize_invoke(error: RaisedInClient, *, _baml: _BamlOptions | None = None) -> InvokeError:
     """Kept as a named boundary for the invoke-path call sites; identical gate."""
-async def normalize_invoke_async(error: RaisedInClient) -> InvokeError:
+async def normalize_invoke_async(error: RaisedInClient, *, _baml: _BamlOptions | None = None) -> InvokeError:
     """Kept as a named boundary for the invoke-path call sites; identical gate."""
 
 
@@ -111,6 +113,23 @@ class Refused(pydantic.BaseModel):
 class ParseFailed(pydantic.BaseModel):
     provider: str
     raw_output: str
+    message: typing.Optional[str] = None
+
+
+class InvalidResponse(pydantic.BaseModel):
+    provider: str
+    message: str
+    raw_body: typing.Optional[str] = None
+    status_code: typing.Optional[int] = None
+
+
+class ProviderError(pydantic.BaseModel):
+    provider: str
+    message: str
+    error_type: typing.Optional[str] = None
+    error_code: typing.Optional[str] = None
+    raw_body: typing.Optional[str] = None
+    status_code: typing.Optional[int] = None
 
 
 class FinishReasonError(pydantic.BaseModel):
@@ -131,10 +150,10 @@ class ToolFailedError(pydantic.BaseModel):
 
 
 class StreamingUnsupported(pydantic.BaseModel):
-    client_id: str
+    requested_model: str
 
 
-def classify_http(provider: str, status_code: int, body: str, *, headers: typing.Union[typing.Dict[str, str], None, UNSET] = None) -> typing.Any:
+def classify_http(provider: str, status_code: int, body: str, *, headers: typing.Union[typing.Dict[str, str], None, UNSET] = None, _baml: _BamlOptions | None = None) -> typing.Any:
     """HTTP status -> classified failure. The classifier attaches the body it
     received as raw_body, so a failure always carries what the provider said.
 
@@ -142,7 +161,7 @@ def classify_http(provider: str, status_code: int, body: str, *, headers: typing
     passes `resp.headers`); it is what fills RateLimited.retry_after_ms. It
     defaults to null so a caller that only has a status and a body still compiles
     — such a call just cannot report a retry delay."""
-async def classify_http_async(provider: str, status_code: int, body: str, *, headers: typing.Union[typing.Dict[str, str], None, UNSET] = None) -> typing.Any:
+async def classify_http_async(provider: str, status_code: int, body: str, *, headers: typing.Union[typing.Dict[str, str], None, UNSET] = None, _baml: _BamlOptions | None = None) -> typing.Any:
     """HTTP status -> classified failure. The classifier attaches the body it
     received as raw_body, so a failure always carries what the provider said.
 
@@ -155,7 +174,7 @@ async def classify_http_async(provider: str, status_code: int, body: str, *, hea
 InvokeError: typing.TypeAlias = typing.Union[typing.Any, baml.errors.Timeout, baml.errors.UnknownError, reflect.errors.CompilationError]
 
 
-RaisedInClient: typing.TypeAlias = typing.Union[InvokeError, baml.errors.InvalidArgument, baml.errors.Io, baml.errors.ParseError, baml.json.SerializationError, baml.json.ParseError, baml.json.DecodeError, baml.errors.AccessError, baml.errors.Unsupported]
+RaisedInClient: typing.TypeAlias = typing.Union[InvokeError, baml.errors.InvalidArgument, reflect.errors.InvalidArgument, baml.errors.Io, baml.errors.ParseError, baml.json.SerializationError, baml.json.ParseError, baml.json.DecodeError, baml.errors.AccessError, baml.errors.Unsupported]
 
 
 __all__ = [
@@ -171,6 +190,8 @@ __all__ = [
     "PreviewUnsupported",
     "Refused",
     "ParseFailed",
+    "InvalidResponse",
+    "ProviderError",
     "FinishReasonError",
     "StepBudgetExceeded",
     "ToolFailedError",

@@ -28,6 +28,8 @@ import pydantic
 if typing.TYPE_CHECKING:
     from ... import reflect
 
+from ..._invocation_types import BamlOptions as _BamlOptions
+
 
 class CompilationError(pydantic.BaseModel):
     message: str
@@ -39,7 +41,15 @@ class EvaluationError(pydantic.BaseModel):
     cause: typing.Any
 
 
+class NotFound(pydantic.BaseModel):
+    message: str
+
+
 class TypeMismatch(pydantic.BaseModel):
+    message: str
+
+
+class InvalidArgument(pydantic.BaseModel):
     message: str
 
 
@@ -50,6 +60,8 @@ class SessionBusy(pydantic.BaseModel):
 __all__ = [
     "CompilationError",
     "EvaluationError",
+    "NotFound",
     "TypeMismatch",
+    "InvalidArgument",
     "SessionBusy",
 ]

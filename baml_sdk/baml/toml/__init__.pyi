@@ -28,6 +28,8 @@ import pydantic
 if typing.TYPE_CHECKING:
     from ... import baml
 
+from ..._invocation_types import BamlOptions as _BamlOptions
+
 
 Item = typing_extensions.TypeAliasType("Item", typing.Union["Table", typing.List["Item"], bool, int, float, str, "baml.time.ZonedDateTime", "baml.time.PlainDateTime", "baml.time.PlainDate", "baml.time.PlainTime"])
 
@@ -35,16 +37,34 @@ Item = typing_extensions.TypeAliasType("Item", typing.Union["Table", typing.List
 class Table(pydantic.BaseModel):
     items: typing.Dict[str, Item]
     @staticmethod
-    def parse(s: str) -> Table:
-        """Raises:
+    def parse(s: str, *, _baml: _BamlOptions | None = None) -> Table:
+        """Parses the text of a TOML file into a table.
+
+        # Throws
+
+        - `baml.toml.ParseError` if `s` is not valid TOML; if an integer does
+          not fit BAML's 63-bit `int` (TOML integers are 64-bit, so the top and
+          bottom of the TOML range are unrepresentable); or if a datetime names
+          a calendar date that does not exist.
+
+        Raises:
             ParseError"""
     @staticmethod
-    async def parse_async(s: str) -> Table:
-        """Raises:
+    async def parse_async(s: str, *, _baml: _BamlOptions | None = None) -> Table:
+        """Parses the text of a TOML file into a table.
+
+        # Throws
+
+        - `baml.toml.ParseError` if `s` is not valid TOML; if an integer does
+          not fit BAML's 63-bit `int` (TOML integers are 64-bit, so the top and
+          bottom of the TOML range are unrepresentable); or if a datetime names
+          a calendar date that does not exist.
+
+        Raises:
             ParseError"""
 
 
-def table_from_json(j: baml.json.json) -> Table:
+def table_from_json(j: baml.json.json, *, _baml: _BamlOptions | None = None) -> Table:
     """Decodes a JSON object into a `Table`, skipping null values.
 
     A `null` object value is dropped key and all — the key does not appear in
@@ -63,7 +83,7 @@ def table_from_json(j: baml.json.json) -> Table:
 
     Raises:
         DecodeError"""
-async def table_from_json_async(j: baml.json.json) -> Table:
+async def table_from_json_async(j: baml.json.json, *, _baml: _BamlOptions | None = None) -> Table:
     """Decodes a JSON object into a `Table`, skipping null values.
 
     A `null` object value is dropped key and all — the key does not appear in
@@ -84,7 +104,7 @@ async def table_from_json_async(j: baml.json.json) -> Table:
         DecodeError"""
 
 
-def item_to_json(item: Item) -> baml.json.json:
+def item_to_json(item: Item, *, _baml: _BamlOptions | None = None) -> baml.json.json:
     """Converts a TOML item to a JSON value.
 
     Lossy: TOML datetimes become JSON strings — `ZonedDateTime` as RFC 3339,
@@ -99,7 +119,7 @@ def item_to_json(item: Item) -> baml.json.json:
 
     Raises:
         SerializationError"""
-async def item_to_json_async(item: Item) -> baml.json.json:
+async def item_to_json_async(item: Item, *, _baml: _BamlOptions | None = None) -> baml.json.json:
     """Converts a TOML item to a JSON value.
 
     Lossy: TOML datetimes become JSON strings — `ZonedDateTime` as RFC 3339,
@@ -116,7 +136,7 @@ async def item_to_json_async(item: Item) -> baml.json.json:
         SerializationError"""
 
 
-def item_from_json(json: baml.json.json) -> Item:
+def item_from_json(json: baml.json.json, *, _baml: _BamlOptions | None = None) -> Item:
     """Converts a JSON value to a TOML item.
 
     `Table.from_json` is usually the better entry point, since it skips nulls
@@ -132,7 +152,7 @@ def item_from_json(json: baml.json.json) -> Item:
 
     Raises:
         DecodeError"""
-async def item_from_json_async(json: baml.json.json) -> Item:
+async def item_from_json_async(json: baml.json.json, *, _baml: _BamlOptions | None = None) -> Item:
     """Converts a JSON value to a TOML item.
 
     `Table.from_json` is usually the better entry point, since it skips nulls

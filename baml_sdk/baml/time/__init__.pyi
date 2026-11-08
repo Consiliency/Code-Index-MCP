@@ -28,6 +28,8 @@ import pydantic
 if typing.TYPE_CHECKING:
     from ...baml import UNSET as UNSET
 
+from ..._invocation_types import BamlOptions as _BamlOptions
+
 
 Disambiguation: typing.TypeAlias = typing.Union[typing.Literal["compatible"], typing.Literal["earlier"], typing.Literal["later"], typing.Literal["reject"]]
 
@@ -35,81 +37,81 @@ Disambiguation: typing.TypeAlias = typing.Union[typing.Literal["compatible"], ty
 class Duration(pydantic.BaseModel):
     field_nanoseconds: int = pydantic.Field(alias="_nanoseconds")
     @staticmethod
-    def from_nanoseconds(ns: typing.Union[int, int]) -> Duration:
+    def from_nanoseconds(ns: typing.Union[int, int], *, _baml: _BamlOptions | None = None) -> Duration:
         """A timespan of `ns` nanoseconds."""
     @staticmethod
-    async def from_nanoseconds_async(ns: typing.Union[int, int]) -> Duration:
+    async def from_nanoseconds_async(ns: typing.Union[int, int], *, _baml: _BamlOptions | None = None) -> Duration:
         """A timespan of `ns` nanoseconds."""
     @staticmethod
-    def from_microseconds(us: typing.Union[int, int]) -> Duration:
+    def from_microseconds(us: typing.Union[int, int], *, _baml: _BamlOptions | None = None) -> Duration:
         """A timespan of `us` microseconds, i.e. `us * 1000` nanoseconds."""
     @staticmethod
-    async def from_microseconds_async(us: typing.Union[int, int]) -> Duration:
+    async def from_microseconds_async(us: typing.Union[int, int], *, _baml: _BamlOptions | None = None) -> Duration:
         """A timespan of `us` microseconds, i.e. `us * 1000` nanoseconds."""
     @staticmethod
-    def from_milliseconds(ms: typing.Union[int, int]) -> Duration:
+    def from_milliseconds(ms: typing.Union[int, int], *, _baml: _BamlOptions | None = None) -> Duration:
         """A timespan of `ms` milliseconds, i.e. `ms * 1000000` nanoseconds."""
     @staticmethod
-    async def from_milliseconds_async(ms: typing.Union[int, int]) -> Duration:
+    async def from_milliseconds_async(ms: typing.Union[int, int], *, _baml: _BamlOptions | None = None) -> Duration:
         """A timespan of `ms` milliseconds, i.e. `ms * 1000000` nanoseconds."""
     @staticmethod
-    def from_seconds(s: typing.Union[int, int]) -> Duration:
+    def from_seconds(s: typing.Union[int, int], *, _baml: _BamlOptions | None = None) -> Duration:
         """A timespan of `s` seconds, i.e. `s * 1000000000` nanoseconds."""
     @staticmethod
-    async def from_seconds_async(s: typing.Union[int, int]) -> Duration:
+    async def from_seconds_async(s: typing.Union[int, int], *, _baml: _BamlOptions | None = None) -> Duration:
         """A timespan of `s` seconds, i.e. `s * 1000000000` nanoseconds."""
     @staticmethod
-    def from_minutes(m: typing.Union[int, int]) -> Duration:
+    def from_minutes(m: typing.Union[int, int], *, _baml: _BamlOptions | None = None) -> Duration:
         """A timespan of `m` minutes, i.e. `m * 60` seconds."""
     @staticmethod
-    async def from_minutes_async(m: typing.Union[int, int]) -> Duration:
+    async def from_minutes_async(m: typing.Union[int, int], *, _baml: _BamlOptions | None = None) -> Duration:
         """A timespan of `m` minutes, i.e. `m * 60` seconds."""
     @staticmethod
-    def from_hours(h: typing.Union[int, int]) -> Duration:
+    def from_hours(h: typing.Union[int, int], *, _baml: _BamlOptions | None = None) -> Duration:
         """A timespan of `h` hours, i.e. `h * 3600` seconds.
 
         A fixed 3600-second hour, never a calendar hour: it does not absorb a
         DST transition. See the note on `Duration`."""
     @staticmethod
-    async def from_hours_async(h: typing.Union[int, int]) -> Duration:
+    async def from_hours_async(h: typing.Union[int, int], *, _baml: _BamlOptions | None = None) -> Duration:
         """A timespan of `h` hours, i.e. `h * 3600` seconds.
 
         A fixed 3600-second hour, never a calendar hour: it does not absorb a
         DST transition. See the note on `Duration`."""
-    def abs(self) -> Duration:
+    def abs(self, *, _baml: _BamlOptions | None = None) -> Duration:
         """The magnitude of `self`, with the sign discarded."""
-    async def abs_async(self) -> Duration:
+    async def abs_async(self, *, _baml: _BamlOptions | None = None) -> Duration:
         """The magnitude of `self`, with the sign discarded."""
-    def to_nanoseconds(self) -> int:
+    def to_nanoseconds(self, *, _baml: _BamlOptions | None = None) -> int:
         """The length of `self` in nanoseconds. Exact: this is the stored unit."""
-    async def to_nanoseconds_async(self) -> int:
+    async def to_nanoseconds_async(self, *, _baml: _BamlOptions | None = None) -> int:
         """The length of `self` in nanoseconds. Exact: this is the stored unit."""
-    def to_microseconds(self) -> int:
+    def to_microseconds(self, *, _baml: _BamlOptions | None = None) -> int:
         """The length of `self` in whole microseconds."""
-    async def to_microseconds_async(self) -> int:
+    async def to_microseconds_async(self, *, _baml: _BamlOptions | None = None) -> int:
         """The length of `self` in whole microseconds."""
-    def to_milliseconds(self) -> int:
+    def to_milliseconds(self, *, _baml: _BamlOptions | None = None) -> int:
         """The length of `self` in whole milliseconds."""
-    async def to_milliseconds_async(self) -> int:
+    async def to_milliseconds_async(self, *, _baml: _BamlOptions | None = None) -> int:
         """The length of `self` in whole milliseconds."""
-    def to_seconds(self) -> int:
+    def to_seconds(self, *, _baml: _BamlOptions | None = None) -> int:
         """The length of `self` in whole seconds."""
-    async def to_seconds_async(self) -> int:
+    async def to_seconds_async(self, *, _baml: _BamlOptions | None = None) -> int:
         """The length of `self` in whole seconds."""
-    def to_minutes(self) -> int:
+    def to_minutes(self, *, _baml: _BamlOptions | None = None) -> int:
         """The length of `self` in whole minutes."""
-    async def to_minutes_async(self) -> int:
+    async def to_minutes_async(self, *, _baml: _BamlOptions | None = None) -> int:
         """The length of `self` in whole minutes."""
-    def to_hours(self) -> int:
+    def to_hours(self, *, _baml: _BamlOptions | None = None) -> int:
         """The length of `self` in whole hours, each a fixed 3600 seconds."""
-    async def to_hours_async(self) -> int:
+    async def to_hours_async(self, *, _baml: _BamlOptions | None = None) -> int:
         """The length of `self` in whole hours, each a fixed 3600 seconds."""
 
 
 class Instant(pydantic.BaseModel):
     field_nanoseconds: int = pydantic.Field(alias="_nanoseconds")
     @staticmethod
-    def now() -> Instant:
+    def now(*, _baml: _BamlOptions | None = None) -> Instant:
         """The current point in time, read from the host's wall clock. Mirrors
         `Temporal.Now.instant()`.
 
@@ -123,7 +125,7 @@ class Instant(pydantic.BaseModel):
           clock is a property of the platform, not of the call, so there is
           nothing for a caller to handle — hence a panic rather than an error."""
     @staticmethod
-    async def now_async() -> Instant:
+    async def now_async(*, _baml: _BamlOptions | None = None) -> Instant:
         """The current point in time, read from the host's wall clock. Mirrors
         `Temporal.Now.instant()`.
 
@@ -137,50 +139,96 @@ class Instant(pydantic.BaseModel):
           clock is a property of the platform, not of the call, so there is
           nothing for a caller to handle — hence a panic rather than an error."""
     @staticmethod
-    def parse(s: str) -> Instant:
-        """Raises:
+    def parse(s: str, *, _baml: _BamlOptions | None = None) -> Instant:
+        """Parses a timestamp string into an `Instant`.
+
+        The following formats are tried in order; the first that matches wins:
+        1. [RFC 3339](https://www.rfc-editor.org/rfc/rfc3339) — e.g. `"2026-05-27T12:00:00Z"`, `"2026-05-27T12:00:00.5+02:00"`
+        2. [ISO 8601](https://en.wikipedia.org/wiki/ISO_8601) — including the basic (separator-less) form, e.g. `"20260527T120000Z"`
+        3. [RFC 2822](https://www.rfc-editor.org/rfc/rfc2822) — e.g. `"Tue, 01 Jul 2003 10:52:37 +0200"`
+
+        Every accepted format carries a UTC offset, which is applied to produce
+        the absolute instant and then discarded — an `Instant` keeps no
+        timezone. Zoneless strings are rejected; parse those as `PlainDateTime`,
+        and use `ZonedDateTime.parse` when the offset or IANA identifier is
+        worth keeping.
+
+        # Throws
+
+        - `baml.errors.ParseError` if `s` matches none of the formats above.
+
+        # Examples
+
+        ```baml
+        let t = baml.time.Instant.parse("2026-05-27T12:00:00Z");
+        ```
+
+        Raises:
             ParseError"""
     @staticmethod
-    async def parse_async(s: str) -> Instant:
-        """Raises:
+    async def parse_async(s: str, *, _baml: _BamlOptions | None = None) -> Instant:
+        """Parses a timestamp string into an `Instant`.
+
+        The following formats are tried in order; the first that matches wins:
+        1. [RFC 3339](https://www.rfc-editor.org/rfc/rfc3339) — e.g. `"2026-05-27T12:00:00Z"`, `"2026-05-27T12:00:00.5+02:00"`
+        2. [ISO 8601](https://en.wikipedia.org/wiki/ISO_8601) — including the basic (separator-less) form, e.g. `"20260527T120000Z"`
+        3. [RFC 2822](https://www.rfc-editor.org/rfc/rfc2822) — e.g. `"Tue, 01 Jul 2003 10:52:37 +0200"`
+
+        Every accepted format carries a UTC offset, which is applied to produce
+        the absolute instant and then discarded — an `Instant` keeps no
+        timezone. Zoneless strings are rejected; parse those as `PlainDateTime`,
+        and use `ZonedDateTime.parse` when the offset or IANA identifier is
+        worth keeping.
+
+        # Throws
+
+        - `baml.errors.ParseError` if `s` matches none of the formats above.
+
+        # Examples
+
+        ```baml
+        let t = baml.time.Instant.parse("2026-05-27T12:00:00Z");
+        ```
+
+        Raises:
             ParseError"""
     @staticmethod
-    def from_timestamp_nanoseconds(ns: int) -> Instant:
+    def from_timestamp_nanoseconds(ns: int, *, _baml: _BamlOptions | None = None) -> Instant:
         """The `Instant` `ns` nanoseconds after the UNIX epoch."""
     @staticmethod
-    async def from_timestamp_nanoseconds_async(ns: int) -> Instant:
+    async def from_timestamp_nanoseconds_async(ns: int, *, _baml: _BamlOptions | None = None) -> Instant:
         """The `Instant` `ns` nanoseconds after the UNIX epoch."""
     @staticmethod
-    def from_timestamp_microseconds(us: int) -> Instant:
+    def from_timestamp_microseconds(us: int, *, _baml: _BamlOptions | None = None) -> Instant:
         """The `Instant` `us` microseconds after the UNIX epoch."""
     @staticmethod
-    async def from_timestamp_microseconds_async(us: int) -> Instant:
+    async def from_timestamp_microseconds_async(us: int, *, _baml: _BamlOptions | None = None) -> Instant:
         """The `Instant` `us` microseconds after the UNIX epoch."""
     @staticmethod
-    def from_timestamp_milliseconds(ms: int) -> Instant:
+    def from_timestamp_milliseconds(ms: int, *, _baml: _BamlOptions | None = None) -> Instant:
         """The `Instant` `ms` milliseconds after the UNIX epoch. This is the unit
         most JSON and JavaScript timestamps arrive in."""
     @staticmethod
-    async def from_timestamp_milliseconds_async(ms: int) -> Instant:
+    async def from_timestamp_milliseconds_async(ms: int, *, _baml: _BamlOptions | None = None) -> Instant:
         """The `Instant` `ms` milliseconds after the UNIX epoch. This is the unit
         most JSON and JavaScript timestamps arrive in."""
     @staticmethod
-    def from_timestamp_seconds(s: int) -> Instant:
+    def from_timestamp_seconds(s: int, *, _baml: _BamlOptions | None = None) -> Instant:
         """The `Instant` `s` seconds after the UNIX epoch. This is the unit a POSIX
         `time_t` arrives in."""
     @staticmethod
-    async def from_timestamp_seconds_async(s: int) -> Instant:
+    async def from_timestamp_seconds_async(s: int, *, _baml: _BamlOptions | None = None) -> Instant:
         """The `Instant` `s` seconds after the UNIX epoch. This is the unit a POSIX
         `time_t` arrives in."""
     @staticmethod
-    def epoch() -> Instant:
+    def epoch(*, _baml: _BamlOptions | None = None) -> Instant:
         """The UNIX epoch itself, 1970-01-01T00:00:00Z. Equivalent to
         `Instant.from_timestamp_seconds(0)`."""
     @staticmethod
-    async def epoch_async() -> Instant:
+    async def epoch_async(*, _baml: _BamlOptions | None = None) -> Instant:
         """The UNIX epoch itself, 1970-01-01T00:00:00Z. Equivalent to
         `Instant.from_timestamp_seconds(0)`."""
-    def elapsed(self) -> Duration:
+    def elapsed(self, *, _baml: _BamlOptions | None = None) -> Duration:
         """The time elapsed since `self`, i.e. `Instant.now() - self`. Negative if
         `self` is in the future.
 
@@ -200,7 +248,7 @@ class Instant(pydantic.BaseModel):
         let response = baml.http.fetch("https://example.com");
         let duration = start.elapsed();
         ```"""
-    async def elapsed_async(self) -> Duration:
+    async def elapsed_async(self, *, _baml: _BamlOptions | None = None) -> Duration:
         """The time elapsed since `self`, i.e. `Instant.now() - self`. Negative if
         `self` is in the future.
 
@@ -220,7 +268,7 @@ class Instant(pydantic.BaseModel):
         let response = baml.http.fetch("https://example.com");
         let duration = start.elapsed();
         ```"""
-    def _to_string_impl_(self) -> str:
+    def _to_string_impl_(self, *, _baml: _BamlOptions | None = None) -> str:
         """(internal) RFC 3339 formatter, shared by `to_string` and `to_json` so
         the two agree byte for byte.
 
@@ -233,7 +281,7 @@ class Instant(pydantic.BaseModel):
 
         Raises:
             InvalidArgument"""
-    async def _to_string_impl__async(self) -> str:
+    async def _to_string_impl__async(self, *, _baml: _BamlOptions | None = None) -> str:
         """(internal) RFC 3339 formatter, shared by `to_string` and `to_json` so
         the two agree byte for byte.
 
@@ -246,65 +294,117 @@ class Instant(pydantic.BaseModel):
 
         Raises:
             InvalidArgument"""
-    def max(self, other: Instant) -> Instant:
+    def max(self, other: Instant, *, _baml: _BamlOptions | None = None) -> Instant:
         """The later of `self` and `other`; `self` if they are the same instant."""
-    async def max_async(self, other: Instant) -> Instant:
+    async def max_async(self, other: Instant, *, _baml: _BamlOptions | None = None) -> Instant:
         """The later of `self` and `other`; `self` if they are the same instant."""
-    def min(self, other: Instant) -> Instant:
+    def min(self, other: Instant, *, _baml: _BamlOptions | None = None) -> Instant:
         """The earlier of `self` and `other`; `self` if they are the same instant."""
-    async def min_async(self, other: Instant) -> Instant:
+    async def min_async(self, other: Instant, *, _baml: _BamlOptions | None = None) -> Instant:
         """The earlier of `self` and `other`; `self` if they are the same instant."""
-    def abs_diff(self, other: Instant) -> Duration:
+    def abs_diff(self, other: Instant, *, _baml: _BamlOptions | None = None) -> Duration:
         """How far apart `self` and `other` are, regardless of which came first.
 
         Never negative, and commutative: swapping `self` and `other` does not
         change the result. Use `self - other` instead when the sign — i.e. the
         direction — matters."""
-    async def abs_diff_async(self, other: Instant) -> Duration:
+    async def abs_diff_async(self, other: Instant, *, _baml: _BamlOptions | None = None) -> Duration:
         """How far apart `self` and `other` are, regardless of which came first.
 
         Never negative, and commutative: swapping `self` and `other` does not
         change the result. Use `self - other` instead when the sign — i.e. the
         direction — matters."""
-    def to_timestamp_nanoseconds(self) -> int:
+    def to_timestamp_nanoseconds(self, *, _baml: _BamlOptions | None = None) -> int:
         """The number of nanoseconds since the UNIX epoch. Exact: this is the
         stored unit."""
-    async def to_timestamp_nanoseconds_async(self) -> int:
+    async def to_timestamp_nanoseconds_async(self, *, _baml: _BamlOptions | None = None) -> int:
         """The number of nanoseconds since the UNIX epoch. Exact: this is the
         stored unit."""
-    def to_timestamp_microseconds(self) -> int:
+    def to_timestamp_microseconds(self, *, _baml: _BamlOptions | None = None) -> int:
         """The number of whole microseconds since the UNIX epoch."""
-    async def to_timestamp_microseconds_async(self) -> int:
+    async def to_timestamp_microseconds_async(self, *, _baml: _BamlOptions | None = None) -> int:
         """The number of whole microseconds since the UNIX epoch."""
-    def to_timestamp_milliseconds(self) -> int:
+    def to_timestamp_milliseconds(self, *, _baml: _BamlOptions | None = None) -> int:
         """The number of whole milliseconds since the UNIX epoch."""
-    async def to_timestamp_milliseconds_async(self) -> int:
+    async def to_timestamp_milliseconds_async(self, *, _baml: _BamlOptions | None = None) -> int:
         """The number of whole milliseconds since the UNIX epoch."""
-    def to_timestamp_seconds(self) -> int:
+    def to_timestamp_seconds(self, *, _baml: _BamlOptions | None = None) -> int:
         """The number of whole seconds since the UNIX epoch."""
-    async def to_timestamp_seconds_async(self) -> int:
+    async def to_timestamp_seconds_async(self, *, _baml: _BamlOptions | None = None) -> int:
         """The number of whole seconds since the UNIX epoch."""
 
 
 class PlainDate(pydantic.BaseModel):
     field_days: int = pydantic.Field(alias="_days")
     @staticmethod
-    def from_components(year: int, month: int, day: int) -> PlainDate:
-        """Raises:
+    def from_components(year: int, month: int, day: int, *, _baml: _BamlOptions | None = None) -> PlainDate:
+        """Creates a `PlainDate` from calendar components.
+
+        # Parameters
+
+        - `year`: the proleptic Gregorian year, in `[-9999, 9999]`. Year 0 is
+          1 BCE, following ISO 8601's astronomical numbering.
+        - `month`: 1-based, in `[1, 12]`.
+        - `day`: 1-based, and must exist in that month of that year — Feb 29 is
+          accepted in a leap year and rejected otherwise.
+
+        # Throws
+
+        - `baml.errors.InvalidArgument` if a component is out of range
+          (e.g. month 13, Feb 30) or the year is outside ±9999.
+
+        Raises:
             InvalidArgument"""
     @staticmethod
-    async def from_components_async(year: int, month: int, day: int) -> PlainDate:
-        """Raises:
+    async def from_components_async(year: int, month: int, day: int, *, _baml: _BamlOptions | None = None) -> PlainDate:
+        """Creates a `PlainDate` from calendar components.
+
+        # Parameters
+
+        - `year`: the proleptic Gregorian year, in `[-9999, 9999]`. Year 0 is
+          1 BCE, following ISO 8601's astronomical numbering.
+        - `month`: 1-based, in `[1, 12]`.
+        - `day`: 1-based, and must exist in that month of that year — Feb 29 is
+          accepted in a leap year and rejected otherwise.
+
+        # Throws
+
+        - `baml.errors.InvalidArgument` if a component is out of range
+          (e.g. month 13, Feb 30) or the year is outside ±9999.
+
+        Raises:
             InvalidArgument"""
     @staticmethod
-    def parse(s: str) -> PlainDate:
-        """Raises:
+    def parse(s: str, *, _baml: _BamlOptions | None = None) -> PlainDate:
+        """Parses an extended-format ISO 8601 calendar date: `1979-05-27`.
+
+        The `-`-separated form only: the basic (separator-less) `19790527` is
+        not accepted, and neither is a trailing time-of-day — parse those as
+        `PlainDateTime`.
+
+        # Throws
+
+        - `baml.errors.ParseError` if `s` is not an ISO 8601 calendar date, or
+          names a day that does not exist.
+
+        Raises:
             ParseError"""
     @staticmethod
-    async def parse_async(s: str) -> PlainDate:
-        """Raises:
+    async def parse_async(s: str, *, _baml: _BamlOptions | None = None) -> PlainDate:
+        """Parses an extended-format ISO 8601 calendar date: `1979-05-27`.
+
+        The `-`-separated form only: the basic (separator-less) `19790527` is
+        not accepted, and neither is a trailing time-of-day — parse those as
+        `PlainDateTime`.
+
+        # Throws
+
+        - `baml.errors.ParseError` if `s` is not an ISO 8601 calendar date, or
+          names a day that does not exist.
+
+        Raises:
             ParseError"""
-    def _to_string_impl_(self) -> str:
+    def _to_string_impl_(self, *, _baml: _BamlOptions | None = None) -> str:
         """(internal) ISO 8601 formatter, shared by `to_string` and `to_json` so
         the two agree byte for byte.
 
@@ -317,7 +417,7 @@ class PlainDate(pydantic.BaseModel):
 
         Raises:
             InvalidArgument"""
-    async def _to_string_impl__async(self) -> str:
+    async def _to_string_impl__async(self, *, _baml: _BamlOptions | None = None) -> str:
         """(internal) ISO 8601 formatter, shared by `to_string` and `to_json` so
         the two agree byte for byte.
 
@@ -330,7 +430,7 @@ class PlainDate(pydantic.BaseModel):
 
         Raises:
             InvalidArgument"""
-    def to_plain_datetime(self, *, time: typing.Union[PlainTime, UNSET] = UNSET) -> PlainDateTime:
+    def to_plain_datetime(self, *, time: typing.Union[PlainTime, UNSET] = UNSET, _baml: _BamlOptions | None = None) -> PlainDateTime:
         """Combines with a time-of-day into a `PlainDateTime`. Still a wall-clock
         value — pass it to `PlainDateTime.to_zoned` to place it on the global
         timeline.
@@ -340,7 +440,7 @@ class PlainDate(pydantic.BaseModel):
         - `time`: the time-of-day to attach. Defaults to midnight
           (`00:00:00`); being defaulted it is named-only, so overriding it
           reads `d.to_plain_datetime(time = t)`."""
-    async def to_plain_datetime_async(self, *, time: typing.Union[PlainTime, UNSET] = UNSET) -> PlainDateTime:
+    async def to_plain_datetime_async(self, *, time: typing.Union[PlainTime, UNSET] = UNSET, _baml: _BamlOptions | None = None) -> PlainDateTime:
         """Combines with a time-of-day into a `PlainDateTime`. Still a wall-clock
         value — pass it to `PlainDateTime.to_zoned` to place it on the global
         timeline.
@@ -350,9 +450,21 @@ class PlainDate(pydantic.BaseModel):
         - `time`: the time-of-day to attach. Defaults to midnight
           (`00:00:00`); being defaulted it is named-only, so overriding it
           reads `d.to_plain_datetime(time = t)`."""
-    def _to_plain_datetime_(self, time: int) -> PlainDateTime: ...
-    async def _to_plain_datetime__async(self, time: int) -> PlainDateTime: ...
-    def year(self) -> int:
+    def _to_plain_datetime_(self, time: int, *, _baml: _BamlOptions | None = None) -> PlainDateTime:
+        """(internal) all-required native behind `to_plain_datetime` (native
+        functions have no BAML prologue to fill defaulted parameters).
+
+        # Parameters
+
+        - `time`: nanoseconds since midnight, i.e. `PlainTime._nanoseconds`."""
+    async def _to_plain_datetime__async(self, time: int, *, _baml: _BamlOptions | None = None) -> PlainDateTime:
+        """(internal) all-required native behind `to_plain_datetime` (native
+        functions have no BAML prologue to fill defaulted parameters).
+
+        # Parameters
+
+        - `time`: nanoseconds since midnight, i.e. `PlainTime._nanoseconds`."""
+    def year(self, *, _baml: _BamlOptions | None = None) -> int:
         """The calendar year. Negative years follow ISO 8601's astronomical
         numbering, where year 0 is 1 BCE.
 
@@ -363,7 +475,7 @@ class PlainDate(pydantic.BaseModel):
 
         Raises:
             InvalidArgument"""
-    async def year_async(self) -> int:
+    async def year_async(self, *, _baml: _BamlOptions | None = None) -> int:
         """The calendar year. Negative years follow ISO 8601's astronomical
         numbering, where year 0 is 1 BCE.
 
@@ -374,7 +486,7 @@ class PlainDate(pydantic.BaseModel):
 
         Raises:
             InvalidArgument"""
-    def month(self) -> int:
+    def month(self, *, _baml: _BamlOptions | None = None) -> int:
         """The calendar month, in `[1, 12]`. January is 1, not 0.
 
         # Throws
@@ -384,7 +496,7 @@ class PlainDate(pydantic.BaseModel):
 
         Raises:
             InvalidArgument"""
-    async def month_async(self) -> int:
+    async def month_async(self, *, _baml: _BamlOptions | None = None) -> int:
         """The calendar month, in `[1, 12]`. January is 1, not 0.
 
         # Throws
@@ -394,7 +506,7 @@ class PlainDate(pydantic.BaseModel):
 
         Raises:
             InvalidArgument"""
-    def day(self) -> int:
+    def day(self, *, _baml: _BamlOptions | None = None) -> int:
         """The day of the month, in `[1, 31]`.
 
         # Throws
@@ -404,7 +516,7 @@ class PlainDate(pydantic.BaseModel):
 
         Raises:
             InvalidArgument"""
-    async def day_async(self) -> int:
+    async def day_async(self, *, _baml: _BamlOptions | None = None) -> int:
         """The day of the month, in `[1, 31]`.
 
         # Throws
@@ -419,7 +531,7 @@ class PlainDate(pydantic.BaseModel):
 class PlainDateTime(pydantic.BaseModel):
     field_nanoseconds: int = pydantic.Field(alias="_nanoseconds")
     @staticmethod
-    def from_components(year: int, month: int, day: int, *, hour: typing.Union[int, UNSET] = 0, minute: typing.Union[int, UNSET] = 0, second: typing.Union[int, UNSET] = 0, millisecond: typing.Union[int, UNSET] = 0, microsecond: typing.Union[int, UNSET] = 0, nanosecond: typing.Union[int, UNSET] = 0) -> PlainDateTime:
+    def from_components(year: int, month: int, day: int, *, hour: typing.Union[int, UNSET] = 0, minute: typing.Union[int, UNSET] = 0, second: typing.Union[int, UNSET] = 0, millisecond: typing.Union[int, UNSET] = 0, microsecond: typing.Union[int, UNSET] = 0, nanosecond: typing.Union[int, UNSET] = 0, _baml: _BamlOptions | None = None) -> PlainDateTime:
         """Creates a `PlainDateTime` from calendar and clock components.
 
         Every clock component is defaulted and therefore named-only:
@@ -445,7 +557,7 @@ class PlainDateTime(pydantic.BaseModel):
         Raises:
             InvalidArgument"""
     @staticmethod
-    async def from_components_async(year: int, month: int, day: int, *, hour: typing.Union[int, UNSET] = 0, minute: typing.Union[int, UNSET] = 0, second: typing.Union[int, UNSET] = 0, millisecond: typing.Union[int, UNSET] = 0, microsecond: typing.Union[int, UNSET] = 0, nanosecond: typing.Union[int, UNSET] = 0) -> PlainDateTime:
+    async def from_components_async(year: int, month: int, day: int, *, hour: typing.Union[int, UNSET] = 0, minute: typing.Union[int, UNSET] = 0, second: typing.Union[int, UNSET] = 0, millisecond: typing.Union[int, UNSET] = 0, microsecond: typing.Union[int, UNSET] = 0, nanosecond: typing.Union[int, UNSET] = 0, _baml: _BamlOptions | None = None) -> PlainDateTime:
         """Creates a `PlainDateTime` from calendar and clock components.
 
         Every clock component is defaulted and therefore named-only:
@@ -471,22 +583,64 @@ class PlainDateTime(pydantic.BaseModel):
         Raises:
             InvalidArgument"""
     @staticmethod
-    def _from_components_(year: int, month: int, day: int, hour: int, minute: int, second: int, millisecond: int, microsecond: int, nanosecond: int) -> PlainDateTime:
-        """Raises:
+    def _from_components_(year: int, month: int, day: int, hour: int, minute: int, second: int, millisecond: int, microsecond: int, nanosecond: int, *, _baml: _BamlOptions | None = None) -> PlainDateTime:
+        """(internal) all-required native behind `from_components` (native
+        functions have no BAML prologue to fill defaulted parameters).
+
+        # Throws
+
+        - `baml.errors.InvalidArgument` if a component is out of range.
+
+        Raises:
             InvalidArgument"""
     @staticmethod
-    async def _from_components__async(year: int, month: int, day: int, hour: int, minute: int, second: int, millisecond: int, microsecond: int, nanosecond: int) -> PlainDateTime:
-        """Raises:
+    async def _from_components__async(year: int, month: int, day: int, hour: int, minute: int, second: int, millisecond: int, microsecond: int, nanosecond: int, *, _baml: _BamlOptions | None = None) -> PlainDateTime:
+        """(internal) all-required native behind `from_components` (native
+        functions have no BAML prologue to fill defaulted parameters).
+
+        # Throws
+
+        - `baml.errors.InvalidArgument` if a component is out of range.
+
+        Raises:
             InvalidArgument"""
     @staticmethod
-    def parse(s: str) -> PlainDateTime:
-        """Raises:
+    def parse(s: str, *, _baml: _BamlOptions | None = None) -> PlainDateTime:
+        """Parses a zoneless ISO 8601 string: `1979-05-27T07:32:00`,
+        `1979-05-27T07:32:00.5`. These are exactly the strings `Instant.parse`
+        and `ZonedDateTime.parse` reject for carrying no offset.
+
+        The `-`/`:`-separated form with a literal `T` only. Seconds are
+        required, and the fractional part is optional. An offset or `Z` suffix
+        is rejected rather than ignored: a string that pins itself to the global
+        timeline is not a `PlainDateTime`.
+
+        # Throws
+
+        - `baml.errors.ParseError` if `s` is not a zoneless ISO 8601 datetime,
+          or names a component out of range.
+
+        Raises:
             ParseError"""
     @staticmethod
-    async def parse_async(s: str) -> PlainDateTime:
-        """Raises:
+    async def parse_async(s: str, *, _baml: _BamlOptions | None = None) -> PlainDateTime:
+        """Parses a zoneless ISO 8601 string: `1979-05-27T07:32:00`,
+        `1979-05-27T07:32:00.5`. These are exactly the strings `Instant.parse`
+        and `ZonedDateTime.parse` reject for carrying no offset.
+
+        The `-`/`:`-separated form with a literal `T` only. Seconds are
+        required, and the fractional part is optional. An offset or `Z` suffix
+        is rejected rather than ignored: a string that pins itself to the global
+        timeline is not a `PlainDateTime`.
+
+        # Throws
+
+        - `baml.errors.ParseError` if `s` is not a zoneless ISO 8601 datetime,
+          or names a component out of range.
+
+        Raises:
             ParseError"""
-    def _to_string_impl_(self) -> str:
+    def _to_string_impl_(self, *, _baml: _BamlOptions | None = None) -> str:
         """(internal) ISO 8601 formatter, shared by `to_string` and `to_json` so
         the two agree byte for byte.
 
@@ -498,7 +652,7 @@ class PlainDateTime(pydantic.BaseModel):
 
         Raises:
             InvalidArgument"""
-    async def _to_string_impl__async(self) -> str:
+    async def _to_string_impl__async(self, *, _baml: _BamlOptions | None = None) -> str:
         """(internal) ISO 8601 formatter, shared by `to_string` and `to_json` so
         the two agree byte for byte.
 
@@ -510,7 +664,7 @@ class PlainDateTime(pydantic.BaseModel):
 
         Raises:
             InvalidArgument"""
-    def to_zoned(self, timezone: typing.Union[TimeZoneOffset, str], *, disambiguation: typing.Union[Disambiguation, UNSET] = "compatible") -> ZonedDateTime:
+    def to_zoned(self, timezone: typing.Union[TimeZoneOffset, str], *, disambiguation: typing.Union[Disambiguation, UNSET] = "compatible", _baml: _BamlOptions | None = None) -> ZonedDateTime:
         """Locates this wall-clock reading in a timezone, producing an absolute
         time. The counterpart of `ZonedDateTime.to_plain`.
 
@@ -557,7 +711,7 @@ class PlainDateTime(pydantic.BaseModel):
 
         Raises:
             UnknownTimezoneError, AmbiguousTimeError, Io"""
-    async def to_zoned_async(self, timezone: typing.Union[TimeZoneOffset, str], *, disambiguation: typing.Union[Disambiguation, UNSET] = "compatible") -> ZonedDateTime:
+    async def to_zoned_async(self, timezone: typing.Union[TimeZoneOffset, str], *, disambiguation: typing.Union[Disambiguation, UNSET] = "compatible", _baml: _BamlOptions | None = None) -> ZonedDateTime:
         """Locates this wall-clock reading in a timezone, producing an absolute
         time. The counterpart of `ZonedDateTime.to_plain`.
 
@@ -604,7 +758,7 @@ class PlainDateTime(pydantic.BaseModel):
 
         Raises:
             UnknownTimezoneError, AmbiguousTimeError, Io"""
-    def max(self, other: PlainDateTime) -> PlainDateTime:
+    def max(self, other: PlainDateTime, *, _baml: _BamlOptions | None = None) -> PlainDateTime:
         """The later of `self` and `other` on the clock face; `self` if they read
         the same.
 
@@ -612,7 +766,7 @@ class PlainDateTime(pydantic.BaseModel):
         timezone. Two readings taken in different zones are not ordered by this
         — convert to `Instant` or `ZonedDateTime` first if absolute order is
         what you mean."""
-    async def max_async(self, other: PlainDateTime) -> PlainDateTime:
+    async def max_async(self, other: PlainDateTime, *, _baml: _BamlOptions | None = None) -> PlainDateTime:
         """The later of `self` and `other` on the clock face; `self` if they read
         the same.
 
@@ -620,21 +774,53 @@ class PlainDateTime(pydantic.BaseModel):
         timezone. Two readings taken in different zones are not ordered by this
         — convert to `Instant` or `ZonedDateTime` first if absolute order is
         what you mean."""
-    def min(self, other: PlainDateTime) -> PlainDateTime:
+    def min(self, other: PlainDateTime, *, _baml: _BamlOptions | None = None) -> PlainDateTime:
         """The earlier of `self` and `other` on the clock face; `self` if they read
         the same. A civil comparison, with the same caveat as `max`."""
-    async def min_async(self, other: PlainDateTime) -> PlainDateTime:
+    async def min_async(self, other: PlainDateTime, *, _baml: _BamlOptions | None = None) -> PlainDateTime:
         """The earlier of `self` and `other` on the clock face; `self` if they read
         the same. A civil comparison, with the same caveat as `max`."""
-    def to_plain_date(self) -> PlainDate:
-        """Raises:
+    def to_plain_date(self, *, _baml: _BamlOptions | None = None) -> PlainDate:
+        """Drops the time-of-day, keeping the calendar date. The inverse of
+        `PlainDate.to_plain_datetime`.
+
+        The check here is laxer than the ±9999 year range: it can hand back a
+        `PlainDate` whose own accessors then throw. See `PlainDate.year`.
+
+        # Throws
+
+        - `baml.errors.InvalidArgument` if the reading is too far from the epoch
+          for its day count to be computed.
+
+        Raises:
             InvalidArgument"""
-    async def to_plain_date_async(self) -> PlainDate:
-        """Raises:
+    async def to_plain_date_async(self, *, _baml: _BamlOptions | None = None) -> PlainDate:
+        """Drops the time-of-day, keeping the calendar date. The inverse of
+        `PlainDate.to_plain_datetime`.
+
+        The check here is laxer than the ±9999 year range: it can hand back a
+        `PlainDate` whose own accessors then throw. See `PlainDate.year`.
+
+        # Throws
+
+        - `baml.errors.InvalidArgument` if the reading is too far from the epoch
+          for its day count to be computed.
+
+        Raises:
             InvalidArgument"""
-    def to_plain_time(self) -> PlainTime: ...
-    async def to_plain_time_async(self) -> PlainTime: ...
-    def year(self) -> int:
+    def to_plain_time(self, *, _baml: _BamlOptions | None = None) -> PlainTime:
+        """Drops the calendar date, keeping the time-of-day. The inverse of
+        `PlainTime.to_plain_datetime`.
+
+        Total: the time-of-day is the reading modulo one day, which is defined
+        for every value the type can hold, however far from the epoch."""
+    async def to_plain_time_async(self, *, _baml: _BamlOptions | None = None) -> PlainTime:
+        """Drops the calendar date, keeping the time-of-day. The inverse of
+        `PlainTime.to_plain_datetime`.
+
+        Total: the time-of-day is the reading modulo one day, which is defined
+        for every value the type can hold, however far from the epoch."""
+    def year(self, *, _baml: _BamlOptions | None = None) -> int:
         """The calendar year. Negative years follow ISO 8601's astronomical
         numbering, where year 0 is 1 BCE.
 
@@ -644,7 +830,7 @@ class PlainDateTime(pydantic.BaseModel):
 
         Raises:
             InvalidArgument"""
-    async def year_async(self) -> int:
+    async def year_async(self, *, _baml: _BamlOptions | None = None) -> int:
         """The calendar year. Negative years follow ISO 8601's astronomical
         numbering, where year 0 is 1 BCE.
 
@@ -654,7 +840,7 @@ class PlainDateTime(pydantic.BaseModel):
 
         Raises:
             InvalidArgument"""
-    def month(self) -> int:
+    def month(self, *, _baml: _BamlOptions | None = None) -> int:
         """The calendar month, in `[1, 12]`. January is 1, not 0.
 
         # Throws
@@ -663,7 +849,7 @@ class PlainDateTime(pydantic.BaseModel):
 
         Raises:
             InvalidArgument"""
-    async def month_async(self) -> int:
+    async def month_async(self, *, _baml: _BamlOptions | None = None) -> int:
         """The calendar month, in `[1, 12]`. January is 1, not 0.
 
         # Throws
@@ -672,7 +858,7 @@ class PlainDateTime(pydantic.BaseModel):
 
         Raises:
             InvalidArgument"""
-    def day(self) -> int:
+    def day(self, *, _baml: _BamlOptions | None = None) -> int:
         """The day of the month, in `[1, 31]`.
 
         # Throws
@@ -681,7 +867,7 @@ class PlainDateTime(pydantic.BaseModel):
 
         Raises:
             InvalidArgument"""
-    async def day_async(self) -> int:
+    async def day_async(self, *, _baml: _BamlOptions | None = None) -> int:
         """The day of the month, in `[1, 31]`.
 
         # Throws
@@ -690,7 +876,7 @@ class PlainDateTime(pydantic.BaseModel):
 
         Raises:
             InvalidArgument"""
-    def hour(self) -> int:
+    def hour(self, *, _baml: _BamlOptions | None = None) -> int:
         """The hour of the day, in `[0, 23]`. A 24-hour clock.
 
         # Throws
@@ -699,7 +885,7 @@ class PlainDateTime(pydantic.BaseModel):
 
         Raises:
             InvalidArgument"""
-    async def hour_async(self) -> int:
+    async def hour_async(self, *, _baml: _BamlOptions | None = None) -> int:
         """The hour of the day, in `[0, 23]`. A 24-hour clock.
 
         # Throws
@@ -708,7 +894,7 @@ class PlainDateTime(pydantic.BaseModel):
 
         Raises:
             InvalidArgument"""
-    def minute(self) -> int:
+    def minute(self, *, _baml: _BamlOptions | None = None) -> int:
         """The minute of the hour, in `[0, 59]`.
 
         # Throws
@@ -717,7 +903,7 @@ class PlainDateTime(pydantic.BaseModel):
 
         Raises:
             InvalidArgument"""
-    async def minute_async(self) -> int:
+    async def minute_async(self, *, _baml: _BamlOptions | None = None) -> int:
         """The minute of the hour, in `[0, 59]`.
 
         # Throws
@@ -726,7 +912,7 @@ class PlainDateTime(pydantic.BaseModel):
 
         Raises:
             InvalidArgument"""
-    def second(self) -> int:
+    def second(self, *, _baml: _BamlOptions | None = None) -> int:
         """The second of the minute, in `[0, 59]`.
 
         # Throws
@@ -735,7 +921,7 @@ class PlainDateTime(pydantic.BaseModel):
 
         Raises:
             InvalidArgument"""
-    async def second_async(self) -> int:
+    async def second_async(self, *, _baml: _BamlOptions | None = None) -> int:
         """The second of the minute, in `[0, 59]`.
 
         # Throws
@@ -744,7 +930,7 @@ class PlainDateTime(pydantic.BaseModel):
 
         Raises:
             InvalidArgument"""
-    def millisecond(self) -> int:
+    def millisecond(self, *, _baml: _BamlOptions | None = None) -> int:
         """The millisecond of the second, in `[0, 999]`.
 
         The finer components `from_components` accepts — microsecond and
@@ -756,7 +942,7 @@ class PlainDateTime(pydantic.BaseModel):
 
         Raises:
             InvalidArgument"""
-    async def millisecond_async(self) -> int:
+    async def millisecond_async(self, *, _baml: _BamlOptions | None = None) -> int:
         """The millisecond of the second, in `[0, 999]`.
 
         The finer components `from_components` accepts — microsecond and
@@ -773,7 +959,7 @@ class PlainDateTime(pydantic.BaseModel):
 class PlainTime(pydantic.BaseModel):
     field_nanoseconds: int = pydantic.Field(alias="_nanoseconds")
     @staticmethod
-    def from_components(hour: int, *, minute: typing.Union[int, UNSET] = 0, second: typing.Union[int, UNSET] = 0, millisecond: typing.Union[int, UNSET] = 0, microsecond: typing.Union[int, UNSET] = 0, nanosecond: typing.Union[int, UNSET] = 0) -> PlainTime:
+    def from_components(hour: int, *, minute: typing.Union[int, UNSET] = 0, second: typing.Union[int, UNSET] = 0, millisecond: typing.Union[int, UNSET] = 0, microsecond: typing.Union[int, UNSET] = 0, nanosecond: typing.Union[int, UNSET] = 0, _baml: _BamlOptions | None = None) -> PlainTime:
         """Creates a `PlainTime` from clock components.
 
         Every component but `hour` is defaulted and therefore named-only:
@@ -797,7 +983,7 @@ class PlainTime(pydantic.BaseModel):
         Raises:
             InvalidArgument"""
     @staticmethod
-    async def from_components_async(hour: int, *, minute: typing.Union[int, UNSET] = 0, second: typing.Union[int, UNSET] = 0, millisecond: typing.Union[int, UNSET] = 0, microsecond: typing.Union[int, UNSET] = 0, nanosecond: typing.Union[int, UNSET] = 0) -> PlainTime:
+    async def from_components_async(hour: int, *, minute: typing.Union[int, UNSET] = 0, second: typing.Union[int, UNSET] = 0, millisecond: typing.Union[int, UNSET] = 0, microsecond: typing.Union[int, UNSET] = 0, nanosecond: typing.Union[int, UNSET] = 0, _baml: _BamlOptions | None = None) -> PlainTime:
         """Creates a `PlainTime` from clock components.
 
         Every component but `hour` is defaulted and therefore named-only:
@@ -821,34 +1007,72 @@ class PlainTime(pydantic.BaseModel):
         Raises:
             InvalidArgument"""
     @staticmethod
-    def _from_components_(hour: int, minute: int, second: int, millisecond: int, microsecond: int, nanosecond: int) -> PlainTime:
-        """Raises:
+    def _from_components_(hour: int, minute: int, second: int, millisecond: int, microsecond: int, nanosecond: int, *, _baml: _BamlOptions | None = None) -> PlainTime:
+        """(internal) all-required native behind `from_components`. Native
+        functions have no BAML prologue, so defaulted parameters cannot live on
+        the native itself — an omitted argument would reach it unfilled.
+
+        # Throws
+
+        - `baml.errors.InvalidArgument` if a component is out of range.
+
+        Raises:
             InvalidArgument"""
     @staticmethod
-    async def _from_components__async(hour: int, minute: int, second: int, millisecond: int, microsecond: int, nanosecond: int) -> PlainTime:
-        """Raises:
+    async def _from_components__async(hour: int, minute: int, second: int, millisecond: int, microsecond: int, nanosecond: int, *, _baml: _BamlOptions | None = None) -> PlainTime:
+        """(internal) all-required native behind `from_components`. Native
+        functions have no BAML prologue, so defaulted parameters cannot live on
+        the native itself — an omitted argument would reach it unfilled.
+
+        # Throws
+
+        - `baml.errors.InvalidArgument` if a component is out of range.
+
+        Raises:
             InvalidArgument"""
     @staticmethod
-    def parse(s: str) -> PlainTime:
-        """Raises:
+    def parse(s: str, *, _baml: _BamlOptions | None = None) -> PlainTime:
+        """Parses an ISO 8601 time-of-day: `07:32:00`, `07:32:00.5`.
+
+        Hours, minutes and seconds are all required — `07:32` is rejected. The
+        fractional-second part is optional. No offset or `Z` suffix is accepted,
+        since a time-of-day has no timezone to attach one to.
+
+        # Throws
+
+        - `baml.errors.ParseError` if the string is not a valid ISO 8601
+          time-of-day, or names a component out of range.
+
+        Raises:
             ParseError"""
     @staticmethod
-    async def parse_async(s: str) -> PlainTime:
-        """Raises:
+    async def parse_async(s: str, *, _baml: _BamlOptions | None = None) -> PlainTime:
+        """Parses an ISO 8601 time-of-day: `07:32:00`, `07:32:00.5`.
+
+        Hours, minutes and seconds are all required — `07:32` is rejected. The
+        fractional-second part is optional. No offset or `Z` suffix is accepted,
+        since a time-of-day has no timezone to attach one to.
+
+        # Throws
+
+        - `baml.errors.ParseError` if the string is not a valid ISO 8601
+          time-of-day, or names a component out of range.
+
+        Raises:
             ParseError"""
-    def _to_string_impl_(self) -> str:
+    def _to_string_impl_(self, *, _baml: _BamlOptions | None = None) -> str:
         """(internal) ISO 8601 time-of-day formatter behind `to_string`.
 
         Infallible: it reduces the nanosecond count into `[0, 24h)` before
         formatting, so even a `PlainTime` assembled field-by-field outside the
         class invariant renders rather than failing."""
-    async def _to_string_impl__async(self) -> str:
+    async def _to_string_impl__async(self, *, _baml: _BamlOptions | None = None) -> str:
         """(internal) ISO 8601 time-of-day formatter behind `to_string`.
 
         Infallible: it reduces the nanosecond count into `[0, 24h)` before
         formatting, so even a `PlainTime` assembled field-by-field outside the
         class invariant renders rather than failing."""
-    def to_plain_datetime(self, date: PlainDate) -> PlainDateTime:
+    def to_plain_datetime(self, date: PlainDate, *, _baml: _BamlOptions | None = None) -> PlainDateTime:
         """Combines with a date into a `PlainDateTime`, the mirror image of
         `PlainDate.to_plain_datetime`. Still a wall-clock value — pass it to
         `PlainDateTime.to_zoned` to place it on the global timeline.
@@ -861,7 +1085,7 @@ class PlainTime(pydantic.BaseModel):
         let datetime = time.to_plain_datetime(date);
         assert.equal(datetime, baml.time.PlainDateTime.parse("2025-01-01T12:34:56"));
         ```"""
-    async def to_plain_datetime_async(self, date: PlainDate) -> PlainDateTime:
+    async def to_plain_datetime_async(self, date: PlainDate, *, _baml: _BamlOptions | None = None) -> PlainDateTime:
         """Combines with a date into a `PlainDateTime`, the mirror image of
         `PlainDate.to_plain_datetime`. Still a wall-clock value — pass it to
         `PlainDateTime.to_zoned` to place it on the global timeline.
@@ -874,33 +1098,33 @@ class PlainTime(pydantic.BaseModel):
         let datetime = time.to_plain_datetime(date);
         assert.equal(datetime, baml.time.PlainDateTime.parse("2025-01-01T12:34:56"));
         ```"""
-    def hour(self) -> int:
+    def hour(self, *, _baml: _BamlOptions | None = None) -> int:
         """The hour of the day, in `[0, 23]`. A 24-hour clock, so there is no am/pm
         distinction to lose."""
-    async def hour_async(self) -> int:
+    async def hour_async(self, *, _baml: _BamlOptions | None = None) -> int:
         """The hour of the day, in `[0, 23]`. A 24-hour clock, so there is no am/pm
         distinction to lose."""
-    def minute(self) -> int:
+    def minute(self, *, _baml: _BamlOptions | None = None) -> int:
         """The minute of the hour, in `[0, 59]`."""
-    async def minute_async(self) -> int:
+    async def minute_async(self, *, _baml: _BamlOptions | None = None) -> int:
         """The minute of the hour, in `[0, 59]`."""
-    def second(self) -> int:
+    def second(self, *, _baml: _BamlOptions | None = None) -> int:
         """The second of the minute, in `[0, 59]`."""
-    async def second_async(self) -> int:
+    async def second_async(self, *, _baml: _BamlOptions | None = None) -> int:
         """The second of the minute, in `[0, 59]`."""
-    def millisecond(self) -> int:
+    def millisecond(self, *, _baml: _BamlOptions | None = None) -> int:
         """The millisecond of the second, in `[0, 999]`.
 
         The finer components `from_components` accepts — microsecond and
         nanosecond — have no accessor of their own; `to_string` renders them."""
-    async def millisecond_async(self) -> int:
+    async def millisecond_async(self, *, _baml: _BamlOptions | None = None) -> int:
         """The millisecond of the second, in `[0, 999]`.
 
         The finer components `from_components` accepts — microsecond and
         nanosecond — have no accessor of their own; `to_string` renders them."""
 
 
-def _wrap_into_day(total_ns: int) -> int:
+def _wrap_into_day(total_ns: int, *, _baml: _BamlOptions | None = None) -> int:
     """(internal) Reduces `total_ns` to nanoseconds-since-midnight in `[0, 24h)`,
     re-establishing `PlainTime._nanoseconds`'s invariant after arithmetic.
 
@@ -911,7 +1135,7 @@ def _wrap_into_day(total_ns: int) -> int:
     # Returns
 
     The wrapped count, always in `[0, 24h)` and therefore always an `int`."""
-async def _wrap_into_day_async(total_ns: int) -> int:
+async def _wrap_into_day_async(total_ns: int, *, _baml: _BamlOptions | None = None) -> int:
     """(internal) Reduces `total_ns` to nanoseconds-since-midnight in `[0, 24h)`,
     re-establishing `PlainTime._nanoseconds`'s invariant after arithmetic.
 
@@ -935,13 +1159,13 @@ class AmbiguousTimeError(pydantic.BaseModel):
 class TimeZoneOffset(pydantic.BaseModel):
     field_nanoseconds: int = pydantic.Field(alias="_nanoseconds")
     @staticmethod
-    def utc() -> TimeZoneOffset:
+    def utc(*, _baml: _BamlOptions | None = None) -> TimeZoneOffset:
         """The UTC (zero) offset."""
     @staticmethod
-    async def utc_async() -> TimeZoneOffset:
+    async def utc_async(*, _baml: _BamlOptions | None = None) -> TimeZoneOffset:
         """The UTC (zero) offset."""
     @staticmethod
-    def new(hours: int, minutes: int) -> TimeZoneOffset:
+    def new(hours: int, minutes: int, *, _baml: _BamlOptions | None = None) -> TimeZoneOffset:
         """Creates a `TimeZoneOffset` from hours and minutes east of UTC.
 
         # Parameters
@@ -967,7 +1191,7 @@ class TimeZoneOffset(pydantic.BaseModel):
         Raises:
             InvalidArgument"""
     @staticmethod
-    async def new_async(hours: int, minutes: int) -> TimeZoneOffset:
+    async def new_async(hours: int, minutes: int, *, _baml: _BamlOptions | None = None) -> TimeZoneOffset:
         """Creates a `TimeZoneOffset` from hours and minutes east of UTC.
 
         # Parameters
@@ -993,7 +1217,7 @@ class TimeZoneOffset(pydantic.BaseModel):
         Raises:
             InvalidArgument"""
     @staticmethod
-    def from_timezone(timezone: str, at: Instant) -> TimeZoneOffset:
+    def from_timezone(timezone: str, at: Instant, *, _baml: _BamlOptions | None = None) -> TimeZoneOffset:
         """Resolves an IANA timezone identifier (e.g. `"America/Los_Angeles"`) to
         its concrete offset at the absolute time `at`, daylight saving included.
 
@@ -1018,7 +1242,7 @@ class TimeZoneOffset(pydantic.BaseModel):
         Raises:
             UnknownTimezoneError"""
     @staticmethod
-    async def from_timezone_async(timezone: str, at: Instant) -> TimeZoneOffset:
+    async def from_timezone_async(timezone: str, at: Instant, *, _baml: _BamlOptions | None = None) -> TimeZoneOffset:
         """Resolves an IANA timezone identifier (e.g. `"America/Los_Angeles"`) to
         its concrete offset at the absolute time `at`, daylight saving included.
 
@@ -1043,7 +1267,7 @@ class TimeZoneOffset(pydantic.BaseModel):
         Raises:
             UnknownTimezoneError"""
     @staticmethod
-    def local() -> TimeZoneOffset:
+    def local(*, _baml: _BamlOptions | None = None) -> TimeZoneOffset:
         """The system timezone's offset as of right now.
 
         Even in one location this varies over time with daylight saving, so the
@@ -1066,7 +1290,7 @@ class TimeZoneOffset(pydantic.BaseModel):
         Raises:
             UnknownTimezoneError, Io"""
     @staticmethod
-    async def local_async() -> TimeZoneOffset:
+    async def local_async(*, _baml: _BamlOptions | None = None) -> TimeZoneOffset:
         """The system timezone's offset as of right now.
 
         Even in one location this varies over time with daylight saving, so the
@@ -1089,33 +1313,57 @@ class TimeZoneOffset(pydantic.BaseModel):
         Raises:
             UnknownTimezoneError, Io"""
     @staticmethod
-    def from_duration(duration: Duration) -> TimeZoneOffset:
-        """Raises:
+    def from_duration(duration: Duration, *, _baml: _BamlOptions | None = None) -> TimeZoneOffset:
+        """Creates a `TimeZoneOffset` east of UTC by `duration`. A negative
+        `duration` gives an offset west of UTC.
+
+        The nanosecond count is kept exactly, not rounded to a whole minute,
+        which matters for the historical LMT offsets in the timezone database.
+        `to_string` on a `ZonedDateTime` renders only `±hh:mm`, truncating any
+        sub-minute part toward zero.
+
+        # Throws
+
+        - `baml.errors.InvalidArgument` if the duration exceeds ±24 hours.
+
+        Raises:
             InvalidArgument"""
     @staticmethod
-    async def from_duration_async(duration: Duration) -> TimeZoneOffset:
-        """Raises:
+    async def from_duration_async(duration: Duration, *, _baml: _BamlOptions | None = None) -> TimeZoneOffset:
+        """Creates a `TimeZoneOffset` east of UTC by `duration`. A negative
+        `duration` gives an offset west of UTC.
+
+        The nanosecond count is kept exactly, not rounded to a whole minute,
+        which matters for the historical LMT offsets in the timezone database.
+        `to_string` on a `ZonedDateTime` renders only `±hh:mm`, truncating any
+        sub-minute part toward zero.
+
+        # Throws
+
+        - `baml.errors.InvalidArgument` if the duration exceeds ±24 hours.
+
+        Raises:
             InvalidArgument"""
-    def to_duration(self) -> Duration:
+    def to_duration(self, *, _baml: _BamlOptions | None = None) -> Duration:
         """The offset as a `Duration` east of UTC; negative west of it. Exact, and
         the inverse of `from_duration`."""
-    async def to_duration_async(self) -> Duration:
+    async def to_duration_async(self, *, _baml: _BamlOptions | None = None) -> Duration:
         """The offset as a `Duration` east of UTC; negative west of it. Exact, and
         the inverse of `from_duration`."""
-    def hours(self) -> int:
+    def hours(self, *, _baml: _BamlOptions | None = None) -> int:
         """The hour component of the offset, truncated toward zero. Negative for an
         offset west of UTC."""
-    async def hours_async(self) -> int:
+    async def hours_async(self, *, _baml: _BamlOptions | None = None) -> int:
         """The hour component of the offset, truncated toward zero. Negative for an
         offset west of UTC."""
-    def minutes(self) -> int:
+    def minutes(self, *, _baml: _BamlOptions | None = None) -> int:
         """The minute component of the offset within its hour, truncated toward
         zero.
 
         Signed like `hours`, and for the same reason: the two are one signed
         quantity split in two, so `-09:30` reads back as `hours() == -9` and
         `minutes() == -30`. Neither reports any sub-minute part of the offset."""
-    async def minutes_async(self) -> int:
+    async def minutes_async(self, *, _baml: _BamlOptions | None = None) -> int:
         """The minute component of the offset within its hour, truncated toward
         zero.
 
@@ -1124,7 +1372,7 @@ class TimeZoneOffset(pydantic.BaseModel):
         `minutes() == -30`. Neither reports any sub-minute part of the offset."""
 
 
-def system_timezone() -> str:
+def system_timezone(*, _baml: _BamlOptions | None = None) -> str:
     """The system's IANA timezone identifier, for example
     `"America/Los_Angeles"`. Mirrors `Temporal.Now.timeZoneId()`.
 
@@ -1144,7 +1392,7 @@ def system_timezone() -> str:
 
     Raises:
         Io"""
-async def system_timezone_async() -> str:
+async def system_timezone_async(*, _baml: _BamlOptions | None = None) -> str:
     """The system's IANA timezone identifier, for example
     `"America/Los_Angeles"`. Mirrors `Temporal.Now.timeZoneId()`.
 
@@ -1166,11 +1414,57 @@ async def system_timezone_async() -> str:
         Io"""
 
 
-def _tz_offset_at(timezone: str, at_ns: int) -> typing.Optional[int]: ...
-async def _tz_offset_at_async(timezone: str, at_ns: int) -> typing.Optional[int]: ...
+def _tz_offset_at(timezone: str, at_ns: int, *, _baml: _BamlOptions | None = None) -> typing.Optional[int]:
+    """(internal) Resolves an IANA identifier to its offset (in nanoseconds) at the
+    absolute time `at_ns` (nanoseconds since the Unix epoch), using the host's
+    timezone database.
+
+    # Parameters
+
+    - `timezone`: an IANA identifier.
+    - `at_ns`: the absolute time to resolve at. The native host saturates values
+      beyond what it can represent rather than failing — a zone's offset is
+      constant past the last transition in its database, so the saturated answer
+      is the correct one.
+
+    # Returns
+
+    The offset east of UTC in nanoseconds, or `null` if the identifier is
+    unknown to the host (callers turn that into
+    `baml.time.UnknownTimezoneError`).
+
+    # Panics
+
+    - `baml.panics.HostUnavailable` if timezone data is unavailable. `throws
+      never` still holds: this is the panic channel, not the error one, which is
+      exactly what `//baml:fallible` marks."""
+async def _tz_offset_at_async(timezone: str, at_ns: int, *, _baml: _BamlOptions | None = None) -> typing.Optional[int]:
+    """(internal) Resolves an IANA identifier to its offset (in nanoseconds) at the
+    absolute time `at_ns` (nanoseconds since the Unix epoch), using the host's
+    timezone database.
+
+    # Parameters
+
+    - `timezone`: an IANA identifier.
+    - `at_ns`: the absolute time to resolve at. The native host saturates values
+      beyond what it can represent rather than failing — a zone's offset is
+      constant past the last transition in its database, so the saturated answer
+      is the correct one.
+
+    # Returns
+
+    The offset east of UTC in nanoseconds, or `null` if the identifier is
+    unknown to the host (callers turn that into
+    `baml.time.UnknownTimezoneError`).
+
+    # Panics
+
+    - `baml.panics.HostUnavailable` if timezone data is unavailable. `throws
+      never` still holds: this is the panic channel, not the error one, which is
+      exactly what `//baml:fallible` marks."""
 
 
-def _tz_to_instant(timezone: str, civil_ns: int, disambiguation: str) -> typing.Optional[int]:
+def _tz_to_instant(timezone: str, civil_ns: int, disambiguation: str, *, _baml: _BamlOptions | None = None) -> typing.Optional[int]:
     """(internal) Locates a civil ("wall-clock") reading in an IANA timezone,
     producing an absolute time. The lookup behind `PlainDateTime.to_zoned`.
 
@@ -1202,7 +1496,7 @@ def _tz_to_instant(timezone: str, civil_ns: int, disambiguation: str) -> typing.
 
     Raises:
         Io"""
-async def _tz_to_instant_async(timezone: str, civil_ns: int, disambiguation: str) -> typing.Optional[int]:
+async def _tz_to_instant_async(timezone: str, civil_ns: int, disambiguation: str, *, _baml: _BamlOptions | None = None) -> typing.Optional[int]:
     """(internal) Locates a civil ("wall-clock") reading in an IANA timezone,
     producing an absolute time. The lookup behind `PlainDateTime.to_zoned`.
 
@@ -1241,7 +1535,7 @@ class ZonedDateTime(pydantic.BaseModel):
     field_offset_ns: typing.Optional[int] = pydantic.Field(default=None, alias="_offset_ns")
     field_iana: typing.Optional[str] = pydantic.Field(default=None, alias="_iana")
     @staticmethod
-    def now() -> ZonedDateTime:
+    def now(*, _baml: _BamlOptions | None = None) -> ZonedDateTime:
         """The current time in the system timezone, kept as an IANA identifier
         (e.g. `"America/Los_Angeles"`) rather than as today's offset. Mirrors
         `Temporal.Now.zonedDateTimeISO()`.
@@ -1259,7 +1553,7 @@ class ZonedDateTime(pydantic.BaseModel):
         Raises:
             Io"""
     @staticmethod
-    async def now_async() -> ZonedDateTime:
+    async def now_async(*, _baml: _BamlOptions | None = None) -> ZonedDateTime:
         """The current time in the system timezone, kept as an IANA identifier
         (e.g. `"America/Los_Angeles"`) rather than as today's offset. Mirrors
         `Temporal.Now.zonedDateTimeISO()`.
@@ -1277,21 +1571,21 @@ class ZonedDateTime(pydantic.BaseModel):
         Raises:
             Io"""
     @staticmethod
-    def now_in(timezone: typing.Union[TimeZoneOffset, str]) -> ZonedDateTime:
+    def now_in(timezone: typing.Union[TimeZoneOffset, str], *, _baml: _BamlOptions | None = None) -> ZonedDateTime:
         """The current time in `timezone`.
 
         # Panics
 
         - `baml.panics.HostUnavailable` if the host provides no clock."""
     @staticmethod
-    async def now_in_async(timezone: typing.Union[TimeZoneOffset, str]) -> ZonedDateTime:
+    async def now_in_async(timezone: typing.Union[TimeZoneOffset, str], *, _baml: _BamlOptions | None = None) -> ZonedDateTime:
         """The current time in `timezone`.
 
         # Panics
 
         - `baml.panics.HostUnavailable` if the host provides no clock."""
     @staticmethod
-    def from_instant(instant: Instant, timezone: typing.Union[TimeZoneOffset, str]) -> ZonedDateTime:
+    def from_instant(instant: Instant, timezone: typing.Union[TimeZoneOffset, str], *, _baml: _BamlOptions | None = None) -> ZonedDateTime:
         """Pairs an absolute time with a timezone, without moving it: the result
         denotes the same moment `instant` does, and only its date and time
         components and its rendering differ.
@@ -1305,7 +1599,7 @@ class ZonedDateTime(pydantic.BaseModel):
         ZonedDateTime.from_instant(Instant.now(), "America/Los_Angeles")
         ```"""
     @staticmethod
-    async def from_instant_async(instant: Instant, timezone: typing.Union[TimeZoneOffset, str]) -> ZonedDateTime:
+    async def from_instant_async(instant: Instant, timezone: typing.Union[TimeZoneOffset, str], *, _baml: _BamlOptions | None = None) -> ZonedDateTime:
         """Pairs an absolute time with a timezone, without moving it: the result
         denotes the same moment `instant` does, and only its date and time
         components and its rendering differ.
@@ -1319,7 +1613,7 @@ class ZonedDateTime(pydantic.BaseModel):
         ZonedDateTime.from_instant(Instant.now(), "America/Los_Angeles")
         ```"""
     @staticmethod
-    def from_components(timezone: typing.Union[TimeZoneOffset, str], year: int, month: int, day: int, *, hour: typing.Union[int, UNSET] = 0, minute: typing.Union[int, UNSET] = 0, second: typing.Union[int, UNSET] = 0, millisecond: typing.Union[int, UNSET] = 0, microsecond: typing.Union[int, UNSET] = 0, nanosecond: typing.Union[int, UNSET] = 0, disambiguation: typing.Union[Disambiguation, UNSET] = "compatible") -> ZonedDateTime:
+    def from_components(timezone: typing.Union[TimeZoneOffset, str], year: int, month: int, day: int, *, hour: typing.Union[int, UNSET] = 0, minute: typing.Union[int, UNSET] = 0, second: typing.Union[int, UNSET] = 0, millisecond: typing.Union[int, UNSET] = 0, microsecond: typing.Union[int, UNSET] = 0, nanosecond: typing.Union[int, UNSET] = 0, disambiguation: typing.Union[Disambiguation, UNSET] = "compatible", _baml: _BamlOptions | None = None) -> ZonedDateTime:
         """Creates a `ZonedDateTime` from calendar and clock components read in
         `timezone` — i.e. from a wall-clock reading someone in that zone would
         give you.
@@ -1363,7 +1657,7 @@ class ZonedDateTime(pydantic.BaseModel):
         Raises:
             InvalidArgument, UnknownTimezoneError, AmbiguousTimeError, Io"""
     @staticmethod
-    async def from_components_async(timezone: typing.Union[TimeZoneOffset, str], year: int, month: int, day: int, *, hour: typing.Union[int, UNSET] = 0, minute: typing.Union[int, UNSET] = 0, second: typing.Union[int, UNSET] = 0, millisecond: typing.Union[int, UNSET] = 0, microsecond: typing.Union[int, UNSET] = 0, nanosecond: typing.Union[int, UNSET] = 0, disambiguation: typing.Union[Disambiguation, UNSET] = "compatible") -> ZonedDateTime:
+    async def from_components_async(timezone: typing.Union[TimeZoneOffset, str], year: int, month: int, day: int, *, hour: typing.Union[int, UNSET] = 0, minute: typing.Union[int, UNSET] = 0, second: typing.Union[int, UNSET] = 0, millisecond: typing.Union[int, UNSET] = 0, microsecond: typing.Union[int, UNSET] = 0, nanosecond: typing.Union[int, UNSET] = 0, disambiguation: typing.Union[Disambiguation, UNSET] = "compatible", _baml: _BamlOptions | None = None) -> ZonedDateTime:
         """Creates a `ZonedDateTime` from calendar and clock components read in
         `timezone` — i.e. from a wall-clock reading someone in that zone would
         give you.
@@ -1407,44 +1701,80 @@ class ZonedDateTime(pydantic.BaseModel):
         Raises:
             InvalidArgument, UnknownTimezoneError, AmbiguousTimeError, Io"""
     @staticmethod
-    def parse(s: str) -> ZonedDateTime:
-        """Raises:
+    def parse(s: str, *, _baml: _BamlOptions | None = None) -> ZonedDateTime:
+        """Parses [RFC 3339](https://datatracker.ietf.org/doc/html/rfc3339)
+        (`2026-03-18T13:04:27-07:00`) and
+        [RFC 9557](https://datatracker.ietf.org/doc/html/rfc9557)
+        (`2026-03-18T13:04:27-07:00[America/Los_Angeles]`) strings. Zoneless
+        strings are rejected — parse those as `PlainDateTime`.
+
+        The numeric offset always determines the absolute time. When a bracketed
+        IANA annotation is also present it becomes the timezone and the numeric
+        offset is not retained, so a string whose offset disagrees with what the
+        named zone had at that moment is accepted as written rather than
+        rejected. RFC 9557's leading `!` critical-annotation marker is accepted
+        and stripped; the identifier is used either way.
+
+        # Throws
+
+        - `baml.errors.ParseError` if `s` is not an RFC 3339 timestamp, or its
+          bracketed annotation is empty.
+
+        Raises:
             ParseError"""
     @staticmethod
-    async def parse_async(s: str) -> ZonedDateTime:
-        """Raises:
+    async def parse_async(s: str, *, _baml: _BamlOptions | None = None) -> ZonedDateTime:
+        """Parses [RFC 3339](https://datatracker.ietf.org/doc/html/rfc3339)
+        (`2026-03-18T13:04:27-07:00`) and
+        [RFC 9557](https://datatracker.ietf.org/doc/html/rfc9557)
+        (`2026-03-18T13:04:27-07:00[America/Los_Angeles]`) strings. Zoneless
+        strings are rejected — parse those as `PlainDateTime`.
+
+        The numeric offset always determines the absolute time. When a bracketed
+        IANA annotation is also present it becomes the timezone and the numeric
+        offset is not retained, so a string whose offset disagrees with what the
+        named zone had at that moment is accepted as written rather than
+        rejected. RFC 9557's leading `!` critical-annotation marker is accepted
+        and stripped; the identifier is used either way.
+
+        # Throws
+
+        - `baml.errors.ParseError` if `s` is not an RFC 3339 timestamp, or its
+          bracketed annotation is empty.
+
+        Raises:
             ParseError"""
-    def to_instant(self) -> Instant:
+    def to_instant(self, *, _baml: _BamlOptions | None = None) -> Instant:
         """The absolute time, dropping the timezone. The inverse of `from_instant`,
         and infallible for the same reason: the absolute time is what is stored,
         so no timezone database is consulted.
 
         Contrast `to_plain`, which keeps the components and drops the moment."""
-    async def to_instant_async(self) -> Instant:
+    async def to_instant_async(self, *, _baml: _BamlOptions | None = None) -> Instant:
         """The absolute time, dropping the timezone. The inverse of `from_instant`,
         and infallible for the same reason: the absolute time is what is stored,
         so no timezone database is consulted.
 
         Contrast `to_plain`, which keeps the components and drops the moment."""
-    def max(self, other: ZonedDateTime) -> ZonedDateTime:
+    def max(self, other: ZonedDateTime, *, _baml: _BamlOptions | None = None) -> ZonedDateTime:
         """The later of `self` and `other`; `self` if they name the same moment.
 
         An absolute-time comparison, so it is meaningful across timezones: the
         two values need not share one, and the timezone of the winner comes
         along unchanged. No timezone database is consulted."""
-    async def max_async(self, other: ZonedDateTime) -> ZonedDateTime:
+    async def max_async(self, other: ZonedDateTime, *, _baml: _BamlOptions | None = None) -> ZonedDateTime:
         """The later of `self` and `other`; `self` if they name the same moment.
 
         An absolute-time comparison, so it is meaningful across timezones: the
         two values need not share one, and the timezone of the winner comes
         along unchanged. No timezone database is consulted."""
-    def min(self, other: ZonedDateTime) -> ZonedDateTime:
+    def min(self, other: ZonedDateTime, *, _baml: _BamlOptions | None = None) -> ZonedDateTime:
         """The earlier of `self` and `other`; `self` if they name the same moment.
         An absolute-time comparison, with the same properties as `max`."""
-    async def min_async(self, other: ZonedDateTime) -> ZonedDateTime:
+    async def min_async(self, other: ZonedDateTime, *, _baml: _BamlOptions | None = None) -> ZonedDateTime:
         """The earlier of `self` and `other`; `self` if they name the same moment.
         An absolute-time comparison, with the same properties as `max`."""
-    def with_timezone(self, timezone: typing.Union[TimeZoneOffset, str]) -> ZonedDateTime:
+    def with_timezone(self, timezone: typing.Union[TimeZoneOffset, str], *, _baml: _BamlOptions | None = None) -> ZonedDateTime:
         """The same moment, presented in a different timezone: the date and time
         components change, the instant does not.
 
@@ -1452,7 +1782,7 @@ class ZonedDateTime(pydantic.BaseModel):
         along the timeline, so it cannot land in a DST gap and takes no
         `Disambiguation`. To keep the *components* and change the moment, go
         through `to_plain` and `PlainDateTime.to_zoned` instead."""
-    async def with_timezone_async(self, timezone: typing.Union[TimeZoneOffset, str]) -> ZonedDateTime:
+    async def with_timezone_async(self, timezone: typing.Union[TimeZoneOffset, str], *, _baml: _BamlOptions | None = None) -> ZonedDateTime:
         """The same moment, presented in a different timezone: the date and time
         components change, the instant does not.
 
@@ -1460,15 +1790,15 @@ class ZonedDateTime(pydantic.BaseModel):
         along the timeline, so it cannot land in a DST gap and takes no
         `Disambiguation`. To keep the *components* and change the moment, go
         through `to_plain` and `PlainDateTime.to_zoned` instead."""
-    def timezone(self) -> typing.Union[TimeZoneOffset, str]:
+    def timezone(self, *, _baml: _BamlOptions | None = None) -> typing.Union[TimeZoneOffset, str]:
         """The timezone, in whichever form it was supplied: a `TimeZoneOffset` if
         fixed, or the IANA identifier as a `string`. Use `timezone_offset` for
         the concrete offset either way."""
-    async def timezone_async(self) -> typing.Union[TimeZoneOffset, str]:
+    async def timezone_async(self, *, _baml: _BamlOptions | None = None) -> typing.Union[TimeZoneOffset, str]:
         """The timezone, in whichever form it was supplied: a `TimeZoneOffset` if
         fixed, or the IANA identifier as a `string`. Use `timezone_offset` for
         the concrete offset either way."""
-    def timezone_offset(self) -> TimeZoneOffset:
+    def timezone_offset(self, *, _baml: _BamlOptions | None = None) -> TimeZoneOffset:
         """The concrete `TimeZoneOffset` in effect at this moment.
 
         A fixed offset is returned as-is. An IANA identifier is resolved against
@@ -1487,7 +1817,7 @@ class ZonedDateTime(pydantic.BaseModel):
 
         Raises:
             UnknownTimezoneError"""
-    async def timezone_offset_async(self) -> TimeZoneOffset:
+    async def timezone_offset_async(self, *, _baml: _BamlOptions | None = None) -> TimeZoneOffset:
         """The concrete `TimeZoneOffset` in effect at this moment.
 
         A fixed offset is returned as-is. An IANA identifier is resolved against
@@ -1506,7 +1836,7 @@ class ZonedDateTime(pydantic.BaseModel):
 
         Raises:
             UnknownTimezoneError"""
-    def to_plain(self) -> PlainDateTime:
+    def to_plain(self, *, _baml: _BamlOptions | None = None) -> PlainDateTime:
         """Drops the timezone, keeping the wall-clock reading a local observer
         would give. The counterpart of `PlainDateTime.to_zoned`, and the
         opposite trade from `to_instant`, which keeps the moment and drops the
@@ -1532,7 +1862,7 @@ class ZonedDateTime(pydantic.BaseModel):
 
         Raises:
             UnknownTimezoneError"""
-    async def to_plain_async(self) -> PlainDateTime:
+    async def to_plain_async(self, *, _baml: _BamlOptions | None = None) -> PlainDateTime:
         """Drops the timezone, keeping the wall-clock reading a local observer
         would give. The counterpart of `PlainDateTime.to_zoned`, and the
         opposite trade from `to_instant`, which keeps the moment and drops the
@@ -1558,27 +1888,27 @@ class ZonedDateTime(pydantic.BaseModel):
 
         Raises:
             UnknownTimezoneError"""
-    def year(self) -> int:
+    def year(self, *, _baml: _BamlOptions | None = None) -> int:
         """The calendar year as read in this timezone.
 
         Raises:
             InvalidArgument, UnknownTimezoneError"""
-    async def year_async(self) -> int:
+    async def year_async(self, *, _baml: _BamlOptions | None = None) -> int:
         """The calendar year as read in this timezone.
 
         Raises:
             InvalidArgument, UnknownTimezoneError"""
-    def month(self) -> int:
+    def month(self, *, _baml: _BamlOptions | None = None) -> int:
         """The calendar month, in `[1, 12]`, as read in this timezone.
 
         Raises:
             InvalidArgument, UnknownTimezoneError"""
-    async def month_async(self) -> int:
+    async def month_async(self, *, _baml: _BamlOptions | None = None) -> int:
         """The calendar month, in `[1, 12]`, as read in this timezone.
 
         Raises:
             InvalidArgument, UnknownTimezoneError"""
-    def day(self) -> int:
+    def day(self, *, _baml: _BamlOptions | None = None) -> int:
         """The day of the month, in `[1, 31]`, as read in this timezone.
 
         This is the *local* day: the same moment can fall on different dates in
@@ -1586,7 +1916,7 @@ class ZonedDateTime(pydantic.BaseModel):
 
         Raises:
             InvalidArgument, UnknownTimezoneError"""
-    async def day_async(self) -> int:
+    async def day_async(self, *, _baml: _BamlOptions | None = None) -> int:
         """The day of the month, in `[1, 31]`, as read in this timezone.
 
         This is the *local* day: the same moment can fall on different dates in
@@ -1594,7 +1924,7 @@ class ZonedDateTime(pydantic.BaseModel):
 
         Raises:
             InvalidArgument, UnknownTimezoneError"""
-    def hour(self) -> int:
+    def hour(self, *, _baml: _BamlOptions | None = None) -> int:
         """The hour of the day, in `[0, 23]`, as read in this timezone.
 
         Across a DST transition this is not a continuous function of the
@@ -1602,7 +1932,7 @@ class ZonedDateTime(pydantic.BaseModel):
 
         Raises:
             InvalidArgument, UnknownTimezoneError"""
-    async def hour_async(self) -> int:
+    async def hour_async(self, *, _baml: _BamlOptions | None = None) -> int:
         """The hour of the day, in `[0, 23]`, as read in this timezone.
 
         Across a DST transition this is not a continuous function of the
@@ -1610,27 +1940,27 @@ class ZonedDateTime(pydantic.BaseModel):
 
         Raises:
             InvalidArgument, UnknownTimezoneError"""
-    def minute(self) -> int:
+    def minute(self, *, _baml: _BamlOptions | None = None) -> int:
         """The minute of the hour, in `[0, 59]`, as read in this timezone.
 
         Raises:
             InvalidArgument, UnknownTimezoneError"""
-    async def minute_async(self) -> int:
+    async def minute_async(self, *, _baml: _BamlOptions | None = None) -> int:
         """The minute of the hour, in `[0, 59]`, as read in this timezone.
 
         Raises:
             InvalidArgument, UnknownTimezoneError"""
-    def second(self) -> int:
+    def second(self, *, _baml: _BamlOptions | None = None) -> int:
         """The second of the minute, in `[0, 59]`, as read in this timezone.
 
         Raises:
             InvalidArgument, UnknownTimezoneError"""
-    async def second_async(self) -> int:
+    async def second_async(self, *, _baml: _BamlOptions | None = None) -> int:
         """The second of the minute, in `[0, 59]`, as read in this timezone.
 
         Raises:
             InvalidArgument, UnknownTimezoneError"""
-    def millisecond(self) -> int:
+    def millisecond(self, *, _baml: _BamlOptions | None = None) -> int:
         """The millisecond of the second, in `[0, 999]`, as read in this timezone.
 
         The finer components have no accessor of their own; `to_string` renders
@@ -1638,7 +1968,7 @@ class ZonedDateTime(pydantic.BaseModel):
 
         Raises:
             InvalidArgument, UnknownTimezoneError"""
-    async def millisecond_async(self) -> int:
+    async def millisecond_async(self, *, _baml: _BamlOptions | None = None) -> int:
         """The millisecond of the second, in `[0, 999]`, as read in this timezone.
 
         The finer components have no accessor of their own; `to_string` renders
@@ -1648,7 +1978,7 @@ class ZonedDateTime(pydantic.BaseModel):
             InvalidArgument, UnknownTimezoneError"""
 
 
-def _format_zoned(epoch_ns: int, offset_ns: int, iana: typing.Optional[str]) -> str:
+def _format_zoned(epoch_ns: int, offset_ns: int, iana: typing.Optional[str], *, _baml: _BamlOptions | None = None) -> str:
     """(internal) Formats an absolute time as RFC 3339 at the given offset,
     appending an RFC 9557 `[iana]` annotation when `iana` is non-null.
 
@@ -1674,7 +2004,7 @@ def _format_zoned(epoch_ns: int, offset_ns: int, iana: typing.Optional[str]) -> 
 
     Raises:
         InvalidArgument"""
-async def _format_zoned_async(epoch_ns: int, offset_ns: int, iana: typing.Optional[str]) -> str:
+async def _format_zoned_async(epoch_ns: int, offset_ns: int, iana: typing.Optional[str], *, _baml: _BamlOptions | None = None) -> str:
     """(internal) Formats an absolute time as RFC 3339 at the given offset,
     appending an RFC 9557 `[iana]` annotation when `iana` is non-null.
 

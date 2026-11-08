@@ -129,13 +129,15 @@ Raises:
     InvalidArgument"""
 
 
-converse_model_path       = _define_function("aws.internal.converse_model_path", "sync",  ["model_id"], binding_name="converse_model_path", binding_qualname="converse_model_path", binding_module=__name__)
-converse_model_path.__doc__ = """The Converse request path for a model id, inference-profile id, or ARN.
+converse_model_path       = _define_function("aws.internal.converse_model_path", "sync",  ["model_id"], ["stream"], binding_name="converse_model_path", binding_qualname="converse_model_path", binding_module=__name__)
+converse_model_path.__doc__ = """The Converse request path for a model id, inference-profile id, or ARN;
+with `stream`, the ConverseStream path.
 
 Raises:
     InvalidArgument"""
-converse_model_path_async = _define_function("aws.internal.converse_model_path", "async", ["model_id"], binding_name="converse_model_path_async", binding_qualname="converse_model_path_async", binding_module=__name__)
-converse_model_path_async.__doc__ = """The Converse request path for a model id, inference-profile id, or ARN.
+converse_model_path_async = _define_function("aws.internal.converse_model_path", "async", ["model_id"], ["stream"], binding_name="converse_model_path_async", binding_qualname="converse_model_path_async", binding_module=__name__)
+converse_model_path_async.__doc__ = """The Converse request path for a model id, inference-profile id, or ARN;
+with `stream`, the ConverseStream path.
 
 Raises:
     InvalidArgument"""
@@ -228,6 +230,10 @@ class CachePointBlock(pydantic.BaseModel):
     type: str
 
 
+_default_cache_point       = _define_function("aws.internal._default_cache_point", "sync",  [], binding_name="_default_cache_point", binding_qualname="_default_cache_point", binding_module=__name__)
+_default_cache_point_async = _define_function("aws.internal._default_cache_point", "async", [], binding_name="_default_cache_point_async", binding_qualname="_default_cache_point_async", binding_module=__name__)
+
+
 class ToolUseBlock(pydantic.BaseModel):
     model_config = pydantic.ConfigDict(
         arbitrary_types_allowed=True,
@@ -272,7 +278,7 @@ class ContentBlock(pydantic.BaseModel):
     audio: typing.Optional[AudioBlock] = None
     toolUse: typing.Optional[ToolUseBlock] = None
     toolResult: typing.Optional[ToolResultBlock] = None
-    cachePoint: typing.Optional[CachePointBlock] = None
+    cachePoint: typing.Optional[baml.json.json] = None
     of_text       = staticmethod(_define_function("aws.internal.ContentBlock.of_text", "sync",  ["text"], binding_name="of_text", binding_qualname="ContentBlock.of_text", binding_module=__name__))
     of_text_async = staticmethod(_define_function("aws.internal.ContentBlock.of_text", "async", ["text"], binding_name="of_text_async", binding_qualname="ContentBlock.of_text_async", binding_module=__name__))
     of_image       = staticmethod(_define_function("aws.internal.ContentBlock.of_image", "sync",  ["image"], binding_name="of_image", binding_qualname="ContentBlock.of_image", binding_module=__name__))
@@ -287,8 +293,8 @@ class ContentBlock(pydantic.BaseModel):
     of_tool_use_async = staticmethod(_define_function("aws.internal.ContentBlock.of_tool_use", "async", ["tool_use"], binding_name="of_tool_use_async", binding_qualname="ContentBlock.of_tool_use_async", binding_module=__name__))
     of_tool_result       = staticmethod(_define_function("aws.internal.ContentBlock.of_tool_result", "sync",  ["tool_result"], binding_name="of_tool_result", binding_qualname="ContentBlock.of_tool_result", binding_module=__name__))
     of_tool_result_async = staticmethod(_define_function("aws.internal.ContentBlock.of_tool_result", "async", ["tool_result"], binding_name="of_tool_result_async", binding_qualname="ContentBlock.of_tool_result_async", binding_module=__name__))
-    of_cache_point       = staticmethod(_define_function("aws.internal.ContentBlock.of_cache_point", "sync",  [], binding_name="of_cache_point", binding_qualname="ContentBlock.of_cache_point", binding_module=__name__))
-    of_cache_point_async = staticmethod(_define_function("aws.internal.ContentBlock.of_cache_point", "async", [], binding_name="of_cache_point_async", binding_qualname="ContentBlock.of_cache_point_async", binding_module=__name__))
+    of_cache_delimiter       = staticmethod(_define_function("aws.internal.ContentBlock.of_cache_delimiter", "sync",  ["args"], binding_name="of_cache_delimiter", binding_qualname="ContentBlock.of_cache_delimiter", binding_module=__name__))
+    of_cache_delimiter_async = staticmethod(_define_function("aws.internal.ContentBlock.of_cache_delimiter", "async", ["args"], binding_name="of_cache_delimiter_async", binding_qualname="ContentBlock.of_cache_delimiter_async", binding_module=__name__))
 
 
 _empty_content_block       = _define_function("aws.internal._empty_content_block", "sync",  [], binding_name="_empty_content_block", binding_qualname="_empty_content_block", binding_module=__name__)
@@ -307,11 +313,13 @@ class SystemContentBlock(pydantic.BaseModel):
         populate_by_name=True,
     )
     text: typing.Optional[str] = None
-    cachePoint: typing.Optional[CachePointBlock] = None
+    cachePoint: typing.Optional[baml.json.json] = None
     of_text       = staticmethod(_define_function("aws.internal.SystemContentBlock.of_text", "sync",  ["text"], binding_name="of_text", binding_qualname="SystemContentBlock.of_text", binding_module=__name__))
     of_text_async = staticmethod(_define_function("aws.internal.SystemContentBlock.of_text", "async", ["text"], binding_name="of_text_async", binding_qualname="SystemContentBlock.of_text_async", binding_module=__name__))
     of_cache_point       = staticmethod(_define_function("aws.internal.SystemContentBlock.of_cache_point", "sync",  [], binding_name="of_cache_point", binding_qualname="SystemContentBlock.of_cache_point", binding_module=__name__))
     of_cache_point_async = staticmethod(_define_function("aws.internal.SystemContentBlock.of_cache_point", "async", [], binding_name="of_cache_point_async", binding_qualname="SystemContentBlock.of_cache_point_async", binding_module=__name__))
+    of_cache_delimiter       = staticmethod(_define_function("aws.internal.SystemContentBlock.of_cache_delimiter", "sync",  ["args"], binding_name="of_cache_delimiter", binding_qualname="SystemContentBlock.of_cache_delimiter", binding_module=__name__))
+    of_cache_delimiter_async = staticmethod(_define_function("aws.internal.SystemContentBlock.of_cache_delimiter", "async", ["args"], binding_name="of_cache_delimiter_async", binding_qualname="SystemContentBlock.of_cache_delimiter_async", binding_module=__name__))
 
 
 class Message(pydantic.BaseModel):
@@ -525,34 +533,34 @@ Raises:
 
 _image_block       = _define_function("aws.internal._image_block", "sync",  ["image"], ["preview"], binding_name="_image_block", binding_qualname="_image_block", binding_module=__name__)
 _image_block.__doc__ = """Raises:
-    InvalidArgument, Io, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+    InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
 _image_block_async = _define_function("aws.internal._image_block", "async", ["image"], ["preview"], binding_name="_image_block_async", binding_qualname="_image_block_async", binding_module=__name__)
 _image_block_async.__doc__ = """Raises:
-    InvalidArgument, Io, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+    InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
 
 
 _video_block       = _define_function("aws.internal._video_block", "sync",  ["video"], ["preview"], binding_name="_video_block", binding_qualname="_video_block", binding_module=__name__)
 _video_block.__doc__ = """Raises:
-    InvalidArgument, Io, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+    InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
 _video_block_async = _define_function("aws.internal._video_block", "async", ["video"], ["preview"], binding_name="_video_block_async", binding_qualname="_video_block_async", binding_module=__name__)
 _video_block_async.__doc__ = """Raises:
-    InvalidArgument, Io, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+    InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
 
 
 _document_block       = _define_function("aws.internal._document_block", "sync",  ["pdf"], ["preview"], binding_name="_document_block", binding_qualname="_document_block", binding_module=__name__)
 _document_block.__doc__ = """Raises:
-    InvalidArgument, Io, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+    InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
 _document_block_async = _define_function("aws.internal._document_block", "async", ["pdf"], ["preview"], binding_name="_document_block_async", binding_qualname="_document_block_async", binding_module=__name__)
 _document_block_async.__doc__ = """Raises:
-    InvalidArgument, Io, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+    InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
 
 
 _audio_block       = _define_function("aws.internal._audio_block", "sync",  ["audio"], ["preview"], binding_name="_audio_block", binding_qualname="_audio_block", binding_module=__name__)
 _audio_block.__doc__ = """Raises:
-    InvalidArgument, Io, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+    InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
 _audio_block_async = _define_function("aws.internal._audio_block", "async", ["audio"], ["preview"], binding_name="_audio_block_async", binding_qualname="_audio_block_async", binding_module=__name__)
 _audio_block_async.__doc__ = """Raises:
-    InvalidArgument, Io, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+    InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
 
 
 class BedrockPrompt(pydantic.BaseModel):
@@ -583,7 +591,7 @@ member, so audio in a result degrades into a user turn after the run of results
   tool_result | Accept | Accept | Accept | Degrade | Accept
 
 Raises:
-    InvalidArgument, Io, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+    InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
 _lower_block_async = _define_function("aws.internal._lower_block", "async", ["block"], ["preview"], binding_name="_lower_block_async", binding_qualname="_lower_block_async", binding_module=__name__)
 _lower_block_async.__doc__ = """(internal) One content block -> its Converse `ContentBlock`, or null when it lowers to
 nothing. Converse takes every media kind in a conversation message; a tool
@@ -598,24 +606,24 @@ member, so audio in a result degrades into a user turn after the run of results
   tool_result | Accept | Accept | Accept | Degrade | Accept
 
 Raises:
-    InvalidArgument, Io, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+    InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
 
 
 _lower_blocks       = _define_function("aws.internal._lower_blocks", "sync",  ["blocks"], ["preview"], binding_name="_lower_blocks", binding_qualname="_lower_blocks", binding_module=__name__)
 _lower_blocks.__doc__ = """Raises:
-    InvalidArgument, Io, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+    InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
 _lower_blocks_async = _define_function("aws.internal._lower_blocks", "async", ["blocks"], ["preview"], binding_name="_lower_blocks_async", binding_qualname="_lower_blocks_async", binding_module=__name__)
 _lower_blocks_async.__doc__ = """Raises:
-    InvalidArgument, Io, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+    InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
 
 
-_prompt_system       = _define_function("aws.internal._prompt_system", "sync",  ["message"], binding_name="_prompt_system", binding_qualname="_prompt_system", binding_module=__name__)
+_prompt_system       = _define_function("aws.internal._prompt_system", "sync",  ["message", "default_cache_args"], binding_name="_prompt_system", binding_qualname="_prompt_system", binding_module=__name__)
 _prompt_system.__doc__ = """(internal) System content is text-only; a media part in a system message is rejected
 rather than silently dropped (`build_request/bedrock.rs:174-176`).
 
 Raises:
     InvalidRequest"""
-_prompt_system_async = _define_function("aws.internal._prompt_system", "async", ["message"], binding_name="_prompt_system_async", binding_qualname="_prompt_system_async", binding_module=__name__)
+_prompt_system_async = _define_function("aws.internal._prompt_system", "async", ["message", "default_cache_args"], binding_name="_prompt_system_async", binding_qualname="_prompt_system_async", binding_module=__name__)
 _prompt_system_async.__doc__ = """(internal) System content is text-only; a media part in a system message is rejected
 rather than silently dropped (`build_request/bedrock.rs:174-176`).
 
@@ -623,15 +631,35 @@ Raises:
     InvalidRequest"""
 
 
-_wants_cache_point       = _define_function("aws.internal._wants_cache_point", "sync",  ["metadata"], binding_name="_wants_cache_point", binding_qualname="_wants_cache_point", binding_module=__name__)
-_wants_cache_point_async = _define_function("aws.internal._wants_cache_point", "async", ["metadata"], binding_name="_wants_cache_point_async", binding_qualname="_wants_cache_point_async", binding_module=__name__)
+_takes_cache_point       = _define_function("aws.internal._takes_cache_point", "sync",  ["previous", "lowered", "delimiter"], binding_name="_takes_cache_point", binding_qualname="_takes_cache_point", binding_module=__name__)
+_takes_cache_point_async = _define_function("aws.internal._takes_cache_point", "async", ["previous", "lowered", "delimiter"], binding_name="_takes_cache_point_async", binding_qualname="_takes_cache_point_async", binding_module=__name__)
+
+
+_prompt_content       = _define_function("aws.internal._prompt_content", "sync",  ["message", "default_cache_args"], ["preview"], binding_name="_prompt_content", binding_qualname="_prompt_content", binding_module=__name__)
+_prompt_content.__doc__ = """(internal) One non-system prompt message as Converse content blocks. Text
+and media lower exactly as they do for a journal turn; a `${cache(args)}`
+becomes a `cachePoint` block at the position it was written, with `args`
+embedded as written, and the text on either side of it is trimmed where it
+faces the checkpoint (`ai.wire.prompt_parts`).
+
+Raises:
+    InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+_prompt_content_async = _define_function("aws.internal._prompt_content", "async", ["message", "default_cache_args"], ["preview"], binding_name="_prompt_content_async", binding_qualname="_prompt_content_async", binding_module=__name__)
+_prompt_content_async.__doc__ = """(internal) One non-system prompt message as Converse content blocks. Text
+and media lower exactly as they do for a journal turn; a `${cache(args)}`
+becomes a `cachePoint` block at the position it was written, with `args`
+embedded as written, and the text on either side of it is trimmed where it
+faces the checkpoint (`ai.wire.prompt_parts`).
+
+Raises:
+    InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
 
 
 _conversation_role       = _define_function("aws.internal._conversation_role", "sync",  ["role"], binding_name="_conversation_role", binding_qualname="_conversation_role", binding_module=__name__)
 _conversation_role_async = _define_function("aws.internal._conversation_role", "async", ["role"], binding_name="_conversation_role_async", binding_qualname="_conversation_role_async", binding_module=__name__)
 
 
-_lower_prompt       = _define_function("aws.internal._lower_prompt", "sync",  ["prompt"], ["preview"], binding_name="_lower_prompt", binding_qualname="_lower_prompt", binding_module=__name__)
+_lower_prompt       = _define_function("aws.internal._lower_prompt", "sync",  ["prompt", "default_cache_args"], ["preview"], binding_name="_lower_prompt", binding_qualname="_lower_prompt", binding_module=__name__)
 _lower_prompt.__doc__ = """(internal) MULTI-SYSTEM: every `system` message merges into the one top-level `system`
 array, deliberately diverging from PLAN §5's "others: demote 2nd+ to user"
 row. That row exists for providers whose wire format has room for exactly
@@ -642,8 +670,8 @@ The native Anthropic client (`messages.baml:308-337`) merges for the same
 reason.
 
 Raises:
-    InvalidArgument, Io, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
-_lower_prompt_async = _define_function("aws.internal._lower_prompt", "async", ["prompt"], ["preview"], binding_name="_lower_prompt_async", binding_qualname="_lower_prompt_async", binding_module=__name__)
+    InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+_lower_prompt_async = _define_function("aws.internal._lower_prompt", "async", ["prompt", "default_cache_args"], ["preview"], binding_name="_lower_prompt_async", binding_qualname="_lower_prompt_async", binding_module=__name__)
 _lower_prompt_async.__doc__ = """(internal) MULTI-SYSTEM: every `system` message merges into the one top-level `system`
 array, deliberately diverging from PLAN §5's "others: demote 2nd+ to user"
 row. That row exists for providers whose wire format has room for exactly
@@ -654,7 +682,7 @@ The native Anthropic client (`messages.baml:308-337`) merges for the same
 reason.
 
 Raises:
-    InvalidArgument, Io, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+    InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
 
 
 class PendingMessage(pydantic.BaseModel):
@@ -672,6 +700,10 @@ _supports_tool_result_status       = _define_function("aws.internal._supports_to
 _supports_tool_result_status_async = _define_function("aws.internal._supports_tool_result_status", "async", ["model"], binding_name="_supports_tool_result_status_async", binding_qualname="_supports_tool_result_status_async", binding_module=__name__)
 
 
+_supports_cache_point       = _define_function("aws.internal._supports_cache_point", "sync",  ["model"], binding_name="_supports_cache_point", binding_qualname="_supports_cache_point", binding_module=__name__)
+_supports_cache_point_async = _define_function("aws.internal._supports_cache_point", "async", ["model"], binding_name="_supports_cache_point_async", binding_qualname="_supports_cache_point_async", binding_module=__name__)
+
+
 _push_tool_result       = _define_function("aws.internal._push_tool_result", "sync",  ["pending", "id", "content", "is_error", "with_status"], binding_name="_push_tool_result", binding_qualname="_push_tool_result", binding_module=__name__)
 _push_tool_result_async = _define_function("aws.internal._push_tool_result", "async", ["pending", "id", "content", "is_error", "with_status"], binding_name="_push_tool_result_async", binding_qualname="_push_tool_result_async", binding_module=__name__)
 
@@ -681,13 +713,13 @@ _lower_journal.__doc__ = """(internal) `ai.RunStarted` / `ai.ToolRequested` / `a
 journal-only and skip; skipping never closes an open tool-result group.
 
 Raises:
-    InvalidArgument, Io, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+    InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
 _lower_journal_async = _define_function("aws.internal._lower_journal", "async", ["journal", "with_status"], ["preview"], binding_name="_lower_journal_async", binding_qualname="_lower_journal_async", binding_module=__name__)
 _lower_journal_async.__doc__ = """(internal) `ai.RunStarted` / `ai.ToolRequested` / `ai.Usage` / `ai.FinalProduced` are
 journal-only and skip; skipping never closes an open tool-result group.
 
 Raises:
-    InvalidArgument, Io, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+    InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
 
 
 _tool_choice       = _define_function("aws.internal._tool_choice", "sync",  ["choice"], binding_name="_tool_choice", binding_qualname="_tool_choice", binding_module=__name__)
@@ -722,22 +754,22 @@ converse_request       = _define_function("aws.internal.converse_request", "sync
 converse_request.__doc__ = """The typed Converse body for one model turn, before serialization.
 
 Raises:
-    InvalidArgument, Io, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
+    InvalidArgument, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
 converse_request_async = _define_function("aws.internal.converse_request", "async", ["client", "input"], ["preview"], binding_name="converse_request_async", binding_qualname="converse_request_async", binding_module=__name__)
 converse_request_async.__doc__ = """The typed Converse body for one model turn, before serialization.
 
 Raises:
-    InvalidArgument, Io, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
+    InvalidArgument, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
 
 
-converse_url       = _define_function("aws.internal.converse_url", "sync",  ["client"], ["preview"], binding_name="converse_url", binding_qualname="converse_url", binding_module=__name__)
+converse_url       = _define_function("aws.internal.converse_url", "sync",  ["client"], ["preview", "stream"], binding_name="converse_url", binding_qualname="converse_url", binding_module=__name__)
 converse_url.__doc__ = """The Converse endpoint for this client: the `endpoint_url` override when set
 (which bypasses region resolution entirely), else
 `https://bedrock-runtime.<region>.amazonaws.com`.
 
 Raises:
     InvalidArgument, Io, ParseError, InvalidRequest"""
-converse_url_async = _define_function("aws.internal.converse_url", "async", ["client"], ["preview"], binding_name="converse_url_async", binding_qualname="converse_url_async", binding_module=__name__)
+converse_url_async = _define_function("aws.internal.converse_url", "async", ["client"], ["preview", "stream"], binding_name="converse_url_async", binding_qualname="converse_url_async", binding_module=__name__)
 converse_url_async.__doc__ = """The Converse endpoint for this client: the `endpoint_url` override when set
 (which bypasses region resolution entirely), else
 `https://bedrock-runtime.<region>.amazonaws.com`.
@@ -764,19 +796,25 @@ Raises:
     InvalidArgument"""
 
 
-build_request       = _define_function("aws.internal.build_request", "sync",  ["client", "input"], ["preview"], binding_name="build_request", binding_qualname="build_request", binding_module=__name__)
+build_request       = _define_function("aws.internal.build_request", "sync",  ["client", "input"], ["preview", "stream"], binding_name="build_request", binding_qualname="build_request", binding_module=__name__)
 build_request.__doc__ = """The complete, UNSIGNED Converse request: typed body -> JSON -> null-pruned
 -> `request_body` passthrough merged in, plus the user's headers and query
 parameters. Signing must come after this and nothing may touch the request
 afterwards, so this is the seam request-shape tests assert on.
 
+`stream` targets ConverseStream: same body, the `/converse-stream` path,
+and an event-stream `accept`.
+
 Raises:
     InvalidArgument, Io, ParseError, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
-build_request_async = _define_function("aws.internal.build_request", "async", ["client", "input"], ["preview"], binding_name="build_request_async", binding_qualname="build_request_async", binding_module=__name__)
+build_request_async = _define_function("aws.internal.build_request", "async", ["client", "input"], ["preview", "stream"], binding_name="build_request_async", binding_qualname="build_request_async", binding_module=__name__)
 build_request_async.__doc__ = """The complete, UNSIGNED Converse request: typed body -> JSON -> null-pruned
 -> `request_body` passthrough merged in, plus the user's headers and query
 parameters. Signing must come after this and nothing may touch the request
 afterwards, so this is the seam request-shape tests assert on.
+
+`stream` targets ConverseStream: same body, the `/converse-stream` path,
+and an event-stream `accept`.
 
 Raises:
     InvalidArgument, Io, ParseError, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
@@ -923,7 +961,7 @@ tool calling impossible. A missing `output.message` is still a hard error —
 that response is malformed, not empty.
 
 Raises:
-    SerializationError, ParseFailed"""
+    SerializationError, InvalidResponse, ProviderError"""
 parse_response_async = _define_function("aws.internal.parse_response", "async", ["response"], binding_name="parse_response_async", binding_qualname="parse_response_async", binding_module=__name__)
 parse_response_async.__doc__ = """Decode one Converse response into canonical content blocks.
 
@@ -934,7 +972,11 @@ tool calling impossible. A missing `output.message` is still a hard error —
 that response is malformed, not empty.
 
 Raises:
-    SerializationError, ParseFailed"""
+    SerializationError, InvalidResponse, ProviderError"""
+
+
+converse_usage       = _define_function("aws.internal.converse_usage", "sync",  ["usage"], binding_name="converse_usage", binding_qualname="converse_usage", binding_module=__name__)
+converse_usage_async = _define_function("aws.internal.converse_usage", "async", ["usage"], binding_name="converse_usage_async", binding_qualname="converse_usage_async", binding_module=__name__)
 
 
 invoke       = _define_function("aws.internal.invoke", "sync",  ["client", "input"], binding_name="invoke", binding_qualname="invoke", binding_module=__name__)
@@ -943,6 +985,358 @@ invoke.__doc__ = """Raises:
 invoke_async = _define_function("aws.internal.invoke", "async", ["client", "input"], binding_name="invoke_async", binding_qualname="invoke_async", binding_module=__name__)
 invoke_async.__doc__ = """Raises:
     InvalidArgument, Io, ParseError, Timeout, SerializationError"""
+
+
+class MessageStartEvent(pydantic.BaseModel):
+    """
+    `messageStart`.
+
+    Attributes:
+        role: `"assistant"` or `"user"`.
+    """
+    model_config = pydantic.ConfigDict(
+        arbitrary_types_allowed=True,
+        extra="ignore",
+        populate_by_name=True,
+    )
+    role: typing.Optional[str] = None
+
+
+class ToolUseBlockStart(pydantic.BaseModel):
+    model_config = pydantic.ConfigDict(
+        arbitrary_types_allowed=True,
+        extra="ignore",
+        populate_by_name=True,
+    )
+    toolUseId: typing.Optional[str] = None
+    name: typing.Optional[str] = None
+
+
+class ContentBlockStart(pydantic.BaseModel):
+    """Union: which kind of content block is starting."""
+    model_config = pydantic.ConfigDict(
+        arbitrary_types_allowed=True,
+        extra="ignore",
+        populate_by_name=True,
+    )
+    toolUse: typing.Optional[ToolUseBlockStart] = None
+
+
+class ContentBlockStartEvent(pydantic.BaseModel):
+    """
+    `contentBlockStart`: sent before a tool-use block (text blocks start with
+    their first delta).
+    """
+    model_config = pydantic.ConfigDict(
+        arbitrary_types_allowed=True,
+        extra="ignore",
+        populate_by_name=True,
+    )
+    start: typing.Optional[ContentBlockStart] = None
+    contentBlockIndex: typing.Optional[int] = None
+
+
+class ToolUseBlockDelta(pydantic.BaseModel):
+    """
+    Attributes:
+        input: A fragment of the tool input's JSON text.
+    """
+    model_config = pydantic.ConfigDict(
+        arbitrary_types_allowed=True,
+        extra="ignore",
+        populate_by_name=True,
+    )
+    input: typing.Optional[str] = None
+
+
+class ReasoningContentBlockDelta(pydantic.BaseModel):
+    """
+    Union: one reasoning fragment.
+
+    Attributes:
+        text
+        redactedContent: Base64: thinking the provider redacted.
+        signature
+    """
+    model_config = pydantic.ConfigDict(
+        arbitrary_types_allowed=True,
+        extra="ignore",
+        populate_by_name=True,
+    )
+    text: typing.Optional[str] = None
+    redactedContent: typing.Optional[str] = None
+    signature: typing.Optional[str] = None
+
+
+class CitationSourceContentDelta(pydantic.BaseModel):
+    model_config = pydantic.ConfigDict(
+        arbitrary_types_allowed=True,
+        extra="ignore",
+        populate_by_name=True,
+    )
+    text: typing.Optional[str] = None
+
+
+class DocumentCharLocation(pydantic.BaseModel):
+    model_config = pydantic.ConfigDict(
+        arbitrary_types_allowed=True,
+        extra="ignore",
+        populate_by_name=True,
+    )
+    documentIndex: typing.Optional[int] = None
+    start: typing.Optional[int] = None
+    end: typing.Optional[int] = None
+
+
+class DocumentPageLocation(pydantic.BaseModel):
+    model_config = pydantic.ConfigDict(
+        arbitrary_types_allowed=True,
+        extra="ignore",
+        populate_by_name=True,
+    )
+    documentIndex: typing.Optional[int] = None
+    start: typing.Optional[int] = None
+    end: typing.Optional[int] = None
+
+
+class DocumentChunkLocation(pydantic.BaseModel):
+    model_config = pydantic.ConfigDict(
+        arbitrary_types_allowed=True,
+        extra="ignore",
+        populate_by_name=True,
+    )
+    documentIndex: typing.Optional[int] = None
+    start: typing.Optional[int] = None
+    end: typing.Optional[int] = None
+
+
+class CitationLocation(pydantic.BaseModel):
+    """Union: where in a source document a citation points."""
+    model_config = pydantic.ConfigDict(
+        arbitrary_types_allowed=True,
+        extra="ignore",
+        populate_by_name=True,
+    )
+    documentChar: typing.Optional[DocumentCharLocation] = None
+    documentPage: typing.Optional[DocumentPageLocation] = None
+    documentChunk: typing.Optional[DocumentChunkLocation] = None
+
+
+class CitationsDelta(pydantic.BaseModel):
+    model_config = pydantic.ConfigDict(
+        arbitrary_types_allowed=True,
+        extra="ignore",
+        populate_by_name=True,
+    )
+    title: typing.Optional[str] = None
+    sourceContent: typing.Optional[typing.List[CitationSourceContentDelta]] = None
+    location: typing.Optional[CitationLocation] = None
+
+
+class ContentBlockDelta(pydantic.BaseModel):
+    """Union: one incremental piece of a content block."""
+    model_config = pydantic.ConfigDict(
+        arbitrary_types_allowed=True,
+        extra="ignore",
+        populate_by_name=True,
+    )
+    text: typing.Optional[str] = None
+    toolUse: typing.Optional[ToolUseBlockDelta] = None
+    reasoningContent: typing.Optional[ReasoningContentBlockDelta] = None
+    citation: typing.Optional[CitationsDelta] = None
+
+
+class ContentBlockDeltaEvent(pydantic.BaseModel):
+    """`contentBlockDelta`."""
+    model_config = pydantic.ConfigDict(
+        arbitrary_types_allowed=True,
+        extra="ignore",
+        populate_by_name=True,
+    )
+    delta: typing.Optional[ContentBlockDelta] = None
+    contentBlockIndex: typing.Optional[int] = None
+
+
+class ContentBlockStopEvent(pydantic.BaseModel):
+    """`contentBlockStop`."""
+    model_config = pydantic.ConfigDict(
+        arbitrary_types_allowed=True,
+        extra="ignore",
+        populate_by_name=True,
+    )
+    contentBlockIndex: typing.Optional[int] = None
+
+
+class MessageStopEvent(pydantic.BaseModel):
+    """
+    `messageStop`.
+
+    Attributes:
+        stopReason: See `stop_reason` for the values.
+        additionalModelResponseFields
+    """
+    model_config = pydantic.ConfigDict(
+        arbitrary_types_allowed=True,
+        extra="ignore",
+        populate_by_name=True,
+    )
+    stopReason: typing.Optional[str] = None
+    additionalModelResponseFields: typing.Optional[baml.json.json] = None
+
+
+class ConverseStreamMetrics(pydantic.BaseModel):
+    model_config = pydantic.ConfigDict(
+        arbitrary_types_allowed=True,
+        extra="ignore",
+        populate_by_name=True,
+    )
+    latencyMs: typing.Optional[int] = None
+
+
+class PerformanceConfiguration(pydantic.BaseModel):
+    """
+    Attributes:
+        latency: `"standard"` or `"optimized"`.
+    """
+    model_config = pydantic.ConfigDict(
+        arbitrary_types_allowed=True,
+        extra="ignore",
+        populate_by_name=True,
+    )
+    latency: typing.Optional[str] = None
+
+
+class ConverseStreamMetadataEvent(pydantic.BaseModel):
+    """`metadata`: always the last event of a turn."""
+    model_config = pydantic.ConfigDict(
+        arbitrary_types_allowed=True,
+        extra="ignore",
+        populate_by_name=True,
+    )
+    usage: typing.Optional[ConverseUsage] = None
+    metrics: typing.Optional[ConverseStreamMetrics] = None
+    trace: typing.Optional[baml.json.json] = None
+    performanceConfig: typing.Optional[PerformanceConfiguration] = None
+
+
+decode_stream_event       = _define_function("aws.internal.decode_stream_event", "sync",  ["event_type", "data"], binding_name="decode_stream_event", binding_qualname="decode_stream_event", binding_module=__name__)
+decode_stream_event.__doc__ = """Decode one event payload by its `:event-type`; `null` for an event type
+this model does not know.
+
+Raises:
+    DecodeError, ParseError"""
+decode_stream_event_async = _define_function("aws.internal.decode_stream_event", "async", ["event_type", "data"], binding_name="decode_stream_event_async", binding_qualname="decode_stream_event_async", binding_module=__name__)
+decode_stream_event_async.__doc__ = """Decode one event payload by its `:event-type`; `null` for an event type
+this model does not know.
+
+Raises:
+    DecodeError, ParseError"""
+
+
+class InternalServerException(pydantic.BaseModel):
+    model_config = pydantic.ConfigDict(
+        arbitrary_types_allowed=True,
+        extra="ignore",
+        populate_by_name=True,
+    )
+    message: typing.Optional[str] = None
+
+
+class ModelStreamErrorException(pydantic.BaseModel):
+    """
+    Attributes:
+        message
+        originalStatusCode: The status the model itself failed with.
+        originalMessage
+    """
+    model_config = pydantic.ConfigDict(
+        arbitrary_types_allowed=True,
+        extra="ignore",
+        populate_by_name=True,
+    )
+    message: typing.Optional[str] = None
+    originalStatusCode: typing.Optional[int] = None
+    originalMessage: typing.Optional[str] = None
+
+
+class ValidationException(pydantic.BaseModel):
+    model_config = pydantic.ConfigDict(
+        arbitrary_types_allowed=True,
+        extra="ignore",
+        populate_by_name=True,
+    )
+    message: typing.Optional[str] = None
+
+
+class ThrottlingException(pydantic.BaseModel):
+    model_config = pydantic.ConfigDict(
+        arbitrary_types_allowed=True,
+        extra="ignore",
+        populate_by_name=True,
+    )
+    message: typing.Optional[str] = None
+
+
+class ServiceUnavailableException(pydantic.BaseModel):
+    model_config = pydantic.ConfigDict(
+        arbitrary_types_allowed=True,
+        extra="ignore",
+        populate_by_name=True,
+    )
+    message: typing.Optional[str] = None
+
+
+_stream_provider_error       = _define_function("aws.internal._stream_provider_error", "sync",  ["kind", "data"], binding_name="_stream_provider_error", binding_qualname="_stream_provider_error", binding_module=__name__)
+_stream_provider_error_async = _define_function("aws.internal._stream_provider_error", "async", ["kind", "data"], binding_name="_stream_provider_error_async", binding_qualname="_stream_provider_error_async", binding_module=__name__)
+
+
+decode_stream_batch       = _define_function("aws.internal.decode_stream_batch", "sync",  ["batch"], binding_name="decode_stream_batch", binding_qualname="decode_stream_batch", binding_module=__name__)
+decode_stream_batch.__doc__ = """One `SseStream.next()` batch -> the stream events it contains. Tool-use and
+reasoning deltas are skipped: streaming runs no tool loop, and the
+non-streaming path does not surface reasoning as text either.
+
+Raises:
+    DecodeError, ParseError"""
+decode_stream_batch_async = _define_function("aws.internal.decode_stream_batch", "async", ["batch"], binding_name="decode_stream_batch_async", binding_qualname="decode_stream_batch_async", binding_module=__name__)
+decode_stream_batch_async.__doc__ = """One `SseStream.next()` batch -> the stream events it contains. Tool-use and
+reasoning deltas are skipped: streaming runs no tool loop, and the
+non-streaming path does not surface reasoning as text either.
+
+Raises:
+    DecodeError, ParseError"""
+
+
+_stream_open_failure       = _define_function("aws.internal._stream_open_failure", "sync",  ["error"], binding_name="_stream_open_failure", binding_qualname="_stream_open_failure", binding_module=__name__)
+_stream_open_failure.__doc__ = """(internal) `send_sse` fails a non-2xx status itself ("SSE request failed
+with status 403: …"). Route the status through the classifier the
+non-streaming path uses, so a 4xx is never a retry-safe NetworkFailure.
+
+Raises:
+    Timeout"""
+_stream_open_failure_async = _define_function("aws.internal._stream_open_failure", "async", ["error"], binding_name="_stream_open_failure_async", binding_qualname="_stream_open_failure_async", binding_module=__name__)
+_stream_open_failure_async.__doc__ = """(internal) `send_sse` fails a non-2xx status itself ("SSE request failed
+with status 403: …"). Route the status through the classifier the
+non-streaming path uses, so a 4xx is never a retry-safe NetworkFailure.
+
+Raises:
+    Timeout"""
+
+
+invoke_stream       = _define_function("aws.internal.invoke_stream", "sync",  ["client", "input"], binding_name="invoke_stream", binding_qualname="invoke_stream", binding_module=__name__)
+invoke_stream.__doc__ = """The streaming entry point: the signed ConverseStream request, wrapped in a
+TurnStream over the decoded event stream.
+
+Raises:
+    InvalidArgument, Io, ParseError, Timeout, SerializationError"""
+invoke_stream_async = _define_function("aws.internal.invoke_stream", "async", ["client", "input"], binding_name="invoke_stream_async", binding_qualname="invoke_stream_async", binding_module=__name__)
+invoke_stream_async.__doc__ = """The streaming entry point: the signed ConverseStream request, wrapped in a
+TurnStream over the decoded event stream.
+
+Raises:
+    InvalidArgument, Io, ParseError, Timeout, SerializationError"""
+
+
+ConverseStreamEvent: typing.TypeAlias = typing.Union[MessageStartEvent, ContentBlockStartEvent, ContentBlockDeltaEvent, ContentBlockStopEvent, MessageStopEvent, ConverseStreamMetadataEvent]
 
 
 __all__ = [
@@ -998,6 +1392,39 @@ __all__ = [
     "stop_reason_async",
     "parse_response",
     "parse_response_async",
+    "converse_usage",
+    "converse_usage_async",
     "invoke",
     "invoke_async",
+    "MessageStartEvent",
+    "ToolUseBlockStart",
+    "ContentBlockStart",
+    "ContentBlockStartEvent",
+    "ToolUseBlockDelta",
+    "ReasoningContentBlockDelta",
+    "CitationSourceContentDelta",
+    "DocumentCharLocation",
+    "DocumentPageLocation",
+    "DocumentChunkLocation",
+    "CitationLocation",
+    "CitationsDelta",
+    "ContentBlockDelta",
+    "ContentBlockDeltaEvent",
+    "ContentBlockStopEvent",
+    "MessageStopEvent",
+    "ConverseStreamMetrics",
+    "PerformanceConfiguration",
+    "ConverseStreamMetadataEvent",
+    "decode_stream_event",
+    "decode_stream_event_async",
+    "InternalServerException",
+    "ModelStreamErrorException",
+    "ValidationException",
+    "ThrottlingException",
+    "ServiceUnavailableException",
+    "decode_stream_batch",
+    "decode_stream_batch_async",
+    "invoke_stream",
+    "invoke_stream_async",
+    "ConverseStreamEvent",
 ]

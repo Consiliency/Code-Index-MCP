@@ -22,19 +22,20 @@
 from __future__ import annotations
 
 _LAZY_CHILDREN = frozenset({
-    "array",
     "class_",
     "enum",
     "errors",
     "function",
     "interface",
-    "literal",
-    "map",
-    "primitive",
-    "union",
 })
 
 def __getattr__(name):
+    if name == "experimental" and __name__ == "baml_sdk":
+        import importlib
+        return importlib.import_module(".experimental", __name__)
+    if name == "trace" and __name__ == "baml_sdk":
+        import importlib
+        return importlib.import_module(".vendor.trace", __name__)
     if name in _LAZY_CHILDREN:
         import importlib
         return importlib.import_module(f".{name}", __name__)
@@ -44,7 +45,8 @@ import typing
 import typing_extensions
 import pydantic
 
-from .. import reflect
+if typing.TYPE_CHECKING:
+    from .. import reflect
 
 from baml_bridge import define_function as _define_function
 
@@ -53,8 +55,219 @@ from baml_bridge.reflect import Type as Type
 
 E = typing.TypeVar("E")
 F = typing.TypeVar("F")
+I = typing.TypeVar("I")
 R = typing.TypeVar("R")
 T = typing.TypeVar("T")
+
+
+class Class(pydantic.BaseModel):
+    """
+    A class-kind view of a `type` value. Users never construct this class.
+
+    Attributes:
+        field_ty: The wrapped `type` value. Private by invariant: reflection natives are
+            its only readers, and each kind method panics if the held type no longer
+            classifies as this view's kind.
+    """
+    model_config = pydantic.ConfigDict(
+        arbitrary_types_allowed=True,
+        extra="ignore",
+        populate_by_name=True,
+    )
+    field_ty: typing.Any = pydantic.Field(alias="_ty")
+    new       = staticmethod(_define_function("reflect.Class.new", "sync",  ["name", "fields"], ["implementations"], binding_name="new", binding_qualname="Class.new", binding_module=__name__))
+    new_async = staticmethod(_define_function("reflect.Class.new", "async", ["name", "fields"], ["implementations"], binding_name="new_async", binding_qualname="Class.new_async", binding_module=__name__))
+    _new_       = staticmethod(_define_function("reflect.Class._new", "sync",  ["name", "fields", "implementations"], binding_name="_new_", binding_qualname="Class._new_", binding_module=__name__))
+    _new__async = staticmethod(_define_function("reflect.Class._new", "async", ["name", "fields", "implementations"], binding_name="_new__async", binding_qualname="Class._new__async", binding_module=__name__))
+    extends       = staticmethod(_define_function("reflect.Class.extends", "sync",  ["name", "fields"], binding_name="extends", binding_qualname="Class.extends", binding_module=__name__, type_params=["I"]))
+    extends_async = staticmethod(_define_function("reflect.Class.extends", "async", ["name", "fields"], binding_name="extends_async", binding_qualname="Class.extends_async", binding_module=__name__, type_params=["I"]))
+    _extends_       = staticmethod(_define_function("reflect.Class._extends", "sync",  ["name", "fields"], binding_name="_extends_", binding_qualname="Class._extends_", binding_module=__name__, type_params=["I"]))
+    _extends__async = staticmethod(_define_function("reflect.Class._extends", "async", ["name", "fields"], binding_name="_extends__async", binding_qualname="Class._extends__async", binding_module=__name__, type_params=["I"]))
+    builder       = staticmethod(_define_function("reflect.Class.builder", "sync",  ["name"], binding_name="builder", binding_qualname="Class.builder", binding_module=__name__))
+    builder_async = staticmethod(_define_function("reflect.Class.builder", "async", ["name"], binding_name="builder_async", binding_qualname="Class.builder_async", binding_module=__name__))
+    get_field       = staticmethod(_define_function("reflect.Class.get_field", "sync",  ["value", "name"], binding_name="get_field", binding_qualname="Class.get_field", binding_module=__name__, type_params=["T"]))
+    get_field_async = staticmethod(_define_function("reflect.Class.get_field", "async", ["value", "name"], binding_name="get_field_async", binding_qualname="Class.get_field_async", binding_module=__name__, type_params=["T"]))
+    fields       = _define_function("reflect.Class.fields", "sync",  ["self"], binding_name="fields", binding_qualname="Class.fields", binding_module=__name__)
+    fields_async = _define_function("reflect.Class.fields", "async", ["self"], binding_name="fields_async", binding_qualname="Class.fields_async", binding_module=__name__)
+    metadata       = _define_function("reflect.Class.metadata", "sync",  ["self"], binding_name="metadata", binding_qualname="Class.metadata", binding_module=__name__)
+    metadata_async = _define_function("reflect.Class.metadata", "async", ["self"], binding_name="metadata_async", binding_qualname="Class.metadata_async", binding_module=__name__)
+    name       = _define_function("reflect.Class.name", "sync",  ["self"], binding_name="name", binding_qualname="Class.name", binding_module=__name__)
+    name_async = _define_function("reflect.Class.name", "async", ["self"], binding_name="name_async", binding_qualname="Class.name_async", binding_module=__name__)
+
+
+class Enum(pydantic.BaseModel):
+    """
+    An enum-kind view of a `type` value. Users never construct this class.
+
+    Attributes:
+        field_ty: The wrapped `type` value. Private by invariant: reflection natives are
+            its only readers, and each kind method panics if the held type no longer
+            classifies as this view's kind.
+    """
+    model_config = pydantic.ConfigDict(
+        arbitrary_types_allowed=True,
+        extra="ignore",
+        populate_by_name=True,
+    )
+    field_ty: typing.Any = pydantic.Field(alias="_ty")
+    value       = staticmethod(_define_function("reflect.Enum.value", "sync",  ["name"], ["alias", "description", "docstring", "other"], binding_name="value", binding_qualname="Enum.value", binding_module=__name__))
+    value_async = staticmethod(_define_function("reflect.Enum.value", "async", ["name"], ["alias", "description", "docstring", "other"], binding_name="value_async", binding_qualname="Enum.value_async", binding_module=__name__))
+    new       = staticmethod(_define_function("reflect.Enum.new", "sync",  ["name", "values"], binding_name="new", binding_qualname="Enum.new", binding_module=__name__))
+    new_async = staticmethod(_define_function("reflect.Enum.new", "async", ["name", "values"], binding_name="new_async", binding_qualname="Enum.new_async", binding_module=__name__))
+    get_value       = staticmethod(_define_function("reflect.Enum.get_value", "sync",  ["value"], binding_name="get_value", binding_qualname="Enum.get_value", binding_module=__name__))
+    get_value_async = staticmethod(_define_function("reflect.Enum.get_value", "async", ["value"], binding_name="get_value_async", binding_qualname="Enum.get_value_async", binding_module=__name__))
+    values       = _define_function("reflect.Enum.values", "sync",  ["self"], binding_name="values", binding_qualname="Enum.values", binding_module=__name__)
+    values_async = _define_function("reflect.Enum.values", "async", ["self"], binding_name="values_async", binding_qualname="Enum.values_async", binding_module=__name__)
+    metadata       = _define_function("reflect.Enum.metadata", "sync",  ["self"], binding_name="metadata", binding_qualname="Enum.metadata", binding_module=__name__)
+    metadata_async = _define_function("reflect.Enum.metadata", "async", ["self"], binding_name="metadata_async", binding_qualname="Enum.metadata_async", binding_module=__name__)
+    name       = _define_function("reflect.Enum.name", "sync",  ["self"], binding_name="name", binding_qualname="Enum.name", binding_module=__name__)
+    name_async = _define_function("reflect.Enum.name", "async", ["self"], binding_name="name_async", binding_qualname="Enum.name_async", binding_module=__name__)
+
+
+class Union(pydantic.BaseModel):
+    """
+    A union-kind view of a `type` value. Users never construct this class.
+
+    Attributes:
+        field_ty: The wrapped `type` value. Private by invariant: reflection natives are
+            its only readers, and each kind method panics if the held type no longer
+            classifies as this view's kind.
+    """
+    model_config = pydantic.ConfigDict(
+        arbitrary_types_allowed=True,
+        extra="ignore",
+        populate_by_name=True,
+    )
+    field_ty: typing.Any = pydantic.Field(alias="_ty")
+    new       = staticmethod(_define_function("reflect.Union.new", "sync",  ["types"], binding_name="new", binding_qualname="Union.new", binding_module=__name__))
+    new_async = staticmethod(_define_function("reflect.Union.new", "async", ["types"], binding_name="new_async", binding_qualname="Union.new_async", binding_module=__name__))
+    _new_       = staticmethod(_define_function("reflect.Union._new", "sync",  ["types"], binding_name="_new_", binding_qualname="Union._new_", binding_module=__name__))
+    _new__async = staticmethod(_define_function("reflect.Union._new", "async", ["types"], binding_name="_new__async", binding_qualname="Union._new__async", binding_module=__name__))
+    member_types       = _define_function("reflect.Union.member_types", "sync",  ["self"], binding_name="member_types", binding_qualname="Union.member_types", binding_module=__name__)
+    member_types_async = _define_function("reflect.Union.member_types", "async", ["self"], binding_name="member_types_async", binding_qualname="Union.member_types_async", binding_module=__name__)
+
+
+class Literal(pydantic.BaseModel):
+    """
+    A literal-kind view of a `type` value. Users never construct this class.
+
+    Attributes:
+        field_ty: The wrapped `type` value. Private by invariant: reflection natives are
+            its only readers, and each kind method panics if the held type no longer
+            classifies as this view's kind.
+    """
+    model_config = pydantic.ConfigDict(
+        arbitrary_types_allowed=True,
+        extra="ignore",
+        populate_by_name=True,
+    )
+    field_ty: typing.Any = pydantic.Field(alias="_ty")
+    new       = staticmethod(_define_function("reflect.Literal.new", "sync",  ["value"], binding_name="new", binding_qualname="Literal.new", binding_module=__name__))
+    new_async = staticmethod(_define_function("reflect.Literal.new", "async", ["value"], binding_name="new_async", binding_qualname="Literal.new_async", binding_module=__name__))
+    value       = _define_function("reflect.Literal.value", "sync",  ["self"], binding_name="value", binding_qualname="Literal.value", binding_module=__name__)
+    value_async = _define_function("reflect.Literal.value", "async", ["self"], binding_name="value_async", binding_qualname="Literal.value_async", binding_module=__name__)
+
+
+class Array(pydantic.BaseModel):
+    """
+    An array-kind view of a `type` value. Users never construct this class.
+
+    Attributes:
+        field_ty: The wrapped `type` value. Private by invariant: reflection natives are
+            its only readers, and each kind method panics if the held type no longer
+            classifies as this view's kind.
+    """
+    model_config = pydantic.ConfigDict(
+        arbitrary_types_allowed=True,
+        extra="ignore",
+        populate_by_name=True,
+    )
+    field_ty: typing.Any = pydantic.Field(alias="_ty")
+    element_type       = _define_function("reflect.Array.element_type", "sync",  ["self"], binding_name="element_type", binding_qualname="Array.element_type", binding_module=__name__)
+    element_type_async = _define_function("reflect.Array.element_type", "async", ["self"], binding_name="element_type_async", binding_qualname="Array.element_type_async", binding_module=__name__)
+
+
+class Map(pydantic.BaseModel):
+    """
+    A map-kind view of a `type` value. Users never construct this class.
+
+    Attributes:
+        field_ty: The wrapped `type` value. Private by invariant: reflection natives are
+            its only readers, and each kind method panics if the held type no longer
+            classifies as this view's kind.
+    """
+    model_config = pydantic.ConfigDict(
+        arbitrary_types_allowed=True,
+        extra="ignore",
+        populate_by_name=True,
+    )
+    field_ty: typing.Any = pydantic.Field(alias="_ty")
+    new       = staticmethod(_define_function("reflect.Map.new", "sync",  ["key", "value"], binding_name="new", binding_qualname="Map.new", binding_module=__name__))
+    new_async = staticmethod(_define_function("reflect.Map.new", "async", ["key", "value"], binding_name="new_async", binding_qualname="Map.new_async", binding_module=__name__))
+    _new_       = staticmethod(_define_function("reflect.Map._new", "sync",  ["key", "value"], binding_name="_new_", binding_qualname="Map._new_", binding_module=__name__))
+    _new__async = staticmethod(_define_function("reflect.Map._new", "async", ["key", "value"], binding_name="_new__async", binding_qualname="Map._new__async", binding_module=__name__))
+    key_type       = _define_function("reflect.Map.key_type", "sync",  ["self"], binding_name="key_type", binding_qualname="Map.key_type", binding_module=__name__)
+    key_type_async = _define_function("reflect.Map.key_type", "async", ["self"], binding_name="key_type_async", binding_qualname="Map.key_type_async", binding_module=__name__)
+    value_type       = _define_function("reflect.Map.value_type", "sync",  ["self"], binding_name="value_type", binding_qualname="Map.value_type", binding_module=__name__)
+    value_type_async = _define_function("reflect.Map.value_type", "async", ["self"], binding_name="value_type_async", binding_qualname="Map.value_type_async", binding_module=__name__)
+
+
+class Interface(pydantic.BaseModel):
+    """
+    An interface-kind view of a `type` value. Users never construct this class.
+
+    Attributes:
+        field_ty: The wrapped `type` value. Private by invariant: reflection natives are
+            its only readers, and each kind method panics if the held type no longer
+            classifies as this view's kind.
+    """
+    model_config = pydantic.ConfigDict(
+        arbitrary_types_allowed=True,
+        extra="ignore",
+        populate_by_name=True,
+    )
+    field_ty: typing.Any = pydantic.Field(alias="_ty")
+    implementation       = staticmethod(_define_function("reflect.Interface.implementation", "sync",  [], binding_name="implementation", binding_qualname="Interface.implementation", binding_module=__name__, type_params=["I"]))
+    implementation_async = staticmethod(_define_function("reflect.Interface.implementation", "async", [], binding_name="implementation_async", binding_qualname="Interface.implementation_async", binding_module=__name__, type_params=["I"]))
+
+
+class Primitive(pydantic.BaseModel):
+    """
+    A primitive-kind view of a `type` value. Users never construct this class.
+
+    Attributes:
+        field_ty: The wrapped `type` value. Private by invariant: reflection natives are
+            its only readers, and each kind method panics if the held type no longer
+            classifies as this view's kind.
+    """
+    model_config = pydantic.ConfigDict(
+        arbitrary_types_allowed=True,
+        extra="ignore",
+        populate_by_name=True,
+    )
+    field_ty: typing.Any = pydantic.Field(alias="_ty")
+
+
+class Function(pydantic.BaseModel):
+    """
+    A function-kind view of a `type` value. Throws are intentionally not part
+    of the function reflection surface.
+
+    Attributes:
+        field_ty: The wrapped `type` value. Private by invariant: reflection natives are
+            its only readers, and each kind method panics if the held type no longer
+            classifies as this view's kind.
+    """
+    model_config = pydantic.ConfigDict(
+        arbitrary_types_allowed=True,
+        extra="ignore",
+        populate_by_name=True,
+    )
+    field_ty: typing.Any = pydantic.Field(alias="_ty")
+    params       = _define_function("reflect.Function.params", "sync",  ["self"], binding_name="params", binding_qualname="Function.params", binding_module=__name__)
+    params_async = _define_function("reflect.Function.params", "async", ["self"], binding_name="params_async", binding_qualname="Function.params_async", binding_module=__name__)
+    return_type       = _define_function("reflect.Function.return_type", "sync",  ["self"], binding_name="return_type", binding_qualname="Function.return_type", binding_module=__name__)
+    return_type_async = _define_function("reflect.Function.return_type", "async", ["self"], binding_name="return_type_async", binding_qualname="Function.return_type_async", binding_module=__name__)
 
 
 class Arg(pydantic.BaseModel):
@@ -214,6 +427,14 @@ class Diagnostic(pydantic.BaseModel):
     related_info: typing.List[DiagnosticRelatedInfo]
 
 
+_as_types       = _define_function("reflect._as_types", "sync",  ["types"], binding_name="_as_types", binding_qualname="_as_types", binding_module=__name__)
+_as_types_async = _define_function("reflect._as_types", "async", ["types"], binding_name="_as_types_async", binding_qualname="_as_types_async", binding_module=__name__)
+
+
+_as_field_rows       = _define_function("reflect._as_field_rows", "sync",  ["fields"], binding_name="_as_field_rows", binding_qualname="_as_field_rows", binding_module=__name__)
+_as_field_rows_async = _define_function("reflect._as_field_rows", "async", ["fields"], binding_name="_as_field_rows_async", binding_qualname="_as_field_rows_async", binding_module=__name__)
+
+
 class Signature(pydantic.BaseModel):
     """
     The runtime signature of a function value, reconstructed from the value
@@ -289,14 +510,24 @@ class Package(pydantic.BaseModel):
     _finish__async = staticmethod(_define_function("reflect.Package._finish", "async", ["artifact", "packages"], binding_name="_finish__async", binding_qualname="Package._finish__async", binding_module=__name__))
     get_class       = _define_function("reflect.Package.get_class", "sync",  ["self", "name"], binding_name="get_class", binding_qualname="Package.get_class", binding_module=__name__)
     get_class_async = _define_function("reflect.Package.get_class", "async", ["self", "name"], binding_name="get_class_async", binding_qualname="Package.get_class_async", binding_module=__name__)
+    find_class       = _define_function("reflect.Package.find_class", "sync",  ["self", "name"], binding_name="find_class", binding_qualname="Package.find_class", binding_module=__name__)
+    find_class_async = _define_function("reflect.Package.find_class", "async", ["self", "name"], binding_name="find_class_async", binding_qualname="Package.find_class_async", binding_module=__name__)
     get_enum       = _define_function("reflect.Package.get_enum", "sync",  ["self", "name"], binding_name="get_enum", binding_qualname="Package.get_enum", binding_module=__name__)
     get_enum_async = _define_function("reflect.Package.get_enum", "async", ["self", "name"], binding_name="get_enum_async", binding_qualname="Package.get_enum_async", binding_module=__name__)
+    find_enum       = _define_function("reflect.Package.find_enum", "sync",  ["self", "name"], binding_name="find_enum", binding_qualname="Package.find_enum", binding_module=__name__)
+    find_enum_async = _define_function("reflect.Package.find_enum", "async", ["self", "name"], binding_name="find_enum_async", binding_qualname="Package.find_enum_async", binding_module=__name__)
     get_interface       = _define_function("reflect.Package.get_interface", "sync",  ["self", "name"], binding_name="get_interface", binding_qualname="Package.get_interface", binding_module=__name__)
     get_interface_async = _define_function("reflect.Package.get_interface", "async", ["self", "name"], binding_name="get_interface_async", binding_qualname="Package.get_interface_async", binding_module=__name__)
+    find_interface       = _define_function("reflect.Package.find_interface", "sync",  ["self", "name"], binding_name="find_interface", binding_qualname="Package.find_interface", binding_module=__name__)
+    find_interface_async = _define_function("reflect.Package.find_interface", "async", ["self", "name"], binding_name="find_interface_async", binding_qualname="Package.find_interface_async", binding_module=__name__)
     with_types       = _define_function("reflect.Package.with_types", "sync",  ["self", "types"], binding_name="with_types", binding_qualname="Package.with_types", binding_module=__name__)
     with_types_async = _define_function("reflect.Package.with_types", "async", ["self", "types"], binding_name="with_types_async", binding_qualname="Package.with_types_async", binding_module=__name__)
+    _with_types_       = _define_function("reflect.Package._with_types", "sync",  ["self", "types"], binding_name="_with_types_", binding_qualname="Package._with_types_", binding_module=__name__)
+    _with_types__async = _define_function("reflect.Package._with_types", "async", ["self", "types"], binding_name="_with_types__async", binding_qualname="Package._with_types__async", binding_module=__name__)
     get_function       = _define_function("reflect.Package.get_function", "sync",  ["self", "name"], binding_name="get_function", binding_qualname="Package.get_function", binding_module=__name__, type_params=["F"])
     get_function_async = _define_function("reflect.Package.get_function", "async", ["self", "name"], binding_name="get_function_async", binding_qualname="Package.get_function_async", binding_module=__name__, type_params=["F"])
+    find_function       = _define_function("reflect.Package.find_function", "sync",  ["self", "name"], binding_name="find_function", binding_qualname="Package.find_function", binding_module=__name__, type_params=["F"])
+    find_function_async = _define_function("reflect.Package.find_function", "async", ["self", "name"], binding_name="find_function_async", binding_qualname="Package.find_function_async", binding_module=__name__, type_params=["F"])
     classes       = _define_function("reflect.Package.classes", "sync",  ["self"], binding_name="classes", binding_qualname="Package.classes", binding_module=__name__)
     classes_async = _define_function("reflect.Package.classes", "async", ["self"], binding_name="classes_async", binding_qualname="Package.classes_async", binding_module=__name__)
     enums       = _define_function("reflect.Package.enums", "sync",  ["self"], binding_name="enums", binding_qualname="Package.enums", binding_module=__name__)
@@ -305,6 +536,12 @@ class Package(pydantic.BaseModel):
     interfaces_async = _define_function("reflect.Package.interfaces", "async", ["self"], binding_name="interfaces_async", binding_qualname="Package.interfaces_async", binding_module=__name__)
     functions       = _define_function("reflect.Package.functions", "sync",  ["self"], binding_name="functions", binding_qualname="Package.functions", binding_module=__name__)
     functions_async = _define_function("reflect.Package.functions", "async", ["self"], binding_name="functions_async", binding_qualname="Package.functions_async", binding_module=__name__)
+    globals       = _define_function("reflect.Package.globals", "sync",  ["self"], binding_name="globals", binding_qualname="Package.globals", binding_module=__name__)
+    globals_async = _define_function("reflect.Package.globals", "async", ["self"], binding_name="globals_async", binding_qualname="Package.globals_async", binding_module=__name__)
+    get_global       = _define_function("reflect.Package.get_global", "sync",  ["self", "name"], binding_name="get_global", binding_qualname="Package.get_global", binding_module=__name__, type_params=["T"])
+    get_global_async = _define_function("reflect.Package.get_global", "async", ["self", "name"], binding_name="get_global_async", binding_qualname="Package.get_global_async", binding_module=__name__, type_params=["T"])
+    find_global       = _define_function("reflect.Package.find_global", "sync",  ["self", "name"], binding_name="find_global", binding_qualname="Package.find_global", binding_module=__name__, type_params=["T"])
+    find_global_async = _define_function("reflect.Package.find_global", "async", ["self", "name"], binding_name="find_global_async", binding_qualname="Package.find_global_async", binding_module=__name__, type_params=["T"])
     tests       = _define_function("reflect.Package.tests", "sync",  ["self"], binding_name="tests", binding_qualname="Package.tests", binding_module=__name__)
     tests_async = _define_function("reflect.Package.tests", "async", ["self"], binding_name="tests_async", binding_qualname="Package.tests_async", binding_module=__name__)
     diagnostics       = _define_function("reflect.Package.diagnostics", "sync",  ["self"], binding_name="diagnostics", binding_qualname="Package.diagnostics", binding_module=__name__)
@@ -346,17 +583,50 @@ signature_async = _define_function("reflect.signature", "async", ["f"], binding_
 
 
 call_any       = _define_function("reflect.call_any", "sync",  ["f", "args"], binding_name="call_any", binding_qualname="call_any", binding_module=__name__, type_params=["R", "E"])
-call_any.__doc__ = """Raises:
+call_any.__doc__ = """Calls `f` with `args`, every argument keyed by parameter name (a nameless
+positional is addressed by its `$argN` placeholder), checked at runtime
+against `f`'s signature: a missing required parameter, a key naming no
+parameter, or a value that does not fit its parameter's type throws
+`InvalidArgumentError`. The returned value is checked against `R` at the
+same boundary (except when `R` is `unknown`). An absent optional fires the
+callee's own default. `R` and `E` are `f`'s `Returns`/`Throws` pins, so a
+pinned `AnyFunction<Returns = json, Throws = ToolError>` yields typed
+results and an exhaustive catch; a bare `AnyFunction` returns `unknown`
+and throws `unknown` (which covers `InvalidArgumentError` and
+`reflect.errors.CompilationError`).
+
+Raises:
     InvalidArgumentError, CompilationError"""
 call_any_async = _define_function("reflect.call_any", "async", ["f", "args"], binding_name="call_any_async", binding_qualname="call_any_async", binding_module=__name__, type_params=["R", "E"])
-call_any_async.__doc__ = """Raises:
+call_any_async.__doc__ = """Calls `f` with `args`, every argument keyed by parameter name (a nameless
+positional is addressed by its `$argN` placeholder), checked at runtime
+against `f`'s signature: a missing required parameter, a key naming no
+parameter, or a value that does not fit its parameter's type throws
+`InvalidArgumentError`. The returned value is checked against `R` at the
+same boundary (except when `R` is `unknown`). An absent optional fires the
+callee's own default. `R` and `E` are `f`'s `Returns`/`Throws` pins, so a
+pinned `AnyFunction<Returns = json, Throws = ToolError>` yields typed
+results and an exhaustive catch; a bare `AnyFunction` returns `unknown`
+and throws `unknown` (which covers `InvalidArgumentError` and
+`reflect.errors.CompilationError`).
+
+Raises:
     InvalidArgumentError, CompilationError"""
 
 
-TypeKind: typing.TypeAlias = typing.Union[reflect.class_.Type, reflect.enum.Type, reflect.union.Type, reflect.literal.Type, reflect.array.Type, reflect.map.Type, reflect.interface.Type, reflect.primitive.Type, reflect.function.Type]
+TypeKind: typing.TypeAlias = typing.Union[Class, Enum, Union, Literal, Array, Map, Interface, Primitive, Function]
 
 
 __all__ = [
+    "Class",
+    "Enum",
+    "Union",
+    "Literal",
+    "Array",
+    "Map",
+    "Interface",
+    "Primitive",
+    "Function",
     "Arg",
     "Meta",
     "WithMeta",

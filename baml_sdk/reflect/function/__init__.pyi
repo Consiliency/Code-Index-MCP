@@ -25,6 +25,8 @@ import typing
 import typing_extensions
 import pydantic
 
+from ..._invocation_types import BamlOptions as _BamlOptions
+
 
 class Parameter(pydantic.BaseModel):
     name: typing.Optional[str] = None
@@ -32,19 +34,6 @@ class Parameter(pydantic.BaseModel):
     optional: bool
 
 
-class Type(pydantic.BaseModel):
-    field_ty: typing.Any = pydantic.Field(alias="_ty")
-    def params(self) -> typing.List[Parameter]:
-        """The function's parameters, in declaration order."""
-    async def params_async(self) -> typing.List[Parameter]:
-        """The function's parameters, in declaration order."""
-    def return_type(self) -> typing.Any:
-        """The function's return type."""
-    async def return_type_async(self) -> typing.Any:
-        """The function's return type."""
-
-
 __all__ = [
     "Parameter",
-    "Type",
 ]

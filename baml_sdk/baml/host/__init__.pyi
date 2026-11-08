@@ -25,12 +25,14 @@ import typing
 import typing_extensions
 import pydantic
 
+from ..._invocation_types import BamlOptions as _BamlOptions
+
 
 E = typing.TypeVar("E")
 T = typing.TypeVar("T")
 
 
-def call_host_value(handle: Value, args: typing.List[typing.Any], *, _types: dict[str, typing.Any]) -> T:
+def call_host_value(handle: Value, args: typing.List[typing.Any], *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> T:
     """Internal: invoked only by compiler-synthesized host-callable wrapper
     closures. Not directly callable by user code.
 
@@ -50,7 +52,7 @@ def call_host_value(handle: Value, args: typing.List[typing.Any], *, _types: dic
     `Object::HostClosure`), dropping omitted optionals — so each bridge applies
     its own calling convention (TS `$opts`, Python kwargs) without needing the
     callee type on the wire."""
-async def call_host_value_async(handle: Value, args: typing.List[typing.Any], *, _types: dict[str, typing.Any]) -> T:
+async def call_host_value_async(handle: Value, args: typing.List[typing.Any], *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> T:
     """Internal: invoked only by compiler-synthesized host-callable wrapper
     closures. Not directly callable by user code.
 

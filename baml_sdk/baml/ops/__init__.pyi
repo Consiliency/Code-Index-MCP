@@ -25,6 +25,8 @@ import enum
 import typing
 import typing_extensions
 
+from ..._invocation_types import BamlOptions as _BamlOptions
+
 
 class Ordering(str, enum.Enum):
     Less = "Less"
@@ -32,32 +34,166 @@ class Ordering(str, enum.Enum):
     Greater = "Greater"
 
 
-def equals_equals(a: typing.Any, b: typing.Any) -> bool: ...
-async def equals_equals_async(a: typing.Any, b: typing.Any) -> bool: ...
+def equals_equals(a: typing.Any, b: typing.Any, *, _baml: _BamlOptions | None = None) -> bool:
+    """The broad `==` / `!=` operator driver.
+
+    Unlike the same-`Self` signature of `Equals.eq`, `==`
+    works on any pair of compatible types, and gives the same answer whether
+    those types are known statically or erased to `unknown`, a union, or an
+    interface. This function is what `==` means in the erased case, and what
+    structural comparison recurses through.
+
+    It compares by the operands' concrete runtime types: an explicit `Equals.eq`
+    override wins; a class with the implicit default compares structurally,
+    field by field; enums compare by identity; and operands whose concrete
+    runtime types differ are never equal. Containers recurse — arrays must have
+    the same length and compare element-wise by position, maps must have the
+    same key set and compare values key-wise, so map order never matters. Values
+    that hold a reference rather than data — functions, closures, futures,
+    collectors — compare by identity. A `type` value compares by type
+    equivalence, not by spelling.
+
+    Two properties are worth knowing before relying on this:
+
+    - It is reflexive. `Equals` is an equivalence relation and `float` equality
+      is BAML's total one (`NaN` equals itself), so a value is always equal to
+      itself — including a class instance or array that contains a `NaN` — and
+      two references to the same value are equal without being walked.
+    - It terminates on cyclic data. A pair of objects already being compared
+      higher up the walk is taken as equal, so a self-referential value does not
+      spin; every other reachable element is still compared."""
+async def equals_equals_async(a: typing.Any, b: typing.Any, *, _baml: _BamlOptions | None = None) -> bool:
+    """The broad `==` / `!=` operator driver.
+
+    Unlike the same-`Self` signature of `Equals.eq`, `==`
+    works on any pair of compatible types, and gives the same answer whether
+    those types are known statically or erased to `unknown`, a union, or an
+    interface. This function is what `==` means in the erased case, and what
+    structural comparison recurses through.
+
+    It compares by the operands' concrete runtime types: an explicit `Equals.eq`
+    override wins; a class with the implicit default compares structurally,
+    field by field; enums compare by identity; and operands whose concrete
+    runtime types differ are never equal. Containers recurse — arrays must have
+    the same length and compare element-wise by position, maps must have the
+    same key set and compare values key-wise, so map order never matters. Values
+    that hold a reference rather than data — functions, closures, futures,
+    collectors — compare by identity. A `type` value compares by type
+    equivalence, not by spelling.
+
+    Two properties are worth knowing before relying on this:
+
+    - It is reflexive. `Equals` is an equivalence relation and `float` equality
+      is BAML's total one (`NaN` equals itself), so a value is always equal to
+      itself — including a class instance or array that contains a `NaN` — and
+      two references to the same value are equal without being walked.
+    - It terminates on cyclic data. A pair of objects already being compared
+      higher up the walk is taken as equal, so a self-referential value does not
+      spin; every other reachable element is still compared."""
 
 
-def __union_add(a: typing.Any, b: typing.Any) -> typing.Any: ...
-async def __union_add_async(a: typing.Any, b: typing.Any) -> typing.Any: ...
+def __union_add(a: typing.Any, b: typing.Any, *, _baml: _BamlOptions | None = None) -> typing.Any:
+    """(internal) Runtime double dispatch for `a + b`: picks the `baml.ops.Add`
+    impl from *both* operands' runtime types — `a`'s selects the implementing
+    type, `b`'s the `Rhs` — and tail-calls its `add`.
+
+    The compiler emits a `__union_<op>` call for a binary operator whose
+    operands' static types are erased to an abstract form (a union, an
+    interface-existential, or a type variable), where the `implement` rule can
+    only be chosen from the operands' *runtime* types — double dispatch a static
+    call cannot express. Primitive operands keep their fast path and a
+    statically-pinned pair calls the impl directly; only the abstract case lands
+    here.
+
+    `unknown` in and out costs nothing: the type checker has already proved
+    every runtime operand pair is implemented — an unresolved dispatch is an
+    internal error, not a user one — and supplies the real operand types, while
+    the caller re-applies the statically-computed result type to what comes
+    back.
+
+    The four drivers below (`__union_sub`, `__union_mul`, `__union_div`,
+    `__union_rem`) and the unary `__union_neg` work exactly the same way, each
+    against its own interface.
+
+    # Panics
+
+    - Whatever the resolved `add` raises — for an `int` pair, for instance,
+      `baml.panics.IntegerOverflow`."""
+async def __union_add_async(a: typing.Any, b: typing.Any, *, _baml: _BamlOptions | None = None) -> typing.Any:
+    """(internal) Runtime double dispatch for `a + b`: picks the `baml.ops.Add`
+    impl from *both* operands' runtime types — `a`'s selects the implementing
+    type, `b`'s the `Rhs` — and tail-calls its `add`.
+
+    The compiler emits a `__union_<op>` call for a binary operator whose
+    operands' static types are erased to an abstract form (a union, an
+    interface-existential, or a type variable), where the `implement` rule can
+    only be chosen from the operands' *runtime* types — double dispatch a static
+    call cannot express. Primitive operands keep their fast path and a
+    statically-pinned pair calls the impl directly; only the abstract case lands
+    here.
+
+    `unknown` in and out costs nothing: the type checker has already proved
+    every runtime operand pair is implemented — an unresolved dispatch is an
+    internal error, not a user one — and supplies the real operand types, while
+    the caller re-applies the statically-computed result type to what comes
+    back.
+
+    The four drivers below (`__union_sub`, `__union_mul`, `__union_div`,
+    `__union_rem`) and the unary `__union_neg` work exactly the same way, each
+    against its own interface.
+
+    # Panics
+
+    - Whatever the resolved `add` raises — for an `int` pair, for instance,
+      `baml.panics.IntegerOverflow`."""
 
 
-def __union_sub(a: typing.Any, b: typing.Any) -> typing.Any: ...
-async def __union_sub_async(a: typing.Any, b: typing.Any) -> typing.Any: ...
+def __union_sub(a: typing.Any, b: typing.Any, *, _baml: _BamlOptions | None = None) -> typing.Any:
+    """(internal) Runtime double dispatch for `a - b` through `baml.ops.Subtract`.
+    See `baml.ops.__union_add` for why these drivers exist and what the
+    `unknown` parameters and result mean."""
+async def __union_sub_async(a: typing.Any, b: typing.Any, *, _baml: _BamlOptions | None = None) -> typing.Any:
+    """(internal) Runtime double dispatch for `a - b` through `baml.ops.Subtract`.
+    See `baml.ops.__union_add` for why these drivers exist and what the
+    `unknown` parameters and result mean."""
 
 
-def __union_mul(a: typing.Any, b: typing.Any) -> typing.Any: ...
-async def __union_mul_async(a: typing.Any, b: typing.Any) -> typing.Any: ...
+def __union_mul(a: typing.Any, b: typing.Any, *, _baml: _BamlOptions | None = None) -> typing.Any:
+    """(internal) Runtime double dispatch for `a * b` through `baml.ops.Multiply`.
+    See `baml.ops.__union_add`."""
+async def __union_mul_async(a: typing.Any, b: typing.Any, *, _baml: _BamlOptions | None = None) -> typing.Any:
+    """(internal) Runtime double dispatch for `a * b` through `baml.ops.Multiply`.
+    See `baml.ops.__union_add`."""
 
 
-def __union_div(a: typing.Any, b: typing.Any) -> typing.Any: ...
-async def __union_div_async(a: typing.Any, b: typing.Any) -> typing.Any: ...
+def __union_div(a: typing.Any, b: typing.Any, *, _baml: _BamlOptions | None = None) -> typing.Any:
+    """(internal) Runtime double dispatch for `a / b` through `baml.ops.Divide`.
+    See `baml.ops.__union_add`."""
+async def __union_div_async(a: typing.Any, b: typing.Any, *, _baml: _BamlOptions | None = None) -> typing.Any:
+    """(internal) Runtime double dispatch for `a / b` through `baml.ops.Divide`.
+    See `baml.ops.__union_add`."""
 
 
-def __union_rem(a: typing.Any, b: typing.Any) -> typing.Any: ...
-async def __union_rem_async(a: typing.Any, b: typing.Any) -> typing.Any: ...
+def __union_rem(a: typing.Any, b: typing.Any, *, _baml: _BamlOptions | None = None) -> typing.Any:
+    """(internal) Runtime double dispatch for `a % b` through `baml.ops.Remainder`.
+    See `baml.ops.__union_add`."""
+async def __union_rem_async(a: typing.Any, b: typing.Any, *, _baml: _BamlOptions | None = None) -> typing.Any:
+    """(internal) Runtime double dispatch for `a % b` through `baml.ops.Remainder`.
+    See `baml.ops.__union_add`."""
 
 
-def __union_neg(a: typing.Any) -> typing.Any: ...
-async def __union_neg_async(a: typing.Any) -> typing.Any: ...
+def __union_neg(a: typing.Any, *, _baml: _BamlOptions | None = None) -> typing.Any:
+    """(internal) Unary `-a`: single dispatch on `a`'s runtime type through
+    `baml.ops.Negate`.
+
+    `Negate` takes no `Rhs`, so unlike the binary drivers this resolves from one
+    operand only. See `baml.ops.__union_add` for the rest of the contract."""
+async def __union_neg_async(a: typing.Any, *, _baml: _BamlOptions | None = None) -> typing.Any:
+    """(internal) Unary `-a`: single dispatch on `a`'s runtime type through
+    `baml.ops.Negate`.
+
+    `Negate` takes no `Rhs`, so unlike the binary drivers this resolves from one
+    operand only. See `baml.ops.__union_add` for the rest of the contract."""
 
 
 __all__ = [

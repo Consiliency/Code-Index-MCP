@@ -226,15 +226,11 @@ Raises:
 
 
 sleep       = _define_function("baml.sys.sleep", "sync",  ["delay"], binding_name="sleep", binding_qualname="sleep", binding_module=__name__)
-sleep.__doc__ = """Suspends the current thread for `delay`.
-
-Raises:
-    Io"""
 sleep_async = _define_function("baml.sys.sleep", "async", ["delay"], binding_name="sleep_async", binding_qualname="sleep_async", binding_module=__name__)
-sleep_async.__doc__ = """Suspends the current thread for `delay`.
 
-Raises:
-    Io"""
+
+_sleep       = _define_function("baml.sys._sleep", "sync",  ["delay_nanos"], binding_name="_sleep", binding_qualname="_sleep", binding_module=__name__)
+_sleep_async = _define_function("baml.sys._sleep", "async", ["delay_nanos"], binding_name="_sleep_async", binding_qualname="_sleep_async", binding_module=__name__)
 
 
 collect_garbage       = _define_function("baml.sys.collect_garbage", "sync",  [], binding_name="collect_garbage", binding_qualname="collect_garbage", binding_module=__name__)

@@ -29,9 +29,9 @@ _LAZY_CHILDREN = frozenset({
     "fs",
     "future",
     "glob",
+    "hash",
     "host",
     "http",
-    "id",
     "io",
     "iter",
     "json",
@@ -40,6 +40,7 @@ _LAZY_CHILDREN = frozenset({
     "ops",
     "panics",
     "random",
+    "regex",
     "sap",
     "spawn",
     "sys",
@@ -50,6 +51,12 @@ _LAZY_CHILDREN = frozenset({
 })
 
 def __getattr__(name):
+    if name == "experimental" and __name__ == "baml_sdk":
+        import importlib
+        return importlib.import_module(".experimental", __name__)
+    if name == "trace" and __name__ == "baml_sdk":
+        import importlib
+        return importlib.import_module(".vendor.trace", __name__)
     if name in _LAZY_CHILDREN:
         import importlib
         return importlib.import_module(f".{name}", __name__)
@@ -244,9 +251,10 @@ class Map(pydantic.BaseModel, typing.Generic[K, V]):
     """
     An insertion-ordered collection of key-value pairs.
 
-    `Map<K, V>` is spelled `map<K, V>` in type position. `K` must be `string` —
-    the compiler rejects any other key type — so the type parameter exists for
-    uniformity rather than choice; convert other keys with `.to_string()` first.
+    `Map<K, V>` is spelled `map<K, V>` in type position. Keys must implement
+    `baml.Hash` and `baml.ops.Equals`. Equal keys must hash equally,
+    and their hash and equality must stay stable while stored in the map.
+    JSON and SDK boundaries still require string-keyed maps.
 
     Iteration order is the order in which keys were *first* inserted: `keys()`
     and `values()` follow it, `set` on an existing key keeps that key's original
@@ -284,6 +292,8 @@ class Map(pydantic.BaseModel, typing.Generic[K, V]):
     set_async = _define_function("baml.Map.set", "async", ["self", "key", "value"], binding_name="set_async", binding_qualname="Map.set_async", binding_module=__name__, class_type_params=["K", "V"])
     get       = _define_function("baml.Map.get", "sync",  ["self", "key"], binding_name="get", binding_qualname="Map.get", binding_module=__name__, class_type_params=["K", "V"])
     get_async = _define_function("baml.Map.get", "async", ["self", "key"], binding_name="get_async", binding_qualname="Map.get_async", binding_module=__name__, class_type_params=["K", "V"])
+    index       = _define_function("baml.Map.index", "sync",  ["self", "key"], binding_name="index", binding_qualname="Map.index", binding_module=__name__, class_type_params=["K", "V"])
+    index_async = _define_function("baml.Map.index", "async", ["self", "key"], binding_name="index_async", binding_qualname="Map.index_async", binding_module=__name__, class_type_params=["K", "V"])
     delete       = _define_function("baml.Map.delete", "sync",  ["self", "key"], binding_name="delete", binding_qualname="Map.delete", binding_module=__name__, class_type_params=["K", "V"])
     delete_async = _define_function("baml.Map.delete", "async", ["self", "key"], binding_name="delete_async", binding_qualname="Map.delete_async", binding_module=__name__, class_type_params=["K", "V"])
     get_or_insert       = _define_function("baml.Map.get_or_insert", "sync",  ["self", "key", "default"], binding_name="get_or_insert", binding_qualname="Map.get_or_insert", binding_module=__name__, class_type_params=["K", "V"])
@@ -301,10 +311,26 @@ _sum_float_async = _define_function("baml._sum_float", "async", ["values"], bind
 
 
 _median_float       = _define_function("baml._median_float", "sync",  ["values"], binding_name="_median_float", binding_qualname="_median_float", binding_module=__name__)
-_median_float.__doc__ = """Raises:
+_median_float.__doc__ = """(internal) Native backing for `float[].median()`; call that instead. Sorts a
+*copy* of `values` by BAML's total float order and returns the middle element,
+or the mean of the two middle elements for an even count, leaving `values`
+untouched.
+
+# Throws
+- `baml.errors.InvalidArgument` when `values` is empty.
+
+Raises:
     InvalidArgument"""
 _median_float_async = _define_function("baml._median_float", "async", ["values"], binding_name="_median_float_async", binding_qualname="_median_float_async", binding_module=__name__)
-_median_float_async.__doc__ = """Raises:
+_median_float_async.__doc__ = """(internal) Native backing for `float[].median()`; call that instead. Sorts a
+*copy* of `values` by BAML's total float order and returns the middle element,
+or the mean of the two middle elements for an even count, leaving `values`
+untouched.
+
+# Throws
+- `baml.errors.InvalidArgument` when `values` is empty.
+
+Raises:
     InvalidArgument"""
 
 
@@ -317,27 +343,45 @@ _cleanup_begin_async = _define_function("baml._cleanup_begin", "async", ["value"
 
 
 _to_json_default       = _define_function("baml._to_json_default", "sync",  ["value"], binding_name="_to_json_default", binding_qualname="_to_json_default", binding_module=__name__, type_params=["T"])
-_to_json_default.__doc__ = """Raises:
+_to_json_default.__doc__ = """(internal) The structural rendering used by the default `baml.ToJson` body.
+
+Primitives render naturally; containers and class instances render
+structurally (`[1, 2]`, `{"field": value}`), enums as their variant name,
+media as the tagged form. A nested value whose runtime class *does*
+implement `baml.ToJson` renders through that override, so the default honors
+overrides at every depth, just as `baml.json.from` does. Throws
+`baml.json.SerializationError` for non-representable values.
+
+Raises:
     SerializationError"""
 _to_json_default_async = _define_function("baml._to_json_default", "async", ["value"], binding_name="_to_json_default_async", binding_qualname="_to_json_default_async", binding_module=__name__, type_params=["T"])
-_to_json_default_async.__doc__ = """Raises:
+_to_json_default_async.__doc__ = """(internal) The structural rendering used by the default `baml.ToJson` body.
+
+Primitives render naturally; containers and class instances render
+structurally (`[1, 2]`, `{"field": value}`), enums as their variant name,
+media as the tagged form. A nested value whose runtime class *does*
+implement `baml.ToJson` renders through that override, so the default honors
+overrides at every depth, just as `baml.json.from` does. Throws
+`baml.json.SerializationError` for non-representable values.
+
+Raises:
     SerializationError"""
 
 
-_to_json_shim       = _define_function("baml._to_json_shim", "sync",  ["value"], binding_name="_to_json_shim", binding_qualname="_to_json_shim", binding_module=__name__, type_params=["T"])
-_to_json_shim.__doc__ = """Raises:
-    SerializationError"""
-_to_json_shim_async = _define_function("baml._to_json_shim", "async", ["value"], binding_name="_to_json_shim_async", binding_qualname="_to_json_shim_async", binding_module=__name__, type_params=["T"])
-_to_json_shim_async.__doc__ = """Raises:
-    SerializationError"""
+_from_json_structural_default       = _define_function("baml._from_json_structural_default", "sync",  ["j"], binding_name="_from_json_structural_default", binding_qualname="_from_json_structural_default", binding_module=__name__, type_params=["T"])
+_from_json_structural_default.__doc__ = """Decode the root structurally while honoring nested FromJson implementations.
 
-
-_from_json_shim       = _define_function("baml._from_json_shim", "sync",  ["j"], binding_name="_from_json_shim", binding_qualname="_from_json_shim", binding_module=__name__, type_params=["T"])
-_from_json_shim.__doc__ = """Raises:
+Raises:
     DecodeError"""
-_from_json_shim_async = _define_function("baml._from_json_shim", "async", ["j"], binding_name="_from_json_shim_async", binding_qualname="_from_json_shim_async", binding_module=__name__, type_params=["T"])
-_from_json_shim_async.__doc__ = """Raises:
+_from_json_structural_default_async = _define_function("baml._from_json_structural_default", "async", ["j"], binding_name="_from_json_structural_default_async", binding_qualname="_from_json_structural_default_async", binding_module=__name__, type_params=["T"])
+_from_json_structural_default_async.__doc__ = """Decode the root structurally while honoring nested FromJson implementations.
+
+Raises:
     DecodeError"""
+
+
+_equals_structural_default       = _define_function("baml._equals_structural_default", "sync",  ["a", "b"], binding_name="_equals_structural_default", binding_qualname="_equals_structural_default", binding_module=__name__)
+_equals_structural_default_async = _define_function("baml._equals_structural_default", "async", ["a", "b"], binding_name="_equals_structural_default_async", binding_qualname="_equals_structural_default_async", binding_module=__name__)
 
 
 deep_copy       = _define_function("baml.deep_copy", "sync",  ["value"], binding_name="deep_copy", binding_qualname="deep_copy", binding_module=__name__, type_params=["T"])
@@ -382,8 +426,9 @@ class Float(pydantic.BaseModel):
     overflow (`1e308 * 10.0` is `inf`), and from other invalid operations
     (`(-1.0).sqrt()` is `NaN`).
 
-    Neither has a JSON representation, so `baml.json.from` renders NaN and both
-    infinities as `null`.
+    JSON text has neither, so `baml.json.stringify` throws on NaN and both
+    infinities. A `json` value holds them as they are: `baml.json.from` keeps
+    them, and `baml.json.to<float>` takes them.
 
     Comparison departs from raw IEEE: `==` is reflexive and `<`/`<=`/`>`/`>=`
     are a *total* order, with NaN a single value ordered above every number
@@ -498,6 +543,10 @@ _trunc_to_int       = _define_function("baml._trunc_to_int", "sync",  ["value"],
 _trunc_to_int_async = _define_function("baml._trunc_to_int", "async", ["value"], binding_name="_trunc_to_int_async", binding_qualname="_trunc_to_int_async", binding_module=__name__)
 
 
+_hash_structural_default       = _define_function("baml._hash_structural_default", "sync",  ["value", "state"], binding_name="_hash_structural_default", binding_qualname="_hash_structural_default", binding_module=__name__)
+_hash_structural_default_async = _define_function("baml._hash_structural_default", "async", ["value", "state"], binding_name="_hash_structural_default_async", binding_qualname="_hash_structural_default_async", binding_module=__name__)
+
+
 class Int(pydantic.BaseModel):
     """
     A 63-bit signed integer, from `-2^62` (`-4_611_686_018_427_387_904`) to
@@ -570,7 +619,7 @@ class Int(pydantic.BaseModel):
 
 
 class Null(pydantic.BaseModel):
-    """The type of `null`, representing the absence of a value."""
+    """The unit type, whose only value is `null`. Also spelled `void`."""
     model_config = pydantic.ConfigDict(
         arbitrary_types_allowed=True,
         extra="ignore",
@@ -662,6 +711,12 @@ class String(pydantic.BaseModel):
     repeat_async = _define_function("baml.String.repeat", "async", ["self", "count"], binding_name="repeat_async", binding_qualname="String.repeat_async", binding_module=__name__)
     replace_all       = _define_function("baml.String.replace_all", "sync",  ["self", "search", "replacement"], binding_name="replace_all", binding_qualname="String.replace_all", binding_module=__name__)
     replace_all_async = _define_function("baml.String.replace_all", "async", ["self", "search", "replacement"], binding_name="replace_all_async", binding_qualname="String.replace_all_async", binding_module=__name__)
+    _as_string_       = _define_function("baml.String._as_string", "sync",  ["self"], binding_name="_as_string_", binding_qualname="String._as_string_", binding_module=__name__)
+    _as_string__async = _define_function("baml.String._as_string", "async", ["self"], binding_name="_as_string__async", binding_qualname="String._as_string__async", binding_module=__name__)
+    _replace_literal_       = _define_function("baml.String._replace_literal", "sync",  ["self", "search", "replacement"], binding_name="_replace_literal_", binding_qualname="String._replace_literal_", binding_module=__name__)
+    _replace_literal__async = _define_function("baml.String._replace_literal", "async", ["self", "search", "replacement"], binding_name="_replace_literal__async", binding_qualname="String._replace_literal__async", binding_module=__name__)
+    _replace_all_literal_       = _define_function("baml.String._replace_all_literal", "sync",  ["self", "search", "replacement"], binding_name="_replace_all_literal_", binding_qualname="String._replace_all_literal_", binding_module=__name__)
+    _replace_all_literal__async = _define_function("baml.String._replace_all_literal", "async", ["self", "search", "replacement"], binding_name="_replace_all_literal__async", binding_qualname="String._replace_all_literal__async", binding_module=__name__)
     is_numeric       = _define_function("baml.String.is_numeric", "sync",  ["self"], binding_name="is_numeric", binding_qualname="String.is_numeric", binding_module=__name__)
     is_numeric_async = _define_function("baml.String.is_numeric", "async", ["self"], binding_name="is_numeric_async", binding_qualname="String.is_numeric_async", binding_module=__name__)
     is_alphabetic       = _define_function("baml.String.is_alphabetic", "sync",  ["self"], binding_name="is_alphabetic", binding_qualname="String.is_alphabetic", binding_module=__name__)

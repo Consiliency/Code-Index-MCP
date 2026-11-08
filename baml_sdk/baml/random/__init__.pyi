@@ -28,22 +28,24 @@ import pydantic
 if typing.TYPE_CHECKING:
     from ...baml import UNSET as UNSET
 
+from ..._invocation_types import BamlOptions as _BamlOptions
+
 from baml_bridge import BamlPyHandle as _BamlPyHandle
 
 
 class SystemRandom(pydantic.BaseModel):
     @staticmethod
-    def get() -> SystemRandom:
+    def get(*, _baml: _BamlOptions | None = None) -> SystemRandom:
         """Returns a new `SystemRandom` instance using the global system random number generator."""
     @staticmethod
-    async def get_async() -> SystemRandom:
+    async def get_async(*, _baml: _BamlOptions | None = None) -> SystemRandom:
         """Returns a new `SystemRandom` instance using the global system random number generator."""
 
 
 class Xoshiro256PlusPlus(pydantic.BaseModel):
     field_state: _BamlPyHandle = pydantic.Field(alias="_state")
     @staticmethod
-    def new(*, seed: typing.Union[bytes, UNSET] = UNSET) -> Xoshiro256PlusPlus:
+    def new(*, seed: typing.Union[bytes, UNSET] = UNSET, _baml: _BamlOptions | None = None) -> Xoshiro256PlusPlus:
         """Creates a new `Xoshiro256PlusPlus` pseudo-random number generator.
 
         # Parameters
@@ -54,7 +56,7 @@ class Xoshiro256PlusPlus(pydantic.BaseModel):
         # Panics
         If `seed` is shorter than 32 bytes."""
     @staticmethod
-    async def new_async(*, seed: typing.Union[bytes, UNSET] = UNSET) -> Xoshiro256PlusPlus:
+    async def new_async(*, seed: typing.Union[bytes, UNSET] = UNSET, _baml: _BamlOptions | None = None) -> Xoshiro256PlusPlus:
         """Creates a new `Xoshiro256PlusPlus` pseudo-random number generator.
 
         # Parameters
@@ -65,15 +67,15 @@ class Xoshiro256PlusPlus(pydantic.BaseModel):
         # Panics
         If `seed` is shorter than 32 bytes."""
     @staticmethod
-    def _new_(seed: bytes) -> Xoshiro256PlusPlus: ...
+    def _new_(seed: bytes, *, _baml: _BamlOptions | None = None) -> Xoshiro256PlusPlus: ...
     @staticmethod
-    async def _new__async(seed: bytes) -> Xoshiro256PlusPlus: ...
+    async def _new__async(seed: bytes, *, _baml: _BamlOptions | None = None) -> Xoshiro256PlusPlus: ...
 
 
 class ChaCha20(pydantic.BaseModel):
     field_state: _BamlPyHandle = pydantic.Field(alias="_state")
     @staticmethod
-    def new(*, seed: typing.Union[bytes, UNSET] = UNSET) -> ChaCha20:
+    def new(*, seed: typing.Union[bytes, UNSET] = UNSET, _baml: _BamlOptions | None = None) -> ChaCha20:
         """Creates a new `ChaCha20` pseudo-random number generator.
 
         # Parameters
@@ -84,7 +86,7 @@ class ChaCha20(pydantic.BaseModel):
         # Panics
         If `seed` is shorter than 32 bytes."""
     @staticmethod
-    async def new_async(*, seed: typing.Union[bytes, UNSET] = UNSET) -> ChaCha20:
+    async def new_async(*, seed: typing.Union[bytes, UNSET] = UNSET, _baml: _BamlOptions | None = None) -> ChaCha20:
         """Creates a new `ChaCha20` pseudo-random number generator.
 
         # Parameters
@@ -95,9 +97,9 @@ class ChaCha20(pydantic.BaseModel):
         # Panics
         If `seed` is shorter than 32 bytes."""
     @staticmethod
-    def _new_(seed: bytes) -> ChaCha20: ...
+    def _new_(seed: bytes, *, _baml: _BamlOptions | None = None) -> ChaCha20: ...
     @staticmethod
-    async def _new__async(seed: bytes) -> ChaCha20: ...
+    async def _new__async(seed: bytes, *, _baml: _BamlOptions | None = None) -> ChaCha20: ...
 
 
 __all__ = [

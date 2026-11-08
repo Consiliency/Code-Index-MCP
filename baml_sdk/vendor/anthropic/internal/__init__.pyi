@@ -31,8 +31,10 @@ if typing.TYPE_CHECKING:
     from .... import vendor
     from ....baml import UNSET as UNSET
 
+from ...._invocation_types import BamlOptions as _BamlOptions
 
-def _reject(detail: str) -> ai.errors.InvalidRequest:
+
+def _reject(detail: str, *, _baml: _BamlOptions | None = None) -> ai.errors.InvalidRequest:
     """(internal) Every LOCAL, pre-send rejection in the Anthropic client throws ONE error
     identity: `ai.errors.InvalidRequest` with a null status code — the class
     the Responses, Google, Images and Bedrock clients already use.
@@ -42,7 +44,7 @@ def _reject(detail: str) -> ai.errors.InvalidRequest:
     into an untyped `baml.errors.UnknownError`, and `ai.Fallback` only advances
     to the next member on a TYPED failure. A missing key in one member of a
     fallback chain has to fall through, not abort the chain."""
-async def _reject_async(detail: str) -> ai.errors.InvalidRequest:
+async def _reject_async(detail: str, *, _baml: _BamlOptions | None = None) -> ai.errors.InvalidRequest:
     """(internal) Every LOCAL, pre-send rejection in the Anthropic client throws ONE error
     identity: `ai.errors.InvalidRequest` with a null status code — the class
     the Responses, Google, Images and Bedrock clients already use.
@@ -160,7 +162,7 @@ class Response(pydantic.BaseModel):
     usage: typing.Optional[Usage] = None
 
 
-def _anth_verbatim_subtree(key: str) -> bool:
+def _anth_verbatim_subtree(key: str, *, _baml: _BamlOptions | None = None) -> bool:
     """(internal) Drop null-valued map entries, recursively. BAML serializes an unset optional
     field as an explicit `null`, which the Messages API rejects for several
     parameters; the typed request classes above therefore go through this on
@@ -168,7 +170,7 @@ def _anth_verbatim_subtree(key: str) -> bool:
     "Option::is_none"` in the Rust builders this replaces.
 
     Nulls INSIDE arrays are preserved (a JSON Schema `"enum": [null]` survives),
-    and the two OPAQUE subtrees below are copied verbatim. The passthrough merge —
+    and the three OPAQUE subtrees below are copied verbatim. The passthrough merge —
     where `null` means "delete this key" — still runs AFTER this, on the
     already-pruned base.
 
@@ -179,8 +181,11 @@ def _anth_verbatim_subtree(key: str) -> bool:
     tool parameter the model answered with null silently vanished from the
     replayed tool_use, and the generated schema types optionals as
     `["string","null"]` and marks them required, so a null answer is the
-    schema-conformant one."""
-async def _anth_verbatim_subtree_async(key: str) -> bool:
+    schema-conformant one.
+
+    `cache_control` is the `args` of a `${cache(args)}` in the prompt, which
+    this client sends as written."""
+async def _anth_verbatim_subtree_async(key: str, *, _baml: _BamlOptions | None = None) -> bool:
     """(internal) Drop null-valued map entries, recursively. BAML serializes an unset optional
     field as an explicit `null`, which the Messages API rejects for several
     parameters; the typed request classes above therefore go through this on
@@ -188,7 +193,7 @@ async def _anth_verbatim_subtree_async(key: str) -> bool:
     "Option::is_none"` in the Rust builders this replaces.
 
     Nulls INSIDE arrays are preserved (a JSON Schema `"enum": [null]` survives),
-    and the two OPAQUE subtrees below are copied verbatim. The passthrough merge —
+    and the three OPAQUE subtrees below are copied verbatim. The passthrough merge —
     where `null` means "delete this key" — still runs AFTER this, on the
     already-pruned base.
 
@@ -199,11 +204,14 @@ async def _anth_verbatim_subtree_async(key: str) -> bool:
     tool parameter the model answered with null silently vanished from the
     replayed tool_use, and the generated schema types optionals as
     `["string","null"]` and marks them required, so a null answer is the
-    schema-conformant one."""
+    schema-conformant one.
+
+    `cache_control` is the `args` of a `${cache(args)}` in the prompt, which
+    this client sends as written."""
 
 
-def _anth_drop_nulls(j: baml.json.json) -> baml.json.json: ...
-async def _anth_drop_nulls_async(j: baml.json.json) -> baml.json.json: ...
+def _anth_drop_nulls(j: baml.json.json, *, _baml: _BamlOptions | None = None) -> baml.json.json: ...
+async def _anth_drop_nulls_async(j: baml.json.json, *, _baml: _BamlOptions | None = None) -> baml.json.json: ...
 
 
 class Message(pydantic.BaseModel):
@@ -217,53 +225,61 @@ class Prompt(pydantic.BaseModel):
     messages: typing.List[Message]
 
 
-def _anth_apply_cache_control(blocks: typing.List[AnthBlock], cache_control: typing.Optional[baml.json.json]) -> None:
-    """(internal) Anthropic places a cache breakpoint on a CONTENT BLOCK, but the authored
-    directive lives on a MESSAGE (`${ai.Role { name: "user", metadata:
-    { "cache_control": ... } }}`). The engine's rule, ported: the directive
-    attaches to that message's LAST content block, so everything up to and
-    including it is the cached prefix."""
-async def _anth_apply_cache_control_async(blocks: typing.List[AnthBlock], cache_control: typing.Optional[baml.json.json]) -> None:
-    """(internal) Anthropic places a cache breakpoint on a CONTENT BLOCK, but the authored
-    directive lives on a MESSAGE (`${ai.Role { name: "user", metadata:
-    { "cache_control": ... } }}`). The engine's rule, ported: the directive
-    attaches to that message's LAST content block, so everything up to and
-    including it is the cached prefix."""
+def _anth_apply_cache_control(blocks: typing.List[AnthBlock], cache_control: typing.Optional[baml.json.json], *, _baml: _BamlOptions | None = None) -> None:
+    """(internal) Anthropic places a cache breakpoint ON a content block, while a
+    `${cache(args)}` in the prompt sits BETWEEN parts. The breakpoint goes on
+    the last block lowered before the delimiter, so everything up to and
+    including that block is the cached prefix, and `args` is the value of
+    `cache_control`, as written.
+
+    Nothing is set when `blocks` is empty (there is no content before the
+    delimiter in its message) or when `args` is null. A second delimiter with no
+    block in between overwrites the first."""
+async def _anth_apply_cache_control_async(blocks: typing.List[AnthBlock], cache_control: typing.Optional[baml.json.json], *, _baml: _BamlOptions | None = None) -> None:
+    """(internal) Anthropic places a cache breakpoint ON a content block, while a
+    `${cache(args)}` in the prompt sits BETWEEN parts. The breakpoint goes on
+    the last block lowered before the delimiter, so everything up to and
+    including that block is the cached prefix, and `args` is the value of
+    `cache_control`, as written.
+
+    Nothing is set when `blocks` is empty (there is no content before the
+    delimiter in its message) or when `args` is null. A second delimiter with no
+    block in between overwrites the first."""
 
 
-def _anth_supported_image_mime(mime: str) -> bool:
+def _anth_supported_image_mime(mime: str, *, _baml: _BamlOptions | None = None) -> bool:
     """(internal) One media part -> its `{type, source}` block. `resolve_media(_, false)`
     passes an ordinary http(s) URL straight through as `source.type: "url"`
     (Anthropic fetches it itself) and inlines everything else as base64 —
     sys_llm's `send_url` default for this provider.
     The four image media types the Messages API accepts on a base64 source. It
     validates the declared `media_type` against the actual bytes, so anything
-    else is a 400 — including `image/svg+xml` (which `ai.internal._media_mime_type`
+    else is a 400 — including `image/svg+xml` (which `baml.media.Image.infer_mime_type`
     produces for an `.svg` source) and `image/png` guessed for an unknown
     extension. Checking here keeps the error client-side and specific; the check
     is per-provider because the allowed set is."""
-async def _anth_supported_image_mime_async(mime: str) -> bool:
+async def _anth_supported_image_mime_async(mime: str, *, _baml: _BamlOptions | None = None) -> bool:
     """(internal) One media part -> its `{type, source}` block. `resolve_media(_, false)`
     passes an ordinary http(s) URL straight through as `source.type: "url"`
     (Anthropic fetches it itself) and inlines everything else as base64 —
     sys_llm's `send_url` default for this provider.
     The four image media types the Messages API accepts on a base64 source. It
     validates the declared `media_type` against the actual bytes, so anything
-    else is a 400 — including `image/svg+xml` (which `ai.internal._media_mime_type`
+    else is a 400 — including `image/svg+xml` (which `baml.media.Image.infer_mime_type`
     produces for an `.svg` source) and `image/png` guessed for an unknown
     extension. Checking here keeps the error client-side and specific; the check
     is per-provider because the allowed set is."""
 
 
-def _media_block(media: ai.MediaPart, block_type: str, *, preview: typing.Union[bool, UNSET] = False) -> AnthMediaBlock:
+def _media_block(media: ai.MediaPart, block_type: str, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> AnthMediaBlock:
     """Raises:
-        InvalidArgument, Io, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
-async def _media_block_async(media: ai.MediaPart, block_type: str, *, preview: typing.Union[bool, UNSET] = False) -> AnthMediaBlock:
+        InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+async def _media_block_async(media: ai.MediaPart, block_type: str, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> AnthMediaBlock:
     """Raises:
-        InvalidArgument, Io, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+        InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
 
 
-def _lower_block(block: ai.content.Block, position: str, *, preview: typing.Union[bool, UNSET] = False) -> typing.Optional[AnthBlock]:
+def _lower_block(block: ai.content.Block, position: str, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> typing.Optional[AnthBlock]:
     """One content block at `position` -> its wire block, or null when it lowers
     to nothing. The Messages API's input modalities, per position:
 
@@ -279,8 +295,8 @@ def _lower_block(block: ai.content.Block, position: str, *, preview: typing.Unio
     everywhere — an invented `{"type":"input_audio"}` used to guarantee a 400.
 
     Raises:
-        InvalidArgument, Io, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
-async def _lower_block_async(block: ai.content.Block, position: str, *, preview: typing.Union[bool, UNSET] = False) -> typing.Optional[AnthBlock]:
+        InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+async def _lower_block_async(block: ai.content.Block, position: str, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> typing.Optional[AnthBlock]:
     """One content block at `position` -> its wire block, or null when it lowers
     to nothing. The Messages API's input modalities, per position:
 
@@ -296,54 +312,74 @@ async def _lower_block_async(block: ai.content.Block, position: str, *, preview:
     everywhere — an invented `{"type":"input_audio"}` used to guarantee a 400.
 
     Raises:
-        InvalidArgument, Io, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+        InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
 
 
-def _lower_blocks(blocks: typing.List[ai.content.Block], position: str, *, preview: typing.Union[bool, UNSET] = False) -> typing.List[AnthBlock]:
+def _lower_blocks(blocks: typing.List[ai.content.Block], position: str, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> typing.List[AnthBlock]:
     """Raises:
-        InvalidArgument, Io, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
-async def _lower_blocks_async(blocks: typing.List[ai.content.Block], position: str, *, preview: typing.Union[bool, UNSET] = False) -> typing.List[AnthBlock]:
+        InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+async def _lower_blocks_async(blocks: typing.List[ai.content.Block], position: str, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> typing.List[AnthBlock]:
     """Raises:
-        InvalidArgument, Io, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+        InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
 
 
-def _lower_prompt(prompt: ai.Prompt, *, preview: typing.Union[bool, UNSET] = False) -> Prompt:
+def _prompt_blocks(message: ai.PromptMessage, position: str, default_cache_args: baml.json.json, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> typing.List[AnthBlock]:
+    """(internal) One prompt message as Messages API blocks. Text and media lower
+    exactly as they do for a journal turn; a `${cache(args)}` sets
+    `cache_control` on the block before it (`_anth_apply_cache_control`), and
+    the text on either side is trimmed where it faces the delimiter
+    (`ai.wire.prompt_parts`). A `${cache()}` carries `default_cache_args`.
+
+    Raises:
+        InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+async def _prompt_blocks_async(message: ai.PromptMessage, position: str, default_cache_args: baml.json.json, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> typing.List[AnthBlock]:
+    """(internal) One prompt message as Messages API blocks. Text and media lower
+    exactly as they do for a journal turn; a `${cache(args)}` sets
+    `cache_control` on the block before it (`_anth_apply_cache_control`), and
+    the text on either side is trimmed where it faces the delimiter
+    (`ai.wire.prompt_parts`). A `${cache()}` carries `default_cache_args`.
+
+    Raises:
+        InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+
+
+def _lower_prompt(prompt: ai.Prompt, default_cache_args: baml.json.json, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> Prompt:
     """Raises:
-        InvalidArgument, Io, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
-async def _lower_prompt_async(prompt: ai.Prompt, *, preview: typing.Union[bool, UNSET] = False) -> Prompt:
+        InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+async def _lower_prompt_async(prompt: ai.Prompt, default_cache_args: baml.json.json, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> Prompt:
     """Raises:
-        InvalidArgument, Io, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+        InvalidArgument, Timeout, InvalidRequest, NetworkFailure, PreviewUnsupported"""
 
 
-def _tool_result_content(blocks: typing.List[AnthBlock]) -> typing.Union[str, typing.List[AnthBlock]]:
+def _tool_result_content(blocks: typing.List[AnthBlock], *, _baml: _BamlOptions | None = None) -> typing.Union[str, typing.List[AnthBlock]]:
     """(internal) A tool result's `content`: the plain string when the result is
     text only (one text block, or nothing), the block list otherwise."""
-async def _tool_result_content_async(blocks: typing.List[AnthBlock]) -> typing.Union[str, typing.List[AnthBlock]]:
+async def _tool_result_content_async(blocks: typing.List[AnthBlock], *, _baml: _BamlOptions | None = None) -> typing.Union[str, typing.List[AnthBlock]]:
     """(internal) A tool result's `content`: the plain string when the result is
     text only (one text block, or nothing), the block list otherwise."""
 
 
-def _push_tool_result(msgs: typing.List[Message], id: str, content: typing.Union[str, typing.List[AnthBlock]], is_error: bool) -> None:
+def _push_tool_result(msgs: typing.List[Message], id: str, content: typing.Union[str, typing.List[AnthBlock]], is_error: bool, *, _baml: _BamlOptions | None = None) -> None:
     """(internal) Append one tool_result block, extending the trailing group when open."""
-async def _push_tool_result_async(msgs: typing.List[Message], id: str, content: typing.Union[str, typing.List[AnthBlock]], is_error: bool) -> None:
+async def _push_tool_result_async(msgs: typing.List[Message], id: str, content: typing.Union[str, typing.List[AnthBlock]], is_error: bool, *, _baml: _BamlOptions | None = None) -> None:
     """(internal) Append one tool_result block, extending the trailing group when open."""
 
 
-def _lower_journal(j: ai.Journal, *, preview: typing.Union[bool, UNSET] = False) -> typing.List[Message]:
+def _lower_journal(j: ai.Journal, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> typing.List[Message]:
     """(internal) ai.RunStarted/ai.ToolRequested/ai.Usage/ai.FinalProduced are not promptable and skip;
     skipped events never close an open tool_result group.
 
     Raises:
-        InvalidArgument, Io, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported"""
-async def _lower_journal_async(j: ai.Journal, *, preview: typing.Union[bool, UNSET] = False) -> typing.List[Message]:
+        InvalidArgument, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+async def _lower_journal_async(j: ai.Journal, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> typing.List[Message]:
     """(internal) ai.RunStarted/ai.ToolRequested/ai.Usage/ai.FinalProduced are not promptable and skip;
     skipped events never close an open tool_result group.
 
     Raises:
-        InvalidArgument, Io, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported"""
+        InvalidArgument, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported"""
 
 
-def _render_messages(msgs: typing.List[Message]) -> typing.List[AnthMessageParam]:
+def _render_messages(msgs: typing.List[Message], *, _baml: _BamlOptions | None = None) -> typing.List[AnthMessageParam]:
     """(internal) The API wants user and assistant to alternate, and several paths here can
     leave two of the same role side by side: a dropped assistant turn (a
     reasoning-only reply lowers to no blocks) leaves the user turns that
@@ -355,7 +391,7 @@ def _render_messages(msgs: typing.List[Message]) -> typing.List[AnthMessageParam
     shape. Block order is preserved and messages are joined in order, so a
     `cache_control` marker still sits on exactly the block it was placed on.
     `_push_tool_result`'s grouping becomes a special case of this."""
-async def _render_messages_async(msgs: typing.List[Message]) -> typing.List[AnthMessageParam]:
+async def _render_messages_async(msgs: typing.List[Message], *, _baml: _BamlOptions | None = None) -> typing.List[AnthMessageParam]:
     """(internal) The API wants user and assistant to alternate, and several paths here can
     leave two of the same role side by side: a dropped assistant turn (a
     reasoning-only reply lowers to no blocks) leaves the user turns that
@@ -379,66 +415,77 @@ class BodyParams(pydantic.BaseModel):
     thinking: typing.Optional[vendor.anthropic.ThinkingConfig] = None
     tool_choice: typing.Optional[vendor.anthropic.ToolChoice] = None
     request_body: typing.Optional[baml.json.json] = None
-    client_id: str
+    provider: str
+    default_cache_args: baml.json.json = None
 
 
-def _body_params(c: vendor.anthropic.Client) -> BodyParams: ...
-async def _body_params_async(c: vendor.anthropic.Client) -> BodyParams: ...
+def default_cache_control(*, _baml: _BamlOptions | None = None) -> baml.json.json:
+    """The `cache_control` a `${cache()}` sends on the Messages wire: an ephemeral
+    breakpoint with the default 5-minute lifetime. Shared by every client that
+    speaks that wire (`anthropic.Client`, Claude on `google.VertexClient`)."""
+async def default_cache_control_async(*, _baml: _BamlOptions | None = None) -> baml.json.json:
+    """The `cache_control` a `${cache()}` sends on the Messages wire: an ephemeral
+    breakpoint with the default 5-minute lifetime. Shared by every client that
+    speaks that wire (`anthropic.Client`, Claude on `google.VertexClient`)."""
 
 
-def _tool_params(toolbox: ai.tools.Toolbox) -> typing.List[AnthToolParam]:
+def _body_params(c: vendor.anthropic.Client, *, _baml: _BamlOptions | None = None) -> BodyParams: ...
+async def _body_params_async(c: vendor.anthropic.Client, *, _baml: _BamlOptions | None = None) -> BodyParams: ...
+
+
+def _tool_params(toolbox: ai.tools.Toolbox, *, _baml: _BamlOptions | None = None) -> typing.List[AnthToolParam]:
     """Raises:
         SerializationError"""
-async def _tool_params_async(toolbox: ai.tools.Toolbox) -> typing.List[AnthToolParam]:
+async def _tool_params_async(toolbox: ai.tools.Toolbox, *, _baml: _BamlOptions | None = None) -> typing.List[AnthToolParam]:
     """Raises:
         SerializationError"""
 
 
-def _tool_choice_param(choice: typing.Optional[vendor.anthropic.ToolChoice]) -> AnthToolChoiceParam: ...
-async def _tool_choice_param_async(choice: typing.Optional[vendor.anthropic.ToolChoice]) -> AnthToolChoiceParam: ...
+def _tool_choice_param(choice: typing.Optional[vendor.anthropic.ToolChoice], *, _baml: _BamlOptions | None = None) -> AnthToolChoiceParam: ...
+async def _tool_choice_param_async(choice: typing.Optional[vendor.anthropic.ToolChoice], *, _baml: _BamlOptions | None = None) -> AnthToolChoiceParam: ...
 
 
-def _thinking_param(thinking: typing.Optional[vendor.anthropic.ThinkingConfig]) -> typing.Optional[AnthThinkingParam]: ...
-async def _thinking_param_async(thinking: typing.Optional[vendor.anthropic.ThinkingConfig]) -> typing.Optional[AnthThinkingParam]: ...
+def _thinking_param(thinking: typing.Optional[vendor.anthropic.ThinkingConfig], *, _baml: _BamlOptions | None = None) -> typing.Optional[AnthThinkingParam]: ...
+async def _thinking_param_async(thinking: typing.Optional[vendor.anthropic.ThinkingConfig], *, _baml: _BamlOptions | None = None) -> typing.Optional[AnthThinkingParam]: ...
 
 
-def messages_request(params: BodyParams, input: ai.ModelTurnInput, stream: bool, *, preview: typing.Union[bool, UNSET] = False) -> MessagesRequest:
+def messages_request(params: BodyParams, input: ai.ModelTurnInput, stream: bool, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> MessagesRequest:
     """The typed Messages request for one model turn. Public so a Vertex/Bedrock
     client can build the identical body and re-target it.
 
     Raises:
-        InvalidArgument, Io, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
-async def messages_request_async(params: BodyParams, input: ai.ModelTurnInput, stream: bool, *, preview: typing.Union[bool, UNSET] = False) -> MessagesRequest:
+        InvalidArgument, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
+async def messages_request_async(params: BodyParams, input: ai.ModelTurnInput, stream: bool, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> MessagesRequest:
     """The typed Messages request for one model turn. Public so a Vertex/Bedrock
     client can build the identical body and re-target it.
 
     Raises:
-        InvalidArgument, Io, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
+        InvalidArgument, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
 
 
-def messages_body(params: BodyParams, input: ai.ModelTurnInput, stream: bool, *, preview: typing.Union[bool, UNSET] = False) -> str:
+def messages_body(params: BodyParams, input: ai.ModelTurnInput, stream: bool, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> str:
     """The serialized request body: typed request -> json -> drop unset optionals
     -> deep-merge the caller's `request_body` passthrough (LAST, per P0.3).
 
     Raises:
-        InvalidArgument, Io, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
-async def messages_body_async(params: BodyParams, input: ai.ModelTurnInput, stream: bool, *, preview: typing.Union[bool, UNSET] = False) -> str:
+        InvalidArgument, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
+async def messages_body_async(params: BodyParams, input: ai.ModelTurnInput, stream: bool, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> str:
     """The serialized request body: typed request -> json -> drop unset optionals
     -> deep-merge the caller's `request_body` passthrough (LAST, per P0.3).
 
     Raises:
-        InvalidArgument, Io, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
+        InvalidArgument, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
 
 
-def _query_suffix(query_params: typing.Optional[typing.Dict[str, str]]) -> str:
+def _query_suffix(query_params: typing.Optional[typing.Dict[str, str]], *, _baml: _BamlOptions | None = None) -> str:
     """(internal) `?a=1&b=2` for the client's query_params, or "" when there are none.
     Values are used verbatim: the stdlib has no percent-encoder yet."""
-async def _query_suffix_async(query_params: typing.Optional[typing.Dict[str, str]]) -> str:
+async def _query_suffix_async(query_params: typing.Optional[typing.Dict[str, str]], *, _baml: _BamlOptions | None = None) -> str:
     """(internal) `?a=1&b=2` for the client's query_params, or "" when there are none.
     Values are used verbatim: the stdlib has no percent-encoder yet."""
 
 
-def _headers(c: vendor.anthropic.Client, *, preview: typing.Union[bool, UNSET] = False) -> typing.Dict[str, str]:
+def _headers(c: vendor.anthropic.Client, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> typing.Dict[str, str]:
     """(internal) Defaults, then the caller's headers, then auth. User headers come FIRST so
     `anthropic-beta` (and `anthropic-dangerous-direct-browser-access`, which the
     WASM playground needs) are reachable and `anthropic-version` is overridable;
@@ -446,7 +493,7 @@ def _headers(c: vendor.anthropic.Client, *, preview: typing.Union[bool, UNSET] =
 
     Raises:
         Io, ParseError, InvalidRequest"""
-async def _headers_async(c: vendor.anthropic.Client, *, preview: typing.Union[bool, UNSET] = False) -> typing.Dict[str, str]:
+async def _headers_async(c: vendor.anthropic.Client, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> typing.Dict[str, str]:
     """(internal) Defaults, then the caller's headers, then auth. User headers come FIRST so
     `anthropic-beta` (and `anthropic-dangerous-direct-browser-access`, which the
     WASM playground needs) are reachable and `anthropic-version` is overridable;
@@ -456,13 +503,13 @@ async def _headers_async(c: vendor.anthropic.Client, *, preview: typing.Union[bo
         Io, ParseError, InvalidRequest"""
 
 
-def _request(c: vendor.anthropic.Client, input: ai.ModelTurnInput, stream: bool, *, preview: typing.Union[bool, UNSET] = False) -> baml.http.Request:
+def _request(c: vendor.anthropic.Client, input: ai.ModelTurnInput, stream: bool, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> baml.http.Request:
     """(internal) The shared request builder: identical body for both paths, plus the
     `stream: true` flag on the streaming one.
 
     Raises:
         InvalidArgument, Io, ParseError, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
-async def _request_async(c: vendor.anthropic.Client, input: ai.ModelTurnInput, stream: bool, *, preview: typing.Union[bool, UNSET] = False) -> baml.http.Request:
+async def _request_async(c: vendor.anthropic.Client, input: ai.ModelTurnInput, stream: bool, *, preview: typing.Union[bool, UNSET] = False, _baml: _BamlOptions | None = None) -> baml.http.Request:
     """(internal) The shared request builder: identical body for both paths, plus the
     `stream: true` flag on the streaming one.
 
@@ -470,33 +517,31 @@ async def _request_async(c: vendor.anthropic.Client, input: ai.ModelTurnInput, s
         InvalidArgument, Io, ParseError, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
 
 
-def render(c: vendor.anthropic.Client, input: ai.ModelTurnInput) -> baml.http.Request:
+def render(c: vendor.anthropic.Client, input: ai.ModelTurnInput, *, _baml: _BamlOptions | None = None) -> baml.http.Request:
     """The request one `invoke` would send, for tests and for debugging.
 
     Raises:
         InvalidArgument, Io, ParseError, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
-async def render_async(c: vendor.anthropic.Client, input: ai.ModelTurnInput) -> baml.http.Request:
+async def render_async(c: vendor.anthropic.Client, input: ai.ModelTurnInput, *, _baml: _BamlOptions | None = None) -> baml.http.Request:
     """The request one `invoke` would send, for tests and for debugging.
 
     Raises:
         InvalidArgument, Io, ParseError, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
 
 
-def preview(c: vendor.anthropic.Client, input: ai.ModelTurnInput) -> baml.http.Request:
-    """The request one `render` would send. URL media remains a URL reference;
-    local files are rejected before any filesystem read.
+def preview(c: vendor.anthropic.Client, input: ai.ModelTurnInput, *, _baml: _BamlOptions | None = None) -> baml.http.Request:
+    """The request one `render` would send. URL media remains a URL reference.
 
     Raises:
         InvalidArgument, Io, ParseError, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
-async def preview_async(c: vendor.anthropic.Client, input: ai.ModelTurnInput) -> baml.http.Request:
-    """The request one `render` would send. URL media remains a URL reference;
-    local files are rejected before any filesystem read.
+async def preview_async(c: vendor.anthropic.Client, input: ai.ModelTurnInput, *, _baml: _BamlOptions | None = None) -> baml.http.Request:
+    """The request one `render` would send. URL media remains a URL reference.
 
     Raises:
         InvalidArgument, Io, ParseError, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
 
 
-def _stop_reason(s: str) -> ai.content.StopReason:
+def _stop_reason(s: str, *, _baml: _BamlOptions | None = None) -> ai.content.StopReason:
     """(internal) One wire stop_reason string -> the canonical stop reason.
 
     `end_turn`/`stop_sequence` are the only reasons that mean "the model said
@@ -504,7 +549,7 @@ def _stop_reason(s: str) -> ai.content.StopReason:
     and anything Anthropic ships next are TRUNCATIONS, so they map to MaxTokens
     (the runner's "incomplete answer" outcome) rather than silently reporting a
     truncated candidate as a successful completion."""
-async def _stop_reason_async(s: str) -> ai.content.StopReason:
+async def _stop_reason_async(s: str, *, _baml: _BamlOptions | None = None) -> ai.content.StopReason:
     """(internal) One wire stop_reason string -> the canonical stop reason.
 
     `end_turn`/`stop_sequence` are the only reasons that mean "the model said
@@ -514,18 +559,32 @@ async def _stop_reason_async(s: str) -> ai.content.StopReason:
     truncated candidate as a successful completion."""
 
 
-def parse(resp: Response) -> ai.ModelTurn:
-    """One decoded response -> canonical content blocks, stop reason and usage."""
-async def parse_async(resp: Response) -> ai.ModelTurn:
-    """One decoded response -> canonical content blocks, stop reason and usage."""
+def parse(resp: Response, *, _baml: _BamlOptions | None = None) -> ai.ModelTurn:
+    """One decoded response -> canonical content blocks and stop reason."""
+async def parse_async(resp: Response, *, _baml: _BamlOptions | None = None) -> ai.ModelTurn:
+    """One decoded response -> canonical content blocks and stop reason."""
 
 
-def invoke(c: vendor.anthropic.Client, input: ai.ModelTurnInput) -> ai.ModelTurn:
+def usage(resp: Response, *, _baml: _BamlOptions | None = None) -> typing.Optional[ai.events.Usage]:
+    """One decoded response's usage, null when it reported none."""
+async def usage_async(resp: Response, *, _baml: _BamlOptions | None = None) -> typing.Optional[ai.events.Usage]:
+    """One decoded response's usage, null when it reported none."""
+
+
+def _events_usage(input: typing.Optional[int], output: typing.Optional[int], cache_read: typing.Optional[int], cache_creation: typing.Optional[int], thinking: typing.Optional[int], *, _baml: _BamlOptions | None = None) -> ai.events.Usage:
+    """(internal) Anthropic's counts, as a response or a stream event reports
+    them, in `ai.events.Usage`'s terms."""
+async def _events_usage_async(input: typing.Optional[int], output: typing.Optional[int], cache_read: typing.Optional[int], cache_creation: typing.Optional[int], thinking: typing.Optional[int], *, _baml: _BamlOptions | None = None) -> ai.events.Usage:
+    """(internal) Anthropic's counts, as a response or a stream event reports
+    them, in `ai.events.Usage`'s terms."""
+
+
+def invoke(c: vendor.anthropic.Client, input: ai.ModelTurnInput, *, _baml: _BamlOptions | None = None) -> ai.ModelTurn:
     """The one internal entry point: render, send, normalize — one model turn.
 
     Raises:
         InvalidArgument, Io, ParseError, Timeout, SerializationError"""
-async def invoke_async(c: vendor.anthropic.Client, input: ai.ModelTurnInput) -> ai.ModelTurn:
+async def invoke_async(c: vendor.anthropic.Client, input: ai.ModelTurnInput, *, _baml: _BamlOptions | None = None) -> ai.ModelTurn:
     """The one internal entry point: render, send, normalize — one model turn.
 
     Raises:
@@ -538,6 +597,14 @@ class AnthStreamUsage(pydantic.BaseModel):
     cache_read_input_tokens: typing.Optional[int] = None
     cache_creation_input_tokens: typing.Optional[int] = None
     output_tokens_details: typing.Optional[AnthOutputTokensDetails] = None
+
+
+def _anth_stream_meta(stop: typing.Optional[ai.content.StopReason], usage: typing.Optional[AnthStreamUsage], *, resolved_model: typing.Union[str, None, UNSET] = None, _baml: _BamlOptions | None = None) -> ai.stream.TurnMeta:
+    """One event's usage, with the meanings a non-streamed turn's usage has, and
+    the model it names."""
+async def _anth_stream_meta_async(stop: typing.Optional[ai.content.StopReason], usage: typing.Optional[AnthStreamUsage], *, resolved_model: typing.Union[str, None, UNSET] = None, _baml: _BamlOptions | None = None) -> ai.stream.TurnMeta:
+    """One event's usage, with the meanings a non-streamed turn's usage has, and
+    the model it names."""
 
 
 class AnthStreamDelta(pydantic.BaseModel):
@@ -591,48 +658,39 @@ class AnthStreamState(pydantic.BaseModel):
     thinking: str
     signature: str
     tool_calls: typing.List[AnthStreamToolCall]
-    cache_read_input_tokens: typing.Optional[int] = None
-    cache_creation_input_tokens: typing.Optional[int] = None
-    reasoning_tokens: typing.Optional[int] = None
     stop_reason_raw: typing.Optional[str] = None
     model: typing.Optional[str] = None
     @staticmethod
-    def new() -> AnthStreamState: ...
+    def new(*, _baml: _BamlOptions | None = None) -> AnthStreamState: ...
     @staticmethod
-    async def new_async() -> AnthStreamState: ...
-    def tool_uses(self) -> typing.List[ai.content.ToolUse]:
+    async def new_async(*, _baml: _BamlOptions | None = None) -> AnthStreamState: ...
+    def tool_uses(self, *, _baml: _BamlOptions | None = None) -> typing.List[ai.content.ToolUse]:
         """The assembled tool calls as canonical content blocks. An argument
         fragment stream that never completed decodes as an empty argument map
         rather than throwing."""
-    async def tool_uses_async(self) -> typing.List[ai.content.ToolUse]:
+    async def tool_uses_async(self, *, _baml: _BamlOptions | None = None) -> typing.List[ai.content.ToolUse]:
         """The assembled tool calls as canonical content blocks. An argument
         fragment stream that never completed decodes as an empty argument map
         rather than throwing."""
 
 
-def _anth_stream_call_at(state: AnthStreamState, index: typing.Optional[int]) -> typing.Optional[AnthStreamToolCall]: ...
-async def _anth_stream_call_at_async(state: AnthStreamState, index: typing.Optional[int]) -> typing.Optional[AnthStreamToolCall]: ...
+def _anth_stream_call_at(state: AnthStreamState, index: typing.Optional[int], *, _baml: _BamlOptions | None = None) -> typing.Optional[AnthStreamToolCall]: ...
+async def _anth_stream_call_at_async(state: AnthStreamState, index: typing.Optional[int], *, _baml: _BamlOptions | None = None) -> typing.Optional[AnthStreamToolCall]: ...
 
 
-def _anth_stream_failure(error: typing.Optional[AnthStreamError], raw: str) -> typing.Any:
-    """(internal) A mid-stream `error` event -> the precise failure. Same discipline as
-    ai.errors.classify_http: only genuinely transient conditions get a
-    retry-safe transport classification; a bad request stays a bad request so
-    ai.clients.Retry does not replay it."""
-async def _anth_stream_failure_async(error: typing.Optional[AnthStreamError], raw: str) -> typing.Any:
-    """(internal) A mid-stream `error` event -> the precise failure. Same discipline as
-    ai.errors.classify_http: only genuinely transient conditions get a
-    retry-safe transport classification; a bad request stays a bad request so
-    ai.clients.Retry does not replay it."""
+def _anth_stream_failure(error: typing.Optional[AnthStreamError], raw: str, *, _baml: _BamlOptions | None = None) -> typing.Any:
+    """(internal) Preserve a valid in-band provider error and its native type."""
+async def _anth_stream_failure_async(error: typing.Optional[AnthStreamError], raw: str, *, _baml: _BamlOptions | None = None) -> typing.Any:
+    """(internal) Preserve a valid in-band provider error and its native type."""
 
 
-def decode_batch(batch: str, state: AnthStreamState) -> typing.List[ai.stream.Event]:
+def decode_batch(batch: str, state: AnthStreamState, *, _baml: _BamlOptions | None = None) -> typing.List[ai.stream.Event]:
     """One `SseStream.next()` batch -> provider-agnostic stream events, folding
     everything Event cannot carry into `state`.
 
     Raises:
         DecodeError, ParseError"""
-async def decode_batch_async(batch: str, state: AnthStreamState) -> typing.List[ai.stream.Event]:
+async def decode_batch_async(batch: str, state: AnthStreamState, *, _baml: _BamlOptions | None = None) -> typing.List[ai.stream.Event]:
     """One `SseStream.next()` batch -> provider-agnostic stream events, folding
     everything Event cannot carry into `state`.
 
@@ -640,35 +698,35 @@ async def decode_batch_async(batch: str, state: AnthStreamState) -> typing.List[
         DecodeError, ParseError"""
 
 
-def _sse_failure(message: str) -> typing.Any:
-    """(internal) `fetch_sse` fails a non-2xx status itself, throwing baml.errors.Io with the
+def _sse_failure(message: str, *, _baml: _BamlOptions | None = None) -> typing.Any:
+    """(internal) `send_sse` fails a non-2xx status itself, throwing baml.errors.Io with the
     status and body in its message ("SSE request failed with status 401: …").
     Recover the status and route it through the SAME classifier the non-streaming
     path uses: a 400 or 401 must never come back as a retry-safe NetworkFailure,
     or ai.clients.Retry cheerfully replays a request that can never succeed."""
-async def _sse_failure_async(message: str) -> typing.Any:
-    """(internal) `fetch_sse` fails a non-2xx status itself, throwing baml.errors.Io with the
+async def _sse_failure_async(message: str, *, _baml: _BamlOptions | None = None) -> typing.Any:
+    """(internal) `send_sse` fails a non-2xx status itself, throwing baml.errors.Io with the
     status and body in its message ("SSE request failed with status 401: …").
     Recover the status and route it through the SAME classifier the non-streaming
     path uses: a 400 or 401 must never come back as a retry-safe NetworkFailure,
     or ai.clients.Retry cheerfully replays a request that can never succeed."""
 
 
-def _stream_open_failure(error: typing.Union[baml.errors.Io, baml.errors.Timeout]) -> None:
+def _stream_open_failure(error: typing.Union[baml.errors.Io, baml.errors.Timeout], *, _baml: _BamlOptions | None = None) -> None:
     """Raises:
         Timeout"""
-async def _stream_open_failure_async(error: typing.Union[baml.errors.Io, baml.errors.Timeout]) -> None:
+async def _stream_open_failure_async(error: typing.Union[baml.errors.Io, baml.errors.Timeout], *, _baml: _BamlOptions | None = None) -> None:
     """Raises:
         Timeout"""
 
 
-def invoke_stream(c: vendor.anthropic.Client, input: ai.ModelTurnInput) -> ai.stream.TurnStream:
+def invoke_stream(c: vendor.anthropic.Client, input: ai.ModelTurnInput, *, _baml: _BamlOptions | None = None) -> ai.stream.TurnStream:
     """The streaming entry point: the same request as `invoke` with
     `stream: true`, wrapped in an ai.TurnStream over the SSE connection.
 
     Raises:
         InvalidArgument, Io, ParseError, Timeout, SerializationError"""
-async def invoke_stream_async(c: vendor.anthropic.Client, input: ai.ModelTurnInput) -> ai.stream.TurnStream:
+async def invoke_stream_async(c: vendor.anthropic.Client, input: ai.ModelTurnInput, *, _baml: _BamlOptions | None = None) -> ai.stream.TurnStream:
     """The streaming entry point: the same request as `invoke` with
     `stream: true`, wrapped in an ai.TurnStream over the SSE connection.
 
@@ -697,6 +755,8 @@ __all__ = [
     "Message",
     "Prompt",
     "BodyParams",
+    "default_cache_control",
+    "default_cache_control_async",
     "messages_request",
     "messages_request_async",
     "messages_body",
@@ -707,6 +767,8 @@ __all__ = [
     "preview_async",
     "parse",
     "parse_async",
+    "usage",
+    "usage_async",
     "invoke",
     "invoke_async",
     "AnthStreamUsage",

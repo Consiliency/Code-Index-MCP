@@ -24,10 +24,10 @@ from __future__ import annotations
 from . import anthropic
 from . import assert_
 from . import aws
-from . import boundary
 from . import claude_code
 from . import google
 from . import openai
 from . import testing
+from . import trace
 from . import typesafeai
 from . import vercel

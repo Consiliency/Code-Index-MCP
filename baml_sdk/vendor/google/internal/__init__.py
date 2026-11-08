@@ -433,12 +433,12 @@ resolves itself).
 media defaults: the Gemini Developer API has no server-side URL fetch, so an
 http(s) URL is downloaded and inlined (`true`), while Vertex takes the URL
 through as `fileData.fileUri` (`false`) — which also keeps large media out
-of the inline request-size cap. Local files always become base64 and
-existing base64 is retained on both backends, and a `_gm_is_provider_uri`
+of the inline request-size cap. Existing base64, which is what media built
+from a file holds, is retained on both backends, and a `_gm_is_provider_uri`
 URL is passed through even when `fetch_url` is set.
 
 Raises:
-    InvalidArgument, Io, Timeout, NetworkFailure, PreviewUnsupported"""
+    InvalidArgument, Timeout, NetworkFailure, PreviewUnsupported"""
 _gm_media_part_async = _define_function("google.internal._gm_media_part", "async", ["media", "fetch_url"], ["preview"], binding_name="_gm_media_part_async", binding_qualname="_gm_media_part_async", binding_module=__name__)
 _gm_media_part_async.__doc__ = """(internal) One prompt media part -> `inlineData` (base64) or `fileData` (a URI the API
 resolves itself).
@@ -447,12 +447,12 @@ resolves itself).
 media defaults: the Gemini Developer API has no server-side URL fetch, so an
 http(s) URL is downloaded and inlined (`true`), while Vertex takes the URL
 through as `fileData.fileUri` (`false`) — which also keeps large media out
-of the inline request-size cap. Local files always become base64 and
-existing base64 is retained on both backends, and a `_gm_is_provider_uri`
+of the inline request-size cap. Existing base64, which is what media built
+from a file holds, is retained on both backends, and a `_gm_is_provider_uri`
 URL is passed through even when `fetch_url` is set.
 
 Raises:
-    InvalidArgument, Io, Timeout, NetworkFailure, PreviewUnsupported"""
+    InvalidArgument, Timeout, NetworkFailure, PreviewUnsupported"""
 
 
 _lower_block       = _define_function("google.internal._lower_block", "sync",  ["block", "fetch_url"], ["preview"], binding_name="_lower_block", binding_qualname="_lower_block", binding_module=__name__)
@@ -469,7 +469,7 @@ A tool result's text goes in `functionResponse.response`; its media parts
 go in `functionResponse.parts` (`lower_journal`).
 
 Raises:
-    InvalidArgument, Io, Timeout, NetworkFailure, PreviewUnsupported"""
+    InvalidArgument, Timeout, NetworkFailure, PreviewUnsupported"""
 _lower_block_async = _define_function("google.internal._lower_block", "async", ["block", "fetch_url"], ["preview"], binding_name="_lower_block_async", binding_qualname="_lower_block_async", binding_module=__name__)
 _lower_block_async.__doc__ = """One content block -> one `Part`. Gemini takes every media kind at every
 position, so the table is all Accept and no position is passed:
@@ -484,15 +484,15 @@ A tool result's text goes in `functionResponse.response`; its media parts
 go in `functionResponse.parts` (`lower_journal`).
 
 Raises:
-    InvalidArgument, Io, Timeout, NetworkFailure, PreviewUnsupported"""
+    InvalidArgument, Timeout, NetworkFailure, PreviewUnsupported"""
 
 
 _lower_blocks       = _define_function("google.internal._lower_blocks", "sync",  ["blocks", "fetch_url"], ["preview"], binding_name="_lower_blocks", binding_qualname="_lower_blocks", binding_module=__name__)
 _lower_blocks.__doc__ = """Raises:
-    InvalidArgument, Io, Timeout, NetworkFailure, PreviewUnsupported"""
+    InvalidArgument, Timeout, NetworkFailure, PreviewUnsupported"""
 _lower_blocks_async = _define_function("google.internal._lower_blocks", "async", ["blocks", "fetch_url"], ["preview"], binding_name="_lower_blocks_async", binding_qualname="_lower_blocks_async", binding_module=__name__)
 _lower_blocks_async.__doc__ = """Raises:
-    InvalidArgument, Io, Timeout, NetworkFailure, PreviewUnsupported"""
+    InvalidArgument, Timeout, NetworkFailure, PreviewUnsupported"""
 
 
 class Prompt(pydantic.BaseModel):
@@ -514,7 +514,7 @@ merges, the other providers demote the 2nd+ to user) — matching sys_llm's
 builder and the shipped native behavior.
 
 Raises:
-    InvalidArgument, Io, Timeout, NetworkFailure, PreviewUnsupported"""
+    InvalidArgument, Timeout, NetworkFailure, PreviewUnsupported"""
 lower_prompt_async = _define_function("google.internal.lower_prompt", "async", ["prompt"], ["fetch_url", "preview"], binding_name="lower_prompt_async", binding_qualname="lower_prompt_async", binding_module=__name__)
 lower_prompt_async.__doc__ = """Gemini spells assistant as `model` and carries system instructions outside
 `contents`. Role-less prompt content is an ordinary user turn.
@@ -524,7 +524,7 @@ merges, the other providers demote the 2nd+ to user) — matching sys_llm's
 builder and the shipped native behavior.
 
 Raises:
-    InvalidArgument, Io, Timeout, NetworkFailure, PreviewUnsupported"""
+    InvalidArgument, Timeout, NetworkFailure, PreviewUnsupported"""
 
 
 _gm_sig_marker       = _define_function("google.internal._gm_sig_marker", "sync",  [], binding_name="_gm_sig_marker", binding_qualname="_gm_sig_marker", binding_module=__name__)
@@ -547,7 +547,7 @@ parts, matching how Gemini expects results for a multi-call turn. Gemini
 correlates results by tool NAME, not id (`ai.wire.tool_name`).
 
 Raises:
-    InvalidArgument, Io, Timeout, NetworkFailure, PreviewUnsupported"""
+    InvalidArgument, Timeout, NetworkFailure, PreviewUnsupported"""
 lower_journal_async = _define_function("google.internal.lower_journal", "async", ["j", "fetch_url"], ["preview"], binding_name="lower_journal_async", binding_qualname="lower_journal_async", binding_module=__name__)
 lower_journal_async.__doc__ = """ai.Journal -> generateContent `contents`. Only promptable events lower;
 ai.RunStarted, ai.ToolRequested, ai.Usage, and ai.FinalProduced are journal-only.
@@ -556,10 +556,10 @@ parts, matching how Gemini expects results for a multi-call turn. Gemini
 correlates results by tool NAME, not id (`ai.wire.tool_name`).
 
 Raises:
-    InvalidArgument, Io, Timeout, NetworkFailure, PreviewUnsupported"""
+    InvalidArgument, Timeout, NetworkFailure, PreviewUnsupported"""
 
 
-gemini_build_body       = _define_function("google.internal.gemini_build_body", "sync",  ["input", "client_id", "generation_config", "safety_settings", "request_body"], ["fetch_url", "preview"], binding_name="gemini_build_body", binding_qualname="gemini_build_body", binding_module=__name__)
+gemini_build_body       = _define_function("google.internal.gemini_build_body", "sync",  ["input", "provider", "requested_model", "generation_config", "safety_settings", "request_body"], ["fetch_url", "preview"], binding_name="gemini_build_body", binding_qualname="gemini_build_body", binding_module=__name__)
 gemini_build_body.__doc__ = """ai.ModelTurnInput -> the serialized generateContent body.
 
 The last step is always `ai.wire.merge_request_body`, so `request_body`
@@ -570,8 +570,8 @@ the key the client injected).
 Developer API inlines http(s) media, Vertex passes the URL through.
 
 Raises:
-    InvalidArgument, Io, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
-gemini_build_body_async = _define_function("google.internal.gemini_build_body", "async", ["input", "client_id", "generation_config", "safety_settings", "request_body"], ["fetch_url", "preview"], binding_name="gemini_build_body_async", binding_qualname="gemini_build_body_async", binding_module=__name__)
+    InvalidArgument, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
+gemini_build_body_async = _define_function("google.internal.gemini_build_body", "async", ["input", "provider", "requested_model", "generation_config", "safety_settings", "request_body"], ["fetch_url", "preview"], binding_name="gemini_build_body_async", binding_qualname="gemini_build_body_async", binding_module=__name__)
 gemini_build_body_async.__doc__ = """ai.ModelTurnInput -> the serialized generateContent body.
 
 The last step is always `ai.wire.merge_request_body`, so `request_body`
@@ -582,7 +582,7 @@ the key the client injected).
 Developer API inlines http(s) media, Vertex passes the URL through.
 
 Raises:
-    InvalidArgument, Io, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
+    InvalidArgument, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
 
 
 gemini_method       = _define_function("google.internal.gemini_method", "sync",  ["stream"], binding_name="gemini_method", binding_qualname="gemini_method", binding_module=__name__)
@@ -613,7 +613,7 @@ silently returning an empty Complete turn makes a `-> string` function
 return "" as a success. `provider` names the backend in that failure.
 
 Raises:
-    SerializationError"""
+    SerializationError, InvalidResponse, ProviderError"""
 parse_async = _define_function("google.internal.parse", "async", ["resp", "seq"], ["provider"], binding_name="parse_async", binding_qualname="parse_async", binding_module=__name__)
 parse_async.__doc__ = """One decoded response -> canonical content blocks and a stop reason.
 Gemini sends no call ids; synthesize `call_<seq>_<i>` from the journal
@@ -626,7 +626,7 @@ silently returning an empty Complete turn makes a `-> string` function
 return "" as a success. `provider` names the backend in that failure.
 
 Raises:
-    SerializationError"""
+    SerializationError, InvalidResponse, ProviderError"""
 
 
 _gm_sse_failure       = _define_function("google.internal._gm_sse_failure", "sync",  ["provider", "error"], binding_name="_gm_sse_failure", binding_qualname="_gm_sse_failure", binding_module=__name__)
@@ -649,12 +649,12 @@ Raises:
     Timeout"""
 
 
-_gm_open_sse       = _define_function("google.internal._gm_open_sse", "sync",  ["req", "provider"], ["request_timeout_ms", "time_to_first_token_timeout_ms"], binding_name="_gm_open_sse", binding_qualname="_gm_open_sse", binding_module=__name__)
+_gm_open_sse       = _define_function("google.internal._gm_open_sse", "sync",  ["req", "provider"], binding_name="_gm_open_sse", binding_qualname="_gm_open_sse", binding_module=__name__)
 _gm_open_sse.__doc__ = """(internal) Open the SSE connection, classifying the failure precisely.
 
 Raises:
     Timeout"""
-_gm_open_sse_async = _define_function("google.internal._gm_open_sse", "async", ["req", "provider"], ["request_timeout_ms", "time_to_first_token_timeout_ms"], binding_name="_gm_open_sse_async", binding_qualname="_gm_open_sse_async", binding_module=__name__)
+_gm_open_sse_async = _define_function("google.internal._gm_open_sse", "async", ["req", "provider"], binding_name="_gm_open_sse_async", binding_qualname="_gm_open_sse_async", binding_module=__name__)
 _gm_open_sse_async.__doc__ = """(internal) Open the SSE connection, classifying the failure precisely.
 
 Raises:
@@ -679,7 +679,7 @@ this used to do) turns a cut or a proxy's error page into missing text that
 no caller can see.
 
 Raises:
-    DecodeError, ParseError"""
+    DecodeError, ParseError, InvalidResponse, ProviderError"""
 _gm_decode_batch_async = _define_function("google.internal._gm_decode_batch", "async", ["batch", "provider"], binding_name="_gm_decode_batch_async", binding_qualname="_gm_decode_batch_async", binding_module=__name__)
 _gm_decode_batch_async.__doc__ = """(internal) One SseStream batch -> provider-agnostic stream events.
 
@@ -698,7 +698,7 @@ this used to do) turns a cut or a proxy's error page into missing text that
 no caller can see.
 
 Raises:
-    DecodeError, ParseError"""
+    DecodeError, ParseError, InvalidResponse, ProviderError"""
 
 
 render       = _define_function("google.internal.render", "sync",  ["c", "input"], binding_name="render", binding_qualname="render", binding_module=__name__)
@@ -755,10 +755,10 @@ Raises:
 
 _decode_batch       = _define_function("google.internal._decode_batch", "sync",  ["batch"], binding_name="_decode_batch", binding_qualname="_decode_batch", binding_module=__name__)
 _decode_batch.__doc__ = """Raises:
-    DecodeError, ParseError"""
+    DecodeError, ParseError, InvalidResponse, ProviderError"""
 _decode_batch_async = _define_function("google.internal._decode_batch", "async", ["batch"], binding_name="_decode_batch_async", binding_qualname="_decode_batch_async", binding_module=__name__)
 _decode_batch_async.__doc__ = """Raises:
-    DecodeError, ParseError"""
+    DecodeError, ParseError, InvalidResponse, ProviderError"""
 
 
 gemini_invoke_stream       = _define_function("google.internal.gemini_invoke_stream", "sync",  ["c", "input"], binding_name="gemini_invoke_stream", binding_qualname="gemini_invoke_stream", binding_module=__name__)
@@ -949,7 +949,7 @@ built; a caller who needs it back can put it in `request_body`, which merges
 after these fields.
 
 Raises:
-    InvalidArgument, Io, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
+    InvalidArgument, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
 _vertex_anthropic_body_async = _define_function("google.internal._vertex_anthropic_body", "async", ["c", "input", "stream"], ["preview"], binding_name="_vertex_anthropic_body_async", binding_qualname="_vertex_anthropic_body_async", binding_module=__name__)
 _vertex_anthropic_body_async.__doc__ = """(internal) Claude on Vertex is served by `publishers/anthropic` through `:rawPredict`,
 whose body is the Anthropic Messages format rather than generateContent.
@@ -962,7 +962,7 @@ built; a caller who needs it back can put it in `request_body`, which merges
 after these fields.
 
 Raises:
-    InvalidArgument, Io, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
+    InvalidArgument, Timeout, SerializationError, InvalidRequest, NetworkFailure, PreviewUnsupported, PromptRenderError"""
 
 
 vertex_render       = _define_function("google.internal.vertex_render", "sync",  ["c", "input"], binding_name="vertex_render", binding_qualname="vertex_render", binding_module=__name__)
@@ -1021,10 +1021,10 @@ Raises:
 
 _vertex_decode_batch       = _define_function("google.internal._vertex_decode_batch", "sync",  ["batch"], binding_name="_vertex_decode_batch", binding_qualname="_vertex_decode_batch", binding_module=__name__)
 _vertex_decode_batch.__doc__ = """Raises:
-    DecodeError, ParseError"""
+    DecodeError, ParseError, InvalidResponse, ProviderError"""
 _vertex_decode_batch_async = _define_function("google.internal._vertex_decode_batch", "async", ["batch"], binding_name="_vertex_decode_batch_async", binding_qualname="_vertex_decode_batch_async", binding_module=__name__)
 _vertex_decode_batch_async.__doc__ = """Raises:
-    DecodeError, ParseError"""
+    DecodeError, ParseError, InvalidResponse, ProviderError"""
 
 
 vertex_invoke_stream       = _define_function("google.internal.vertex_invoke_stream", "sync",  ["c", "input"], binding_name="vertex_invoke_stream", binding_qualname="vertex_invoke_stream", binding_module=__name__)

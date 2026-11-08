@@ -385,9 +385,11 @@ from importlib.metadata import version
 import os
 from unittest.mock import patch
 
+import mcp_server.indexing.summarization  # applies the BAML recording default
 from baml_sdk import ChunkInput, SummarizeChunkAlone_spec, SummarizeFileChunks_spec
 
-assert version("baml-bridge") == "0.20.1"
+assert version("baml-bridge") == "0.23.0"
+assert os.environ["MCP_BAML_TELEMETRY"] == "off"
 os.environ["CEREBRAS_API_KEY"] = "dummy-offline"
 with patch("socket.socket.connect", side_effect=AssertionError("BAML smoke must stay offline")):
     batch = SummarizeFileChunks_spec(

@@ -35,13 +35,64 @@ from baml_bridge import (
 
 class Request(pydantic.BaseModel):
     """
-    An HTTP request — outgoing (built for `baml.http.send`/`fetch_sse`) or
-    incoming (passed to an `http.Server` handler).
+    An outgoing HTTP request, sent with `baml.http.send` or `baml.http.send_sse`.
 
-    For an incoming server request: `url` is the request-target as received
-    (origin-form, e.g. `/path?q=1`, on HTTP/1; the authority lives in the `host`
-    header), `body` is the bytes decoded lossily as UTF-8 (non-UTF-8 bytes become
-    U+FFFD), and a header sent multiple times has its values joined with `, `.
+    Build one as a literal, or with `Request.from_url` and the `set_*` methods:
+    ```baml
+    let req = baml.http.Request.from_url("https://api.example.com/items")
+        .set_method("POST")
+        .set_headers({ "content-type": "application/json" })
+        .set_body("{}")
+        .set_timeout(baml.time.Duration.from_seconds(10));
+    let resp = baml.http.send(req);
+    ```
+
+    An `http.Server` handler receives a `ServerRequest`, not this class.
+
+    Attributes:
+        method
+        url
+        headers
+        body
+        timeout: End-to-end limit for the whole exchange: connecting, sending the
+            request, waiting for response headers and reading the body. `null` is
+            the default of 5 minutes; a zero or negative duration is no limit.
+        connect_timeout: Limit for establishing the connection (TCP and TLS). `null` is the
+            default of 10 seconds; a zero or negative duration is no limit.
+    """
+    model_config = pydantic.ConfigDict(
+        arbitrary_types_allowed=True,
+        extra="ignore",
+        populate_by_name=True,
+    )
+    method: str
+    url: str
+    headers: typing.Dict[str, str]
+    body: str
+    timeout: typing.Optional[baml.time.Duration] = None
+    connect_timeout: typing.Optional[baml.time.Duration] = None
+    from_url       = staticmethod(_define_function("baml.http.Request.from_url", "sync",  ["url"], binding_name="from_url", binding_qualname="Request.from_url", binding_module=__name__))
+    from_url_async = staticmethod(_define_function("baml.http.Request.from_url", "async", ["url"], binding_name="from_url_async", binding_qualname="Request.from_url_async", binding_module=__name__))
+    set_method       = _define_function("baml.http.Request.set_method", "sync",  ["self", "method"], binding_name="set_method", binding_qualname="Request.set_method", binding_module=__name__)
+    set_method_async = _define_function("baml.http.Request.set_method", "async", ["self", "method"], binding_name="set_method_async", binding_qualname="Request.set_method_async", binding_module=__name__)
+    set_headers       = _define_function("baml.http.Request.set_headers", "sync",  ["self", "headers"], binding_name="set_headers", binding_qualname="Request.set_headers", binding_module=__name__)
+    set_headers_async = _define_function("baml.http.Request.set_headers", "async", ["self", "headers"], binding_name="set_headers_async", binding_qualname="Request.set_headers_async", binding_module=__name__)
+    set_body       = _define_function("baml.http.Request.set_body", "sync",  ["self", "body"], binding_name="set_body", binding_qualname="Request.set_body", binding_module=__name__)
+    set_body_async = _define_function("baml.http.Request.set_body", "async", ["self", "body"], binding_name="set_body_async", binding_qualname="Request.set_body_async", binding_module=__name__)
+    set_timeout       = _define_function("baml.http.Request.set_timeout", "sync",  ["self", "timeout"], binding_name="set_timeout", binding_qualname="Request.set_timeout", binding_module=__name__)
+    set_timeout_async = _define_function("baml.http.Request.set_timeout", "async", ["self", "timeout"], binding_name="set_timeout_async", binding_qualname="Request.set_timeout_async", binding_module=__name__)
+    set_connect_timeout       = _define_function("baml.http.Request.set_connect_timeout", "sync",  ["self", "connect_timeout"], binding_name="set_connect_timeout", binding_qualname="Request.set_connect_timeout", binding_module=__name__)
+    set_connect_timeout_async = _define_function("baml.http.Request.set_connect_timeout", "async", ["self", "connect_timeout"], binding_name="set_connect_timeout_async", binding_qualname="Request.set_connect_timeout_async", binding_module=__name__)
+
+
+class ServerRequest(pydantic.BaseModel):
+    """
+    An incoming HTTP request, passed to an `http.Server` handler.
+
+    `url` is the request-target as received (origin-form, e.g. `/path?q=1`, on
+    HTTP/1; the authority lives in the `host` header), `body` is the bytes
+    decoded lossily as UTF-8 (non-UTF-8 bytes become U+FFFD), and a header sent
+    multiple times has its values joined with `, `.
     """
     model_config = pydantic.ConfigDict(
         arbitrary_types_allowed=True,
@@ -91,11 +142,11 @@ class Response(pydantic.BaseModel):
 
 class SseStream(pydantic.BaseModel):
     """
-    A Server-Sent Events (SSE) stream. Created by `baml.http.fetch_sse`.
+    A Server-Sent Events (SSE) stream. Created by `baml.http.send_sse`.
 
     Attributes:
         url
-        status_code: Status code of the opening response. `fetch_sse` throws on non-2xx,
+        status_code: Status code of the opening response. `send_sse` throws on non-2xx,
             so this is always a success status.
         headers: Response headers at connection open — the provider request id
             (`x-request-id`, `request-id`, ...) lives here.
@@ -116,34 +167,48 @@ class SseStream(pydantic.BaseModel):
     close_async = _define_function("baml.http.SseStream.close", "async", ["self"], binding_name="close_async", binding_qualname="SseStream.close_async", binding_module=__name__)
 
 
-_timeout_nanos       = _define_function("baml.http._timeout_nanos", "sync",  ["timeout"], binding_name="_timeout_nanos", binding_qualname="_timeout_nanos", binding_module=__name__)
-_timeout_nanos_async = _define_function("baml.http._timeout_nanos", "async", ["timeout"], binding_name="_timeout_nanos_async", binding_qualname="_timeout_nanos_async", binding_module=__name__)
+_timeout_nanos       = _define_function("baml.http._timeout_nanos", "sync",  ["timeout", "default"], binding_name="_timeout_nanos", binding_qualname="_timeout_nanos", binding_module=__name__)
+_timeout_nanos_async = _define_function("baml.http._timeout_nanos", "async", ["timeout", "default"], binding_name="_timeout_nanos_async", binding_qualname="_timeout_nanos_async", binding_module=__name__)
+
+
+_default_timeout       = _define_function("baml.http._default_timeout", "sync",  [], binding_name="_default_timeout", binding_qualname="_default_timeout", binding_module=__name__)
+_default_timeout_async = _define_function("baml.http._default_timeout", "async", [], binding_name="_default_timeout_async", binding_qualname="_default_timeout_async", binding_module=__name__)
+
+
+_default_connect_timeout       = _define_function("baml.http._default_connect_timeout", "sync",  [], binding_name="_default_connect_timeout", binding_qualname="_default_connect_timeout", binding_module=__name__)
+_default_connect_timeout_async = _define_function("baml.http._default_connect_timeout", "async", [], binding_name="_default_connect_timeout_async", binding_qualname="_default_connect_timeout_async", binding_module=__name__)
 
 
 fetch       = _define_function("baml.http.fetch", "sync",  ["url"], ["timeout"], binding_name="fetch", binding_qualname="fetch", binding_module=__name__)
 fetch.__doc__ = """Sends a GET request to `url` and returns the response.
 
-`timeout` is the total deadline for the request (connection + response
-headers + body). `null` (the default) imposes no deadline. On expiry this
-throws `baml.errors.Timeout`.
+`timeout` is the end-to-end limit for the request: connecting, waiting for
+response headers and reading the body. `null` (the default) is 5 minutes; a
+zero or negative duration is no limit. Connecting is also limited to 10
+seconds; use `send` with a `Request` to change that. On expiry this throws
+`baml.errors.Timeout`, whose `timeout_type` is `"timeout"` or
+`"connect_timeout"`.
 
 Raises:
     Io, Timeout"""
 fetch_async = _define_function("baml.http.fetch", "async", ["url"], ["timeout"], binding_name="fetch_async", binding_qualname="fetch_async", binding_module=__name__)
 fetch_async.__doc__ = """Sends a GET request to `url` and returns the response.
 
-`timeout` is the total deadline for the request (connection + response
-headers + body). `null` (the default) imposes no deadline. On expiry this
-throws `baml.errors.Timeout`.
+`timeout` is the end-to-end limit for the request: connecting, waiting for
+response headers and reading the body. `null` (the default) is 5 minutes; a
+zero or negative duration is no limit. Connecting is also limited to 10
+seconds; use `send` with a `Request` to change that. On expiry this throws
+`baml.errors.Timeout`, whose `timeout_type` is `"timeout"` or
+`"connect_timeout"`.
 
 Raises:
     Io, Timeout"""
 
 
-_fetch       = _define_function("baml.http._fetch", "sync",  ["url", "timeout_nanos"], binding_name="_fetch", binding_qualname="_fetch", binding_module=__name__)
+_fetch       = _define_function("baml.http._fetch", "sync",  ["url", "timeout_nanos", "connect_timeout_nanos"], binding_name="_fetch", binding_qualname="_fetch", binding_module=__name__)
 _fetch.__doc__ = """Raises:
     Io, Timeout"""
-_fetch_async = _define_function("baml.http._fetch", "async", ["url", "timeout_nanos"], binding_name="_fetch_async", binding_qualname="_fetch_async", binding_module=__name__)
+_fetch_async = _define_function("baml.http._fetch", "async", ["url", "timeout_nanos", "connect_timeout_nanos"], binding_name="_fetch_async", binding_qualname="_fetch_async", binding_module=__name__)
 _fetch_async.__doc__ = """Raises:
     Io, Timeout"""
 
@@ -151,78 +216,88 @@ _fetch_async.__doc__ = """Raises:
 send       = _define_function("baml.http.send", "sync",  ["request"], ["timeout"], binding_name="send", binding_qualname="send", binding_module=__name__)
 send.__doc__ = """Sends an HTTP request and returns the response.
 
-`timeout` is the total deadline for the request, as in `fetch`. `null` (the
-default) imposes no deadline.
+The request runs under `request.timeout` (end to end, 5 minutes when null)
+and `request.connect_timeout` (10 seconds when null). The `timeout`
+argument, when given, overrides `request.timeout`. A zero or negative
+duration is no limit.
 
 # Throws
 
 - `InvalidArgument` if `request.method` is not a valid HTTP method.
 - `Io` if the request cannot be sent or the response cannot be read.
-- `Timeout` if `timeout` elapses first.
+- `Timeout` if a limit elapses first. Its `timeout_type` is `"timeout"` or
+  `"connect_timeout"`, the name of the field that set the limit.
 
 Raises:
     Io, Timeout, InvalidArgument"""
 send_async = _define_function("baml.http.send", "async", ["request"], ["timeout"], binding_name="send_async", binding_qualname="send_async", binding_module=__name__)
 send_async.__doc__ = """Sends an HTTP request and returns the response.
 
-`timeout` is the total deadline for the request, as in `fetch`. `null` (the
-default) imposes no deadline.
+The request runs under `request.timeout` (end to end, 5 minutes when null)
+and `request.connect_timeout` (10 seconds when null). The `timeout`
+argument, when given, overrides `request.timeout`. A zero or negative
+duration is no limit.
 
 # Throws
 
 - `InvalidArgument` if `request.method` is not a valid HTTP method.
 - `Io` if the request cannot be sent or the response cannot be read.
-- `Timeout` if `timeout` elapses first.
+- `Timeout` if a limit elapses first. Its `timeout_type` is `"timeout"` or
+  `"connect_timeout"`, the name of the field that set the limit.
 
 Raises:
     Io, Timeout, InvalidArgument"""
 
 
-_send       = _define_function("baml.http._send", "sync",  ["request", "timeout_nanos"], binding_name="_send", binding_qualname="_send", binding_module=__name__)
+_send       = _define_function("baml.http._send", "sync",  ["request", "timeout_nanos", "connect_timeout_nanos"], binding_name="_send", binding_qualname="_send", binding_module=__name__)
 _send.__doc__ = """Raises:
     Io, Timeout, InvalidArgument"""
-_send_async = _define_function("baml.http._send", "async", ["request", "timeout_nanos"], binding_name="_send_async", binding_qualname="_send_async", binding_module=__name__)
+_send_async = _define_function("baml.http._send", "async", ["request", "timeout_nanos", "connect_timeout_nanos"], binding_name="_send_async", binding_qualname="_send_async", binding_module=__name__)
 _send_async.__doc__ = """Raises:
     Io, Timeout, InvalidArgument"""
 
 
-fetch_sse       = _define_function("baml.http.fetch_sse", "sync",  ["request"], ["timeout", "first_event_timeout"], binding_name="fetch_sse", binding_qualname="fetch_sse", binding_module=__name__)
-fetch_sse.__doc__ = """Sends an HTTP request and returns a Server-Sent Events stream for streaming responses.
+send_sse       = _define_function("baml.http.send_sse", "sync",  ["request"], ["timeout"], binding_name="send_sse", binding_qualname="send_sse", binding_module=__name__)
+send_sse.__doc__ = """Sends an HTTP request and returns a Server-Sent Events stream for streaming responses.
 
-On native transports, `timeout` covers the request and streaming body.
-`first_event_timeout` starts after open and ends on the first parsed event.
-Null/non-positive is unbounded; browser/Wasm does not enforce these fields.
-
-# Throws
-
-- `InvalidArgument` if `request.method` is not a valid HTTP method.
-- `Io` if the request cannot be sent or the stream cannot be opened.
-- `Timeout` if `timeout` or `first_event_timeout` elapses first.
-
-Raises:
-    Io, Timeout, InvalidArgument"""
-fetch_sse_async = _define_function("baml.http.fetch_sse", "async", ["request"], ["timeout", "first_event_timeout"], binding_name="fetch_sse_async", binding_qualname="fetch_sse_async", binding_module=__name__)
-fetch_sse_async.__doc__ = """Sends an HTTP request and returns a Server-Sent Events stream for streaming responses.
-
-On native transports, `timeout` covers the request and streaming body.
-`first_event_timeout` starts after open and ends on the first parsed event.
-Null/non-positive is unbounded; browser/Wasm does not enforce these fields.
+The limits are the ones `send` applies: `request.timeout` (overridden by the
+`timeout` argument) covers opening the stream and reading all of it, and
+`request.connect_timeout` covers connecting. `SseStream.next()` throws
+`Timeout` once the end-to-end limit elapses. Browser/Wasm does not enforce
+these limits.
 
 # Throws
 
 - `InvalidArgument` if `request.method` is not a valid HTTP method.
 - `Io` if the request cannot be sent or the stream cannot be opened.
-- `Timeout` if `timeout` or `first_event_timeout` elapses first.
+- `Timeout` if a limit elapses first.
+
+Raises:
+    Io, Timeout, InvalidArgument"""
+send_sse_async = _define_function("baml.http.send_sse", "async", ["request"], ["timeout"], binding_name="send_sse_async", binding_qualname="send_sse_async", binding_module=__name__)
+send_sse_async.__doc__ = """Sends an HTTP request and returns a Server-Sent Events stream for streaming responses.
+
+The limits are the ones `send` applies: `request.timeout` (overridden by the
+`timeout` argument) covers opening the stream and reading all of it, and
+`request.connect_timeout` covers connecting. `SseStream.next()` throws
+`Timeout` once the end-to-end limit elapses. Browser/Wasm does not enforce
+these limits.
+
+# Throws
+
+- `InvalidArgument` if `request.method` is not a valid HTTP method.
+- `Io` if the request cannot be sent or the stream cannot be opened.
+- `Timeout` if a limit elapses first.
 
 Raises:
     Io, Timeout, InvalidArgument"""
 
 
-_fetch_sse       = _define_function("baml.http._fetch_sse", "sync",  ["request", "timeout_nanos", "first_event_timeout_nanos"], binding_name="_fetch_sse", binding_qualname="_fetch_sse", binding_module=__name__)
-_fetch_sse.__doc__ = """Raises:
+_send_sse       = _define_function("baml.http._send_sse", "sync",  ["request", "timeout_nanos", "connect_timeout_nanos"], binding_name="_send_sse", binding_qualname="_send_sse", binding_module=__name__)
+_send_sse.__doc__ = """Raises:
     Io, Timeout, InvalidArgument"""
-_fetch_sse_async = _define_function("baml.http._fetch_sse", "async", ["request", "timeout_nanos", "first_event_timeout_nanos"], binding_name="_fetch_sse_async", binding_qualname="_fetch_sse_async", binding_module=__name__)
-_fetch_sse_async.__doc__ = """Raises:
+_send_sse_async = _define_function("baml.http._send_sse", "async", ["request", "timeout_nanos", "connect_timeout_nanos"], binding_name="_send_sse_async", binding_qualname="_send_sse_async", binding_module=__name__)
+_send_sse_async.__doc__ = """Raises:
     Io, Timeout, InvalidArgument"""
 
 
@@ -306,14 +381,15 @@ WsAccept: typing.TypeAlias = typing.Callable[[baml.ws.WebSocket], None]
 
 __all__ = [
     "Request",
+    "ServerRequest",
     "Response",
     "SseStream",
     "fetch",
     "fetch_async",
     "send",
     "send_async",
-    "fetch_sse",
-    "fetch_sse_async",
+    "send_sse",
+    "send_sse_async",
     "Server",
     "reject_websocket",
     "reject_websocket_async",

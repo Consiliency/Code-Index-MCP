@@ -21,7 +21,7 @@
 
 from __future__ import annotations
 
-from baml_bridge import BamlFunctionSpec as _BamlFunctionSpec
+from .._invocation_types import BamlFunctionSpec as _BamlFunctionSpec
 
 from . import clients
 from . import content
@@ -42,10 +42,21 @@ if typing.TYPE_CHECKING:
     from .. import baml
     from ..baml import UNSET as UNSET
 
+from .._invocation_types import BamlOptions as _BamlOptions
+
 from baml_bridge import BamlPyHandle as _BamlPyHandle
 
 
 Out = typing.TypeVar("Out")
+
+
+class _prompt__body1(typing.Protocol):
+    def __call__(self, name: str, metadata: typing.Dict[str, baml.json.json] = ...) -> Role: ...
+
+class _BamlReturned1(typing.Protocol):
+    def _to_pyhandle(self) -> _BamlPyHandle: ...
+    def __call__(self, arg0: Context, *, _baml: _BamlOptions | None = None) -> Prompt: ...
+    async def call_async(self, arg0: Context, *, _baml: _BamlOptions | None = None) -> Prompt: ...
 
 
 Credential: typing.TypeAlias = typing.Union[str, baml.env.Ref]
@@ -54,18 +65,15 @@ Credential: typing.TypeAlias = typing.Union[str, baml.env.Ref]
 MediaPart: typing.TypeAlias = typing.Union[baml.media.Image, baml.media.Audio, baml.media.Video, baml.media.Pdf]
 
 
-PromptPart: typing.TypeAlias = typing.Union[str, MediaPart]
-
-
 class OutputFormat(pydantic.BaseModel):
     field_data: _BamlPyHandle = pydantic.Field(alias="_data")
-    def _render_(self, *, prefix: typing.Union[str, ai.internal.OutputFormatDefault, None, UNSET] = UNSET, or_splitter: typing.Union[str, ai.internal.OutputFormatDefault, UNSET] = UNSET, enum_value_prefix: typing.Union[str, ai.internal.OutputFormatDefault, None, UNSET] = UNSET, hoisted_class_prefix: typing.Union[str, ai.internal.OutputFormatDefault, None, UNSET] = UNSET, always_hoist_enums: typing.Union[bool, ai.internal.OutputFormatDefault, UNSET] = UNSET, quote_class_fields: typing.Union[bool, ai.internal.OutputFormatDefault, UNSET] = UNSET, hoist_classes: typing.Union[bool, typing.Literal["auto"], typing.List[str], ai.internal.OutputFormatDefault, UNSET] = UNSET, map_style: typing.Union[typing.Literal["angle"], typing.Literal["object"], ai.internal.OutputFormatDefault, UNSET] = UNSET, render_null_as: typing.Union[str, ai.internal.OutputFormatDefault, None, UNSET] = UNSET) -> str: ...
-    async def _render__async(self, *, prefix: typing.Union[str, ai.internal.OutputFormatDefault, None, UNSET] = UNSET, or_splitter: typing.Union[str, ai.internal.OutputFormatDefault, UNSET] = UNSET, enum_value_prefix: typing.Union[str, ai.internal.OutputFormatDefault, None, UNSET] = UNSET, hoisted_class_prefix: typing.Union[str, ai.internal.OutputFormatDefault, None, UNSET] = UNSET, always_hoist_enums: typing.Union[bool, ai.internal.OutputFormatDefault, UNSET] = UNSET, quote_class_fields: typing.Union[bool, ai.internal.OutputFormatDefault, UNSET] = UNSET, hoist_classes: typing.Union[bool, typing.Literal["auto"], typing.List[str], ai.internal.OutputFormatDefault, UNSET] = UNSET, map_style: typing.Union[typing.Literal["angle"], typing.Literal["object"], ai.internal.OutputFormatDefault, UNSET] = UNSET, render_null_as: typing.Union[str, ai.internal.OutputFormatDefault, None, UNSET] = UNSET) -> str: ...
+    def _render_(self, *, prefix: typing.Union[str, ai.internal.OutputFormatDefault, None, UNSET] = UNSET, or_splitter: typing.Union[str, ai.internal.OutputFormatDefault, UNSET] = UNSET, enum_value_prefix: typing.Union[str, ai.internal.OutputFormatDefault, None, UNSET] = UNSET, hoisted_class_prefix: typing.Union[str, ai.internal.OutputFormatDefault, None, UNSET] = UNSET, always_hoist_enums: typing.Union[bool, ai.internal.OutputFormatDefault, UNSET] = UNSET, quote_class_fields: typing.Union[bool, ai.internal.OutputFormatDefault, UNSET] = UNSET, hoist_classes: typing.Union[bool, typing.Literal["auto"], typing.List[str], ai.internal.OutputFormatDefault, UNSET] = UNSET, map_style: typing.Union[typing.Literal["angle"], typing.Literal["object"], ai.internal.OutputFormatDefault, UNSET] = UNSET, render_null_as: typing.Union[str, ai.internal.OutputFormatDefault, None, UNSET] = UNSET, _baml: _BamlOptions | None = None) -> str: ...
+    async def _render__async(self, *, prefix: typing.Union[str, ai.internal.OutputFormatDefault, None, UNSET] = UNSET, or_splitter: typing.Union[str, ai.internal.OutputFormatDefault, UNSET] = UNSET, enum_value_prefix: typing.Union[str, ai.internal.OutputFormatDefault, None, UNSET] = UNSET, hoisted_class_prefix: typing.Union[str, ai.internal.OutputFormatDefault, None, UNSET] = UNSET, always_hoist_enums: typing.Union[bool, ai.internal.OutputFormatDefault, UNSET] = UNSET, quote_class_fields: typing.Union[bool, ai.internal.OutputFormatDefault, UNSET] = UNSET, hoist_classes: typing.Union[bool, typing.Literal["auto"], typing.List[str], ai.internal.OutputFormatDefault, UNSET] = UNSET, map_style: typing.Union[typing.Literal["angle"], typing.Literal["object"], ai.internal.OutputFormatDefault, UNSET] = UNSET, render_null_as: typing.Union[str, ai.internal.OutputFormatDefault, None, UNSET] = UNSET, _baml: _BamlOptions | None = None) -> str: ...
 
 
 class Role(pydantic.BaseModel):
     name: str
-    metadata: typing.Dict[str, typing.Any]
+    metadata: typing.Dict[str, baml.json.json]
 
 
 class ContextClient(pydantic.BaseModel):
@@ -79,30 +87,39 @@ class Context(pydantic.BaseModel):
     client: ContextClient
     tags: typing.Dict[str, typing.Any]
     field_output_format: OutputFormat = pydantic.Field(alias="_output_format")
-    def output_format(self, *, prefix: typing.Union[str, ai.internal.OutputFormatDefault, None, UNSET] = UNSET, or_splitter: typing.Union[str, ai.internal.OutputFormatDefault, UNSET] = UNSET, enum_value_prefix: typing.Union[str, ai.internal.OutputFormatDefault, None, UNSET] = UNSET, hoisted_class_prefix: typing.Union[str, ai.internal.OutputFormatDefault, None, UNSET] = UNSET, always_hoist_enums: typing.Union[bool, ai.internal.OutputFormatDefault, UNSET] = UNSET, quote_class_fields: typing.Union[bool, ai.internal.OutputFormatDefault, UNSET] = UNSET, hoist_classes: typing.Union[bool, typing.Literal["auto"], typing.List[str], ai.internal.OutputFormatDefault, UNSET] = UNSET, map_style: typing.Union[typing.Literal["angle"], typing.Literal["object"], ai.internal.OutputFormatDefault, UNSET] = UNSET, render_null_as: typing.Union[str, ai.internal.OutputFormatDefault, None, UNSET] = UNSET) -> str: ...
-    async def output_format_async(self, *, prefix: typing.Union[str, ai.internal.OutputFormatDefault, None, UNSET] = UNSET, or_splitter: typing.Union[str, ai.internal.OutputFormatDefault, UNSET] = UNSET, enum_value_prefix: typing.Union[str, ai.internal.OutputFormatDefault, None, UNSET] = UNSET, hoisted_class_prefix: typing.Union[str, ai.internal.OutputFormatDefault, None, UNSET] = UNSET, always_hoist_enums: typing.Union[bool, ai.internal.OutputFormatDefault, UNSET] = UNSET, quote_class_fields: typing.Union[bool, ai.internal.OutputFormatDefault, UNSET] = UNSET, hoist_classes: typing.Union[bool, typing.Literal["auto"], typing.List[str], ai.internal.OutputFormatDefault, UNSET] = UNSET, map_style: typing.Union[typing.Literal["angle"], typing.Literal["object"], ai.internal.OutputFormatDefault, UNSET] = UNSET, render_null_as: typing.Union[str, ai.internal.OutputFormatDefault, None, UNSET] = UNSET) -> str: ...
+    def output_format(self, *, prefix: typing.Union[str, ai.internal.OutputFormatDefault, None, UNSET] = UNSET, or_splitter: typing.Union[str, ai.internal.OutputFormatDefault, UNSET] = UNSET, enum_value_prefix: typing.Union[str, ai.internal.OutputFormatDefault, None, UNSET] = UNSET, hoisted_class_prefix: typing.Union[str, ai.internal.OutputFormatDefault, None, UNSET] = UNSET, always_hoist_enums: typing.Union[bool, ai.internal.OutputFormatDefault, UNSET] = UNSET, quote_class_fields: typing.Union[bool, ai.internal.OutputFormatDefault, UNSET] = UNSET, hoist_classes: typing.Union[bool, typing.Literal["auto"], typing.List[str], ai.internal.OutputFormatDefault, UNSET] = UNSET, map_style: typing.Union[typing.Literal["angle"], typing.Literal["object"], ai.internal.OutputFormatDefault, UNSET] = UNSET, render_null_as: typing.Union[str, ai.internal.OutputFormatDefault, None, UNSET] = UNSET, _baml: _BamlOptions | None = None) -> str: ...
+    async def output_format_async(self, *, prefix: typing.Union[str, ai.internal.OutputFormatDefault, None, UNSET] = UNSET, or_splitter: typing.Union[str, ai.internal.OutputFormatDefault, UNSET] = UNSET, enum_value_prefix: typing.Union[str, ai.internal.OutputFormatDefault, None, UNSET] = UNSET, hoisted_class_prefix: typing.Union[str, ai.internal.OutputFormatDefault, None, UNSET] = UNSET, always_hoist_enums: typing.Union[bool, ai.internal.OutputFormatDefault, UNSET] = UNSET, quote_class_fields: typing.Union[bool, ai.internal.OutputFormatDefault, UNSET] = UNSET, hoist_classes: typing.Union[bool, typing.Literal["auto"], typing.List[str], ai.internal.OutputFormatDefault, UNSET] = UNSET, map_style: typing.Union[typing.Literal["angle"], typing.Literal["object"], ai.internal.OutputFormatDefault, UNSET] = UNSET, render_null_as: typing.Union[str, ai.internal.OutputFormatDefault, None, UNSET] = UNSET, _baml: _BamlOptions | None = None) -> str: ...
 
 
 class Journal(pydantic.BaseModel):
     log: typing.List[ai.events.Event]
     @staticmethod
-    def new(spec: FunctionSpec[Out], *, _types: dict[str, typing.Any] | None = None) -> Journal:
+    def new(spec: FunctionSpec[Out], *, _types: dict[str, typing.Any] | None = None, _baml: _BamlOptions | None = None) -> Journal:
         """A journal for one run of a spec, with RunStarted appended."""
     @staticmethod
-    async def new_async(spec: FunctionSpec[Out], *, _types: dict[str, typing.Any] | None = None) -> Journal:
+    async def new_async(spec: FunctionSpec[Out], *, _types: dict[str, typing.Any] | None = None, _baml: _BamlOptions | None = None) -> Journal:
         """A journal for one run of a spec, with RunStarted appended."""
-    def entries(self) -> typing.List[ai.events.Event]: ...
-    async def entries_async(self) -> typing.List[ai.events.Event]: ...
-    def append_all(self, events: typing.List[ai.events.Event]) -> None:
+    def entries(self, *, _baml: _BamlOptions | None = None) -> typing.List[ai.events.Event]: ...
+    async def entries_async(self, *, _baml: _BamlOptions | None = None) -> typing.List[ai.events.Event]: ...
+    def append_all(self, events: typing.List[ai.events.Event], *, _baml: _BamlOptions | None = None) -> None:
         """The driving runner is the only writer; clients and tools never append."""
-    async def append_all_async(self, events: typing.List[ai.events.Event]) -> None:
+    async def append_all_async(self, events: typing.List[ai.events.Event], *, _baml: _BamlOptions | None = None) -> None:
         """The driving runner is the only writer; clients and tools never append."""
 
 
 class RunResult(pydantic.BaseModel, typing.Generic[Out]):
     value: Out
     journal: Journal
-    usage: ai.events.Usage
+    usage: typing.List[ai.events.ModelUsage]
+
+
+class _Delivered(pydantic.BaseModel):
+    count: int
+
+
+class _AcceptedTurn(pydantic.BaseModel):
+    turn: ModelTurn
+    text_output: typing.Optional[ParsedOutput] = None
 
 
 class Agent(pydantic.BaseModel):
@@ -112,32 +129,32 @@ class Agent(pydantic.BaseModel):
     tool_errors: ai.tools.ErrorMode
     on_event: typing.Optional[typing.Callable[[ai.events.Event], None]] = None
     @staticmethod
-    def new(*, max_steps: typing.Union[int, UNSET] = 12, schema_attempts: typing.Union[int, UNSET] = 2, client: typing.Union[typing.Any, None, UNSET] = None, tool_errors: typing.Union[ai.tools.ErrorMode, UNSET] = UNSET, on_event: typing.Union[typing.Callable[[ai.events.Event], None], None, UNSET] = None) -> Agent:
+    def new(*, max_steps: typing.Union[int, UNSET] = 12, schema_attempts: typing.Union[int, UNSET] = 2, client: typing.Union[typing.Any, None, UNSET] = None, tool_errors: typing.Union[ai.tools.ErrorMode, UNSET] = UNSET, on_event: typing.Union[typing.Callable[[ai.events.Event], None], None, UNSET] = None, _baml: _BamlOptions | None = None) -> Agent:
         """Raises:
             InvalidArgument"""
     @staticmethod
-    async def new_async(*, max_steps: typing.Union[int, UNSET] = 12, schema_attempts: typing.Union[int, UNSET] = 2, client: typing.Union[typing.Any, None, UNSET] = None, tool_errors: typing.Union[ai.tools.ErrorMode, UNSET] = UNSET, on_event: typing.Union[typing.Callable[[ai.events.Event], None], None, UNSET] = None) -> Agent:
+    async def new_async(*, max_steps: typing.Union[int, UNSET] = 12, schema_attempts: typing.Union[int, UNSET] = 2, client: typing.Union[typing.Any, None, UNSET] = None, tool_errors: typing.Union[ai.tools.ErrorMode, UNSET] = UNSET, on_event: typing.Union[typing.Callable[[ai.events.Event], None], None, UNSET] = None, _baml: _BamlOptions | None = None) -> Agent:
         """Raises:
             InvalidArgument"""
-    def _validated_schema_attempts_(self) -> int:
+    def _validated_schema_attempts_(self, *, _baml: _BamlOptions | None = None) -> int:
         """Raises:
             InvalidArgument"""
-    async def _validated_schema_attempts__async(self) -> int:
+    async def _validated_schema_attempts__async(self, *, _baml: _BamlOptions | None = None) -> int:
         """Raises:
             InvalidArgument"""
-    def _run_one_tool_(self, tb: ai.tools.Toolbox, call: ai.content.ToolUse, j: Journal) -> None:
+    def _run_one_tool_(self, tb: ai.tools.Toolbox, call: ai.content.ToolUse, j: Journal, *, _baml: _BamlOptions | None = None) -> None:
         """(internal) Execute one call: validate, dispatch, append the correlated result.
         A Raise-mode failure throws ToolFailedError after ToolFailed lands.
 
         Raises:
             ToolFailedError"""
-    async def _run_one_tool__async(self, tb: ai.tools.Toolbox, call: ai.content.ToolUse, j: Journal) -> None:
+    async def _run_one_tool__async(self, tb: ai.tools.Toolbox, call: ai.content.ToolUse, j: Journal, *, _baml: _BamlOptions | None = None) -> None:
         """(internal) Execute one call: validate, dispatch, append the correlated result.
         A Raise-mode failure throws ToolFailedError after ToolFailed lands.
 
         Raises:
             ToolFailedError"""
-    def _has_media_output_(self, turn: ModelTurn, *, _types: dict[str, typing.Any]) -> bool:
+    def _has_media_output_(self, turn: ModelTurn, *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> bool:
         """(internal) Does this turn carry content a media-shaped `Out` can be built from?
         Mirrors the `Ok(None)` condition of sys_llm's
         `parse_llm_output_for_target`: nothing to build from means fall back to
@@ -145,7 +162,7 @@ class Agent(pydantic.BaseModel):
 
         Raises:
             UnknownError"""
-    async def _has_media_output__async(self, turn: ModelTurn, *, _types: dict[str, typing.Any]) -> bool:
+    async def _has_media_output__async(self, turn: ModelTurn, *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> bool:
         """(internal) Does this turn carry content a media-shaped `Out` can be built from?
         Mirrors the `Ok(None)` condition of sys_llm's
         `parse_llm_output_for_target`: nothing to build from means fall back to
@@ -153,27 +170,41 @@ class Agent(pydantic.BaseModel):
 
         Raises:
             UnknownError"""
-    def _media_value_(self, turn: ModelTurn, provider: str, *, _types: dict[str, typing.Any]) -> Out:
+    def _media_value_(self, turn: ModelTurn, provider: str, *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> Out:
         """(internal) Build a media-shaped `Out` from the turn's content blocks. Only called
         when `_has_media_output` holds; the shape-specific errors below are the
         ported sys_llm messages, thrown after the turn is already on the record.
 
         Raises:
             UnknownError, ParseFailed"""
-    async def _media_value__async(self, turn: ModelTurn, provider: str, *, _types: dict[str, typing.Any]) -> Out:
+    async def _media_value__async(self, turn: ModelTurn, provider: str, *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> Out:
         """(internal) Build a media-shaped `Out` from the turn's content blocks. Only called
         when `_has_media_output` holds; the shape-specific errors below are the
         ported sys_llm messages, thrown after the turn is already on the record.
 
         Raises:
             UnknownError, ParseFailed"""
-    def _parses_(self, turn: ModelTurn, candidate: str, *, _types: dict[str, typing.Any]) -> bool:
-        """Raises:
+    def _fits_without_text_(self, turn: ModelTurn, *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> typing.Optional[bool]:
+        """(internal) Whether the turn answers with an `Out` without parsing its
+        text: the provider-decoded output decides, or the turn's media does.
+        `null` when only parsing the terminal text can tell.
+
+        Raises:
             UnknownError"""
-    async def _parses__async(self, turn: ModelTurn, candidate: str, *, _types: dict[str, typing.Any]) -> bool:
-        """Raises:
+    async def _fits_without_text__async(self, turn: ModelTurn, *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> typing.Optional[bool]:
+        """(internal) Whether the turn answers with an `Out` without parsing its
+        text: the provider-decoded output decides, or the turn's media does.
+        `null` when only parsing the terminal text can tell.
+
+        Raises:
             UnknownError"""
-    def _attempt_turn_(self, c: typing.Any, spec: FunctionSpec[Out], j: Journal, total: ai.events.Usage, attempts_left: int, *, _types: dict[str, typing.Any] | None = None) -> ModelTurn:
+    def _parse_text_(self, candidate: str, *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> typing.Optional[ParsedOutput]:
+        """(internal) The terminal text parsed into an `Out`, or `null` when it does
+        not parse."""
+    async def _parse_text__async(self, candidate: str, *, _types: dict[str, typing.Any], _baml: _BamlOptions | None = None) -> typing.Optional[ParsedOutput]:
+        """(internal) The terminal text parsed into an `Out`, or `null` when it does
+        not parse."""
+    def _attempt_turn_(self, c: typing.Any, spec: FunctionSpec[Out], j: Journal, total: typing.List[ai.events.ModelUsage], attempts_left: int, *, _types: dict[str, typing.Any] | None = None, _baml: _BamlOptions | None = None) -> _AcceptedTurn:
         """(internal) One accepted model turn, with the within-turn repair loop: when a
         Complete turn's candidate does not parse, commit the failed turn and a
         correction request as ordinary events and invoke again, under a fixed
@@ -182,8 +213,8 @@ class Agent(pydantic.BaseModel):
         added to `total`.
 
         Raises:
-            Timeout, UnknownError, CompilationError"""
-    async def _attempt_turn__async(self, c: typing.Any, spec: FunctionSpec[Out], j: Journal, total: ai.events.Usage, attempts_left: int, *, _types: dict[str, typing.Any] | None = None) -> ModelTurn:
+            CompilationError, Timeout, UnknownError"""
+    async def _attempt_turn__async(self, c: typing.Any, spec: FunctionSpec[Out], j: Journal, total: typing.List[ai.events.ModelUsage], attempts_left: int, *, _types: dict[str, typing.Any] | None = None, _baml: _BamlOptions | None = None) -> _AcceptedTurn:
         """(internal) One accepted model turn, with the within-turn repair loop: when a
         Complete turn's candidate does not parse, commit the failed turn and a
         correction request as ordinary events and invoke again, under a fixed
@@ -192,11 +223,31 @@ class Agent(pydantic.BaseModel):
         added to `total`.
 
         Raises:
-            Timeout, UnknownError, CompilationError"""
-    def _emit_from_(self, j: Journal, seen: int) -> int:
-        """(internal) Emit any events appended since `seen` to on_event; returns the new count."""
-    async def _emit_from__async(self, j: Journal, seen: int) -> int:
-        """(internal) Emit any events appended since `seen` to on_event; returns the new count."""
+            CompilationError, Timeout, UnknownError"""
+    def _deliver_(self, j: Journal, delivered: _Delivered, *, _baml: _BamlOptions | None = None) -> None:
+        """(internal) Give `on_event` the events appended since the last delivery, in
+        journal order."""
+    async def _deliver__async(self, j: Journal, delivered: _Delivered, *, _baml: _BamlOptions | None = None) -> None:
+        """(internal) Give `on_event` the events appended since the last delivery, in
+        journal order."""
+    def _run_steps_(self, selected: typing.Any, spec: FunctionSpec[Out], j: Journal, delivered: _Delivered, schema_attempts: int, *, _types: dict[str, typing.Any] | None = None, _baml: _BamlOptions | None = None) -> RunResult[Out]:
+        """(internal) The loop of `run`: turns, tool calls and the final value. It
+        delivers events as it goes; an error it throws can leave events on the
+        record that it did not deliver, and `run` delivers those.
+
+        Raises:
+            CompilationError, Timeout, UnknownError"""
+    async def _run_steps__async(self, selected: typing.Any, spec: FunctionSpec[Out], j: Journal, delivered: _Delivered, schema_attempts: int, *, _types: dict[str, typing.Any] | None = None, _baml: _BamlOptions | None = None) -> RunResult[Out]:
+        """(internal) The loop of `run`: turns, tool calls and the final value. It
+        delivers events as it goes; an error it throws can leave events on the
+        record that it did not deliver, and `run` delivers those.
+
+        Raises:
+            CompilationError, Timeout, UnknownError"""
+
+
+class CacheDelimiter(pydantic.BaseModel):
+    args: baml.json.json = None
 
 
 class PromptMessage(pydantic.BaseModel):
@@ -208,17 +259,50 @@ class PromptMessage(pydantic.BaseModel):
 
 class Prompt(pydantic.BaseModel):
     field_data: _BamlPyHandle = pydantic.Field(alias="_data")
-    def text(self) -> str: ...
-    async def text_async(self) -> str: ...
-    def messages(self) -> typing.List[PromptMessage]: ...
-    async def messages_async(self) -> typing.List[PromptMessage]: ...
+    def text(self, *, _baml: _BamlOptions | None = None) -> str:
+        """Render the prompt as readable text. Message roles are emitted as headers."""
+    async def text_async(self, *, _baml: _BamlOptions | None = None) -> str:
+        """Render the prompt as readable text. Message roles are emitted as headers."""
+    def messages(self, *, _baml: _BamlOptions | None = None) -> typing.List[PromptMessage]:
+        """Return the ordered chat messages used by provider request builders."""
+    async def messages_async(self, *, _baml: _BamlOptions | None = None) -> typing.List[PromptMessage]:
+        """Return the ordered chat messages used by provider request builders."""
 
 
-def prompt(body: typing.Callable[[typing.Callable[[str], Role], Context], baml.TaggedString]) -> typing.Callable[[Context], Prompt]: ...
-async def prompt_async(body: typing.Callable[[typing.Callable[[str], Role], Context], baml.TaggedString]) -> typing.Callable[[Context], Prompt]: ...
+def prompt(body: typing.Callable[[_prompt__body1, Context], baml.TaggedString], *, _baml: _BamlOptions | None = None) -> _BamlReturned1:
+    """Standalone tagged prompt constructor. The returned closure renders a
+    structural `ai.Prompt` for the supplied low-level prompt context."""
+async def prompt_async(body: typing.Callable[[_prompt__body1, Context], baml.TaggedString], *, _baml: _BamlOptions | None = None) -> _BamlReturned1:
+    """Standalone tagged prompt constructor. The returned closure renders a
+    structural `ai.Prompt` for the supplied low-level prompt context."""
 
 
 class FunctionSpec(_BamlFunctionSpec[Out], typing.Generic[Out]): ...
+
+
+class LlmTimeoutOptions(pydantic.BaseModel):
+    timeout: typing.Optional[baml.time.Duration] = None
+    connect_timeout: typing.Optional[baml.time.Duration] = None
+    first_token_timeout: typing.Optional[baml.time.Duration] = None
+    stream_token_timeout: typing.Optional[baml.time.Duration] = None
+    @staticmethod
+    def _resolve_(timeout: typing.Union[baml.time.Duration, LlmTimeoutOptions, None], *, _baml: _BamlOptions | None = None) -> LlmTimeoutOptions:
+        """(internal) A client's `timeout` argument as options: a bare `Duration`
+        is the end-to-end total, and `null` leaves every deadline at its
+        default."""
+    @staticmethod
+    async def _resolve__async(timeout: typing.Union[baml.time.Duration, LlmTimeoutOptions, None], *, _baml: _BamlOptions | None = None) -> LlmTimeoutOptions:
+        """(internal) A client's `timeout` argument as options: a bare `Duration`
+        is the end-to-end total, and `null` leaves every deadline at its
+        default."""
+    def _apply_(self, request: baml.http.Request, *, _baml: _BamlOptions | None = None) -> baml.http.Request:
+        """(internal) Puts the two transport deadlines on `request`, which
+        `baml.http` then enforces, and returns it. The two token deadlines are
+        enforced by `ai.stream.TurnStream`."""
+    async def _apply__async(self, request: baml.http.Request, *, _baml: _BamlOptions | None = None) -> baml.http.Request:
+        """(internal) Puts the two transport deadlines on `request`, which
+        `baml.http` then enforces, and returns it. The two token deadlines are
+        enforced by `ai.stream.TurnStream`."""
 
 
 class ModelTurnInput(pydantic.BaseModel):
@@ -236,31 +320,40 @@ class ModelTurn(pydantic.BaseModel):
     parsed_output: typing.Optional[ParsedOutput] = None
     content: typing.List[ai.content.ModelBlock]
     stop_reason: ai.content.StopReason
-    usage: typing.Optional[ai.events.Usage] = None
-    calls: typing.List[ai.events.LLMCall]
-    def terminal_text(self) -> typing.Optional[str]:
+    resolved_model: typing.Optional[ai.events.ModelKey] = None
+    requested_model: typing.Optional[str] = None
+    calls: typing.List[ai.events.ModelCall]
+    child_turns: typing.List[ModelTurn]
+    error: typing.Union[typing.Any, baml.errors.Timeout, None] = None
+    def all_calls(self, *, _baml: _BamlOptions | None = None) -> typing.List[ai.events.ModelCall]:
+        """Every call behind this turn: its own, then each child's, oldest first."""
+    async def all_calls_async(self, *, _baml: _BamlOptions | None = None) -> typing.List[ai.events.ModelCall]:
+        """Every call behind this turn: its own, then each child's, oldest first."""
+    def terminal_text(self, *, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
         """The terminal Text block — the final candidate the runner parses."""
-    async def terminal_text_async(self) -> typing.Optional[str]:
+    async def terminal_text_async(self, *, _baml: _BamlOptions | None = None) -> typing.Optional[str]:
         """The terminal Text block — the final candidate the runner parses."""
-    def media(self) -> typing.List[MediaPart]:
+    def media(self, *, _baml: _BamlOptions | None = None) -> typing.List[MediaPart]:
         """The media payloads the turn produced, in order. A media-shaped output
         type is built from these instead of from the terminal text."""
-    async def media_async(self) -> typing.List[MediaPart]:
+    async def media_async(self, *, _baml: _BamlOptions | None = None) -> typing.List[MediaPart]:
         """The media payloads the turn produced, in order. A media-shaped output
         type is built from these instead of from the terminal text."""
-    def tool_uses(self) -> typing.List[ai.content.ToolUse]:
+    def tool_uses(self, *, _baml: _BamlOptions | None = None) -> typing.List[ai.content.ToolUse]:
         """The ToolUse blocks of the turn, in order."""
-    async def tool_uses_async(self) -> typing.List[ai.content.ToolUse]:
+    async def tool_uses_async(self, *, _baml: _BamlOptions | None = None) -> typing.List[ai.content.ToolUse]:
         """The ToolUse blocks of the turn, in order."""
 
 
 Selector: typing.TypeAlias = ai.clients.Selector
 
 
+PromptPart: typing.TypeAlias = typing.Union[str, MediaPart, CacheDelimiter]
+
+
 __all__ = [
     "Credential",
     "MediaPart",
-    "PromptPart",
     "OutputFormat",
     "Role",
     "ContextClient",
@@ -268,15 +361,18 @@ __all__ = [
     "Journal",
     "RunResult",
     "Agent",
+    "CacheDelimiter",
     "PromptMessage",
     "Prompt",
     "prompt",
     "prompt_async",
     "FunctionSpec",
+    "LlmTimeoutOptions",
     "ModelTurnInput",
     "ParsedOutput",
     "ModelTurn",
     "Selector",
+    "PromptPart",
 ]
 
 class Client:

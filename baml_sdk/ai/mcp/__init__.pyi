@@ -30,13 +30,15 @@ if typing.TYPE_CHECKING:
     from ... import baml
     from ...baml import UNSET as UNSET
 
+from ..._invocation_types import BamlOptions as _BamlOptions
 
-def rpc_line(id: typing.Optional[int], method: str, params: typing.Optional[typing.Dict[str, typing.Any]]) -> str:
+
+def rpc_line(id: typing.Optional[int], method: str, params: typing.Optional[typing.Dict[str, typing.Any]], *, _baml: _BamlOptions | None = None) -> str:
     """One JSON-RPC message as one line. Pure; tested with literal values.
 
     Raises:
         SerializationError"""
-async def rpc_line_async(id: typing.Optional[int], method: str, params: typing.Optional[typing.Dict[str, typing.Any]]) -> str:
+async def rpc_line_async(id: typing.Optional[int], method: str, params: typing.Optional[typing.Dict[str, typing.Any]], *, _baml: _BamlOptions | None = None) -> str:
     """One JSON-RPC message as one line. Pure; tested with literal values.
 
     Raises:
@@ -50,65 +52,65 @@ class Connection(pydantic.BaseModel):
     timeout_ms: int
     next_id: int
     @staticmethod
-    def connect(name: str, command: str, args: typing.List[str], *, timeout_ms: typing.Union[int, UNSET] = 30000) -> Connection:
+    def connect(name: str, command: str, args: typing.List[str], *, timeout_ms: typing.Union[int, UNSET] = 30000, _baml: _BamlOptions | None = None) -> Connection:
         """Spawn the server and perform the initialize handshake. The connection
         is live until close(); the caller owns the lifetime.
 
         Raises:
-            SerializationError, NetworkFailure"""
+            SerializationError, InvalidRequest, NetworkFailure"""
     @staticmethod
-    async def connect_async(name: str, command: str, args: typing.List[str], *, timeout_ms: typing.Union[int, UNSET] = 30000) -> Connection:
+    async def connect_async(name: str, command: str, args: typing.List[str], *, timeout_ms: typing.Union[int, UNSET] = 30000, _baml: _BamlOptions | None = None) -> Connection:
         """Spawn the server and perform the initialize handshake. The connection
         is live until close(); the caller owns the lifetime.
 
         Raises:
-            SerializationError, NetworkFailure"""
-    def _send_(self, line: str) -> None:
+            SerializationError, InvalidRequest, NetworkFailure"""
+    def _send_(self, line: str, *, _baml: _BamlOptions | None = None) -> None:
         """Raises:
             NetworkFailure"""
-    async def _send__async(self, line: str) -> None:
+    async def _send__async(self, line: str, *, _baml: _BamlOptions | None = None) -> None:
         """Raises:
             NetworkFailure"""
-    def _request_(self, method: str, params: typing.Dict[str, typing.Any]) -> baml.json.json:
+    def _request_(self, method: str, params: typing.Dict[str, typing.Any], *, _baml: _BamlOptions | None = None) -> baml.json.json:
         """(internal) One request/response round-trip. Server notifications and unrelated
         ids are skipped; a JSON-RPC error object throws.
 
         Raises:
-            SerializationError, NetworkFailure"""
-    async def _request__async(self, method: str, params: typing.Dict[str, typing.Any]) -> baml.json.json:
+            SerializationError, InvalidRequest, NetworkFailure"""
+    async def _request__async(self, method: str, params: typing.Dict[str, typing.Any], *, _baml: _BamlOptions | None = None) -> baml.json.json:
         """(internal) One request/response round-trip. Server notifications and unrelated
         ids are skipped; a JSON-RPC error object throws.
 
         Raises:
-            SerializationError, NetworkFailure"""
-    def tools(self) -> typing.List[ai.tools.Tool]:
+            SerializationError, InvalidRequest, NetworkFailure"""
+    def tools(self, *, _baml: _BamlOptions | None = None) -> typing.List[ai.tools.Tool]:
         """The server's catalog as ordinary tools. Each tool's inputSchema is
         already JSON Schema, so it carries into Tool.input_schema unchanged;
         the handler proxies tools/call over this connection.
 
         Raises:
-            InvalidArgument, SerializationError, NetworkFailure"""
-    async def tools_async(self) -> typing.List[ai.tools.Tool]:
+            InvalidArgument, SerializationError, InvalidRequest, NetworkFailure"""
+    async def tools_async(self, *, _baml: _BamlOptions | None = None) -> typing.List[ai.tools.Tool]:
         """The server's catalog as ordinary tools. Each tool's inputSchema is
         already JSON Schema, so it carries into Tool.input_schema unchanged;
         the handler proxies tools/call over this connection.
 
         Raises:
-            InvalidArgument, SerializationError, NetworkFailure"""
-    def call_tool(self, name: str, args: typing.Dict[str, typing.Any]) -> str:
+            InvalidArgument, SerializationError, InvalidRequest, NetworkFailure"""
+    def call_tool(self, name: str, args: typing.Dict[str, typing.Any], *, _baml: _BamlOptions | None = None) -> str:
         """One tools/call. Text content items join as the tool's result; an
         isError result throws, which the runner journals as ToolFailed.
 
         Raises:
-            InvalidArgument, SerializationError, NetworkFailure"""
-    async def call_tool_async(self, name: str, args: typing.Dict[str, typing.Any]) -> str:
+            InvalidArgument, SerializationError, InvalidRequest, NetworkFailure"""
+    async def call_tool_async(self, name: str, args: typing.Dict[str, typing.Any], *, _baml: _BamlOptions | None = None) -> str:
         """One tools/call. Text content items join as the tool's result; an
         isError result throws, which the runner journals as ToolFailed.
 
         Raises:
-            InvalidArgument, SerializationError, NetworkFailure"""
-    def close(self) -> None: ...
-    async def close_async(self) -> None: ...
+            InvalidArgument, SerializationError, InvalidRequest, NetworkFailure"""
+    def close(self, *, _baml: _BamlOptions | None = None) -> None: ...
+    async def close_async(self, *, _baml: _BamlOptions | None = None) -> None: ...
 
 
 __all__ = [

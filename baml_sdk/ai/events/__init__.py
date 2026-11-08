@@ -53,8 +53,7 @@ class UserMessage(pydantic.BaseModel):
 
     Attributes:
         content
-        metadata: Per-message provider directives, carried verbatim like
-            `root.PromptMessage.metadata` (Anthropic `cache_control`, for example).
+        metadata: Merged verbatim into inference requests' `message` objects.
     """
     model_config = pydantic.ConfigDict(
         arbitrary_types_allowed=True,
@@ -78,7 +77,8 @@ class AssistantMessage(pydantic.BaseModel):
         populate_by_name=True,
     )
     content: typing.List[ai.content.ModelBlock]
-    client_id: str
+    resolved_model: typing.Optional[ModelKey] = None
+    requested_model: typing.Optional[str] = None
 
 
 class ToolRequested(pydantic.BaseModel):
@@ -123,15 +123,80 @@ class ToolFailed(pydantic.BaseModel):
 
 
 class Usage(pydantic.BaseModel):
+    """
+    The tokens a model call reported. Every count is null when the provider
+    did not report it, which is not the same as reporting zero.
+
+    Attributes:
+        input_tokens
+        output_tokens
+        cached_input_tokens
+        reasoning_tokens
+        cache_write_input_tokens: Tokens written to the provider's prompt cache, billed above the
+            input rate. Null when the provider reports none.
+        uncached_input_tokens: Input tokens billed at the full rate: `input_tokens` without cache
+            reads and writes, whichever way the provider counts them. Null when
+            the provider cannot tell.
+    """
     model_config = pydantic.ConfigDict(
         arbitrary_types_allowed=True,
         extra="ignore",
         populate_by_name=True,
     )
-    input_tokens: int
-    output_tokens: int
+    input_tokens: typing.Optional[int] = None
+    output_tokens: typing.Optional[int] = None
     cached_input_tokens: typing.Optional[int] = None
     reasoning_tokens: typing.Optional[int] = None
+    cache_write_input_tokens: typing.Optional[int] = None
+    uncached_input_tokens: typing.Optional[int] = None
+
+
+class ModelKey(pydantic.BaseModel):
+    """
+    Who answered and billed: the client's provider id (`"anthropic"`,
+    `"openrouter"`, ...) and the model the response reported, which can be
+    more specific than the one requested (a dated snapshot, the model a router
+    chose). Falls back to the requested model when the response names none;
+    null for a call no response answered.
+    """
+    model_config = pydantic.ConfigDict(
+        arbitrary_types_allowed=True,
+        extra="ignore",
+        populate_by_name=True,
+    )
+    provider: str
+    model: typing.Optional[str] = None
+
+
+class ModelUsage(pydantic.BaseModel):
+    """One model's usage: the counts its calls reported, summed."""
+    model_config = pydantic.ConfigDict(
+        arbitrary_types_allowed=True,
+        extra="ignore",
+        populate_by_name=True,
+    )
+    resolved_model: ModelKey
+    usage: Usage
+
+
+call_usage       = _define_function("ai.events.call_usage", "sync",  ["calls"], binding_name="call_usage", binding_qualname="call_usage", binding_module=__name__)
+call_usage_async = _define_function("ai.events.call_usage", "async", ["calls"], binding_name="call_usage_async", binding_qualname="call_usage_async", binding_module=__name__)
+
+
+usage_for       = _define_function("ai.events.usage_for", "sync",  ["usage", "model"], binding_name="usage_for", binding_qualname="usage_for", binding_module=__name__)
+usage_for_async = _define_function("ai.events.usage_for", "async", ["usage", "model"], binding_name="usage_for_async", binding_qualname="usage_for_async", binding_module=__name__)
+
+
+merge_usage       = _define_function("ai.events.merge_usage", "sync",  ["into", "from_"], param_aliases={"from_": "from"}, binding_name="merge_usage", binding_qualname="merge_usage", binding_module=__name__)
+merge_usage_async = _define_function("ai.events.merge_usage", "async", ["into", "from_"], param_aliases={"from_": "from"}, binding_name="merge_usage_async", binding_qualname="merge_usage_async", binding_module=__name__)
+
+
+_sum_usage       = _define_function("ai.events._sum_usage", "sync",  ["a", "b"], binding_name="_sum_usage", binding_qualname="_sum_usage", binding_module=__name__)
+_sum_usage_async = _define_function("ai.events._sum_usage", "async", ["a", "b"], binding_name="_sum_usage_async", binding_qualname="_sum_usage_async", binding_module=__name__)
+
+
+_sum_count       = _define_function("ai.events._sum_count", "sync",  ["a", "b"], binding_name="_sum_count", binding_qualname="_sum_count", binding_module=__name__)
+_sum_count_async = _define_function("ai.events._sum_count", "async", ["a", "b"], binding_name="_sum_count_async", binding_qualname="_sum_count_async", binding_module=__name__)
 
 
 class FinalProduced(pydantic.BaseModel):
@@ -149,9 +214,9 @@ class Timing(pydantic.BaseModel):
         extra="ignore",
         populate_by_name=True,
     )
-    start_time_utc_ms: typing.Optional[int] = None
-    duration_ms: typing.Optional[int] = None
-    ttft_ms: typing.Optional[int] = None
+    start_time: typing.Optional[baml.time.Instant] = None
+    duration: typing.Optional[baml.time.Duration] = None
+    ttft: typing.Optional[baml.time.Duration] = None
 
 
 class HttpResponse(pydantic.BaseModel):
@@ -184,19 +249,17 @@ class SseEventRecord(pydantic.BaseModel):
     id: typing.Optional[str] = None
 
 
-class LLMCall(pydantic.BaseModel):
+class ModelCall(pydantic.BaseModel):
     model_config = pydantic.ConfigDict(
         arbitrary_types_allowed=True,
         extra="ignore",
         populate_by_name=True,
     )
-    client_name: str
-    provider: str
+    resolved_model: ModelKey
+    usage: typing.Optional[Usage] = None
     timing: Timing
     http_request: typing.Optional[baml.http.Request] = None
     http_response: typing.Optional[HttpResponse] = None
-    usage: typing.Optional[Usage] = None
-    selected: bool
     sse_responses: typing.Optional[typing.List[SseEventRecord]] = None
 
 
@@ -204,7 +267,7 @@ guard       = _define_function("ai.events.guard", "sync",  ["listener"], binding
 guard_async = _define_function("ai.events.guard", "async", ["listener"], binding_name="guard_async", binding_qualname="guard_async", binding_module=__name__, type_params=["E"])
 
 
-Event: typing.TypeAlias = typing.Union[RunStarted, UserMessage, AssistantMessage, ToolRequested, ToolCompleted, ToolFailed, Usage, LLMCall, FinalProduced]
+Event: typing.TypeAlias = typing.Union[RunStarted, UserMessage, AssistantMessage, ToolRequested, ToolCompleted, ToolFailed, ModelCall, FinalProduced]
 
 
 __all__ = [
@@ -215,11 +278,19 @@ __all__ = [
     "ToolCompleted",
     "ToolFailed",
     "Usage",
+    "ModelKey",
+    "ModelUsage",
+    "call_usage",
+    "call_usage_async",
+    "usage_for",
+    "usage_for_async",
+    "merge_usage",
+    "merge_usage_async",
     "FinalProduced",
     "Timing",
     "HttpResponse",
     "SseEventRecord",
-    "LLMCall",
+    "ModelCall",
     "guard",
     "guard_async",
     "Event",

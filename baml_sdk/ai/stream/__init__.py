@@ -27,12 +27,14 @@ import pydantic
 
 from ... import ai
 from ... import baml
+from ... import vendor
 
 from baml_bridge import define_function as _define_function
 
 from baml_bridge import BamlStream as Stream
 
 
+E = typing.TypeVar("E")
 T = typing.TypeVar("T")
 
 
@@ -82,7 +84,8 @@ class TurnMeta(pydantic.BaseModel):
     """
     Turn metadata as it arrives on the wire. Providers send stop_reason and
     token counts on different events; each TurnMeta carries what its event had
-    and TurnStream folds non-null fields together (last write wins).
+    and TurnStream folds the non-null values together, count by count (last
+    write wins).
     """
     model_config = pydantic.ConfigDict(
         arbitrary_types_allowed=True,
@@ -90,8 +93,8 @@ class TurnMeta(pydantic.BaseModel):
         populate_by_name=True,
     )
     stop_reason: typing.Optional[ai.content.StopReason] = None
-    input_tokens: typing.Optional[int] = None
-    output_tokens: typing.Optional[int] = None
+    usage: typing.Optional[ai.events.Usage] = None
+    resolved_model: typing.Optional[str] = None
 
 
 class TurnDone(pydantic.BaseModel):
@@ -105,6 +108,23 @@ class TurnDone(pydantic.BaseModel):
     connection that closed early as a failure instead of a complete turn. For a
     protocol with no terminal marker, TurnDone is optional and a socket close
     still completes the turn.
+    """
+    model_config = pydantic.ConfigDict(
+        arbitrary_types_allowed=True,
+        extra="ignore",
+        populate_by_name=True,
+    )
+
+
+class ContentSeen(pydantic.BaseModel):
+    """
+    Non-empty content that is not assistant text: a reasoning or tool-input
+    delta, or a complete tool-call or file part. There is nothing to deliver to
+    the caller, but the model is producing output, which is what
+    `first_token_timeout` and `stream_token_timeout` measure. A decoder yields
+    it for every content-bearing event that produces no TextDelta; events that
+    carry no content (`message_start`, `response.created`, pings, usage-only
+    frames, empty deltas) yield nothing.
     """
     model_config = pydantic.ConfigDict(
         arbitrary_types_allowed=True,
@@ -151,24 +171,34 @@ class TurnStream(pydantic.BaseModel):
     field_pcursor: int = pydantic.Field(alias="_pcursor")
     field_text: str = pydantic.Field(alias="_text")
     field_stop_reason: typing.Optional[ai.content.StopReason] = pydantic.Field(default=None, alias="_stop_reason")
-    field_input_tokens: typing.Optional[int] = pydantic.Field(default=None, alias="_input_tokens")
-    field_output_tokens: typing.Optional[int] = pydantic.Field(default=None, alias="_output_tokens")
+    field_usage: typing.Optional[ai.events.Usage] = pydantic.Field(default=None, alias="_usage")
     field_done: bool = pydantic.Field(alias="_done")
     field_require_terminal: typing.Optional[str] = pydantic.Field(default=None, alias="_require_terminal")
     field_saw_terminal: bool = pydantic.Field(alias="_saw_terminal")
-    field_calls: typing.List[ai.events.LLMCall] = pydantic.Field(alias="_calls")
-    field_wire_call: typing.Optional[ai.events.LLMCall] = pydantic.Field(default=None, alias="_wire_call")
+    field_wire_call: typing.Optional[ai.events.ModelCall] = pydantic.Field(default=None, alias="_wire_call")
+    field_requested_model: typing.Optional[str] = pydantic.Field(default=None, alias="_requested_model")
+    field_resolved_model: typing.Optional[str] = pydantic.Field(default=None, alias="_resolved_model")
+    field_child_turns: typing.List[ai.ModelTurn] = pydantic.Field(alias="_child_turns")
+    field_settled: typing.Optional[ai.ModelTurn] = pydantic.Field(default=None, alias="_settled")
     field_call_started: typing.Optional[baml.time.Instant] = pydantic.Field(default=None, alias="_call_started")
     field_ttft_from: typing.Optional[baml.time.Instant] = pydantic.Field(default=None, alias="_ttft_from")
+    field_first_token_timeout: typing.Optional[baml.time.Duration] = pydantic.Field(default=None, alias="_first_token_timeout")
+    field_stream_token_timeout: typing.Optional[baml.time.Duration] = pydantic.Field(default=None, alias="_stream_token_timeout")
+    field_content_deltas: int = pydantic.Field(alias="_content_deltas")
+    field_token_waited: baml.time.Duration = pydantic.Field(alias="_token_waited")
     field_capture_sse: bool = pydantic.Field(alias="_capture_sse")
-    from_sse       = staticmethod(_define_function("ai.stream.TurnStream.from_sse", "sync",  ["sse", "decode"], ["require_terminal"], binding_name="from_sse", binding_qualname="TurnStream.from_sse", binding_module=__name__))
-    from_sse_async = staticmethod(_define_function("ai.stream.TurnStream.from_sse", "async", ["sse", "decode"], ["require_terminal"], binding_name="from_sse_async", binding_qualname="TurnStream.from_sse_async", binding_module=__name__))
+    from_sse       = staticmethod(_define_function("ai.stream.TurnStream.from_sse", "sync",  ["sse", "decode"], ["require_terminal", "timeout_options", "dispatched"], binding_name="from_sse", binding_qualname="TurnStream.from_sse", binding_module=__name__))
+    from_sse_async = staticmethod(_define_function("ai.stream.TurnStream.from_sse", "async", ["sse", "decode"], ["require_terminal", "timeout_options", "dispatched"], binding_name="from_sse_async", binding_qualname="TurnStream.from_sse_async", binding_module=__name__))
     from_chunks       = staticmethod(_define_function("ai.stream.TurnStream.from_chunks", "sync",  ["chunks"], binding_name="from_chunks", binding_qualname="TurnStream.from_chunks", binding_module=__name__))
     from_chunks_async = staticmethod(_define_function("ai.stream.TurnStream.from_chunks", "async", ["chunks"], binding_name="from_chunks_async", binding_qualname="TurnStream.from_chunks_async", binding_module=__name__))
-    from_event_source       = staticmethod(_define_function("ai.stream.TurnStream.from_event_source", "sync",  ["next_event"], binding_name="from_event_source", binding_qualname="TurnStream.from_event_source", binding_module=__name__))
-    from_event_source_async = staticmethod(_define_function("ai.stream.TurnStream.from_event_source", "async", ["next_event"], binding_name="from_event_source_async", binding_qualname="TurnStream.from_event_source_async", binding_module=__name__))
+    from_event_source       = staticmethod(_define_function("ai.stream.TurnStream.from_event_source", "sync",  ["next_event"], ["call"], binding_name="from_event_source", binding_qualname="TurnStream.from_event_source", binding_module=__name__))
+    from_event_source_async = staticmethod(_define_function("ai.stream.TurnStream.from_event_source", "async", ["next_event"], ["call"], binding_name="from_event_source_async", binding_qualname="TurnStream.from_event_source_async", binding_module=__name__))
     _stamp_first_delta_       = _define_function("ai.stream.TurnStream._stamp_first_delta", "sync",  ["self"], binding_name="_stamp_first_delta_", binding_qualname="TurnStream._stamp_first_delta_", binding_module=__name__)
     _stamp_first_delta__async = _define_function("ai.stream.TurnStream._stamp_first_delta", "async", ["self"], binding_name="_stamp_first_delta__async", binding_qualname="TurnStream._stamp_first_delta__async", binding_module=__name__)
+    _saw_content_       = _define_function("ai.stream.TurnStream._saw_content", "sync",  ["self"], binding_name="_saw_content_", binding_qualname="TurnStream._saw_content_", binding_module=__name__)
+    _saw_content__async = _define_function("ai.stream.TurnStream._saw_content", "async", ["self"], binding_name="_saw_content__async", binding_qualname="TurnStream._saw_content__async", binding_module=__name__)
+    _pull_       = _define_function("ai.stream.TurnStream._pull", "sync",  ["self", "sse"], binding_name="_pull_", binding_qualname="TurnStream._pull_", binding_module=__name__)
+    _pull__async = _define_function("ai.stream.TurnStream._pull", "async", ["self", "sse"], binding_name="_pull__async", binding_qualname="TurnStream._pull__async", binding_module=__name__)
     _capture_batch_       = _define_function("ai.stream.TurnStream._capture_batch", "sync",  ["self", "batch"], binding_name="_capture_batch_", binding_qualname="TurnStream._capture_batch_", binding_module=__name__)
     _capture_batch__async = _define_function("ai.stream.TurnStream._capture_batch", "async", ["self", "batch"], binding_name="_capture_batch__async", binding_qualname="TurnStream._capture_batch__async", binding_module=__name__)
     _finish_       = _define_function("ai.stream.TurnStream._finish", "sync",  ["self"], binding_name="_finish_", binding_qualname="TurnStream._finish_", binding_module=__name__)
@@ -179,6 +209,56 @@ class TurnStream(pydantic.BaseModel):
     next_async = _define_function("ai.stream.TurnStream.next", "async", ["self"], binding_name="next_async", binding_qualname="TurnStream.next_async", binding_module=__name__)
     final_turn       = _define_function("ai.stream.TurnStream.final_turn", "sync",  ["self"], binding_name="final_turn", binding_qualname="TurnStream.final_turn", binding_module=__name__)
     final_turn_async = _define_function("ai.stream.TurnStream.final_turn", "async", ["self"], binding_name="final_turn_async", binding_qualname="TurnStream.final_turn_async", binding_module=__name__)
+    _settled_turn_       = _define_function("ai.stream.TurnStream._settled_turn", "sync",  ["self"], binding_name="_settled_turn_", binding_qualname="TurnStream._settled_turn_", binding_module=__name__)
+    _settled_turn__async = _define_function("ai.stream.TurnStream._settled_turn", "async", ["self"], binding_name="_settled_turn__async", binding_qualname="TurnStream._settled_turn__async", binding_module=__name__)
+    _settle_       = _define_function("ai.stream.TurnStream._settle", "sync",  ["self"], binding_name="_settle_", binding_qualname="TurnStream._settle_", binding_module=__name__)
+    _settle__async = _define_function("ai.stream.TurnStream._settle", "async", ["self"], binding_name="_settle__async", binding_qualname="TurnStream._settle__async", binding_module=__name__)
+
+
+_overlay_usage       = _define_function("ai.stream._overlay_usage", "sync",  ["base", "next"], binding_name="_overlay_usage", binding_qualname="_overlay_usage", binding_module=__name__)
+_overlay_usage_async = _define_function("ai.stream._overlay_usage", "async", ["base", "next"], binding_name="_overlay_usage_async", binding_qualname="_overlay_usage_async", binding_module=__name__)
+
+
+_token_limit       = _define_function("ai.stream._token_limit", "sync",  ["limit"], binding_name="_token_limit", binding_qualname="_token_limit", binding_module=__name__)
+_token_limit_async = _define_function("ai.stream._token_limit", "async", ["limit"], binding_name="_token_limit_async", binding_qualname="_token_limit_async", binding_module=__name__)
+
+
+_token_timeout_error       = _define_function("ai.stream._token_timeout_error", "sync",  ["limit", "timeout_type"], binding_name="_token_timeout_error", binding_qualname="_token_timeout_error", binding_module=__name__)
+_token_timeout_error_async = _define_function("ai.stream._token_timeout_error", "async", ["limit", "timeout_type"], binding_name="_token_timeout_error_async", binding_qualname="_token_timeout_error_async", binding_module=__name__)
+
+
+class _StreamValue(pydantic.BaseModel, typing.Generic[T]):
+    """
+    The typed partial-value stream returned by an LLM function's `@stream`
+    projection. This is the one canonical host-stream class; tagged handles carry
+    its FQN across FFI so host bridges do not need to hardcode a namespace.
+
+    Partial and final values share one type: a partial is the declared type parsed
+    from the text received so far.
+    """
+    model_config = pydantic.ConfigDict(
+        arbitrary_types_allowed=True,
+        extra="ignore",
+        populate_by_name=True,
+    )
+    value: T
+
+
+class _StreamError(pydantic.BaseModel):
+    model_config = pydantic.ConfigDict(
+        arbitrary_types_allowed=True,
+        extra="ignore",
+        populate_by_name=True,
+    )
+    error: typing.Union[ai.errors.InvokeError, vendor.trace.SpanError, baml.panics.Panic]
+
+
+_in_context       = _define_function("ai.stream._in_context", "sync",  ["body"], binding_name="_in_context", binding_qualname="_in_context", binding_module=__name__, type_params=["T", "E"])
+_in_context_async = _define_function("ai.stream._in_context", "async", ["body"], binding_name="_in_context_async", binding_qualname="_in_context_async", binding_module=__name__, type_params=["T", "E"])
+
+
+_context_patch       = _define_function("ai.stream._context_patch", "sync",  ["caller"], binding_name="_context_patch", binding_qualname="_context_patch", binding_module=__name__)
+_context_patch_async = _define_function("ai.stream._context_patch", "async", ["caller"], binding_name="_context_patch_async", binding_qualname="_context_patch_async", binding_module=__name__)
 
 
 from_spec       = _define_function("ai.stream.from_spec", "sync",  ["spec"], ["client", "on_event"], binding_name="from_spec", binding_qualname="from_spec", binding_module=__name__, type_params=["T"])
@@ -195,7 +275,7 @@ only checked at runtime (ai.errors.StreamingUnsupported when it cannot
 stream).
 
 Raises:
-    InvalidArgument, Timeout, UnknownError, CompilationError"""
+    CompilationError, SpanError, InvalidArgument, Timeout, UnknownError"""
 from_spec_async = _define_function("ai.stream.from_spec", "async", ["spec"], ["client", "on_event"], binding_name="from_spec_async", binding_qualname="from_spec_async", binding_module=__name__, type_params=["T"])
 from_spec_async.__doc__ = """One-turn streaming over a spec: render the spec's prompt exactly as the
 default runner's first turn would, require a streaming-capable client, and
@@ -210,10 +290,10 @@ only checked at runtime (ai.errors.StreamingUnsupported when it cannot
 stream).
 
 Raises:
-    InvalidArgument, Timeout, UnknownError, CompilationError"""
+    CompilationError, SpanError, InvalidArgument, Timeout, UnknownError"""
 
 
-Event: typing.TypeAlias = typing.Union[TextDelta, TurnMeta, TurnDone]
+Event: typing.TypeAlias = typing.Union[TextDelta, ContentSeen, TurnMeta, TurnDone]
 
 
 EventSource: typing.TypeAlias = typing.Callable[[], typing.Union[Event, Done]]
@@ -226,6 +306,7 @@ __all__ = [
     "TextDelta",
     "TurnMeta",
     "TurnDone",
+    "ContentSeen",
     "Done",
     "TurnStream",
     "Stream",

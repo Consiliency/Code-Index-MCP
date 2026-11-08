@@ -59,7 +59,7 @@ def test_baml_v1_generated_specs_keep_source_and_chunk_identity(monkeypatch):
         "chunk_id: chunk-1"
     )
     assert "return 1" in messages[1].content
-    assert batch.client_id() == "openai-generic/gpt-oss-120b"
+    assert batch.requested_model() == "gpt-oss-120b"
 
     single = SummarizeChunkAlone_spec(
         language="python",

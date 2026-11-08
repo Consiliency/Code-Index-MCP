@@ -26,6 +26,12 @@ _LAZY_CHILDREN = frozenset({
 })
 
 def __getattr__(name):
+    if name == "experimental" and __name__ == "baml_sdk":
+        import importlib
+        return importlib.import_module(".experimental", __name__)
+    if name == "trace" and __name__ == "baml_sdk":
+        import importlib
+        return importlib.import_module(".vendor.trace", __name__)
     if name in _LAZY_CHILDREN:
         import importlib
         return importlib.import_module(f".{name}", __name__)
@@ -36,6 +42,7 @@ import typing_extensions
 import pydantic
 
 from ... import ai
+from ... import baml
 
 from baml_bridge import define_function as _define_function
 
@@ -56,10 +63,10 @@ class Client(pydantic.BaseModel):
     model: str
     api_key: typing.Optional[ai.Credential] = None
     base_url: typing.Optional[ai.Credential] = None
-    request_timeout_ms: typing.Optional[int] = None
+    timeout: typing.Union[baml.time.Duration, ai.LlmTimeoutOptions, None] = None
     capture_wire: bool
-    new       = staticmethod(_define_function("typesafeai.Client.new", "sync",  [], ["model", "api_key", "base_url", "request_timeout_ms", "capture_wire"], binding_name="new", binding_qualname="Client.new", binding_module=__name__))
-    new_async = staticmethod(_define_function("typesafeai.Client.new", "async", [], ["model", "api_key", "base_url", "request_timeout_ms", "capture_wire"], binding_name="new_async", binding_qualname="Client.new_async", binding_module=__name__))
+    new       = staticmethod(_define_function("typesafeai.Client.new", "sync",  [], ["model", "api_key", "base_url", "timeout", "capture_wire"], binding_name="new", binding_qualname="Client.new", binding_module=__name__))
+    new_async = staticmethod(_define_function("typesafeai.Client.new", "async", [], ["model", "api_key", "base_url", "timeout", "capture_wire"], binding_name="new_async", binding_qualname="Client.new_async", binding_module=__name__))
 
 
 __all__ = [
