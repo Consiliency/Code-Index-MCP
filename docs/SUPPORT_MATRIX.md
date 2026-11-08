@@ -160,7 +160,16 @@ tiers above are unchanged by the upgrade.
   running user or is group- or other-writable, so the cache is per user. For
   shared installs, `mcp-index grammars prefetch --export-libs DIR` copies the
   libraries to a world-readable directory that any user loads through
-  `TREE_SITTER_LANGUAGE_PACK_LIBS_DIR=DIR`. Container images do this into
+  `TREE_SITTER_LANGUAGE_PACK_LIBS_DIR=DIR`. The pack loads that directory
+  first, without an ownership check, into the server and every sandbox worker,
+  so it must be owned by root or the service user and must not be group- or
+  other-writable; `mcp-index grammars check` fails otherwise, and also when a
+  library in it is writable by others or is a symlink. The export writes each
+  library to a temporary file and renames it into place, so re-exporting on a
+  live host does not disturb running processes. It refuses symlinked path
+  components, an existing directory that is writable by others (such as
+  `/tmp`) or holds anything but parser libraries, and only sets mode 0755 on
+  directories it creates. Container images do this into
   `/opt/tree-sitter-language-pack/libs`, CI prefetches before the agent gate,
   and sandboxed plugin workers keep the host cache root and libs directory
   (resolved to absolute paths against the host's working directory) even

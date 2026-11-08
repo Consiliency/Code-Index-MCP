@@ -226,3 +226,141 @@ def test_exported_libs_dir_loads_every_grammar_without_a_cache(warm_grammar_cach
     assert result.returncode == 0, result.stderr
     assert result.stdout.split()[:2] == ["True", str(len(warm_grammar_cache))]
     assert not (tmp_path / "empty-home" / ".cache").exists()
+
+
+# --- export_libs safety and libs-dir checks (#116 review S2, N1) -----------
+
+
+@pytest.fixture
+def fake_cache_libs(monkeypatch, tmp_path):
+    source = tmp_path / "cache-libs"
+    source.mkdir()
+    (source / "libtree_sitter_c.so").write_bytes(b"new-c")
+    (source / "libtree_sitter_cpp.so").write_bytes(b"new-cpp")
+    monkeypatch.setattr(grammar_cache, "effective_cache_dir", lambda: str(source))
+    return source
+
+
+def test_export_libs_replaces_libraries_atomically(fake_cache_libs, tmp_path):
+    """Re-exporting on a live host must not truncate a library a process has
+    mapped; os.replace swaps in a new inode instead."""
+    import mmap
+
+    shared = tmp_path / "shared"
+    shared.mkdir(mode=0o755)
+    os.chmod(shared, 0o755)
+    live = shared / "libtree_sitter_c.so"
+    live.write_bytes(b"old-c")
+    with open(live, "rb") as handle:
+        mapped = mmap.mmap(handle.fileno(), 0, access=mmap.ACCESS_READ)
+        old_inode = os.fstat(handle.fileno()).st_ino
+        copied = grammar_cache.export_libs(shared)
+        assert mapped[:] == b"old-c"  # the mapped file was not rewritten in place
+        mapped.close()
+    assert copied == ["libtree_sitter_c.so", "libtree_sitter_cpp.so"]
+    assert live.read_bytes() == b"new-c"
+    assert os.stat(live).st_ino != old_inode
+    assert (os.stat(live).st_mode & 0o777) == 0o644
+    assert sorted(p.name for p in shared.iterdir()) == copied  # no temp files left
+
+
+def test_export_libs_creates_missing_dirs_0755_and_keeps_existing_modes(fake_cache_libs, tmp_path):
+    old_umask = os.umask(0o077)
+    try:
+        created = tmp_path / "new" / "libs"
+        grammar_cache.export_libs(created)
+    finally:
+        os.umask(old_umask)
+    assert (os.stat(created).st_mode & 0o777) == 0o755
+    assert (os.stat(created.parent).st_mode & 0o777) == 0o755
+
+    existing = tmp_path / "existing"
+    existing.mkdir()
+    os.chmod(existing, 0o750)
+    grammar_cache.export_libs(existing)
+    assert (os.stat(existing).st_mode & 0o777) == 0o750  # never re-chmodded
+
+
+def test_export_libs_refuses_symlinked_target_and_components(fake_cache_libs, tmp_path):
+    real = tmp_path / "real"
+    real.mkdir()
+    (tmp_path / "link").symlink_to(real)
+    with pytest.raises(grammar_cache.UnsafeLibsDirError, match="symlink"):
+        grammar_cache.export_libs(tmp_path / "link")
+    with pytest.raises(grammar_cache.UnsafeLibsDirError, match="symlink"):
+        grammar_cache.export_libs(tmp_path / "link" / "libs")
+    assert list(real.iterdir()) == []
+
+
+def test_export_libs_refuses_a_planted_library_symlink(fake_cache_libs, tmp_path):
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    victim = tmp_path / "victim"
+    victim.write_bytes(b"precious")
+    (shared / "libtree_sitter_c.so").symlink_to(victim)
+    with pytest.raises(grammar_cache.UnsafeLibsDirError, match="not a regular file"):
+        grammar_cache.export_libs(shared)
+    assert victim.read_bytes() == b"precious"
+
+
+def test_export_libs_refuses_world_writable_and_foreign_dirs(fake_cache_libs, tmp_path):
+    sticky = tmp_path / "tmp-like"
+    sticky.mkdir()
+    os.chmod(sticky, 0o1777)
+    with pytest.raises(grammar_cache.UnsafeLibsDirError, match="writable"):
+        grammar_cache.export_libs(sticky)
+    assert (os.stat(sticky).st_mode & 0o7777) == 0o1777  # left alone
+    assert list(sticky.iterdir()) == []
+
+    populated = tmp_path / "populated"
+    populated.mkdir()
+    (populated / "etc").mkdir()
+    with pytest.raises(grammar_cache.UnsafeLibsDirError, match="other than parser libraries"):
+        grammar_cache.export_libs(populated)
+
+    with pytest.raises(grammar_cache.UnsafeLibsDirError):
+        grammar_cache.export_libs("/")
+    with pytest.raises(grammar_cache.UnsafeLibsDirError):
+        grammar_cache.export_libs("/tmp")
+
+
+def test_libs_dir_problems_flags_unsafe_ownership_modes_and_symlinks(tmp_path):
+    shared = tmp_path / "libs"
+    shared.mkdir()
+    os.chmod(shared, 0o755)
+    lib = shared / "libtree_sitter_c.so"
+    lib.write_bytes(b"")
+    os.chmod(lib, 0o644)
+    assert grammar_cache.libs_dir_problems(shared) == []
+
+    os.chmod(lib, 0o664)
+    assert any(
+        "libtree_sitter_c.so" in p and "writable" in p
+        for p in grammar_cache.libs_dir_problems(shared)
+    )
+    os.chmod(lib, 0o644)
+    os.chmod(shared, 0o775)
+    assert any("writable" in p for p in grammar_cache.libs_dir_problems(shared))
+    os.chmod(shared, 0o755)
+    (shared / "libtree_sitter_cpp.so").symlink_to(tmp_path / "elsewhere.so")
+    assert any("symlink" in p for p in grammar_cache.libs_dir_problems(shared))
+    assert grammar_cache.libs_dir_problems(tmp_path / "missing") == [
+        f"{tmp_path / 'missing'}: does not exist"
+    ]
+
+
+def test_grammars_check_fails_on_an_unsafe_libs_dir(monkeypatch, tmp_path):
+    import json
+
+    from mcp_server.cli.grammar_commands import grammars
+
+    shared = tmp_path / "libs"
+    shared.mkdir()
+    os.chmod(shared, 0o777)
+    monkeypatch.setenv(grammar_cache.LIBS_DIR_ENV, str(shared))
+    result = CliRunner().invoke(grammars, ["check", "--json", "--language", "c"])
+    assert result.exit_code == 1, result.output
+    report = json.loads(result.output[result.output.index("{") :])
+    assert report["ok"] is False
+    assert report["libs_dir"] == str(shared)
+    assert any("writable" in p for p in report["libs_dir_problems"])

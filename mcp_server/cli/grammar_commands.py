@@ -60,7 +60,11 @@ def prefetch_command(
     click.echo(f"Parser libraries: {grammar_cache.effective_cache_dir()}")
     click.echo(f"Prefetched and verified {len(check.loaded)}/{len(names)} grammars.")
     if check.ok and export_libs:
-        copied = grammar_cache.export_libs(export_libs)
+        try:
+            copied = grammar_cache.export_libs(export_libs)
+        except grammar_cache.UnsafeLibsDirError as exc:
+            click.echo(f"Refusing to export parser libraries: {exc}", err=True)
+            sys.exit(1)
         click.echo(
             f"Exported {len(copied)} parser libraries to {export_libs}; "
             f"set {grammar_cache.LIBS_DIR_ENV}={export_libs} at runtime."
@@ -81,15 +85,22 @@ def check_command(cache_dir: Optional[str], languages: Tuple[str, ...], as_json:
 
     root = grammar_cache.configure_cache_dir(cache_dir)
     check = grammar_cache.verify(list(languages) or None, offline=True)
+    # The pack loads TREE_SITTER_LANGUAGE_PACK_LIBS_DIR first with no ownership
+    # check, so an unsafe libs dir fails the check (#116 review N1).
+    libs_problems = grammar_cache.libs_dir_problems()
+    ok = check.ok and not libs_problems
     if as_json:
+        libs = grammar_cache.libs_dir()
         click.echo(
             json.dumps(
                 {
                     "cache_root": str(root) if root else None,
                     "parser_libraries": grammar_cache.effective_cache_dir(),
+                    "libs_dir": str(libs) if libs else None,
+                    "libs_dir_problems": libs_problems,
                     "loaded": check.loaded,
                     "failed": check.failed,
-                    "ok": check.ok,
+                    "ok": ok,
                 },
                 indent=2,
                 sort_keys=True,
@@ -100,7 +111,9 @@ def check_command(cache_dir: Optional[str], languages: Tuple[str, ...], as_json:
         click.echo(f"{len(check.loaded)} grammars load offline; {len(check.failed)} missing.")
         for name, reason in sorted(check.failed.items()):
             click.echo(f"  MISSING {name}: {reason}", err=True)
-    if not check.ok:
+        for problem in libs_problems:
+            click.echo(f"  UNSAFE {grammar_cache.LIBS_DIR_ENV}: {problem}", err=True)
+    if not ok:
         sys.exit(1)
 
 

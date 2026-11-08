@@ -188,24 +188,158 @@ def _symbol(name: str) -> str:
     return _LIBRARY_SYMBOL_NAMES.get(name, name)
 
 
+class UnsafeLibsDirError(RuntimeError):
+    """The shared parser-library directory is not safe to load or write."""
+
+
+def _is_library_name(name: str) -> bool:
+    return name.startswith(("libtree_sitter_", "tree_sitter_"))
+
+
+def _owner_ok(st: os.stat_result) -> bool:
+    return st.st_uid in (0, os.getuid())
+
+
+def libs_dir_problems(directory: Optional[str | Path] = None) -> List[str]:
+    """Return reasons ``directory`` (default: the configured libs dir) is unsafe.
+
+    The pack loads every library in ``TREE_SITTER_LANGUAGE_PACK_LIBS_DIR``
+    first, with no ownership check, into the server and every sandbox worker.
+    The directory and each library must therefore be owned by root or the
+    running user and must not be group- or other-writable, and neither may be
+    a symlink. Returns ``[]`` when no libs dir is configured or it is safe.
+    """
+    import stat
+
+    path = Path(directory).expanduser() if directory is not None else libs_dir()
+    if path is None:
+        return []
+    problems: List[str] = []
+    try:
+        st = os.lstat(path)
+    except FileNotFoundError:
+        return [f"{path}: does not exist"]
+    except OSError as exc:
+        return [f"{path}: cannot stat ({exc})"]
+    if stat.S_ISLNK(st.st_mode):
+        return [f"{path}: is a symlink"]
+    if not stat.S_ISDIR(st.st_mode):
+        return [f"{path}: is not a directory"]
+    if not _owner_ok(st):
+        problems.append(f"{path}: owned by uid {st.st_uid}, not root or uid {os.getuid()}")
+    if st.st_mode & 0o022:
+        problems.append(f"{path}: group- or other-writable (mode {st.st_mode & 0o7777:o})")
+    try:
+        entries = sorted(path.iterdir())
+    except OSError as exc:
+        return problems + [f"{path}: cannot list ({exc})"]
+    for entry in entries:
+        if not _is_library_name(entry.name):
+            continue
+        est = os.lstat(entry)
+        if stat.S_ISLNK(est.st_mode):
+            problems.append(f"{entry}: is a symlink")
+            continue
+        if not _owner_ok(est):
+            problems.append(f"{entry}: owned by uid {est.st_uid}, not root or uid {os.getuid()}")
+        if est.st_mode & 0o022:
+            problems.append(f"{entry}: group- or other-writable (mode {est.st_mode & 0o7777:o})")
+    return problems
+
+
+def _prepare_export_dir(destination: str | Path) -> Path:
+    """Validate (and create, if missing) the export directory.
+
+    Refuses symlinked path components, an existing directory that is not
+    owned by root or the running user or is group-/other-writable (``/tmp``),
+    and an existing directory that holds anything but parser libraries
+    (``/``, ``/usr/lib``). Only directories created here get mode 0755.
+    """
+    import stat
+
+    target = Path(os.path.abspath(Path(destination).expanduser()))
+    if target == Path(target.anchor):
+        raise UnsafeLibsDirError(f"refusing to export parser libraries into {target}")
+    current = Path(target.anchor)
+    created: List[Path] = []
+    for part in target.parts[1:]:
+        current = current / part
+        try:
+            st = os.lstat(current)
+        except FileNotFoundError:
+            os.mkdir(current, 0o755)
+            os.chmod(current, 0o755)  # independent of the umask
+            created.append(current)
+            continue
+        if stat.S_ISLNK(st.st_mode):
+            raise UnsafeLibsDirError(
+                f"refusing to export through symlinked path component {current}; "
+                "pass the resolved path"
+            )
+        if not stat.S_ISDIR(st.st_mode):
+            raise UnsafeLibsDirError(f"{current} exists and is not a directory")
+    if target not in created:
+        problems = [
+            problem
+            for problem in libs_dir_problems(target)
+            if not problem.startswith(f"{target}/")  # existing libs are replaced
+        ]
+        if problems:
+            raise UnsafeLibsDirError("; ".join(problems))
+        foreign = [
+            entry.name
+            for entry in target.iterdir()
+            if not _is_library_name(entry.name) and not entry.name.startswith(".tree_sitter_tmp")
+        ]
+        if foreign:
+            raise UnsafeLibsDirError(
+                f"{target} already holds files other than parser libraries "
+                f"({', '.join(sorted(foreign)[:5])}); export into a dedicated directory"
+            )
+    return target
+
+
 def export_libs(destination: str | Path) -> List[str]:
     """Copy the cached parser libraries into a shared, world-readable directory.
 
     Point ``TREE_SITTER_LANGUAGE_PACK_LIBS_DIR`` at ``destination`` so any user
-    loads them offline without a per-user cache. Returns the copied file names.
+    loads them offline without a per-user cache. Each library is written to a
+    temporary file in ``destination`` and atomically renamed into place, so a
+    process that has the previous library mapped keeps a valid mapping.
+    Returns the copied file names.
     """
     import shutil
+    import stat
+    import tempfile
 
     source = Path(effective_cache_dir())
-    target = Path(destination).expanduser().resolve()
-    target.mkdir(parents=True, exist_ok=True)
+    target = _prepare_export_dir(destination)
     copied = []
     for entry in sorted(source.iterdir()):
-        if entry.is_file():
-            shutil.copyfile(entry, target / entry.name)
-            (target / entry.name).chmod(0o644)
-            copied.append(entry.name)
-    target.chmod(0o755)
+        if not entry.is_file() or entry.is_symlink():
+            continue
+        final = target / entry.name
+        try:
+            existing = os.lstat(final)
+        except FileNotFoundError:
+            existing = None
+        if existing is not None and not stat.S_ISREG(existing.st_mode):
+            raise UnsafeLibsDirError(f"{final} exists and is not a regular file")
+        fd, tmp_name = tempfile.mkstemp(prefix=".tree_sitter_tmp.", dir=target)
+        try:
+            with os.fdopen(fd, "wb") as out, open(entry, "rb") as src:
+                shutil.copyfileobj(src, out)
+                out.flush()
+                os.fchmod(out.fileno(), 0o644)
+                os.fsync(out.fileno())
+            os.replace(tmp_name, final)
+        except BaseException:
+            try:
+                os.unlink(tmp_name)
+            except FileNotFoundError:
+                pass
+            raise
+        copied.append(entry.name)
     return copied
 
 
