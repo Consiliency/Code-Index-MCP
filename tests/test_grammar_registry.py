@@ -407,8 +407,39 @@ def test_grammar_status_names_missing_languages(monkeypatch):
     status = grammar_cache.grammar_status()
     assert status["state"] == "ready" and status["remediation"] is None
 
+    # An unsafe libs dir with every grammar available affects no indexing:
+    # it is reported on its own, not as unavailable grammars (re-check NIT 3).
     monkeypatch.setattr(grammar_cache, "libs_dir_problems", lambda: ["/x: group-writable"])
+    status = grammar_cache.grammar_status()
+    assert status["state"] == "libs_dir_unsafe"
+    assert status["ready"] is True and status["languages"] == []
+    assert "TREE_SITTER_LANGUAGE_PACK_LIBS_DIR" in status["remediation"]
+
+    monkeypatch.setattr(grammar_cache, "missing_grammars", lambda: ["rust"])
     assert grammar_cache.grammar_status()["state"] == "grammar_unavailable"
+
+
+def test_grammar_status_ignores_document_plugin_grammars_and_maps_tsx(monkeypatch):
+    """Only a grammar some plugin loads makes status unready (re-check SHOULD-FIX 1,
+    NIT 3): markdown's plugin uses no grammar; ``tsx`` files are TypeScript."""
+    monkeypatch.setattr(grammar_cache, "libs_dir_problems", lambda: [])
+    monkeypatch.delenv(grammar_cache.LIBS_DIR_ENV, raising=False)
+    monkeypatch.setattr(grammar_cache, "missing_grammars", lambda: ["markdown"])
+    status = grammar_cache.grammar_status()
+    assert status["state"] == "ready" and status["ready"] is True
+    assert status["missing_grammars"] == ["markdown"] and status["languages"] == []
+
+    monkeypatch.setattr(grammar_cache, "missing_grammars", lambda: ["tsx"])
+    status = grammar_cache.grammar_status()
+    assert status["state"] == "grammar_unavailable"
+    assert status["languages"] == ["typescript"]
+
+
+def test_unavailable_grammar_skips_document_plugin_languages(monkeypatch, fresh_offline_set):
+    monkeypatch.setattr(grammar_cache, "cached_grammars", lambda: [])
+    assert grammar_cache.unavailable_grammar("markdown") is None
+    assert grammar_cache.unavailable_grammar("plaintext") is None
+    assert grammar_cache.unavailable_grammar("rust") == "rust"
 
 
 def test_get_status_reports_grammar_state(monkeypatch):
@@ -496,6 +527,45 @@ def test_index_directory_fails_closed_for_an_unavailable_grammar(monkeypatch, tm
     assert stats["failed_files"] == 1
     assert any("grammar_unavailable" in error for error in stats["errors"]), stats
     assert _indexed_paths(store) == []
+
+
+class _MarkdownDocumentPlugin:
+    """Stands in for ``MarkdownPlugin``: a document plugin, no grammar."""
+
+    lang = "markdown"
+    language = "markdown"
+
+    def supports(self, path):
+        return str(path).endswith(".md")
+
+    def bind(self, ctx):
+        return None
+
+    def indexFile(self, path, content):
+        return {"file": str(path), "symbols": [], "language": "markdown"}
+
+
+def test_index_directory_indexes_markdown_without_its_grammar(
+    monkeypatch, tmp_path, fresh_offline_set
+):
+    """A cold cache fails grammar-backed files, but not markdown, whose plugin
+    never loads a grammar (re-check SHOULD-FIX 1)."""
+    from mcp_server.dispatcher import EnhancedDispatcher
+
+    monkeypatch.setattr(grammar_cache, "cached_grammars", lambda: [])
+    repo, store, ctx = _rust_repo(tmp_path)
+    (repo / "main.rs").unlink()
+    (repo / "README.md").write_text("# Title\n\nSome text.\n", encoding="utf-8")
+    dispatcher = EnhancedDispatcher(
+        plugins=[_MarkdownDocumentPlugin()],
+        use_plugin_factory=False,
+        enable_advanced_features=False,
+        semantic_search_enabled=False,
+    )
+    stats = dispatcher.index_directory(ctx, repo)
+    assert stats["failed_files"] == 0, stats
+    assert stats["indexed_files"] == 1
+    assert [path.rsplit("/", 1)[-1] for path in _indexed_paths(store)] == ["README.md"]
 
 
 def test_index_file_guarded_fails_closed_for_an_unavailable_grammar(monkeypatch, tmp_path):
@@ -655,6 +725,12 @@ def test_every_standalone_dockerfile_exports_grammars_to_the_shared_libs_dir():
         )
         assert copied_sources < prefetch, f"{dockerfile.name} prefetches before copying sources"
         final_stage = max(index for index, line in enumerate(lines) if line.startswith("FROM "))
+        if prefetch < final_stage:
+            # Multi-stage: the final stage must copy the exported libraries.
+            assert any(
+                line.startswith("COPY --from=") and "/opt/tree-sitter-language-pack" in line
+                for line in lines[final_stage:]
+            ), f"{dockerfile.name} final stage does not copy the exported grammars"
         assert any(
             line.strip() == f"ENV TREE_SITTER_LANGUAGE_PACK_LIBS_DIR={shared}"
             for line in lines[final_stage:]

@@ -256,10 +256,13 @@ def test_network_denied_worker_with_cold_grammar_cache_fails_closed_without_writ
 
 def test_network_denied_worker_rolled_over_cache_fails_closed(tmp_path):
     """A pack patch release moves the versioned cache dir; an older warm dir
-    must read as cold, not trigger a download."""
+    must read as cold, not trigger a download. The older dir holds the
+    plugin's library (a stand-in that would fail to load), so the test also
+    proves it is never used (#116 re-check NIT 4)."""
     cache = tmp_path / "cache"
-    old = cache / "tree-sitter-language-pack" / "v0.0.0" / "libs"
+    old = cache / "tree-sitter-language-pack" / "v1.19.0" / "libs"
     old.mkdir(parents=True)
+    (old / "libtree_sitter_c.so").write_bytes(b"not a shared library\n")
     os.chmod(cache, 0o700)
     before = _tree(cache)
     env = _grammar_free_env(tmp_path, TREE_SITTER_LANGUAGE_PACK_CACHE_DIR=str(cache))

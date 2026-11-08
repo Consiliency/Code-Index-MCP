@@ -800,6 +800,13 @@ class GitAwareIndexManager:
                         admitted.added.append(new_path)
                 result = self._incremental_index_update(repo_id, stage_ctx, admitted)
             if not result.clean:
+                if self._shutdown.is_set():
+                    # The walk stopped because the service is shutting down:
+                    # record it as abandoned, not as a real index failure
+                    # (#116 re-check NIT 2).
+                    raise RebuildShutdownRequested(
+                        "service shutdown requested during the index walk"
+                    )
                 raise RuntimeError("Staged full index did not complete cleanly")
             if getattr(self.dispatcher, "_semantic_enabled", False) is True:
                 self._finalize_staged_vectors(repo_id, stage_ctx)
@@ -830,6 +837,8 @@ class GitAwareIndexManager:
             self._rebuild_checkpoint("before_provenance")
             if not self._git_source_unchanged(repo_path, current_commit, current_branch):
                 raise RuntimeError("Repository changed while the generation was building")
+            # Last shutdown check: only the registry publish write itself remains.
+            self._rebuild_checkpoint("before_publish")
             self.registry.publish_generation(
                 repo_id,
                 generation=generation,

@@ -1046,7 +1046,7 @@ def _log_grammar_availability() -> None:
     except Exception as exc:  # noqa: BLE001 - never block startup on the check
         logger.warning("Tree-sitter grammar check failed: %s", type(exc).__name__)
         return
-    if status["ready"]:
+    if status["state"] == "ready":
         return
     logger.error(
         "Tree-sitter grammars unavailable offline for %d language(s) (%s)%s. "

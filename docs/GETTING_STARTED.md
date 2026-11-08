@@ -52,13 +52,18 @@ uv run mcp-index --version
 uv run --extra dev python -m build --wheel
 python -m pip install dist/index_it_mcp-1.4.1-py3-none-any.whl
 index-it-mcp --version
+
+# Prefetch tree-sitter grammars while network access is available (mandatory)
+mcp-index grammars prefetch
 ```
 
 ### Tree-sitter grammar cache
 
 tree-sitter-language-pack 1.20 downloads parser libraries on first use instead
-of shipping them in its wheel. Prefetch them once per install so indexing never
-waits on, or fails for, a download:
+of shipping them in its wheel, and sandboxed plugin workers never download.
+Prefetching is therefore **mandatory**: without it every file whose plugin needs
+a grammar fails with `grammar_unavailable`, and a reindex does not publish.
+Prefetch once per install, and again after every language-pack upgrade:
 
 ```bash
 mcp-index grammars prefetch                      # default cache root

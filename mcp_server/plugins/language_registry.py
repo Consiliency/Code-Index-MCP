@@ -310,9 +310,18 @@ def get_language_by_extension(extension: str) -> str | None:
 #: Registry languages that are not backed by a tree-sitter grammar.
 GRAMMARLESS_LANGUAGES = frozenset({"plaintext"})
 
+#: Registry languages whose plugin is a document plugin
+#: (``BaseDocumentPlugin``) that never loads a tree-sitter grammar. Their
+#: grammar is still prefetched, but a missing one must not fail their files
+#: (#116 re-check SHOULD-FIX 1).
+PLUGIN_GRAMMARLESS_LANGUAGES = frozenset({"markdown", "plaintext"})
+
 #: Grammars loaded directly by specialized plugins in addition to the
 #: registry codes (the TypeScript plugin parses ``.tsx`` with ``tsx``).
 EXTRA_PLUGIN_GRAMMARS = ("tsx",)
+
+#: The registry language whose files need each extra plugin grammar.
+EXTRA_PLUGIN_GRAMMAR_LANGUAGES = {"tsx": "typescript"}
 
 
 def get_grammar_name(language: str) -> str | None:

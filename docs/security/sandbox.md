@@ -32,7 +32,10 @@ that the socket patch cannot see. The worker points the pack's manifest URL at
 an unknown-scheme sentinel that fails before a socket exists, and refuses with
 `DownloadError` any grammar that is not already extracted in the host cache or
 the shared libs directory. A cold cache fails the plugin load without a
-connection and without writing the host cache. See
+connection and without writing the host cache. This guard is cooperative: a
+plugin that calls the pack's native module or loader classes directly, or that
+changes its environment (for example clearing the manifest URL), is outside it
+and can write the cache or download. See
 [Parser stack and grammar cache](../SUPPORT_MATRIX.md#parser-stack-and-grammar-cache).
 
 ## Limits

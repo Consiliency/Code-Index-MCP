@@ -63,9 +63,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   profile-incompatible until they are rebuilt or re-embedded.
 - 6.0 drops erroneous keyword-only `lambda` fragment chunks from Python and
   changes CRLF handling in `chunk_file`. LF chunk ids are otherwise unchanged.
-- Run `mcp-index grammars prefetch` after installing, and again after every
-  language-pack upgrade, while network access is available. Sandboxed workers
-  do not download a missing grammar.
+- **Grammar prefetch is mandatory.** Run `mcp-index grammars prefetch` after
+  installing, and again after every language-pack upgrade, while network
+  access is available. Sandboxed workers do not download a missing grammar:
+  without a prefetch every file whose plugin needs a grammar fails with
+  `grammar_unavailable`, and a reindex does not publish its generation.
+- `mcp-index grammars check` now fails when `TREE_SITTER_LANGUAGE_PACK_LIBS_DIR`
+  is unsafe (a symlink, not owned by root or the running user, or group- or
+  other-writable); `get_status` reports that case as `libs_dir_unsafe`.
 
 [Unreleased]: # placeholder for post-rc5 work
 

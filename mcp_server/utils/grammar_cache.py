@@ -364,6 +364,7 @@ def prefetch(languages: Optional[Sequence[str]] = None) -> List[str]:
 
 
 GRAMMAR_UNAVAILABLE = "grammar_unavailable"
+LIBS_DIR_UNSAFE = "libs_dir_unsafe"
 
 _offline_grammars: Optional[frozenset] = None
 
@@ -408,9 +409,13 @@ def unavailable_grammar(language: Optional[str]) -> Optional[str]:
     """
     if not language:
         return None
-    from mcp_server.plugins.language_registry import LANGUAGE_CONFIGS, get_grammar_name
+    from mcp_server.plugins.language_registry import (
+        LANGUAGE_CONFIGS,
+        PLUGIN_GRAMMARLESS_LANGUAGES,
+        get_grammar_name,
+    )
 
-    if language not in LANGUAGE_CONFIGS:
+    if language not in LANGUAGE_CONFIGS or language in PLUGIN_GRAMMARLESS_LANGUAGES:
         return None
     grammar = get_grammar_name(language)
     if not grammar:
@@ -423,8 +428,20 @@ def unavailable_grammar(language: Optional[str]) -> Optional[str]:
 
 
 def grammar_status() -> dict:
-    """Summarize grammar availability for ``get_status`` (offline, no loading)."""
-    from mcp_server.plugins.language_registry import LANGUAGE_CONFIGS, get_grammar_name
+    """Summarize grammar availability for ``get_status`` (offline, no loading).
+
+    ``ready`` is false only when files in some language fail indexing: a
+    missing grammar that only a document plugin's language names (markdown)
+    affects nothing. An unsafe libs dir with every grammar available is its
+    own state, ``libs_dir_unsafe``: indexing is unaffected, but the operator
+    must fix the directory.
+    """
+    from mcp_server.plugins.language_registry import (
+        EXTRA_PLUGIN_GRAMMAR_LANGUAGES,
+        LANGUAGE_CONFIGS,
+        PLUGIN_GRAMMARLESS_LANGUAGES,
+        get_grammar_name,
+    )
 
     try:
         missing = missing_grammars()
@@ -433,14 +450,29 @@ def grammar_status() -> dict:
         missing = get_required_grammars()
         error = f"{type(exc).__name__}: {exc}"
     missing_set = set(missing)
-    languages = sorted(
-        language for language in LANGUAGE_CONFIGS if get_grammar_name(language) in missing_set
+    affected = {
+        language
+        for language in LANGUAGE_CONFIGS
+        if language not in PLUGIN_GRAMMARLESS_LANGUAGES
+        and get_grammar_name(language) in missing_set
+    }
+    affected.update(
+        language
+        for grammar, language in EXTRA_PLUGIN_GRAMMAR_LANGUAGES.items()
+        if grammar in missing_set
     )
+    languages = sorted(affected)
     libs_problems = libs_dir_problems()
-    ready = not missing and not libs_problems and error is None
+    ready = not languages and error is None
     libs = libs_dir()
+    if not ready:
+        state = GRAMMAR_UNAVAILABLE
+    elif libs_problems:
+        state = LIBS_DIR_UNSAFE
+    else:
+        state = "ready"
     status = {
-        "state": "ready" if ready else GRAMMAR_UNAVAILABLE,
+        "state": state,
         "ready": ready,
         "missing_grammars": sorted(missing_set),
         "languages": languages,
@@ -450,7 +482,13 @@ def grammar_status() -> dict:
     }
     if error is not None:
         status["error"] = error
-    if not ready:
+    if state == LIBS_DIR_UNSAFE:
+        status["remediation"] = (
+            "Every grammar loads, but TREE_SITTER_LANGUAGE_PACK_LIBS_DIR is unsafe "
+            "(see libs_dir_problems): make it and its libraries owned by root or the "
+            "service user and not group- or other-writable."
+        )
+    elif not ready:
         status["remediation"] = (
             "Run `mcp-index grammars prefetch` as the service user (or export "
             "libraries with --export-libs and set TREE_SITTER_LANGUAGE_PACK_LIBS_DIR "

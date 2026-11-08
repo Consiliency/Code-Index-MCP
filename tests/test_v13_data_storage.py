@@ -345,7 +345,14 @@ def test_failed_generation_retains_old_bytes_and_pending_fence(runtime, monkeypa
 
 
 @pytest.mark.parametrize(
-    "stage", ["stage_created", "before_replacement", "after_replacement", "before_provenance"]
+    "stage",
+    [
+        "stage_created",
+        "before_replacement",
+        "after_replacement",
+        "before_provenance",
+        "before_publish",
+    ],
 )
 def test_shutdown_request_abandons_the_unpublished_generation(runtime, stage):
     """#116 review S1: an in-flight rebuild stops before it publishes once the
@@ -372,6 +379,29 @@ def test_shutdown_request_abandons_the_unpublished_generation(runtime, stage):
     assert current.index_generation == original.index_generation
     assert original.index_path.read_bytes() == before
     assert current.staleness_reason == "partial_index_failure"
+
+
+def test_shutdown_during_the_walk_is_recorded_as_abandoned(runtime, monkeypatch):
+    """#116 re-check NIT 2: a walk stopped by shutdown is a
+    ``RebuildShutdownRequested``, not a generic "did not complete cleanly"."""
+    from mcp_server.storage.git_index_manager import UpdateResult
+
+    repo, registry, repo_id, store, manager = runtime
+    _seed_retained(store, repo)
+    registry.update_indexed_commit(repo_id, _get_head_commit(repo), branch="main")
+    original = registry.get(repo_id)
+
+    def walk_stopped_by_shutdown(*args, **kwargs):
+        manager.request_shutdown()
+        return UpdateResult(indexed=1, skipped=3)
+
+    monkeypatch.setattr(manager, "_full_index", walk_stopped_by_shutdown)
+    result = manager.rebuild_repository_index(repo_id)
+    assert result.action == "failed"
+    assert "RebuildShutdownRequested" in result.error
+    assert "did not complete cleanly" not in result.error
+    current = RepositoryRegistry(registry.registry_path).get(repo_id)
+    assert current.index_generation == original.index_generation
 
 
 def test_rebuild_held_in_flight_is_released_by_shutdown_not_by_time(runtime, monkeypatch, tmp_path):

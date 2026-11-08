@@ -185,15 +185,24 @@ tiers above are unchanged by the upgrade.
   after a 1.20.x patch release moves the versioned directory) therefore fails
   the plugin load closed, with no connection and nothing written to the host
   cache, instead of downloading. A warm cache loads read-only. Prefetch on the
-  host after every pack upgrade. A plugin that calls the pack's private native
-  module directly is outside this cooperative guard; even then the sentinel
-  keeps it off the network.
-- **Missing grammars fail closed.** Indexing a file whose registry grammar is
-  not loadable offline (not in the cache or libs directory) fails with
+  host after every pack upgrade. A plugin that calls the pack's native module or
+  public loader classes directly, or changes its own environment (for example
+  clearing the manifest URL), is outside this cooperative guard: it can create
+  the versioned cache directory and a lock file, and with the manifest URL
+  cleared it can download. This matches the sandbox's cooperative model; the
+  guard does not contain malicious plugins.
+- **Missing grammars fail closed.** Indexing a file whose plugin needs a
+  grammar that is not loadable offline (not in the cache or libs directory)
+  fails with
   `grammar_unavailable` instead of storing the file without chunks, so a
   reindex reports those files as failed and does not publish the generation;
-  the previous generation, or `missing_index`, stays in place. `get_status`
-  reports a `grammars` block with `state` (`ready` or `grammar_unavailable`),
+  the previous generation, or `missing_index`, stays in place. One failed file
+  blocks the whole repository's generation, in every language, as any failed
+  file does; prefetching is therefore mandatory on every host. Document-plugin
+  languages (`markdown`, `plaintext`) never load a grammar and are not
+  affected. `get_status` reports a `grammars` block with `state` (`ready`,
+  `grammar_unavailable`, or `libs_dir_unsafe` when every grammar loads but the
+  shared libs directory fails its ownership or permission checks),
   the missing grammars, the affected language codes, libs-directory problems
   and the remediation, and the server logs an error at startup in the same
   case. Repository readiness of an already published index is unchanged.
