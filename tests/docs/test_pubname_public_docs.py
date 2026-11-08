@@ -28,7 +28,7 @@ def test_public_install_docs_use_source_or_local_wheel_proof():
     for text in (readme, getting_started):
         assert f"dist/index_it_mcp-{EXPECTED_VERSION}-py3-none-any.whl" in text
         assert "prepared candidate" in text
-        assert "Published `1.4.0`" in text
+        assert "Published `1.4.1`" in text
         assert "operations/v13-release.md" in text
 
 

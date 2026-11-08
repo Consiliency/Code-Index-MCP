@@ -1,4 +1,4 @@
-"""Release metadata assertions for the prepared v1.4.1 contract.
+"""Release metadata assertions for the prepared v1.5.0 contract.
 
 Historical GARC soak target: v1.2.0-rc6.
 """
@@ -20,8 +20,8 @@ except ImportError:  # Python <3.11
 
 
 REPO = Path(__file__).parent.parent
-EXPECTED_VERSION = "1.4.1"
-EXPECTED_TAG = "v1.4.1"
+EXPECTED_VERSION = "1.5.0"
+EXPECTED_TAG = "v1.5.0"
 DOCKER_INSTALLERS = (
     "scripts/install-mcp-docker.sh",
     "scripts/install-mcp-docker.ps1",
@@ -40,7 +40,7 @@ def test_docker_installer_pins_release_digest_without_tag_fallback(tmp_path, cas
     elif case == "wrong_namespace":
         response = "ghcr.io/another/image@sha256:" + "a" * 64
     selector = {"latest": "latest", "local": "local-smoke", "invalid_selector": "../wrong"}.get(
-        case, "v1.4.1"
+        case, EXPECTED_TAG
     )
     script = REPO / "scripts/install-mcp-docker.sh"
     command = r"""
@@ -78,7 +78,7 @@ setup_mcp_json
     assert config["mcpServers"]["code-index"] == {"command": "mcp-index", "args": ["stdio"]}
     if case != "local":
         url = (tmp_path / "curl-args").read_text().splitlines()[-1]
-        selector_path = "latest/download" if case == "latest" else "download/v1.4.1"
+        selector_path = "latest/download" if case == "latest" else f"download/{EXPECTED_TAG}"
         assert url.endswith(f"/releases/{selector_path}/image-reference.txt")
 
 
@@ -366,9 +366,9 @@ def test_documented_publish_dispatch_binds_accepted_identity():
 def test_changelog_has_prepared_unpublished_contract_section():
     changelog = _read_text("CHANGELOG.md")
 
-    section = changelog.split(f"## [{EXPECTED_VERSION}] - 2026-09-12", 1)[1].split("\n## [", 1)[0]
+    section = changelog.split(f"## [{EXPECTED_VERSION}] - 2026-11-08", 1)[1].split("\n## [", 1)[0]
     assert "Prepared" in section
-    assert "Code-Index-MCP#97" in section
+    assert "Code-Index-MCP#115" in section
     assert "does not imply publication" in section
 
 
@@ -438,9 +438,9 @@ def test_installers_and_download_helper_match_stable_identity_contract():
     powershell = _read_text("scripts/install-mcp-docker.ps1")
     download_helper = _read_text("scripts/download-release.py")
 
-    assert 'MCP_VARIANT="${MCP_VARIANT:-v1.4.1}"' in shell
+    assert f'MCP_VARIANT="${{MCP_VARIANT:-{EXPECTED_TAG}}}"' in shell
     assert 'MCP_VARIANT="${MCP_VARIANT:-local-smoke}"' not in shell
-    assert 'param(\n    [string]$Variant = "v1.4.1"' in powershell
+    assert f'param(\n    [string]$Variant = "{EXPECTED_TAG}"' in powershell
     assert "SET MCP_IMAGE_REF=@MCP_IMAGE_REF@" in powershell
     assert 'IF "%MCP_VARIANT%"=="" SET MCP_VARIANT=local-smoke' not in powershell
 
@@ -476,7 +476,7 @@ def test_installers_and_download_helper_match_stable_identity_contract():
 def test_active_docs_separate_candidate_from_publication():
     for path in ("README.md", "docs/GETTING_STARTED.md", "docs/MCP_CONFIGURATION.md"):
         text = _read_text(path)
-        assert "1.4.1" in text
+        assert EXPECTED_VERSION in text
         assert "prepared candidate" in text
         assert "docs/operations/v13-release.md" in text or "operations/v13-release.md" in text
         assert "July 10, 2026 collision check" not in text

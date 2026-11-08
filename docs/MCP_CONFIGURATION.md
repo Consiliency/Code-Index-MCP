@@ -2,9 +2,10 @@
 
 This guide provides comprehensive information on configuring the Code-Index-MCP for different environments and use cases.
 
-> **Stable-surface prep status**: This guide targets the `1.4.1` prepared candidate.
+> **Stable-surface prep status**: This guide targets the `1.5.0` prepared candidate.
 > MCP STDIO is primary; FastAPI is secondary admin only. Docker examples require
-> the matching registry publication. Published `1.4.0` lacks the v13 repairs.
+> the matching registry publication. Published `1.4.1` lacks the parser-stack
+> and baml-bridge 0.23.0 upgrades, and published `1.4.0` lacks the v13 repairs.
 > See [release preparation and acceptance](operations/v13-release.md).
 > That container image name is a container identity surface, not the canonical
 > Python distribution name.
@@ -19,7 +20,7 @@ For release containers, replace every `<published-digest>` placeholder below
 with the digest from the accepted GitHub release's `image-reference.txt` asset,
 or use the Docker installer's generated configuration. Set `MCP_DOCKER_IMAGE`
 to that full digest reference when using a client that expands environment
-variables. There is no version-tag or `latest`-tag fallback for `1.4.1`.
+variables. There is no version-tag or `latest`-tag fallback for `1.5.0`.
 >
 > **Public alpha repository model**: one server can serve many unrelated
 > repositories, with one registered worktree per git common directory. Only the

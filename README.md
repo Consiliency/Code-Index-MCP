@@ -6,16 +6,18 @@ Code-Index-MCP is a fast, **local-first** search index for your code. It plugs i
 
 > **New to Code-Index-MCP?** Start with the [Getting Started Guide](docs/GETTING_STARTED.md).
 >
-> **Status:** v1.4.1 stable surface prepared — MCP tools (`search_code`, `symbol_lookup`) are the primary interface; a FastAPI admin gateway is available for diagnostics.
+> **Status:** v1.5.0 stable surface prepared — MCP tools (`search_code`, `symbol_lookup`) are the primary interface; a FastAPI admin gateway is available for diagnostics.
 
-> **Stable-surface prep status**: This guide targets the `1.4.1` prepared candidate.
-> Published `1.4.0` (2026-07-19) does not include these v13 repairs.
+> **Stable-surface prep status**: This guide targets the `1.5.0` prepared candidate.
+> Published `1.4.1` (2026-10-13) does not include the treesitter-chunker 6 /
+> tree-sitter 0.26 parser upgrade or the baml-bridge 0.23.0 runtime; published `1.4.0`
+> (2026-07-19) also predates the v13 repairs.
 > MCP STDIO is primary; FastAPI is secondary admin only.
 > See [release preparation and acceptance](docs/operations/v13-release.md).
 > Publication and fleet rollout remain separate acceptance gates.
 
 ## Project Status
-**Version**: 1.4.1 (prepared candidate; publication tracked separately)
+**Version**: 1.5.0 (prepared candidate; publication tracked separately)
 **Python distribution**: `index-it-mcp`
 **Container image**: `ghcr.io/consiliency/code-index-mcp`
 **Primary surface**: MCP tools (`search_code`, `symbol_lookup`) via the STDIO runner when repository readiness is `ready`
@@ -159,7 +161,7 @@ quality or default sandbox behavior.
 ## 🚀 Quick Start
 
 Supported install paths are the digest-pinned container image published with
-the `v1.4.1` GitHub release, native Python/STDIO with `uv sync --locked`, and a
+the `v1.5.0` GitHub release, native Python/STDIO with `uv sync --locked`, and a
 locally built `index-it-mcp` wheel. Use the registry image only after protected-main publication and delivered
 artifact acceptance; until then use the candidate source or local wheel. The
 `ghcr.io/consiliency/code-index-mcp:local-smoke` image remains an optional dev
@@ -185,7 +187,7 @@ This automatically detects your environment and creates the appropriate `.mcp.js
 
 ### 🐳 Docker Setup
 
-The installer targets `v1.4.1` and resolves its `image-reference.txt` release
+The installer targets `v1.5.0` and resolves its `image-reference.txt` release
 asset to a signed GHCR digest. Version and `latest` image tags are not updated;
 the installer's `latest` option selects the latest GitHub release, then pins
 that release's digest. A missing release asset is an error, never a tag fallback.
@@ -195,7 +197,7 @@ build from this checkout with `make release-smoke-container`.
 #### Option 1: Basic Search (No API Keys) - 2 Minutes
 ```bash
 # After release acceptance, start STDIO with the published image reference
-export MCP_IMAGE_REF=$(curl -fsSL https://github.com/Consiliency/Code-Index-MCP/releases/download/v1.4.1/image-reference.txt)
+export MCP_IMAGE_REF=$(curl -fsSL https://github.com/Consiliency/Code-Index-MCP/releases/download/v1.5.0/image-reference.txt)
 [[ "$MCP_IMAGE_REF" =~ ^ghcr\.io/consiliency/code-index-mcp@sha256:[0-9a-f]{64}$ ]] || exit 1
 docker run -i --rm -v "$(pwd):/workspace" "$MCP_IMAGE_REF" index-it-mcp stdio
 ```
@@ -463,13 +465,13 @@ uv run mcp-index --version
 ```bash
 # From the repo root
 uv run --extra dev python -m build --wheel
-python -m pip install dist/index_it_mcp-1.4.1-py3-none-any.whl
+python -m pip install dist/index_it_mcp-1.5.0-py3-none-any.whl
 index-it-mcp --version
 ```
 
 The canonical Python distribution remains `index-it-mcp`. The commands above
 install this prepared candidate, not the older published release. Use
-`pip install index-it-mcp==1.4.1` only after the protected-main publication and
+`pip install index-it-mcp==1.5.0` only after the protected-main publication and
 independent delivered-package checks recorded in the release receipt.
 
 ### Quick Start After Installation
@@ -1345,12 +1347,12 @@ Maintainers can publish reviewed package and image releases; index artifacts
 have a separate preparation and signing workflow:
 
 ```bash
-# Prepare locally and reconcile Code-Index-MCP#97 before merging
+# Prepare locally and review the release PR before merging
 make agent-gate
 
 # Only after accepted review, merge identity and publication authorization
 gh workflow run "Release Automation" --ref main \
-  -f mode=publish -f version=v1.4.1 -f auto_merge=false \
+  -f mode=publish -f version=v1.5.0 -f auto_merge=false \
   -f expected_commit="$ACCEPTED_MERGE_COMMIT" -f expected_tree="$ACCEPTED_MERGE_TREE"
 ```
 
@@ -1424,7 +1426,7 @@ For detailed architectural documentation, see the [architecture/](architecture/)
 
 See [ROADMAP.md](ROADMAP.md) for detailed development plans and current progress.
 
-**Current Status**: 1.4.1 hardening surface prepared; protected-main publication is still pending
+**Current Status**: 1.5.0 parser-stack and baml-bridge 0.23.0 upgrade prepared; protected-main publication is still pending
 - ✅ **Core Indexing**: SQLite + FTS5 for fast local search
 - ✅ **Multi-Language**: Specialized and registry-backed language coverage; see `docs/SUPPORT_MATRIX.md`
 - ✅ **MCP Protocol**: Verified official Python SDK compatibility over STDIO; see `docs/status/MCP_COMPATIBILITY_EVALUATION.md` for named client posture

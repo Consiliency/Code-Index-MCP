@@ -7,10 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-**Changed** (Consiliency/Code-Index-MCP#119)
+[Unreleased]: # placeholder for post-rc5 work
+
+## [1.5.0] - 2026-11-08
+
+Prepared minor release for Code-Index-MCP#115 and Code-Index-MCP#119: the
+treesitter-chunker 6 / tree-sitter 0.26 parser-stack upgrade and the
+baml-bridge 0.23.0 alignment, so `index-it-mcp` can share one environment with
+`phase-loop-runtime` 0.7.30. This section does not imply publication;
+protected-main dispatch and independent delivered-artifact acceptance are
+separate gates.
+
+### Changed
 - `baml-bridge` and the BAML toolchain move from 0.20.1 to 0.23.0, matching
   `phase-loop-runtime` 0.7.29+ so both can share one environment. `baml_sdk/` is
-  regenerated.
+  regenerated (Consiliency/Code-Index-MCP#119).
 - baml-bridge 0.21+ records every BAML call under `~/.baml/btel` and uploads the
   recordings to Boundary's cloud when `BOUNDARY_API_KEY` or a saved Boundary
   login exists. Recording and upload stay **off by default**: the generated SDK
@@ -28,14 +39,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `scripts/generate_baml_sdk.py` clears `baml_sdk/` before generating, so modules
   a newer toolchain dropped don't survive. It and CI set `DO_NOT_TRACK=1`, which
   stops `baml-cli` usage pings.
-
-**Changed** (Consiliency/Code-Index-MCP#115)
 - Parser stack moves to treesitter-chunker 6.x, tree-sitter 0.26.x and
   tree-sitter-language-pack 1.20.x, matching the other Consiliency repositories
   (Consiliency/Code-Index-MCP#115).
 - The required agent gate runs on Python 3.12, 3.13 and 3.14.
 
-**Added**
+### Added
 - `mcp-index grammars prefetch` and `mcp-index grammars check` manage the
   language-pack grammar cache. Language-pack 1.20 downloads grammars on first
   use, so CI, container images and the devcontainer prefetch them.
@@ -47,7 +56,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with the missing grammars and affected languages), and the server logs an
   error at startup when registry grammars cannot load offline.
 
-**Fixed**
+### Fixed
 - Pack grammar lookups use `csharp` for the `c_sharp` language; the public
   language code is unchanged.
 - Sandboxed plugin workers keep the host grammar cache root and libs
@@ -77,7 +86,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The devcontainer moves to Debian bookworm because the language-pack wheels
   need glibc 2.34 or newer.
 
-**Upgrade notes**
+### Upgrade notes
 - **Full rebuild required.** Chunk ids move to the `treesitter_chunk_id_v6`
   scheme. Indexes built with chunker 4.x report `scheme_mismatch` and fail
   closed until a full `reindex`; they are never mixed with 6.x ids. Semantic
@@ -93,8 +102,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `mcp-index grammars check` now fails when `TREE_SITTER_LANGUAGE_PACK_LIBS_DIR`
   is unsafe (a symlink, not owned by root or the running user, or group- or
   other-writable); `get_status` reports that case as `libs_dir_unsafe`.
+- **Semantic vectors need re-embedding.** After the full reindex, rebuild the
+  semantic profile's summaries and vectors; 4.x vectors are never reused for
+  6.x chunk ids. Budget the inference run before rebuilding large corpora.
+- **glibc 2.34 or newer.** tree-sitter-language-pack 1.20 Linux wheels require
+  glibc 2.34+ (for example Debian 12, Ubuntu 22.04, RHEL 9). Hosts on older
+  glibc cannot install this release; stay on `1.4.1` there.
+- **Dependency floor.** `tree-sitter>=0.26,<0.27`, `treesitter-chunker>=6,<7`
+  and `tree-sitter-language-pack>=1.20,<1.21`. This lets `index-it-mcp` share
+  an environment with other tools that pin tree-sitter 0.26.
 
-[Unreleased]: # placeholder for post-rc5 work
+- **baml-bridge 0.23.0.** `baml-bridge==0.23.0` replaces 0.20.1. Environments
+  that pin `baml-bridge==0.20.1` cannot install this release; tools that pin
+  0.23.0, such as `phase-loop-runtime` 0.7.30, now co-install. Code that imports
+  the checked-in `baml_sdk/` gets the regenerated 0.23.0 SDK.
+- **BAML call recording and upload are off by default.** Leave
+  `MCP_BAML_TELEMETRY` unset (or `off`) to keep it that way. Setting
+  `MCP_BAML_TELEMETRY=low|medium|high` records calls under `~/.baml` and, when
+  `BOUNDARY_API_KEY` or a saved Boundary login exists, **uploads prompts that
+  contain your source code** to Boundary. The level is read at the first
+  `import baml_sdk`, so restart the service after changing it.
+- **Upstream `BAML_TELEMETRY` is ignored.** Only `MCP_BAML_TELEMETRY` controls
+  recording; existing `BAML_TELEMETRY` settings have no effect.
+- **New LLM timeouts.** Summarization calls now stop after 5 minutes in total or
+  10 seconds to connect. Size batch jobs for a worst case of 5 minutes for the
+  batch call plus 5 minutes per chunk on the single-file fallback path.
+- **`client_id()` renamed to `requested_model()`.** Callers of the generated
+  `FunctionSpec.client_id()` must switch to `requested_model()`, which returns
+  the bare model name.
+
+### Known follow-ups
+- Consiliency/Code-Index-MCP#117: a missing grammar currently blocks the whole
+  repository's generation in every language. Per-language degradation is
+  planned; until then, prefetch on every host.
 
 ## [1.4.1] - 2026-09-12
 

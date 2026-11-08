@@ -2,17 +2,24 @@
 
 ## Candidate Status
 
-`1.4.1` is the prepared candidate for Code-Index-MCP#97. The latest release
-verified on September 12, 2026 was `v1.4.0`, published July 19. This document and
-the version bump do not claim that `1.4.1` has been published or deployed.
+`1.5.0` is the prepared candidate for the treesitter-chunker 6 / tree-sitter 0.26
+parser-stack upgrade (Code-Index-MCP#115, merged in #116) and the baml-bridge
+0.23.0 alignment (Code-Index-MCP#119, merged in #120). The latest published
+release is `v1.4.1` (Code-Index-MCP#97), published October 13, 2026 and
+delivered-accepted as recorded in `docs/status/V13_EXECUTION.md`. This document
+and the version bump do not claim that `1.5.0` has been published or deployed.
+The evidence and review narrative below records how `1.4.1` was accepted. The
+Publication Gate was written for `1.4.1`; the owner decides which of its review
+seats and live checks apply to `1.5.0`. Its dispatch, recovery and
+delivered-acceptance rules are unchanged.
 The canonical source plan is `specs/phase-plans-v13.md`; execution progress is
 `docs/status/V13_EXECUTION.md`.
 
 Distribution: `index-it-mcp`; commands: `mcp-index` and `index-it-mcp`.
 Container: the signed `ghcr.io/consiliency/code-index-mcp@sha256:...` reference
-published in the `v1.4.1` GitHub release's `image-reference.txt` asset. Installers
+published in the `v1.5.0` GitHub release's `image-reference.txt` asset. Installers
 pin that exact reference; version/latest GHCR tags are left untouched. Until then, use
-`uv sync --locked` or the locally built `index_it_mcp-1.4.1-py3-none-any.whl`.
+`uv sync --locked` or the locally built `index_it_mcp-1.5.0-py3-none-any.whl`.
 The installer's `latest` selector means the latest GitHub release, not a mutable
 GHCR tag. It refuses a missing or malformed reference without falling back.
 
@@ -94,12 +101,12 @@ an approval substitute. Any candidate edit after review requires renewed review.
 
 1. Accept every PREP goal, resolve blocking findings and bind all four reconciled
    reviews and local checks to the same candidate content.
-2. Verify Code-Index-MCP#97 head and current main; merge only that accepted head.
+2. Verify the release PR head and current main; merge only that accepted head.
 3. Create a clean publication worktree under `/mnt/workspace/worktrees` when
    available. Fetch protected main, confirm merge/source content and version
    inputs, and record independent publication authorization outside that tree.
 4. Check PyPI, GHCR, GitHub release and tag state for collisions or partial effects.
-   Dispatch `Release Automation` once with `mode=publish`, `version=v1.4.1`,
+   Dispatch `Release Automation` once with `mode=publish`, `version=v1.5.0`,
    `auto_merge=false`, `expected_commit=<recorded-main-sha>`,
    `expected_tree=<accepted-tree-sha>`, and `--ref main` only after the SHIP gate.
 5. Record workflow/run, tag/source, wheel/sdist/image digests and attestations.
