@@ -2,7 +2,7 @@
 
 # Version information
 # Historical GARC soak target: 1.2.0-rc6.
-__version__ = "1.4.1"
+__version__ = "1.5.0"
 
 # Public API exports
 __all__ = [

@@ -136,7 +136,7 @@ def test_wheel_source_binding(reviewed_wheel, tmp_path, damage):
     if damage == "name":
         content[metadata] = content[metadata].replace(b"Name: index-it-mcp", b"Name: other-package")
     elif damage == "version":
-        content[metadata] = content[metadata].replace(b"Version: 1.4.1", b"Version: 1.4.0")
+        content[metadata] = content[metadata].replace(b"Version: 1.5.0", b"Version: 1.4.1")
     elif damage == "dependency":
         content[metadata] = content[metadata].replace(b"Requires-Dist: mcp>=1.0.0\n", b"")
     elif damage == "entrypoint":
@@ -158,7 +158,7 @@ def test_wheel_source_binding(reviewed_wheel, tmp_path, damage):
             smoke.validate_wheel_source(wheel)
     else:
         result = smoke.validate_wheel_source(wheel)
-        assert result["version"] == "1.4.1"
+        assert result["version"] == "1.5.0"
         assert result["source_files_verified"] > 290
 
 
@@ -197,7 +197,7 @@ def test_delivered_image_never_builds_and_requires_immutable_reference(
     monkeypatch.setattr(smoke.shutil, "which", lambda _: "/usr/bin/docker")
     source = "c" * 40
     labels = {
-        "org.opencontainers.image.version": "v1.4.1",
+        "org.opencontainers.image.version": "v1.5.0",
         "org.opencontainers.image.revision": source,
     }
     if damage in {"version", "revision"}:
@@ -271,7 +271,7 @@ def test_delivered_image_accepts_explicit_recovery_signer_commit(monkeypatch):
         if "{{json .Config.Labels}}" in command:
             return json.dumps(
                 {
-                    "org.opencontainers.image.version": "v1.4.1",
+                    "org.opencontainers.image.version": "v1.5.0",
                     "org.opencontainers.image.revision": source,
                 }
             )
