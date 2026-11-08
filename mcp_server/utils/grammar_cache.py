@@ -363,6 +363,103 @@ def prefetch(languages: Optional[Sequence[str]] = None) -> List[str]:
     return names
 
 
+GRAMMAR_UNAVAILABLE = "grammar_unavailable"
+
+_offline_grammars: Optional[frozenset] = None
+
+
+class GrammarUnavailableError(RuntimeError):
+    """A registry language's tree-sitter grammar cannot be loaded offline.
+
+    Raised (or reported) instead of indexing the file without chunks, so a
+    reindex never publishes a silently chunkless generation for that language
+    (#116 review S3). The message starts with ``grammar_unavailable:``.
+    """
+
+    code = GRAMMAR_UNAVAILABLE
+
+    def __init__(self, language: str, grammar: str) -> None:
+        self.language = language
+        self.grammar = grammar
+        super().__init__(
+            f"{GRAMMAR_UNAVAILABLE}: tree-sitter grammar {grammar!r} for language "
+            f"{language!r} is not in the local grammar cache or libs dir. Run "
+            "`mcp-index grammars prefetch` (or set TREE_SITTER_LANGUAGE_PACK_LIBS_DIR), "
+            "then reindex."
+        )
+
+
+def _offline_grammar_set(refresh: bool = False) -> frozenset:
+    global _offline_grammars
+    if _offline_grammars is None or refresh:
+        try:
+            _offline_grammars = frozenset(cached_grammars())
+        except Exception:  # noqa: BLE001 - no usable pack means nothing loads offline
+            _offline_grammars = frozenset()
+    return _offline_grammars
+
+
+def unavailable_grammar(language: Optional[str]) -> Optional[str]:
+    """Return the pack grammar ``language`` needs when it cannot load offline.
+
+    ``None`` means the language needs no grammar (plaintext, unknown codes) or
+    its grammar is in the local cache or the shared libs dir. A miss re-reads
+    the cache once, so a prefetch that ran after startup is picked up.
+    """
+    if not language:
+        return None
+    from mcp_server.plugins.language_registry import LANGUAGE_CONFIGS, get_grammar_name
+
+    if language not in LANGUAGE_CONFIGS:
+        return None
+    grammar = get_grammar_name(language)
+    if not grammar:
+        return None
+    for refresh in (False, True):
+        available = _offline_grammar_set(refresh=refresh)
+        if grammar in available or _symbol(grammar) in available:
+            return None
+    return grammar
+
+
+def grammar_status() -> dict:
+    """Summarize grammar availability for ``get_status`` (offline, no loading)."""
+    from mcp_server.plugins.language_registry import LANGUAGE_CONFIGS, get_grammar_name
+
+    try:
+        missing = missing_grammars()
+        error = None
+    except Exception as exc:  # noqa: BLE001 - report, never raise from status
+        missing = get_required_grammars()
+        error = f"{type(exc).__name__}: {exc}"
+    missing_set = set(missing)
+    languages = sorted(
+        language for language in LANGUAGE_CONFIGS if get_grammar_name(language) in missing_set
+    )
+    libs_problems = libs_dir_problems()
+    ready = not missing and not libs_problems and error is None
+    libs = libs_dir()
+    status = {
+        "state": "ready" if ready else GRAMMAR_UNAVAILABLE,
+        "ready": ready,
+        "missing_grammars": sorted(missing_set),
+        "languages": languages,
+        "libs_dir": str(libs) if libs else None,
+        "libs_dir_problems": libs_problems,
+        "remediation": None,
+    }
+    if error is not None:
+        status["error"] = error
+    if not ready:
+        status["remediation"] = (
+            "Run `mcp-index grammars prefetch` as the service user (or export "
+            "libraries with --export-libs and set TREE_SITTER_LANGUAGE_PACK_LIBS_DIR "
+            "to a directory only root or the service user can write), then reindex. "
+            "Files in these languages fail indexing until then."
+        )
+    return status
+
+
 @dataclass
 class GrammarCheck:
     """Result of loading and parsing each requested grammar from the cache."""

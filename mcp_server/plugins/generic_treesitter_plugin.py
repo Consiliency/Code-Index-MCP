@@ -213,6 +213,14 @@ class GenericTreeSitterPlugin(PluginWithSemanticSearch):
             symbols = [self._adapter.chunk_to_symbol_dict(chunk) for chunk in chunks]
             logger.debug(f"Chunked {path}: extracted {len(symbols)} symbols")
         except Exception as e:
+            # A missing grammar is not a per-file parse problem: indexing the
+            # file without chunks would publish a silently degraded generation
+            # (#116 review S3).
+            from ..utils import grammar_cache
+
+            grammar = grammar_cache.unavailable_grammar(self.lang)
+            if grammar is not None:
+                raise grammar_cache.GrammarUnavailableError(self.lang, grammar) from e
             logger.error(f"Failed to chunk {path}: {e}")
             # Fallback to basic extraction
             symbols = self._extract_symbols_basic(content)

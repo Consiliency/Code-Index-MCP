@@ -364,3 +364,231 @@ def test_grammars_check_fails_on_an_unsafe_libs_dir(monkeypatch, tmp_path):
     assert report["ok"] is False
     assert report["libs_dir"] == str(shared)
     assert any("writable" in p for p in report["libs_dir_problems"])
+
+
+# --- grammar unavailability is visible and fails closed (#116 review S3) ---
+
+
+@pytest.fixture
+def fresh_offline_set(monkeypatch):
+    monkeypatch.setattr(grammar_cache, "_offline_grammars", None)
+
+
+def test_unavailable_grammar_maps_registry_codes_and_rereads_on_miss(
+    monkeypatch, fresh_offline_set
+):
+    reads = [set(), {"rust", "csharp"}]
+    monkeypatch.setattr(grammar_cache, "cached_grammars", lambda: sorted(reads[0]))
+    assert grammar_cache.unavailable_grammar("c_sharp") == "csharp"
+    assert grammar_cache.unavailable_grammar("plaintext") is None
+    assert grammar_cache.unavailable_grammar("not-a-registry-language") is None
+    assert grammar_cache.unavailable_grammar(None) is None
+    # A prefetch after startup is picked up on the next miss.
+    reads.pop(0)
+    assert grammar_cache.unavailable_grammar("c_sharp") is None
+    assert grammar_cache.unavailable_grammar("rust") is None
+    assert grammar_cache.unavailable_grammar("go") == "go"
+
+
+def test_grammar_status_names_missing_languages(monkeypatch):
+    monkeypatch.setattr(grammar_cache, "missing_grammars", lambda: ["csharp"])
+    monkeypatch.setattr(grammar_cache, "libs_dir_problems", lambda: [])
+    monkeypatch.delenv(grammar_cache.LIBS_DIR_ENV, raising=False)
+    status = grammar_cache.grammar_status()
+    assert status["state"] == "grammar_unavailable"
+    assert status["ready"] is False
+    assert status["missing_grammars"] == ["csharp"]
+    assert status["languages"] == ["c_sharp"]
+    assert "mcp-index grammars prefetch" in status["remediation"]
+
+    monkeypatch.setattr(grammar_cache, "missing_grammars", lambda: [])
+    status = grammar_cache.grammar_status()
+    assert status["state"] == "ready" and status["remediation"] is None
+
+    monkeypatch.setattr(grammar_cache, "libs_dir_problems", lambda: ["/x: group-writable"])
+    assert grammar_cache.grammar_status()["state"] == "grammar_unavailable"
+
+
+def test_get_status_reports_grammar_state(monkeypatch):
+    import asyncio
+    import json
+
+    from mcp_server.cli.tool_handlers import handle_get_status
+    from mcp_server.dispatcher.simple_dispatcher import SimpleDispatcher
+
+    monkeypatch.setattr(grammar_cache, "missing_grammars", lambda: ["rust"])
+    monkeypatch.setattr(grammar_cache, "libs_dir_problems", lambda: [])
+    result = asyncio.new_event_loop().run_until_complete(
+        handle_get_status(arguments={}, dispatcher=SimpleDispatcher(), repo_resolver=None)
+    )
+    grammars = json.loads(result[0].text)["grammars"]
+    assert grammars["state"] == "grammar_unavailable"
+    assert grammars["languages"] == ["rust"]
+
+
+class _ChunklessRustPlugin:
+    """A plugin that, like the real ones, swallows a missing grammar."""
+
+    lang = "rust"
+    language = "rust"
+
+    def supports(self, path):
+        return str(path).endswith(".rs")
+
+    def bind(self, ctx):
+        return None
+
+    def indexFile(self, path, content):
+        return {"file": str(path), "symbols": [], "language": "rust"}
+
+
+def _rust_repo(tmp_path):
+    from types import SimpleNamespace
+
+    from mcp_server.core.repo_context import RepoContext
+    from mcp_server.storage.sqlite_store import SQLiteStore
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "main.rs").write_text("fn main() {}\n", encoding="utf-8")
+    store = SQLiteStore(str(tmp_path / "index.db"))
+    ctx = RepoContext(
+        repo_id="grammar-repo-0001",
+        sqlite_store=store,
+        workspace_root=repo,
+        tracked_branch="main",
+        registry_entry=SimpleNamespace(
+            tracked_branch="main", path=repo, name="repo", repository_id="grammar-repo-0001"
+        ),
+    )
+    return repo, store, ctx
+
+
+def _indexed_paths(store):
+    with store._get_connection() as conn:
+        return [row[0] for row in conn.execute("SELECT path FROM files").fetchall()]
+
+
+@pytest.mark.parametrize("available", [False, True])
+def test_index_directory_fails_closed_for_an_unavailable_grammar(monkeypatch, tmp_path, available):
+    from mcp_server.dispatcher import EnhancedDispatcher
+
+    monkeypatch.setattr(
+        grammar_cache,
+        "unavailable_grammar",
+        lambda language: None if available or language != "rust" else "rust",
+    )
+    repo, store, ctx = _rust_repo(tmp_path)
+    dispatcher = EnhancedDispatcher(
+        plugins=[_ChunklessRustPlugin()],
+        use_plugin_factory=False,
+        enable_advanced_features=False,
+        semantic_search_enabled=False,
+    )
+    stats = dispatcher.index_directory(ctx, repo)
+    if available:
+        assert stats["indexed_files"] == 1 and stats["failed_files"] == 0
+        return
+    # A failed file keeps the staged generation from publishing.
+    assert stats["indexed_files"] == 0
+    assert stats["failed_files"] == 1
+    assert any("grammar_unavailable" in error for error in stats["errors"]), stats
+    assert _indexed_paths(store) == []
+
+
+def test_index_file_guarded_fails_closed_for_an_unavailable_grammar(monkeypatch, tmp_path):
+    import hashlib
+
+    from mcp_server.dispatcher import EnhancedDispatcher
+    from mcp_server.dispatcher.dispatcher_enhanced import IndexResultStatus
+
+    monkeypatch.setattr(grammar_cache, "unavailable_grammar", lambda language: "rust")
+    repo, store, ctx = _rust_repo(tmp_path)
+    dispatcher = EnhancedDispatcher(
+        plugins=[_ChunklessRustPlugin()],
+        use_plugin_factory=False,
+        enable_advanced_features=False,
+        semantic_search_enabled=False,
+    )
+    path = repo / "main.rs"
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    result = dispatcher.index_file_guarded(ctx, path, digest)
+    assert result.status == IndexResultStatus.ERROR
+    assert result.error.startswith("grammar_unavailable:")
+    assert _indexed_paths(store) == []
+
+
+def test_generic_plugin_raises_instead_of_swallowing_a_missing_grammar(monkeypatch):
+    from mcp_server.plugins import generic_treesitter_plugin as generic
+
+    def _missing(content, language):
+        raise RuntimeError("Language 'rust' not found")
+
+    monkeypatch.setattr(generic, "chunk_text", _missing)
+    plugin = generic.GenericTreeSitterPlugin(
+        LANGUAGE_CONFIGS["rust"], sqlite_store=None, enable_semantic=False
+    )
+    monkeypatch.setattr(grammar_cache, "unavailable_grammar", lambda language: "rust")
+    with pytest.raises(grammar_cache.GrammarUnavailableError, match="grammar_unavailable"):
+        plugin.indexFile("main.rs", "fn main() {}\n")
+    # A chunker failure with the grammar present keeps the basic fallback.
+    monkeypatch.setattr(grammar_cache, "unavailable_grammar", lambda language: None)
+    shard = plugin.indexFile("main.rs", "fn main() {}\n")
+    assert shard["language"] == "rust"
+
+
+def test_cold_cache_reindex_fails_closed_end_to_end(tmp_path):
+    """Real pack, cold cache, no network: every grammar-backed file fails
+    indexing (sandboxed or not) instead of being stored without chunks."""
+    import json
+    import subprocess
+    import sys
+
+    cache = tmp_path / "cold"
+    cache.mkdir(mode=0o700)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "a.c").write_text("int add(int a, int b) { return a + b; }\n")
+    (repo / "b.rs").write_text("fn main() {}\n")
+    (repo / "c.go").write_text("package main\nfunc main() {}\n")
+    script = f"""
+import json, logging
+from pathlib import Path
+from types import SimpleNamespace
+logging.disable(logging.CRITICAL)
+from mcp_server.core.repo_context import RepoContext
+from mcp_server.dispatcher import EnhancedDispatcher
+from mcp_server.storage.sqlite_store import SQLiteStore
+repo = Path({str(repo)!r})
+store = SQLiteStore({str(tmp_path / "index.db")!r})
+ctx = RepoContext(repo_id="cold-0001", sqlite_store=store, workspace_root=repo,
+    tracked_branch="main", registry_entry=SimpleNamespace(tracked_branch="main",
+    path=repo, name="repo", repository_id="cold-0001"))
+stats = EnhancedDispatcher(semantic_search_enabled=False).index_directory(ctx, repo)
+with store._get_connection() as conn:
+    files = conn.execute("SELECT COUNT(*) FROM files").fetchone()[0]
+print(json.dumps({{"indexed": stats["indexed_files"], "failed": stats["failed_files"],
+    "errors": stats.get("errors") or [], "files": files}}))
+"""
+    env = {k: v for k, v in os.environ.items() if not k.startswith("TREE_SITTER_LANGUAGE_PACK_")}
+    env.update(
+        {
+            grammar_cache.CACHE_DIR_ENV: str(cache),
+            # Offline: the unknown scheme fails before any socket is created.
+            grammar_cache.MANIFEST_URL_ENV: grammar_cache.OFFLINE_MANIFEST_URL,
+            "TMPDIR": str(tmp_path),
+            "PYTHONDONTWRITEBYTECODE": "1",
+        }
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script], env=env, capture_output=True, text=True, timeout=240
+    )
+    assert result.returncode == 0, result.stderr[-2000:]
+    report = json.loads(result.stdout.strip().splitlines()[-1])
+    assert report["indexed"] == 0, report
+    assert report["failed"] == 3, report
+    assert report["files"] == 0, report
+    assert all(
+        "grammar_unavailable" in error or "not in the local grammar cache" in error
+        for error in report["errors"]
+    ), report

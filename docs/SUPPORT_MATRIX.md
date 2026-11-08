@@ -188,6 +188,15 @@ tiers above are unchanged by the upgrade.
   host after every pack upgrade. A plugin that calls the pack's private native
   module directly is outside this cooperative guard; even then the sentinel
   keeps it off the network.
+- **Missing grammars fail closed.** Indexing a file whose registry grammar is
+  not loadable offline (not in the cache or libs directory) fails with
+  `grammar_unavailable` instead of storing the file without chunks, so a
+  reindex reports those files as failed and does not publish the generation;
+  the previous generation, or `missing_index`, stays in place. `get_status`
+  reports a `grammars` block with `state` (`ready` or `grammar_unavailable`),
+  the missing grammars, the affected language codes, libs-directory problems
+  and the remediation, and the server logs an error at startup in the same
+  case. Repository readiness of an already published index is unchanged.
 - **Grammar names.** The public language code `c_sharp` is unchanged; the pack
   grammar is `csharp`.
 - **Platform floor.** The language-pack Linux wheels need glibc 2.34 or newer.
