@@ -5,12 +5,15 @@ import logging
 import os
 import re
 import sqlite3
+import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, cast
 
 import mcp.types as types
+from mcp.shared.exceptions import MCPDeprecationWarning
+from mcp.types.version import HANDSHAKE_PROTOCOL_VERSIONS
 
 from ..config.settings import commercial_egress_allowed, learned_models_allowed
 from ..setup.semantic_preflight import EnrichmentModelResolution, resolve_enrichment_model
@@ -289,6 +292,22 @@ class ChunkWriter:
         """Return True if the connected MCP client supports sampling/createMessage."""
         if self.session is None or not commercial_egress_allowed():
             return False
+        # Protocol 2026-07-28 has no server-to-client requests: create_message
+        # raises NoBackChannelError there even when the client advertises
+        # sampling, so skip it rather than fail once per chunk (#132 review N2).
+        protocol_version = getattr(self.session, "protocol_version", None)
+        if (
+            isinstance(protocol_version, str)
+            and protocol_version not in HANDSHAKE_PROTOCOL_VERSIONS
+        ):
+            if not getattr(self, "_sampling_skip_logged", False):
+                self._sampling_skip_logged = True
+                logger.info(
+                    "MCP sampling skipped: protocol %s has no server-to-client requests; "
+                    "using the next summarization path",
+                    protocol_version,
+                )
+            return False
         try:
             params = getattr(self.session, "client_params", None)
             caps = params.capabilities if params else None
@@ -549,16 +568,22 @@ class ChunkWriter:
         # Path 1: MCP sampling (client performs the inference, no file context)
         if self._has_sampling_capability():
             try:
-                result = await self.session.create_message(
-                    messages=[
-                        types.SamplingMessage(
-                            role="user",
-                            content=types.TextContent(type="text", text=sampling_prompt),
-                        )
-                    ],
-                    system_prompt=_SYSTEM_PROMPT,
-                    max_tokens=150,
-                )
+                # mcp 2.x marks sampling deprecated (SEP-2577) but it still works
+                # on handshake-era connections; the warning is emitted when the
+                # coroutine is created, so silence it only for that call.
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", MCPDeprecationWarning)
+                    pending = self.session.create_message(
+                        messages=[
+                            types.SamplingMessage(
+                                role="user",
+                                content=types.TextContent(type="text", text=sampling_prompt),
+                            )
+                        ],
+                        system_prompt=_SYSTEM_PROMPT,
+                        max_tokens=150,
+                    )
+                result = await pending
                 content_block = result.content
                 if hasattr(content_block, "text"):
                     summary_text = content_block.text

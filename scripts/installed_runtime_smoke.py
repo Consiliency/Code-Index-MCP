@@ -11,7 +11,6 @@ import shutil
 import sqlite3
 import subprocess
 import sys
-from datetime import timedelta
 from importlib.metadata import version
 from importlib.resources import files
 from pathlib import Path
@@ -168,7 +167,7 @@ def schema_probe(root: Path) -> None:
 
 
 def payload(result, *, expected_error=False):
-    assert result.isError == expected_error, result
+    assert result.is_error == expected_error, result
     return json.loads("".join(block.text for block in result.content if hasattr(block, "text")))
 
 
@@ -184,7 +183,7 @@ def unavailable(value, state, *, code="index_unavailable"):
 
 #: Tools every STDIO session must list.
 REQUIRED_TOOLS = {"reindex", "search_code", "symbol_lookup", "get_status"}
-#: A protocol revision mcp 1.27 serves; the server may negotiate another.
+#: A handshake-era protocol revision both mcp 1.x and 2.x serve; the server may negotiate another.
 PROTOCOL_VERSION = "2025-06-18"
 
 
@@ -290,9 +289,7 @@ async def stdio_probe(root: Path, entrypoint: str) -> None:
     )
     for attempt in range(2):
         async with stdio_client(params) as (read, write):
-            async with ClientSession(
-                read, write, read_timeout_seconds=timedelta(seconds=60)
-            ) as client:
+            async with ClientSession(read, write, read_timeout_seconds=60.0) as client:
                 await client.initialize()
                 tools = await client.list_tools()
                 assert REQUIRED_TOOLS <= {tool.name for tool in tools.tools}

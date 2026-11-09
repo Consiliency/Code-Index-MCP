@@ -149,7 +149,7 @@ class Owner:
             self.thread.join()
     stop_watching_all = stop
 class Finished(Exception): pass
-def after_startup(*args):
+def after_startup(*args, **kwargs):
     assert all(owner.thread is None or not owner.thread.is_alive() for owner in owners)
     assert len(stopped) == len(owners)
     print('drained', flush=True)
@@ -339,7 +339,7 @@ async def test_stdio_normal_logs_omit_arguments_and_exception_payload(monkeypatc
         result = await runner.call_tool("search_code", {"query": sentinel})
     assert sentinel not in caplog.text
     assert "search_code" in caplog.text
-    assert result.isError == failure
+    assert result.is_error == failure
 
 
 @pytest.mark.asyncio

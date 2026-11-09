@@ -5,11 +5,65 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from uuid import uuid4
 
 import anyio
-from mcp.shared.experimental.tasks.helpers import create_task_state, is_terminal
-from mcp.shared.experimental.tasks.store import TaskStore
 from mcp.types import Result, Task, TaskMetadata, TaskStatus
+from pydantic import TypeAdapter
+
+# mcp 2.x removed the experimental Tasks runtime (``mcp.shared.experimental``)
+# when SEP-1686 left the specification; the ``Task*`` wire types remain in
+# ``mcp.types``. These helpers keep the v1 SDK semantics this registry relied on
+# (Consiliency/Code-Index-MCP#124).
+TERMINAL_TASK_STATUSES: frozenset[str] = frozenset({"completed", "failed", "cancelled"})
+DEFAULT_POLL_INTERVAL_MS = 500
+#: Longest a terminal task and its result are kept. A client's ``ttl`` is
+#: clamped to this, and a request without one gets it; the effective value is
+#: returned in the task, as the protocol allows (#132 review N1).
+MAX_TASK_TTL_MS = 60 * 60 * 1000
+#: Most tasks retained at once. The oldest terminal tasks are evicted first; a
+#: new task is refused only when every retained task is still running.
+MAX_RETAINED_TASKS = 256
+
+
+_DATETIME_ADAPTER: TypeAdapter[datetime] = TypeAdapter(datetime)
+
+
+def wire_time(moment: datetime) -> str:
+    """Serialize ``moment`` as the v1 SDK put task timestamps on the wire.
+
+    mcp 2.x types ``Task.created_at``/``last_updated_at`` as ISO strings where
+    v1 used ``datetime``; pydantic's JSON form keeps the wire value identical
+    (for example ``2026-11-09T15:59:10.123456Z``).
+    """
+    return str(_DATETIME_ADAPTER.dump_python(moment, mode="json"))
+
+
+def is_terminal(status: TaskStatus) -> bool:
+    """Return whether ``status`` is terminal (completed, failed or cancelled)."""
+    return status in TERMINAL_TASK_STATUSES
+
+
+def effective_ttl_ms(requested: int | None, maximum: int = MAX_TASK_TTL_MS) -> int:
+    """Clamp a client-requested task TTL to the server's retention bound."""
+    if requested is None:
+        return maximum
+    return max(0, min(requested, maximum))
+
+
+def create_task_state(
+    metadata: TaskMetadata, task_id: str | None = None, *, ttl_ms: int | None = None
+) -> Task:
+    """Create a new task in ``working`` status, as the v1 SDK helper did."""
+    now = datetime.now(timezone.utc)
+    return Task(
+        task_id=task_id or str(uuid4()),
+        status="working",
+        created_at=wire_time(now),
+        last_updated_at=wire_time(now),
+        ttl=metadata.ttl if ttl_ms is None else ttl_ms,
+        poll_interval=DEFAULT_POLL_INTERVAL_MS,
+    )
 
 
 @dataclass
@@ -29,12 +83,24 @@ class TaskRecord:
     expires_at: datetime | None = None
 
 
-class MCPTaskRegistry(TaskStore):
+class MCPTaskRegistry:
     """Single-process task store with extra repo-local bookkeeping."""
 
-    def __init__(self, page_size: int = 50) -> None:
+    def __init__(
+        self,
+        page_size: int = 50,
+        *,
+        max_ttl_ms: int = MAX_TASK_TTL_MS,
+        max_tasks: int = MAX_RETAINED_TASKS,
+    ) -> None:
         self._tasks: dict[str, TaskRecord] = {}
         self._page_size = page_size
+        self._max_ttl_ms = max_ttl_ms
+        self._max_tasks = max_tasks
+        # One shared event per task with waiters. ``notify_update`` sets it and
+        # drops it, so every parked waiter wakes and the next wait gets a fresh
+        # one; a second ``tasks/result`` can no longer orphan the first
+        # (#132 review S2).
         self._update_events: dict[str, anyio.Event] = {}
 
     def _calculate_expiry(self, ttl_ms: int | None) -> datetime | None:
@@ -42,16 +108,44 @@ class MCPTaskRegistry(TaskStore):
             return None
         return datetime.now(timezone.utc) + timedelta(milliseconds=ttl_ms)
 
+    def _wake(self, task_id: str) -> None:
+        event = self._update_events.pop(task_id, None)
+        if event is not None:
+            event.set()
+
+    def _forget(self, task_id: str) -> None:
+        """Drop a task and wake its waiters, which then see it is gone."""
+        del self._tasks[task_id]
+        self._wake(task_id)
+
     def _cleanup_expired(self) -> None:
+        """Drop terminal tasks past their TTL; running tasks never expire."""
         now = datetime.now(timezone.utc)
         expired = [
             task_id
             for task_id, record in self._tasks.items()
-            if record.expires_at is not None and now >= record.expires_at
+            if is_terminal(record.task.status)
+            and record.expires_at is not None
+            and now >= record.expires_at
         ]
         for task_id in expired:
-            del self._tasks[task_id]
-            self._update_events.pop(task_id, None)
+            self._forget(task_id)
+
+    def _make_room(self) -> None:
+        """Keep at most ``max_tasks``: evict the oldest terminal tasks first."""
+        if len(self._tasks) < self._max_tasks:
+            return
+        terminal = sorted(
+            (record.updated_at, task_id)
+            for task_id, record in self._tasks.items()
+            if is_terminal(record.task.status)
+        )
+        for _, task_id in terminal[: len(self._tasks) - self._max_tasks + 1]:
+            self._forget(task_id)
+        if len(self._tasks) >= self._max_tasks:
+            raise ValueError(
+                f"Too many running tasks ({self._max_tasks}); retry after one finishes"
+            )
 
     def _copy_task(self, task: Task) -> Task:
         return Task(**task.model_dump())
@@ -68,17 +162,21 @@ class MCPTaskRegistry(TaskStore):
         task_id: str | None = None,
     ) -> Task:
         self._cleanup_expired()
-        task = create_task_state(metadata, task_id)
-        if task.taskId in self._tasks:
-            raise ValueError(f"Task with ID {task.taskId} already exists")
+        task = create_task_state(
+            metadata, task_id, ttl_ms=effective_ttl_ms(metadata.ttl, self._max_ttl_ms)
+        )
+        if task.task_id in self._tasks:
+            raise ValueError(f"Task with ID {task.task_id} already exists")
+        self._make_room()
 
         now = datetime.now(timezone.utc)
-        self._tasks[task.taskId] = TaskRecord(
+        # Expiry starts when the task turns terminal (update_task), so a long
+        # reindex is never purged while it runs.
+        self._tasks[task.task_id] = TaskRecord(
             task=task,
             metadata=metadata,
             created_at=now,
             updated_at=now,
-            expires_at=self._calculate_expiry(metadata.ttl),
         )
         return self._copy_task(task)
 
@@ -104,10 +202,10 @@ class MCPTaskRegistry(TaskStore):
             record.task.status = status
             status_changed = True
         if status_message is not None:
-            record.task.statusMessage = status_message
+            record.task.status_message = status_message
 
         record.updated_at = datetime.now(timezone.utc)
-        record.task.lastUpdatedAt = record.updated_at
+        record.task.last_updated_at = wire_time(record.updated_at)
         if status is not None and is_terminal(status) and record.task.ttl is not None:
             record.expires_at = self._calculate_expiry(record.task.ttl)
         if status == "failed":
@@ -147,19 +245,20 @@ class MCPTaskRegistry(TaskStore):
     async def delete_task(self, task_id: str) -> bool:
         if task_id not in self._tasks:
             return False
-        del self._tasks[task_id]
-        self._update_events.pop(task_id, None)
+        self._forget(task_id)
         return True
 
     async def wait_for_update(self, task_id: str) -> None:
+        """Wait for the task's next update; every concurrent waiter is woken."""
         if task_id not in self._tasks:
             raise ValueError(f"Task with ID {task_id} not found")
-        self._update_events[task_id] = anyio.Event()
-        await self._update_events[task_id].wait()
+        event = self._update_events.get(task_id)
+        if event is None:
+            event = self._update_events[task_id] = anyio.Event()
+        await event.wait()
 
     async def notify_update(self, task_id: str) -> None:
-        if task_id in self._update_events:
-            self._update_events[task_id].set()
+        self._wake(task_id)
 
     async def bind_task(
         self,
@@ -182,9 +281,9 @@ class MCPTaskRegistry(TaskStore):
             raise ValueError(f"Cannot cancel task in terminal state '{record.task.status}'")
         record.cancellation_requested = True
         if status_message is not None:
-            record.task.statusMessage = status_message
+            record.task.status_message = status_message
         record.updated_at = datetime.now(timezone.utc)
-        record.task.lastUpdatedAt = record.updated_at
+        record.task.last_updated_at = wire_time(record.updated_at)
         await self.notify_update(task_id)
         return self._copy_task(record.task)
 
@@ -201,8 +300,8 @@ class MCPTaskRegistry(TaskStore):
         record = self._get_record(task_id)
         record.progress = dict(progress)
         record.updated_at = datetime.now(timezone.utc)
-        record.task.lastUpdatedAt = record.updated_at
-        record.task.statusMessage = status_message
+        record.task.last_updated_at = wire_time(record.updated_at)
+        record.task.status_message = status_message
         await self.notify_update(task_id)
         return self._copy_task(record.task)
 
@@ -230,4 +329,6 @@ class MCPTaskRegistry(TaskStore):
 
     def cleanup(self) -> None:
         self._tasks.clear()
-        self._update_events.clear()
+        events, self._update_events = self._update_events, {}
+        for event in events.values():
+            event.set()

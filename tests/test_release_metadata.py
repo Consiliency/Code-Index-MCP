@@ -380,13 +380,26 @@ def test_changelog_has_prepared_unpublished_contract_section():
     assert "does not imply publication" in section
 
 
-def test_runtime_mcp_requirement_is_capped_below_2_until_the_port():
-    """1.5.0/1.4.1 declared mcp>=1.0.0; mcp 2.x cannot start STDIO (#124)."""
+def test_runtime_mcp_requirement_is_bounded_to_the_mcp2_line():
+    """The STDIO server runs on mcp 2.x and co-installs with pmcp 3.x (#124).
+
+    1.5.0/1.4.1 declared an unbounded mcp>=1.0.0 and broke on mcp 2.x; 1.5.1
+    capped mcp<2. After the port the requirement keeps a major upper bound.
+    """
     project = tomllib.loads(_read_text("pyproject.toml"))["project"]
-    assert "mcp>=1.27,<2" in project["dependencies"]
+    # Capped below the first unverified minor: Server.middleware is provisional (#132 S1).
+    assert "mcp>=2.2,<2.4" in project["dependencies"]
+    from packaging.requirements import Requirement
+
+    (mcp_requirement,) = [
+        Requirement(dep) for dep in project["dependencies"] if Requirement(dep).name == "mcp"
+    ]
+    assert "2.3.0" in mcp_requirement.specifier
+    assert "1.30.0" not in mcp_requirement.specifier
+    assert "2.4.0" not in mcp_requirement.specifier
     lock = tomllib.loads(_read_text("uv.lock"))
     (mcp,) = [package for package in lock["package"] if package["name"] == "mcp"]
-    assert mcp["version"].split(".")[0] == "1"
+    assert mcp["version"].split(".")[0] == "2"
 
 
 def test_release_workflow_separates_prepare_from_protected_main_publish():

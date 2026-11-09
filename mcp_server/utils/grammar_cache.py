@@ -25,10 +25,17 @@ first, without the ownership check and without touching ``$HOME``.
 
 from __future__ import annotations
 
+import logging
 import os
+import random
+import re
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable, List, Optional, Sequence
+from typing import Callable, Iterable, List, Optional, Sequence
+from urllib.parse import urlsplit
+
+logger = logging.getLogger(__name__)
 
 #: Environment variable the language pack reads for its cache root.
 CACHE_DIR_ENV = "TREE_SITTER_LANGUAGE_PACK_CACHE_DIR"
@@ -350,17 +357,169 @@ def missing_grammars(languages: Optional[Iterable[str]] = None) -> List[str]:
     return [name for name in wanted if name not in cached]
 
 
-def prefetch(languages: Optional[Sequence[str]] = None) -> List[str]:
+#: Download attempts per prefetch, including the first (Consiliency/Code-Index-MCP#131).
+PREFETCH_ATTEMPTS = 5
+#: Backoff before the second attempt; doubles per attempt, capped at the maximum.
+PREFETCH_BASE_DELAY_SECONDS = 4.0
+PREFETCH_MAX_DELAY_SECONDS = 60.0
+#: Wall-clock budget for one prefetch: no retry starts that would sleep past it.
+#: It bounds the backoff, not a single attempt, which the pack may let hang.
+PREFETCH_DEADLINE_SECONDS = 120.0
+
+_HTTP_STATUS = re.compile(r"http status:\s*(\d{3})", re.IGNORECASE)
+_URL = re.compile(r"[a-z][a-z0-9+.-]*://[^\s'\"<>]+", re.IGNORECASE)
+#: Transport failures worth retrying: connection resets, timeouts, refused
+#: connections and DNS lookup failures (#132 review N4).
+_TRANSIENT_TRANSPORT = re.compile(
+    r"connection reset|reset by peer|connection aborted|broken pipe|"
+    r"unexpected end of file|timed out|timeout|connection refused|"
+    r"dns error|failed to lookup|temporary failure in name resolution|"
+    r"name or service not known",
+    re.IGNORECASE,
+)
+#: HTTP statuses worth retrying besides 5xx.
+_TRANSIENT_HTTP_STATUSES = frozenset({408, 429})
+
+
+class GrammarPrefetchError(RuntimeError):
+    """Grammar download failed; the message names only the URL and the cause.
+
+    The pack's own error text carries the full request URL, query string
+    included, so it is never logged or re-raised verbatim.
+    """
+
+    def __init__(self, message: str, *, attempts: int, failure: "DownloadFailure") -> None:
+        super().__init__(message)
+        self.attempts = attempts
+        self.failure = failure
+
+
+@dataclass(frozen=True)
+class DownloadFailure:
+    """A classified grammar download failure, safe to log."""
+
+    transient: bool
+    reason: str
+    url: Optional[str] = None
+    status: Optional[int] = None
+
+    def describe(self) -> str:
+        where = f" for {self.url}" if self.url else ""
+        status = f"HTTP {self.status}" if self.status is not None else self.reason
+        return f"{status}{where}"
+
+
+def _safe_url(message: str) -> Optional[str]:
+    """Return the first URL in ``message`` without credentials, query or fragment."""
+    match = _URL.search(message)
+    if match is None:
+        return None
+    raw = match.group(0).rstrip(".,;:)")
+    try:
+        parts = urlsplit(raw)
+        host = parts.hostname or ""
+        port = f":{parts.port}" if parts.port else ""
+    except ValueError:
+        return None
+    return f"{parts.scheme}://{host}{port}{parts.path}"
+
+
+def classify_download_error(exc: BaseException) -> DownloadFailure:
+    """Decide whether a language-pack download failure is worth retrying.
+
+    Retried: HTTP 5xx, 408 and 429, connection resets, timeouts, refused
+    connections and DNS lookup failures. Never retried: other HTTP statuses
+    (4xx such as 404), checksum mismatches and anything unrecognized. The pack reports failures as ``RuntimeError("Download error:
+    Failed to fetch manifest from <url>: http status: 504")`` and similar.
+    """
+    message = str(exc)
+    url = _safe_url(message)
+    if type(exc).__name__ == "ChecksumMismatchError" or "checksum" in message.lower():
+        return DownloadFailure(False, "checksum mismatch", url)
+    status_match = _HTTP_STATUS.search(message)
+    if status_match is not None:
+        status = int(status_match.group(1))
+        transient = status in _TRANSIENT_HTTP_STATUSES or 500 <= status <= 599
+        return DownloadFailure(transient, "http status", url, status)
+    transport = _TRANSIENT_TRANSPORT.search(message)
+    if transport is not None:
+        return DownloadFailure(True, transport.group(0).lower(), url)
+    return DownloadFailure(False, type(exc).__name__, url)
+
+
+def _backoff_delay(attempt: int, jitter: Callable[[], float]) -> float:
+    """Equal-jitter exponential backoff before attempt ``attempt + 1``."""
+    ceiling = min(PREFETCH_MAX_DELAY_SECONDS, PREFETCH_BASE_DELAY_SECONDS * 2.0 ** (attempt - 1))
+    return ceiling / 2 + jitter() * ceiling / 2
+
+
+def prefetch(
+    languages: Optional[Sequence[str]] = None,
+    *,
+    downloader: Optional[Callable[[List[str]], object]] = None,
+    attempts: int = PREFETCH_ATTEMPTS,
+    deadline_seconds: float = PREFETCH_DEADLINE_SECONDS,
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.monotonic,
+    jitter: Callable[[], float] = random.random,
+) -> List[str]:
     """Download (if needed) and load every requested grammar.
 
-    Defaults to every grammar the language registry advertises. Raises the
-    pack's ``DownloadError``/``RuntimeError`` when a grammar cannot be fetched.
+    Defaults to every grammar the language registry advertises. The manifest
+    and parser bundle come from GitHub release assets, so transient failures
+    (HTTP 5xx, 408 and 429, connection resets, timeouts, refused connections
+    and DNS lookup failures) are retried with bounded exponential backoff and
+    jitter: at most ``attempts`` tries, and no retry starts that would sleep
+    past ``deadline_seconds`` (Consiliency/Code-Index-MCP#131). The budget
+    bounds the backoff, not one attempt, which the pack may let hang. Other failures,
+    such as HTTP 404 or a checksum mismatch, fail on the first attempt.
+    Retries log only the URL (no query string) and the status.
+
+    Raises :class:`GrammarPrefetchError` when the grammars cannot be fetched.
     Returns the grammar names that were prefetched.
     """
     names = sorted(set(languages if languages is not None else get_required_grammars()))
-    if names:
-        _pack().prefetch(names)
-    return names
+    if not names:
+        return names
+    download = downloader if downloader is not None else _pack().prefetch
+    started = clock()
+    attempts = max(1, attempts)
+    for attempt in range(1, attempts + 1):
+        try:
+            download(names)
+            return names
+        except Exception as exc:  # noqa: BLE001 - classified below
+            failure = classify_download_error(exc)
+        if not failure.transient:
+            raise GrammarPrefetchError(
+                f"grammar download failed ({failure.describe()}); not retried",
+                attempts=attempt,
+                failure=failure,
+            ) from None
+        if attempt == attempts:
+            raise GrammarPrefetchError(
+                f"grammar download failed after {attempt} attempts ({failure.describe()})",
+                attempts=attempt,
+                failure=failure,
+            ) from None
+        delay = _backoff_delay(attempt, jitter)
+        remaining = deadline_seconds - (clock() - started)
+        if delay > remaining:
+            raise GrammarPrefetchError(
+                f"grammar download failed after {attempt} attempts within "
+                f"{deadline_seconds:.0f}s ({failure.describe()})",
+                attempts=attempt,
+                failure=failure,
+            ) from None
+        logger.warning(
+            "Grammar download attempt %d/%d failed (%s); retrying in %.1fs",
+            attempt,
+            attempts,
+            failure.describe(),
+            delay,
+        )
+        sleep(delay)
+    raise AssertionError("unreachable")  # pragma: no cover
 
 
 GRAMMAR_UNAVAILABLE = "grammar_unavailable"

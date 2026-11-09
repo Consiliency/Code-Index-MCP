@@ -773,7 +773,7 @@ def test_reindex_unchanged_file_reports_generation_refresh(tmp_path):
     assert second["mutation_performed"] is True
     assert second["message"] == "File unchanged; index generation refreshed"
     assert generation and generation != prior_generation
-    schema = next(tool.outputSchema for tool in _build_tool_list() if tool.name == "reindex")
+    schema = next(tool.output_schema for tool in _build_tool_list() if tool.name == "reindex")
     jsonschema.validate(second, schema)
 
 

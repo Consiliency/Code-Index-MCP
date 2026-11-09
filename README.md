@@ -484,6 +484,11 @@ acceptance. Do not install published `1.5.0` or `1.4.1` without constraining
 `index-it-mcp==1.5.0` resolves `mcp` 2.x), and `mcp` 2.x cannot start the STDIO
 server (see [docs/operations/v13-release.md](docs/operations/v13-release.md)).
 
+Source installs and wheels built from `main` require `mcp>=2.2,<2.4` (the `mcp`
+2.x SDK), so they install in the same environment as PMCP 3.x. Remove any
+`mcp<2` pin installed alongside them: it makes the install unresolvable. See
+[docs/SUPPORT_MATRIX.md](docs/SUPPORT_MATRIX.md).
+
 ### Quick Start After Installation
 
 ```bash

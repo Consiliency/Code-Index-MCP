@@ -19,7 +19,7 @@ def test_tool_descriptions():
 
 def test_symbol_lookup_schema_has_repository():
     tools = _tools_by_name()
-    assert "repository" in tools["symbol_lookup"].inputSchema["properties"]
+    assert "repository" in tools["symbol_lookup"].input_schema["properties"]
 
 
 def test_write_summaries_sandbox_claim():

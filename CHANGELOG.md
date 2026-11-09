@@ -59,7 +59,100 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `github_pat_`), AWS access key ids, Slack tokens, PEM private keys, URL
   credentials and `*secret*`/`*token*`/`*password*` key-value pairs.
 
+**Changed** (Consiliency/Code-Index-MCP#124)
+- The STDIO server runs on the `mcp` 2.x SDK. The requirement is now
+  `mcp>=2.2,<2.4` (locked at 2.3.0), so `index-it-mcp` installs in the same
+  environment as PMCP 3.x (`mcp>=2.2,<3`) and `phase-loop-runtime==0.7.30`
+  with a clean `uv pip check`. `jsonschema` is now a direct dependency.
+- The cap below 2.4 is deliberate. The Tasks runtime depends on the SDK's
+  `Server.middleware`, which mcp marks provisional ("may change in a 2.x minor
+  release"). Each new mcp minor must be re-tested before the cap is widened.
+  At startup the server also checks the middleware contract it needs and fails
+  with an actionable message if an installed mcp lacks it.
+- Clients see the same tools, input and output schemas, results, error codes
+  (except for methods the server does not serve, below) and readiness-aware
+  `index_unavailable` responses. The port keeps two
+  contracts the 1.x SDK's `call_tool` decorator provided and the 2.x lowlevel
+  server dropped: arguments are validated against each tool's `inputSchema`
+  (`Input validation error: ...` results), and a failing tool returns an
+  `isError` result instead of a JSON-RPC error.
+- The 2.x SDK removed its experimental Tasks runtime. A repo-owned runtime keeps
+  task-augmented `reindex` and `write_summaries`, the `tasks` capability, and
+  `tasks/get`, `tasks/result`, `tasks/list` and `tasks/cancel`, with the 1.x
+  results and error codes, on connections negotiated at a handshake-era
+  protocol revision (2025-11-25 and earlier).
+- Clients that probe `server/discover` now negotiate protocol revision
+  2026-07-28 instead of falling back to `initialize` at 2025-11-25. Claude
+  Code 2.1.x does this. On that revision, which has no Tasks, `tools/list`
+  omits `execution`, task metadata on `tools/call` is ignored (the call runs
+  synchronously), `tasks/*` answer `-32601`, and results add `resultType` and
+  a `serverInfo` `_meta` stamp. The official Python SDK's `ClientSession`, the
+  1.x SDK client and the PMCP 3.x gateway negotiate 2025-11-25.
+- Every tool's `outputSchema` now carries the top-level `"type": "object"` the
+  MCP schema requires and the 2.x SDK enforces. Each schema's `oneOf` branches
+  were already objects, so the same results validate.
+- Requests for methods the server does not serve now answer `-32601` (Method
+  not found) with the method name in `data`, per JSON-RPC; the 1.x SDK
+  answered unknown methods with `-32602`.
+- The PMCP pilot's client uses `streamable_http_client` with an `httpx2`
+  client, because the 2.x SDK removed `streamablehttp_client`.
+
+- Task retention is bounded. A task's `ttl` is clamped to one hour, a task
+  without one gets one hour, and the effective value is returned. Expiry starts
+  when a task finishes, so a running task is never purged. At most 256 tasks
+  are kept: the oldest finished tasks are evicted first, and a new task is
+  refused only while 256 are still running.
+- Concurrent `tasks/result` requests for the same task are all answered when
+  the task finishes. Previously, as in the 1.x SDK runtime, a second request
+  left the first one waiting forever. Deleting or expiring a task now wakes its
+  waiters, which get `-32602`.
+- A line on STDIO that is not a valid JSON-RPC message gets a JSON-RPC error
+  instead of no reply (the 2.x transport drops it silently): `-32700` (Parse
+  error, `id` null) for invalid JSON, and `-32600` (Invalid Request) for other
+  JSON, echoing a string or integer `id`. Blank lines are ignored. A warning
+  logs only the size and the error code.
+- On protocol 2026-07-28, which has no server-to-client requests, summarization
+  no longer attempts MCP sampling for every chunk. It logs once and uses the
+  next summarization path.
+
+**Fixed** (Consiliency/Code-Index-MCP#128)
+- The STDIO `initialize` reply's `serverInfo.version` is the `index-it-mcp`
+  version (`mcp_server.__version__`), not the `mcp` library version. The same
+  version is stamped on 2026-07-28 results.
+
+**Fixed** (Consiliency/Code-Index-MCP#131)
+- `mcp-index grammars prefetch` retries transient download failures from the
+  language pack's GitHub release assets: HTTP 5xx and 429, connection resets
+  and timeouts. It makes at most 5 attempts, with equal-jitter exponential
+  backoff (4 s doubling, capped at 60 s); no retry starts that would sleep past
+  a 120 s budget. Refused connections, DNS lookup failures and HTTP 408 are also
+  retried. Other HTTP 4xx such as 404, checksum mismatches and unrecognized
+  failures fail on the first attempt. Retries and the final error name only the URL (without credentials,
+  query or fragment) and the status. CI, Release Automation and the production
+  Dockerfile all prefetch through this command.
+
+**Fixed** (Consiliency/Code-Index-MCP#127)
+- `scripts/v13_pmcp_pilot.py` now gives its fixtures and network-denied sandbox
+  workers a prefetched grammar cache. `prepare` prefetches into an explicit
+  cache, then binds it in the manifest: `--grammar-cache`, else the caller's
+  `TREE_SITTER_LANGUAGE_PACK_CACHE_DIR`, else `<root>/grammar-cache`. Every
+  mode checks the cache offline before it starts. The fixture, server,
+  registration and lifecycle environments get
+  `TREE_SITTER_LANGUAGE_PACK_CACHE_DIR`, plus a manifest URL that refuses
+  downloads, so offline mode's `reindex` no longer fails with
+  `grammar_unavailable`.
+
 **Upgrade notes**
+- **Drop any `mcp<2` pin installed alongside `index-it-mcp`.** This release
+  requires `mcp>=2.2,<2.4`; a `"mcp<2"` constraint (the workaround for `1.4.1`
+  and `1.5.0`) makes the install unresolvable. Code that imports the `mcp`
+  SDK in the same environment must use the 2.x API.
+- Task-augmented `reindex` and `write_summaries` remain available to clients
+  that negotiate 2025-11-25 or earlier. The official Python SDK 2.x has no
+  Tasks client; its `ClientSession` validates every `tools/call` result as a
+  `CallToolResult`, so task clients must speak the 2025-11-25 wire directly.
+- PMCP pilot manifests prepared before this change lack `grammar_cache`. Run
+  `prepare` again.
 - After deploying, hosts that worked around Consiliency/Code-Index-MCP#114 with
   a long `MCP_WATCHER_SWEEP_MINUTES` (for example 1440) can return to the
   default.

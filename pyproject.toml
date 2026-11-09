@@ -25,7 +25,14 @@ keywords = ["mcp", "code-indexer", "ai", "llm", "claude", "code-search", "tree-s
 
 # Core dependencies - includes voyageai/qdrant for imports (features require API keys)
 dependencies = [
-    "mcp>=1.27,<2",
+    # mcp 2.x SDK (Consiliency/Code-Index-MCP#124): co-installs with pmcp 3.x,
+    # which requires mcp>=2.2,<3. Capped below 2.4 because the Tasks runtime
+    # relies on Server.middleware, which mcp marks provisional ("may change in a
+    # 2.x minor release"); re-test and widen the cap for each new mcp minor.
+    # The STDIO server imports jsonschema directly to keep v1's tools/call input
+    # validation, which the 2.x lowlevel server dropped.
+    "mcp>=2.2,<2.4",
+    "jsonschema>=4.20.0",
     "fastapi>=0.100.0",
     "uvicorn>=0.23.0",
     "treesitter-chunker>=6,<7",

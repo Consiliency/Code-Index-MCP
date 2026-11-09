@@ -35,7 +35,7 @@ class _FakeTask:
 async def test_run_write_summaries_task_returns_sync_shaped_payload() -> None:
     registry = MCPTaskRegistry()
     task_state = await registry.create_task(TaskMetadata())
-    task = _FakeTask(task_state.taskId)
+    task = _FakeTask(task_state.task_id)
     active_store = SimpleNamespace(db_path="/tmp/code_index.db")
 
     with (
@@ -68,7 +68,7 @@ async def test_run_write_summaries_task_returns_sync_shaped_payload() -> None:
         )
         assert writer_cls.call_args.kwargs["summarization_config"]["profile_id"] == "oss_high"
 
-    payload = result.structuredContent
+    payload = result.structured_content
     assert payload["chunks_summarized"] == 3
     assert payload["summary_chunks_attempted"] == 3
     assert payload["summary_missing_chunks"] == 0
@@ -79,8 +79,8 @@ async def test_run_write_summaries_task_returns_sync_shaped_payload() -> None:
 async def test_run_write_summaries_task_records_cancelled_terminal_result() -> None:
     registry = MCPTaskRegistry()
     task_state = await registry.create_task(TaskMetadata())
-    await registry.request_cancellation(task_state.taskId)
-    task = _FakeTask(task_state.taskId)
+    await registry.request_cancellation(task_state.task_id)
+    task = _FakeTask(task_state.task_id)
     active_store = SimpleNamespace(db_path="/tmp/code_index.db")
 
     with (
@@ -113,7 +113,7 @@ async def test_run_write_summaries_task_records_cancelled_terminal_result() -> N
             model_used="gpt-test",
         )
 
-    payload = result.structuredContent
+    payload = result.structured_content
     assert payload["cancelled"] is True
-    record = await registry.get_record(task_state.taskId)
+    record = await registry.get_record(task_state.task_id)
     assert record.task.status == "cancelled"

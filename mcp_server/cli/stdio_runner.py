@@ -19,14 +19,22 @@ from pathlib import Path
 from typing import Any, AsyncIterator, Callable, Optional, Sequence
 
 import anyio
+import jsonschema
 import mcp.types as types
-from mcp.server import Server
+from mcp.server import Server, ServerRequestContext
 from mcp.server.stdio import stdio_server
-from mcp.shared.exceptions import McpError
+from mcp.shared.exceptions import MCPError
 
+from mcp_server import __version__
 from mcp_server.cli import tool_handlers
 from mcp_server.cli.bootstrap import initialize_stateless_services, timeout, validate_index
 from mcp_server.cli.handshake import HandshakeGate
+from mcp_server.cli.task_runtime import (
+    TaskCreated,
+    TaskRequest,
+    TaskRuntime,
+    tasks_capability,
+)
 from mcp_server.dispatcher.dispatcher_enhanced import EnhancedDispatcher
 from mcp_server.dispatcher.simple_dispatcher import SimpleDispatcher
 from mcp_server.health.repository_readiness import ReadinessClassifier
@@ -235,10 +243,10 @@ def _tool_annotations(
     open_world: bool,
 ) -> types.ToolAnnotations:
     return types.ToolAnnotations(
-        readOnlyHint=read_only,
-        destructiveHint=destructive,
-        idempotentHint=idempotent,
-        openWorldHint=open_world,
+        read_only_hint=read_only,
+        destructive_hint=destructive,
+        idempotent_hint=idempotent,
+        open_world_hint=open_world,
     )
 
 
@@ -269,11 +277,15 @@ def _tool(
         name=name,
         title=title,
         description=description,
-        inputSchema=input_schema,
+        input_schema=input_schema,
         annotations=annotations,
-        outputSchema=output_schema,
+        # The MCP schema requires an object-typed outputSchema, and the mcp 2.x
+        # SDK validates tools/list against it. Every branch of these schemas is
+        # already an object, so the top-level "type" does not change what
+        # validates (Consiliency/Code-Index-MCP#124).
+        output_schema={"type": "object", **output_schema},
         execution=(
-            types.ToolExecution(taskSupport="optional")
+            types.ToolExecution(task_support="optional")
             if name in {"reindex", "write_summaries"}
             else None
         ),
@@ -321,8 +333,8 @@ def _to_call_tool_result(
 
     return types.CallToolResult(
         content=list(response),
-        structuredContent=structured_payload,
-        isError=_payload_is_error(structured_payload),
+        structured_content=structured_payload,
+        is_error=_payload_is_error(structured_payload),
     )
 
 
@@ -1004,15 +1016,57 @@ def _force_shutdown() -> None:
         os._exit(1)
 
 
+def _malformed_line_reply(line: str) -> dict[str, Any] | None:
+    """JSON-RPC error for a line the SDK would drop, or ``None`` to pass it on.
+
+    The mcp 2.x STDIO transport discards a line that is not a valid JSON-RPC
+    message without answering, so a client waiting on that id hangs. JSON-RPC
+    2.0 says to reply: -32700 (Parse error) for invalid JSON and -32600
+    (Invalid Request) for JSON that is not a request, with ``id`` null when it
+    cannot be determined (#132 review N3).
+    """
+    try:
+        types.jsonrpc_message_adapter.validate_json(line, by_name=False)
+        return None
+    except (ValueError, RecursionError):
+        pass
+    try:
+        payload = json.loads(line)
+    except (ValueError, RecursionError):
+        error = {"code": types.PARSE_ERROR, "message": "Parse error"}
+        request_id: Any = None
+    else:
+        error = {"code": types.INVALID_REQUEST, "message": "Invalid Request"}
+        request_id = payload.get("id") if isinstance(payload, dict) else None
+        if isinstance(request_id, bool) or not isinstance(request_id, (str, int)):
+            request_id = None
+    return {"jsonrpc": "2.0", "id": request_id, "error": error}
+
+
 async def _stdio_input(
-    reader: asyncio.StreamReader, on_eof: Callable[[], None]
+    reader: asyncio.StreamReader,
+    on_eof: Callable[[], None],
+    output: "_StdioOutput | None" = None,
 ) -> AsyncIterator[str]:
     while True:
         line = await reader.readline()
         if not line:
             on_eof()
             return
-        yield line.decode("utf-8", errors="replace")
+        text = line.decode("utf-8", errors="replace")
+        if output is not None:
+            if not text.strip():
+                continue
+            reply = _malformed_line_reply(text)
+            if reply is not None:
+                logger.warning(
+                    "Rejected a malformed JSON-RPC line (%d bytes) with error %d",
+                    len(line),
+                    reply["error"]["code"],
+                )
+                await output.write(json.dumps(reply) + "\n")
+                continue
+        yield text
 
 
 class _StdioOutput:
@@ -1382,8 +1436,19 @@ _init_lock: Optional[asyncio.Lock] = None
 
 
 async def call_tool(
-    name: str, arguments: dict | None
+    name: str,
+    arguments: dict | None,
+    *,
+    session: Any = None,
+    task_request: TaskRequest | None = None,
 ) -> types.CallToolResult | types.CreateTaskResult:
+    """Dispatch one MCP tool call.
+
+    ``session`` is the request's ``ServerSession`` and ``task_request`` its task
+    view; both are ``None`` when called outside an MCP request (tests, shims).
+    The mcp 2.x SDK passes them to ``_on_call_tool`` instead of the v1
+    ``request_ctx`` contextvar, which it removed.
+    """
     global _lazy_summarizer, _init_lock, _gate
 
     # Authenticate before request-scoped setup or any lazy service side effects.
@@ -1414,19 +1479,14 @@ async def call_tool(
             [types.TextContent(type="text", text=tool_handlers._ensure_response(payload))]
         )
 
-    _current_session = None
+    _current_session = session
+    _request_experimental = task_request
     _client_name = None
-    _request_experimental = None
     try:
-        from mcp.server.lowlevel.server import request_ctx
-
-        _ctx = request_ctx.get()
-        _current_session = _ctx.session
-        _request_experimental = _ctx.experimental
         _params = getattr(_current_session, "client_params", None)
-        _client_name = getattr(getattr(_params, "clientInfo", None), "name", None)
+        _client_name = getattr(getattr(_params, "client_info", None), "name", None)
     except Exception as _e:
-        logger.debug("request_ctx not available: %s", type(_e).__name__)
+        logger.debug("client info not available: %s", type(_e).__name__)
 
     # Lazy initialize on first call
     if dispatcher is None and sqlite_store is None and initialization_error is None:
@@ -1576,7 +1636,7 @@ async def call_tool(
             ]
     except Exception as e:
         _tool_status = "error"
-        if isinstance(e, McpError):
+        if isinstance(e, MCPError):
             raise
         logger.error("MCP tool execution failed (%s)", type(e).__name__)
         response = [
@@ -1617,9 +1677,94 @@ async def call_tool(
     return _to_call_tool_result(response)
 
 
+def _tool_error_result(message: str) -> types.CallToolResult:
+    return types.CallToolResult(
+        content=[types.TextContent(type="text", text=message)],
+        is_error=True,
+    )
+
+
+async def _on_list_tools(
+    ctx: ServerRequestContext[Any], params: types.PaginatedRequestParams | None
+) -> types.ListToolsResult:
+    return types.ListToolsResult(tools=_build_tool_list())
+
+
+def _make_call_tool_handler(task_runtime: TaskRuntime | None):
+    """Build the ``tools/call`` handler with the v1 SDK decorator's contract.
+
+    The mcp 1.x ``@server.call_tool()`` decorator validated arguments against
+    the tool's ``inputSchema`` and turned any handler exception into an
+    ``isError`` result. The 2.x lowlevel server does neither (a raised
+    exception becomes a JSON-RPC error), so this keeps both behaviours for
+    clients (Consiliency/Code-Index-MCP#124).
+    """
+
+    async def _on_call_tool(
+        ctx: ServerRequestContext[Any], params: types.CallToolRequestParams
+    ) -> types.CallToolResult:
+        name = params.name
+        arguments = params.arguments or {}
+        result: types.CallToolResult | types.CreateTaskResult
+        try:
+            tool = next((tool for tool in _build_tool_list() if tool.name == name), None)
+            if tool is not None:
+                try:
+                    jsonschema.validate(instance=arguments, schema=tool.input_schema)
+                except jsonschema.ValidationError as exc:
+                    return _tool_error_result(f"Input validation error: {exc.message}")
+            task_request = (
+                task_runtime.request(ctx, params)
+                if task_runtime is not None
+                else TaskRequest(None, None, ctx.session)
+            )
+            result = await call_tool(
+                name, arguments, session=ctx.session, task_request=task_request
+            )
+        except Exception as exc:
+            return _tool_error_result(str(exc))
+        if isinstance(result, types.CreateTaskResult):
+            raise TaskCreated(result)
+        return result
+
+    return _on_call_tool
+
+
 # ---------------------------------------------------------------------------
 # _serve() — thin orchestrator
 # ---------------------------------------------------------------------------
+
+
+def _build_server(task_runtime: TaskRuntime | None = None) -> Server[Any]:
+    """Construct the lowlevel MCP server with its handlers.
+
+    ``version`` is the index-it-mcp package version, which the ``initialize``
+    reply reports as ``serverInfo.version`` (Consiliency/Code-Index-MCP#128).
+    """
+    server: Server[Any] = Server(
+        _SERVER_NAME,
+        version=__version__,
+        instructions=_SERVER_INSTRUCTIONS,
+        on_list_tools=_on_list_tools,
+        on_call_tool=_make_call_tool_handler(task_runtime),
+    )
+    if task_runtime is not None:
+        task_runtime.install(server)
+    return server
+
+
+def _initialization_options(server: Server[Any]) -> Any:
+    """``initialize`` payload: v1's capability set, including ``tasks``.
+
+    ``experimental: {}`` and ``tasks`` match what the v1 SDK advertised. The
+    ``initialize`` handshake only negotiates handshake-era revisions, which all
+    define Tasks; 2026-07-28 clients use ``server/discover``, whose capabilities
+    the SDK derives without ``tasks``.
+    """
+    options = server.create_initialization_options(experimental_capabilities={})
+    if server.get_request_handler("tasks/get") is not None:
+        options.capabilities.tasks = tasks_capability()
+    return options
 
 
 async def _serve(registry_path=None) -> None:
@@ -1739,27 +1884,9 @@ async def _serve(registry_path=None) -> None:
     if not _gate.enabled:
         logger.warning("running unauthenticated \u2014 MCP_CLIENT_SECRET not set")
 
-    server = Server(_SERVER_NAME)
-    server.instructions = _SERVER_INSTRUCTIONS
     _task_registry = MCPTaskRegistry()
-    server.experimental.enable_tasks(store=_task_registry)
-
-    @server.experimental.cancel_task()
-    async def _cancel_task(req: types.CancelTaskRequest) -> types.CancelTaskResult:
-        if _task_registry is None:
-            raise RuntimeError("Task registry not initialized")
-        task = await _task_registry.request_cancellation(
-            req.params.taskId,
-            status_message="Cancellation requested; waiting for a safe stop point.",
-        )
-        return types.CancelTaskResult(**task.model_dump())
-
-    @server.list_tools()
-    async def list_tools() -> list[types.Tool]:
-        return _build_tool_list()
-
-    # Register module-level call_tool via imperative decorator application
-    server.call_tool()(call_tool)
+    task_runtime = TaskRuntime(_task_registry)
+    server = _build_server(task_runtime)
 
     transports = []
     try:
@@ -1778,17 +1905,19 @@ async def _serve(registry_path=None) -> None:
                 )
                 transports.append(transport)
                 writer = asyncio.StreamWriter(transport, protocol, None, _loop)
+                stdout = _StdioOutput(writer)
                 transport_options = {
-                    "stdin": _stdio_input(reader, _handle_signal),
-                    "stdout": _StdioOutput(writer),
+                    "stdin": _stdio_input(reader, _handle_signal, stdout),
+                    "stdout": stdout,
                 }
             async with stdio_server(**transport_options) as (read_stream, write_stream):
-                await server.run(
-                    read_stream,
-                    write_stream,
-                    server.create_initialization_options(),
-                    raise_exceptions=False,
-                )
+                async with task_runtime.running():
+                    await server.run(
+                        read_stream,
+                        write_stream,
+                        _initialization_options(server),
+                        raise_exceptions=False,
+                    )
     finally:
         _handle_signal()
         cleanup_succeeded = False
