@@ -1,25 +1,27 @@
 # V13 Release Preparation And Acceptance
 
-## Candidate Status
+## Release Status
 
-`1.5.0` is the prepared candidate for the treesitter-chunker 6 / tree-sitter 0.26
+`1.5.0` is published. It carries the treesitter-chunker 6 / tree-sitter 0.26
 parser-stack upgrade (Code-Index-MCP#115, merged in #116) and the baml-bridge
-0.23.0 alignment (Code-Index-MCP#119, merged in #120). The latest published
-release is `v1.4.1` (Code-Index-MCP#97), published October 13, 2026 and
-delivered-accepted as recorded in `docs/status/V13_EXECUTION.md`. This document
-and the version bump do not claim that `1.5.0` has been published or deployed.
-The evidence and review narrative below records how `1.4.1` was accepted. The
-Publication Gate was written for `1.4.1`; the owner decides which of its review
-seats and live checks apply to `1.5.0`. Its dispatch, recovery and
-delivered-acceptance rules are unchanged.
+0.23.0 alignment (Code-Index-MCP#119, merged in #120). It is recorded as
+published, not accepted and not deployed; see "1.5.0 Delivered Acceptance"
+below. The previous release, `v1.4.1` (Code-Index-MCP#97), was published
+October 13, 2026 and delivered-accepted as recorded in
+`docs/status/V13_EXECUTION.md`. The evidence and review narrative below records
+how `1.4.1` was accepted. The Publication Gate was written for `1.4.1`; for
+`1.5.0` the owner chose green CI, the existing reviews on #116 and #120, and
+post-publish acceptance of the published wheel and image. Its dispatch, recovery
+and delivered-acceptance rules are unchanged.
 The canonical source plan is `specs/phase-plans-v13.md`; execution progress is
 `docs/status/V13_EXECUTION.md`.
 
 Distribution: `index-it-mcp`; commands: `mcp-index` and `index-it-mcp`.
 Container: the signed `ghcr.io/consiliency/code-index-mcp@sha256:...` reference
 published in the `v1.5.0` GitHub release's `image-reference.txt` asset. Installers
-pin that exact reference; version/latest GHCR tags are left untouched. Until then, use
-`uv sync --locked` or the locally built `index_it_mcp-1.5.0-py3-none-any.whl`.
+pin that exact reference; version/latest GHCR tags are left untouched. A PyPI
+install needs `"mcp<2"` (see below); `uv sync --locked` and the locally built
+`index_it_mcp-1.5.0-py3-none-any.whl` remain supported development paths.
 The installer's `latest` selector means the latest GitHub release, not a mutable
 GHCR tag. It refuses a missing or malformed reference without falling back.
 
@@ -146,6 +148,85 @@ the delivered image check from its accepted source checkout and pass
 `--image-signer-sha <protected-main-signing-workflow-commit>` with `--image-ref`.
 The verifier checks the signer commit follows the image source, belongs to
 protected-main history, and matches the image signature's workflow identity.
+
+## 1.5.0 Delivered Acceptance
+
+Recorded 2026-11-08 on dev0 (Linux, Python 3.12.14) from a clean worktree at
+`81980d0`. Status: published=true, accepted=false (partial), deployed=false. No
+issue closure or cohort promotion is claimed.
+
+Published (Release Automation run 42539192667, `workflow_dispatch` on `main`;
+validate, gates, claim, build, publish and verify-container jobs succeeded):
+
+| Artifact | Identity |
+| --- | --- |
+| Tag `v1.5.0` | commit `81980d01cb8df7909828d25487ff29f32410875f`, tree `5d43fdfb07a0e5d5393830242081323dd0c4ee70`; claim `refs/tags/release-claims/v1.5.0` exists |
+| GitHub release | `v1.5.0`, not draft or prerelease, published 2026-11-09T00:29:00Z |
+| PyPI wheel | `index_it_mcp-1.5.0-py3-none-any.whl`, sha256 `931f8ed7821935bbb9f2862ae1f6eecbd81578de637c3cc44b4bb6913af206e8` |
+| PyPI sdist | `index_it_mcp-1.5.0.tar.gz`, sha256 `3f0bd752486b0c374e37bb96543677aee408fb99b6c4bb813a284ad37fd9e81e` |
+| Image | `ghcr.io/consiliency/code-index-mcp@sha256:6ef6aa5432ec070eb865d75388cf0859ed10c77404b3767860d74838f2b4b156` |
+
+Passed:
+
+- Downloads: both files from PyPI (`/pypi/index-it-mcp/1.5.0/json` digests)
+  match the values above and the GitHub release assets byte for byte.
+  `image-reference.txt` and `image-digest.txt` name the image digest above.
+- Image: pulled anonymously by digest. Labels are `v1.5.0` and revision
+  `81980d0`; the image user is `mcp`. cosign v2.5.2 (the workflow's version,
+  release checksum verified) verified the keyless signature: identity
+  `.../release-automation.yml@refs/heads/main`, issuer
+  `https://token.actions.githubusercontent.com`, workflow SHA `81980d0`.
+- Release smoke, wheel and STDIO: `release_smoke.py --wheel-path <PyPI wheel>
+  --wheel-sha256 931f8ed7... --stdio --image-ref <digest>` with
+  `TREE_SITTER_LANGUAGE_PACK_CACHE_DIR` set to a fresh, prefetched private cache.
+  Source contract, both entrypoints, schema, prepare, Python client, two STDIO
+  sessions and installed lifecycle passed. The smoke installs with the
+  repository lock's constraints.
+- Release smoke, container: the bridge-network probe could not reach the
+  container's published port, although the server logged healthy requests
+  inside the container. A plain `python -m http.server` in the same image showed
+  the same host-side connection reset, so this is dev0's Docker networking. One
+  deliberate rerun with `--docker-network host` passed: cosign, offline BAML
+  with blank telemetry, schema/prepare/Python as uid 999, HTTP queries before
+  and after restart, log privacy, lifecycle and the safety probe.
+- Co-install: a fresh Python 3.12 venv with `index-it-mcp==1.5.0` and
+  `phase-loop-runtime==0.7.30` from PyPI. `uv pip check` is clean, and installed
+  files match the wheel's `RECORD`. Resolved baml-bridge 0.23.0, tree-sitter
+  0.26.0, treesitter-chunker 6.0.0, tree-sitter-language-pack 1.20.0 and
+  mcp 2.3.0. `mcp-index --version` reports 1.5.0. `grammars prefetch` verified
+  47/47 grammars into a private cache, and `grammars check` loaded 47 offline,
+  0 missing. A BAML import and offline request build left no `~/.baml` with
+  `MCP_BAML_TELEMETRY` unset or blank.
+- PMCP prepare: `v13_pmcp_pilot.py --mode prepare --wheel <PyPI wheel>
+  --wheel-sha256 931f8ed7...` wrote a registry-origin manifest bound to
+  `81980d0`/`5d43fdf`, installed version 1.5.0 (429 wheel files, 135 BAML files
+  verified) and `pmcp 2.7.3`. dev0's PMCP 2.7.3 tooling releases are archived
+  symlinks that the launcher binder refuses, so PyPI `pmcp==2.7.3` was
+  installed as a private uv tool. The live dev0 gateway was not used.
+
+Failed or not run:
+
+- Unconstrained PyPI install fails. The wheel declares `mcp>=1.0.0` with no
+  upper bound, so `pip install index-it-mcp==1.5.0` (alone or with
+  phase-loop-runtime) resolves `mcp` 2.3.0. `index-it-mcp stdio` then fails at
+  import: `cannot import name 'McpError' from 'mcp.shared.exceptions'`. The
+  `1.4.1` metadata has the same unbounded requirement. Adding `"mcp<2"`
+  resolves `mcp` 1.30.0; `uv pip check` is then clean and the installed STDIO
+  probe passes. Release smoke and the PMCP pilot did not catch this because both
+  install with lock constraints (`mcp` 1.27.0). A corrective release needs a new
+  owner-approved action; published artifacts are unchanged.
+- PMCP offline failed. `reindex` returned `SandboxCallError`. The pilot fixture
+  sets a fresh `XDG_CACHE_HOME` and passes no prefetched grammar cache, and
+  network-denied sandbox workers cannot download grammars. This is the #122
+  gap, still present in `v13_pmcp_pilot.py`. The same installed probe fails
+  with a cold cache and passes with a prefetched cache.
+- PMCP rehearsal and browser not run. Both use the same fixture. Rehearsal's
+  disposable Qdrant cannot use bridge port publishing on dev0. In host mode
+  its default gRPC port 6334 is held by dev0's live Qdrant. Browser mode also
+  needs MCP Inspector 2.6.0 and an interactive operator session.
+
+Deployed: no. The dev0 code-index child still runs build `b79cc7c` (main after #116,
+before the baml-bridge 0.23.0 change), not the published 1.5.0 wheel, and was not changed.
 
 ## Recovery And Rollout
 

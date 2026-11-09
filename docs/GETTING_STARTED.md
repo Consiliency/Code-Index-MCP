@@ -2,10 +2,12 @@
 
 This guide walks you through installing and using Code-Index-MCP to index and search your codebase.
 
-> **Stable-surface prep status**: This guide targets the `1.5.0` prepared candidate.
-> Published `1.4.1` does not include the treesitter-chunker 6 / tree-sitter 0.26
-> upgrade, and published `1.4.0` predates the v13 repairs. Use source or a locally
-> built wheel until protected-main publication and delivered-artifact acceptance.
+> **Stable-surface release status**: This guide targets published `1.5.0` (2026-11-09 UTC).
+> Delivered acceptance is partial: the signed image and the lock-constrained
+> wheel passed, but an unconstrained `pip install index-it-mcp==1.5.0` resolves
+> `mcp` 2.x and cannot start STDIO, so add `"mcp<2"` to a PyPI install. Earlier
+> `1.4.1` lacks the treesitter-chunker 6 / tree-sitter 0.26 upgrade, and `1.4.0`
+> predates the v13 repairs.
 > See [release preparation and acceptance](operations/v13-release.md).
 > The [GA readiness checklist](validation/ga-readiness-checklist.md) retains
 > the release gates and support limits; a stable identifier does not widen them.
@@ -52,6 +54,7 @@ uv run mcp-index --version
 # From the repo root
 uv run --extra dev python -m build --wheel
 python -m pip install dist/index_it_mcp-1.5.0-py3-none-any.whl
+# Or the published wheel: python -m pip install index-it-mcp==1.5.0 "mcp<2"
 index-it-mcp --version
 
 # Prefetch tree-sitter grammars while network access is available (mandatory)

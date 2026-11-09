@@ -1,4 +1,4 @@
-"""Release metadata assertions for the prepared v1.5.0 contract.
+"""Release metadata assertions for the published v1.5.0 contract.
 
 Historical GARC soak target: v1.2.0-rc6.
 """
@@ -455,7 +455,8 @@ def test_installers_and_download_helper_match_stable_identity_contract():
 
     readme = _read_text("README.md")
     quick_start = readme.split("## 🚀 Quick Start", 1)[1].split("## Using Against Many Repos", 1)[0]
-    assert "after protected-main publication" in quick_start
+    assert "after protected-main publication" not in quick_start
+    assert "published, signed image reference" in quick_start
     assert "image-reference.txt" in quick_start
     for installer in (shell, powershell):
         assert "image-reference.txt" in installer
@@ -473,11 +474,13 @@ def test_installers_and_download_helper_match_stable_identity_contract():
         assert expected in download_helper
 
 
-def test_active_docs_separate_candidate_from_publication():
+def test_active_docs_record_publication_separately_from_acceptance():
     for path in ("README.md", "docs/GETTING_STARTED.md", "docs/MCP_CONFIGURATION.md"):
         text = _read_text(path)
         assert EXPECTED_VERSION in text
-        assert "prepared candidate" in text
+        assert "prepared candidate" not in text
+        assert f"published `{EXPECTED_VERSION}`" in text
+        assert '"mcp<2"' in text
         assert "docs/operations/v13-release.md" in text or "operations/v13-release.md" in text
         assert "July 10, 2026 collision check" not in text
 

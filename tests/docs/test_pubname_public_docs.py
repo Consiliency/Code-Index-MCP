@@ -27,8 +27,9 @@ def test_public_install_docs_use_source_or_local_wheel_proof():
     getting_started = _read("docs/GETTING_STARTED.md")
     for text in (readme, getting_started):
         assert f"dist/index_it_mcp-{EXPECTED_VERSION}-py3-none-any.whl" in text
-        assert "prepared candidate" in text
-        assert "Published `1.4.1`" in text
+        assert "prepared candidate" not in text
+        assert f"published `{EXPECTED_VERSION}`" in text
+        assert f'pip install index-it-mcp=={EXPECTED_VERSION} \"mcp<2\"' in text
         assert "operations/v13-release.md" in text
 
 

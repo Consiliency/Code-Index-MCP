@@ -55,12 +55,12 @@ def test_readme_status_admonition_near_top():
     text = _readme_text()
     head = "\n".join(text.splitlines()[:80])
     assert (
-        "> **Stable-surface prep status**:" in head
+        "> **Stable-surface release status**:" in head
     ), "README missing stable-surface status blockquote within first 80 lines"
     # Body must name MCP as primary and FastAPI/REST as secondary admin surface.
     # Search the full admonition block (contiguous blockquote lines).
     admonition_blocks = re.findall(r"(?:^>.*\n)+", text, re.MULTILINE)
-    status_blocks = [b for b in admonition_blocks if "Stable-surface prep status" in b]
+    status_blocks = [b for b in admonition_blocks if "Stable-surface release status" in b]
     assert len(status_blocks) >= 1, "No stable-surface status admonition block found"
     status_body = "\n".join(status_blocks)
     assert "MCP" in status_body, "Status admonition does not name MCP as primary surface"

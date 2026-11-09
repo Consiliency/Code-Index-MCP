@@ -97,7 +97,7 @@ def test_public_alpha_history_and_current_release_surfaces_include_required_trut
     changelog = _read("CHANGELOG.md")
 
     assert "docs/SUPPORT_MATRIX.md" in readme
-    assert "stable surface prepared" in readme.lower()
+    assert "stable surface published" in readme.lower()
     assert "GADISP" in readme
     assert "rollback" in _read("docs/operations/deployment-runbook.md").lower()
     assert "uv sync --locked" in readme
