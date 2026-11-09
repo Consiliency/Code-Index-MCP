@@ -6,24 +6,25 @@ Code-Index-MCP is a fast, **local-first** search index for your code. It plugs i
 
 > **New to Code-Index-MCP?** Start with the [Getting Started Guide](docs/GETTING_STARTED.md).
 >
-> **Status:** v1.5.0 stable surface published; v1.5.1 corrective candidate prepared — MCP tools (`search_code`, `symbol_lookup`) are the primary interface; a FastAPI admin gateway is available for diagnostics.
+> **Status:** v1.5.1 stable surface published — MCP tools (`search_code`, `symbol_lookup`) are the primary interface; a FastAPI admin gateway is available for diagnostics.
 
-> **Stable-surface release status**: This guide targets the `1.5.1` prepared candidate,
-> a corrective release that caps `mcp<2`. Published `1.5.0` (GitHub release, PyPI
-> and signed GHCR digest, 2026-11-09 UTC) passed delivered acceptance for the
-> signed image and the lock-constrained wheel, but its acceptance is partial:
-> `1.5.0` and `1.4.1` (2026-10-13) set no upper bound on `mcp`, so installing
-> either one, even as `index-it-mcp==1.5.0`, resolves `mcp` 2.x unless you also
-> constrain `mcp` below 2, and `index-it-mcp stdio` then fails at import. Install
-> `1.5.1` once it is published. `1.4.1` also lacks the treesitter-chunker 6 /
-> tree-sitter 0.26 parser upgrade and the baml-bridge 0.23.0 runtime; `1.4.0`
-> (2026-07-19) predates the v13 repairs.
+> **Stable-surface release status**: This guide targets published `1.5.1`
+> (GitHub release, PyPI and signed GHCR digest, 2026-11-09 UTC), a corrective
+> release of `1.5.0` that caps `mcp<2`. Install it with
+> `pip install index-it-mcp==1.5.1`; its delivered acceptance passed for the
+> signed image and for the wheel installed with and without lock constraints.
+> Published `1.5.0` and `1.4.1` (2026-10-13) set no upper bound on `mcp`: do not
+> install either one, even as `index-it-mcp==1.5.0`, without constraining `mcp`
+> below 2, because `mcp` 2.x makes `index-it-mcp stdio` fail at import.
+> `1.4.1` also lacks the treesitter-chunker 6 / tree-sitter 0.26 parser upgrade
+> and the baml-bridge 0.23.0 runtime; `1.4.0` (2026-07-19) predates the v13
+> repairs.
 > MCP STDIO is primary; FastAPI is secondary admin only.
 > See [release preparation and acceptance](docs/operations/v13-release.md).
-> Publication of `1.5.1`, deployment and fleet rollout remain separate gates.
+> Deployment and fleet rollout remain separate gates.
 
 ## Project Status
-**Version**: 1.5.1 (prepared corrective candidate; publication tracked separately). Latest published: 1.5.0 (2026-11-09 UTC; delivered acceptance partial, see [release acceptance](docs/operations/v13-release.md); not deployed)
+**Version**: 1.5.1 (published 2026-11-09 UTC; delivered acceptance passed for the wheel and image, PMCP offline/rehearsal/browser not run, see [release acceptance](docs/operations/v13-release.md); not deployed)
 **Python distribution**: `index-it-mcp`
 **Container image**: `ghcr.io/consiliency/code-index-mcp`
 **Primary surface**: MCP tools (`search_code`, `symbol_lookup`) via the STDIO runner when repository readiness is `ready`
@@ -168,10 +169,8 @@ quality or default sandbox behavior.
 
 Supported install paths are the digest-pinned container image published with
 the `v1.5.1` GitHub release, native Python/STDIO with `uv sync --locked`, and a
-locally built `index-it-mcp` wheel. Use the `v1.5.1` registry image and PyPI
-wheel only after protected-main publication and delivered artifact acceptance;
-until then use the candidate source, the local wheel, or the signed `v1.5.0`
-image, which passed delivered acceptance. The
+published `index-it-mcp==1.5.1` wheel from PyPI, or a locally built wheel. The
+signed `v1.5.1` image and the PyPI wheel passed delivered acceptance. The
 `ghcr.io/consiliency/code-index-mcp:local-smoke` image remains an optional dev
 path built from this checkout with `make release-smoke-container`.
 Language coverage is bounded by [docs/SUPPORT_MATRIX.md](docs/SUPPORT_MATRIX.md),
@@ -477,14 +476,13 @@ python -m pip install dist/index_it_mcp-1.5.1-py3-none-any.whl
 index-it-mcp --version
 ```
 
-The canonical Python distribution remains `index-it-mcp`. The commands above
-install this prepared candidate. Published `1.5.0` and `1.4.1` are on PyPI, but
-do not install either of them without constraining `mcp` below 2: their `mcp`
-requirement has no upper bound (even `index-it-mcp==1.5.0` resolves `mcp` 2.x),
-and `mcp` 2.x cannot start the STDIO server (see the delivered acceptance
-record in [docs/operations/v13-release.md](docs/operations/v13-release.md)). Use
-`pip install index-it-mcp==1.5.1` only after its protected-main publication and
-independent delivered-package checks.
+The canonical Python distribution remains `index-it-mcp`. Published `1.5.1` is
+on PyPI: install it with `pip install index-it-mcp==1.5.1`. Its `mcp`
+requirement is capped below 2, and a plain install was checked during delivered
+acceptance. Do not install published `1.5.0` or `1.4.1` without constraining
+`mcp` below 2: their `mcp` requirement has no upper bound (even
+`index-it-mcp==1.5.0` resolves `mcp` 2.x), and `mcp` 2.x cannot start the STDIO
+server (see [docs/operations/v13-release.md](docs/operations/v13-release.md)).
 
 ### Quick Start After Installation
 
@@ -1438,7 +1436,7 @@ For detailed architectural documentation, see the [architecture/](architecture/)
 
 See [ROADMAP.md](ROADMAP.md) for detailed development plans and current progress.
 
-**Current Status**: 1.5.1 corrective release (caps `mcp<2`) prepared; 1.5.0 parser-stack and baml-bridge 0.23.0 upgrade published with partial delivered acceptance (unbounded `mcp`); not deployed
+**Current Status**: 1.5.1 corrective release (caps `mcp<2`) published; delivered acceptance passed for the wheel and image (PMCP offline/rehearsal/browser not run); 1.5.0 and 1.4.1 must not be installed without constraining `mcp` below 2; not deployed
 - ✅ **Core Indexing**: SQLite + FTS5 for fast local search
 - ✅ **Multi-Language**: Specialized and registry-backed language coverage; see `docs/SUPPORT_MATRIX.md`
 - ✅ **MCP Protocol**: Verified official Python SDK compatibility over STDIO; see `docs/status/MCP_COMPATIBILITY_EVALUATION.md` for named client posture

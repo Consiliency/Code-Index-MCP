@@ -1,6 +1,7 @@
-"""Release metadata assertions for the prepared v1.5.1 contract.
+"""Release metadata assertions for the published v1.5.1 contract.
 
-Published v1.5.0 (delivered acceptance partial) is PUBLISHED_VERSION.
+Published v1.5.1 is PUBLISHED_VERSION. Published v1.5.0 and v1.4.1
+(UNBOUNDED_MCP_VERSIONS) must not be installed without constraining mcp below 2.
 
 Historical GARC soak target: v1.2.0-rc6.
 """
@@ -24,8 +25,10 @@ except ImportError:  # Python <3.11
 REPO = Path(__file__).parent.parent
 EXPECTED_VERSION = "1.5.1"
 EXPECTED_TAG = "v1.5.1"
-#: Latest published release; delivered acceptance partial (unbounded mcp).
-PUBLISHED_VERSION = "1.5.0"
+#: Latest published release (corrective; caps mcp<2).
+PUBLISHED_VERSION = "1.5.1"
+#: Published releases whose mcp requirement has no upper bound.
+UNBOUNDED_MCP_VERSIONS = ("1.5.0", "1.4.1")
 DOCKER_INSTALLERS = (
     "scripts/install-mcp-docker.sh",
     "scripts/install-mcp-docker.ps1",
@@ -469,7 +472,7 @@ def test_installers_and_download_helper_match_stable_identity_contract():
 
     readme = _read_text("README.md")
     quick_start = readme.split("## 🚀 Quick Start", 1)[1].split("## Using Against Many Repos", 1)[0]
-    assert "after protected-main publication" in quick_start
+    assert "after protected-main publication" not in quick_start
     assert "published, signed image reference" in quick_start
     assert f"signed `v{PUBLISHED_VERSION}`" in quick_start
     assert "image-reference.txt" in quick_start
@@ -489,12 +492,14 @@ def test_installers_and_download_helper_match_stable_identity_contract():
         assert expected in download_helper
 
 
-def test_active_docs_separate_candidate_from_partially_accepted_release():
+def test_active_docs_record_published_release_and_unbounded_mcp_warning():
     for path in ("README.md", "docs/GETTING_STARTED.md", "docs/MCP_CONFIGURATION.md"):
         text = _read_text(path)
         assert EXPECTED_VERSION in text
-        assert "prepared candidate" in text
-        assert f"Published `{PUBLISHED_VERSION}`" in text
+        assert "prepared candidate" not in text
+        assert f"published `{PUBLISHED_VERSION}`" in text
+        for version in UNBOUNDED_MCP_VERSIONS:
+            assert f"`{version}`" in text, (path, version)
         # "unpinned" was ambiguous: `index-it-mcp==1.5.0` looks pinned but is
         # the broken install (#125 review S1). Name the real constraint.
         assert "`mcp` below 2" in text

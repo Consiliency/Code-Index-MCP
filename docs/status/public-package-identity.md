@@ -1,12 +1,24 @@
 # Public Package Identity
 
-Check date: 2026-07-06 UTC; 1.5.0 publication recheck 2026-11-08
+Check date: 2026-07-06 UTC; 1.5.0 publication recheck 2026-11-08; 1.5.1 recheck 2026-11-09
 
 ## Scope
 
 This note freezes the repo-owned public identity contract for PUBNAME.
 It is metadata-only evidence for the prepared `1.3.0` surface. It does not
 claim a new package or container publication.
+
+## 1.5.1 Publication Recheck (2026-11-09)
+
+`https://pypi.org/pypi/index-it-mcp/json` now reports `1.5.1` as the latest
+version, published from Release Automation run 42550570039 at tag `v1.5.1`
+(`13470d0`). The wheel and sdist digests match the GitHub release assets, and
+the metadata declares `mcp<2,>=1.27`. A plain `pip install index-it-mcp==1.5.1`
+resolves `mcp` 1.30.0; see "1.5.1 Delivered Acceptance" in
+`docs/operations/v13-release.md`. Public install docs recommend
+`pip install index-it-mcp==1.5.1`, and they keep the warning not to install
+`1.5.0` or `1.4.1` without constraining `mcp` below 2. The project URLs still
+point to `https://github.com/ViperJuice/Code-Index-MCP`.
 
 ## 1.5.0 Publication Recheck (2026-11-08)
 
@@ -20,7 +32,7 @@ external package (`2.17.1`, `johnhuang316/code-index-mcp`).
 
 The published `1.5.0` metadata declares `mcp>=1.0.0` with no upper bound, so an
 unconstrained `pip install index-it-mcp==1.5.0` resolves `mcp` 2.x, and STDIO
-fails to start. The prepared `1.5.1` corrective release caps `mcp>=1.27,<2`,
+fails to start. The `1.5.1` corrective release caps `mcp>=1.27,<2`,
 so public install docs do not add a separate pin; they say not to install
 `1.5.0` or `1.4.1` without constraining `mcp` below 2.
 The sections below are the original 2026-07-06 PUBNAME evidence.
