@@ -43,9 +43,7 @@ class _Wire:
         self._next_id += 1
         await self._send.send(
             SessionMessage(
-                types.JSONRPCRequest(
-                    jsonrpc="2.0", id=self._next_id, method=method, params=params
-                )
+                types.JSONRPCRequest(jsonrpc="2.0", id=self._next_id, method=method, params=params)
             )
         )
         with anyio.fail_after(10):
@@ -61,7 +59,9 @@ class _Wire:
         return reply["result"]
 
     async def notify(self, method: str) -> None:
-        await self._send.send(SessionMessage(types.JSONRPCNotification(jsonrpc="2.0", method=method)))
+        await self._send.send(
+            SessionMessage(types.JSONRPCNotification(jsonrpc="2.0", method=method))
+        )
 
 
 @asynccontextmanager
@@ -253,9 +253,7 @@ async def test_failed_task_work_marks_the_task_failed(monkeypatch):
 
     monkeypatch.setattr(stdio_runner, "call_tool", fake_call_tool)
     async with _connected() as (wire, _):
-        created = await wire.result(
-            "tools/call", {"name": "reindex", "arguments": {}, "task": {}}
-        )
+        created = await wire.result("tools/call", {"name": "reindex", "arguments": {}, "task": {}})
         task_id = created["task"]["taskId"]
         payload = await wire.result("tasks/result", {"taskId": task_id})
         assert payload == {"_meta": {RELATED_TASK_METADATA_KEY: {"taskId": task_id}}}
@@ -277,3 +275,57 @@ def test_modern_protocol_revisions_have_no_task_surface():
 
     params = types.CallToolRequestParams(name="reindex", arguments={}, task=types.TaskMetadata())
     assert runtime.request(_Ctx(), params).is_task is False
+
+
+MODERN_META = {
+    "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+    "io.modelcontextprotocol/clientInfo": {"name": "claude-code", "version": "2.1.321"},
+    "io.modelcontextprotocol/clientCapabilities": {},
+}
+
+
+@pytest.mark.asyncio
+async def test_modern_revision_serves_the_same_tools_and_results(monkeypatch):
+    """Clients such as Claude Code 2.1.x negotiate 2026-07-28 via server/discover.
+
+    The tools and tool results are the handshake-era ones; the revision only
+    drops the Tasks surface and adds its own result envelope fields.
+    """
+    seen_task_requests = []
+
+    async def fake_call_tool(name, arguments, *, session=None, task_request=None):
+        seen_task_requests.append(task_request.is_task)
+        return stdio_runner._to_call_tool_result(
+            [types.TextContent(type="text", text='{"results": [], "code": "index_unavailable"}')]
+        )
+
+    monkeypatch.setattr(stdio_runner, "call_tool", fake_call_tool)
+    call = {"name": "search_code", "arguments": {"query": "x"}, "task": {"ttl": 1000}}
+
+    async with _connected() as (wire, _):
+        legacy_tools = (await wire.result("tools/list", {}))["tools"]
+        legacy_call = await wire.result(
+            "tools/call", {k: v for k, v in call.items() if k != "task"}
+        )
+    async with _connected(None) as (wire, _):
+        discover = await wire.result("server/discover", {"_meta": MODERN_META})
+        modern_tools = (await wire.result("tools/list", {"_meta": MODERN_META}))["tools"]
+        modern_call = await wire.result("tools/call", {"_meta": MODERN_META, **call})
+        modern_tasks = await wire.request("tasks/list", {"_meta": MODERN_META})
+
+    assert "2026-07-28" in discover["supportedVersions"]
+    assert "tasks" not in discover["capabilities"]
+    assert modern_tools == [
+        {key: value for key, value in tool.items() if key != "execution"} for tool in legacy_tools
+    ]
+    assert {key: modern_call[key] for key in legacy_call} == legacy_call
+    assert set(modern_call) - set(legacy_call) == {"resultType", "_meta"}
+    assert modern_call["resultType"] == "complete"
+    assert modern_call["_meta"]["io.modelcontextprotocol/serverInfo"]["version"] == __version__
+    # Task metadata is not part of the 2026-07-28 tools/call: the call runs synchronously.
+    assert seen_task_requests == [False, False]
+    assert modern_tasks["error"] == {
+        "code": -32601,
+        "message": "Method not found",
+        "data": "tasks/list",
+    }

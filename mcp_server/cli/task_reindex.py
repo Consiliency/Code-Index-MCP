@@ -11,12 +11,12 @@ from typing import Any, cast
 import anyio
 import mcp.types as types
 
+from mcp_server.cli.task_runtime import TaskContext
 from mcp_server.core.repo_resolver import RepositoryMutationCancelled, run_repository_mutation
 from mcp_server.dispatcher.dispatcher_enhanced import IndexResult, IndexResultStatus
 from mcp_server.indexing.checkpoint import ReindexCheckpoint
 from mcp_server.indexing.checkpoint import clear as clear_checkpoint
 from mcp_server.indexing.checkpoint import save
-from mcp_server.cli.task_runtime import TaskContext
 from mcp_server.storage.mcp_task_registry import MCPTaskRegistry
 
 

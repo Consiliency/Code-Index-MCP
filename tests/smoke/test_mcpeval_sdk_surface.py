@@ -7,10 +7,10 @@ import json
 import os
 from pathlib import Path
 
+import mcp.types as types
 import pytest
 from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
-import mcp.types as types
 from mcp.types import CallToolResult
 
 from tests.fixtures.multi_repo import boot_test_server, build_production_matrix

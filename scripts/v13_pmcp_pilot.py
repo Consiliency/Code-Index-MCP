@@ -1242,11 +1242,13 @@ async def gateway(fixture: dict, label: str):
                 raise PilotRefused("pmcp_startup_timeout")
         # mcp 2.x: streamablehttp_client was removed; streamable_http_client takes
         # a caller-owned httpx2 client (v1's default timeouts kept explicitly).
-        async with httpx2.AsyncClient(
-            trust_env=False, timeout=httpx2.Timeout(30, read=300)
-        ) as mcp_http, streamable_http_client(
-            f"http://127.0.0.1:{port}/mcp", http_client=mcp_http
-        ) as (read, write):
+        async with (
+            httpx2.AsyncClient(trust_env=False, timeout=httpx2.Timeout(30, read=300)) as mcp_http,
+            streamable_http_client(f"http://127.0.0.1:{port}/mcp", http_client=mcp_http) as (
+                read,
+                write,
+            ),
+        ):
             async with ClientSession(read, write, read_timeout_seconds=120.0) as client:
                 await client.initialize()
                 yield client, owner

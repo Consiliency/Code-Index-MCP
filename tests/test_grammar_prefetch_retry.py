@@ -20,7 +20,9 @@ from mcp_server.utils.grammar_cache import (
     classify_download_error,
 )
 
-MANIFEST = "https://github.com/xberg-io/tree-sitter-language-pack/releases/download/v1.20.0/parsers.json"
+MANIFEST = (
+    "https://github.com/xberg-io/tree-sitter-language-pack/releases/download/v1.20.0/parsers.json"
+)
 SECRET = "token=super-secret-value"
 
 
@@ -90,7 +92,9 @@ def test_a_persistent_504_fails_after_the_attempt_bound_within_the_time_bound(ca
     assert len(downloader.calls) == PREFETCH_ATTEMPTS == 5
     assert raised.value.attempts == 5
     assert raised.value.failure.status == 504
-    assert str(raised.value) == f"grammar download failed after 5 attempts (HTTP 504 for {MANIFEST})"
+    assert (
+        str(raised.value) == f"grammar download failed after 5 attempts (HTTP 504 for {MANIFEST})"
+    )
     assert raised.value.__cause__ is None and raised.value.__suppress_context__
     # Exponential backoff, worst-case jitter: 4 + 8 + 16 + 32 seconds.
     assert clock.sleeps == [4.0, 8.0, 16.0, 32.0]

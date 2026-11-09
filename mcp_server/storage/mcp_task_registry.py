@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any
-
 from uuid import uuid4
 
 import anyio
@@ -30,7 +29,7 @@ def wire_time(moment: datetime) -> str:
     v1 used ``datetime``; pydantic's JSON form keeps the wire value identical
     (for example ``2026-11-09T15:59:10.123456Z``).
     """
-    return _DATETIME_ADAPTER.dump_python(moment, mode="json")
+    return str(_DATETIME_ADAPTER.dump_python(moment, mode="json"))
 
 
 def is_terminal(status: TaskStatus) -> bool:

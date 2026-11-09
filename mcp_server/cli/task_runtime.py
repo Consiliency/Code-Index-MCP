@@ -232,7 +232,9 @@ class TaskRuntime:
             finally:
                 self._task_group = None
 
-    def request(self, ctx: ServerRequestContext[Any], params: types.CallToolRequestParams) -> TaskRequest:
+    def request(
+        self, ctx: ServerRequestContext[Any], params: types.CallToolRequestParams
+    ) -> TaskRequest:
         metadata = params.task if supports_tasks(ctx.protocol_version) else None
         return TaskRequest(metadata, self, ctx.session)
 
@@ -280,7 +282,9 @@ class TaskRuntime:
         server.add_request_handler("tasks/cancel", types.CancelTaskRequestParams, self._cancel_task)
         server.middleware.append(self.middleware)
 
-    async def middleware(self, ctx: ServerRequestContext[Any], call_next: CallNext) -> HandlerResult:
+    async def middleware(
+        self, ctx: ServerRequestContext[Any], call_next: CallNext
+    ) -> HandlerResult:
         try:
             return await call_next(ctx)
         except TaskCreated as created:

@@ -1401,7 +1401,7 @@ def test_prepare_prefetches_grammars_into_an_explicit_cache(tmp_path, monkeypatc
     assert manifest["grammar_cache"] == str(expected)
     if source == "default":
         assert expected.is_dir() and expected.stat().st_mode & 0o777 == 0o700
-    (label, command, env), = [call for call in calls if call[0] == "grammar-prefetch"]
+    ((label, command, env),) = [call for call in calls if call[0] == "grammar-prefetch"]
     assert command[: len(manifest["uvx_prefix"])] == manifest["uvx_prefix"]
     assert command[len(manifest["uvx_prefix"]) :] == [
         "mcp-index",
@@ -1455,9 +1455,9 @@ def test_fixture_server_and_workers_get_the_prefetched_cache_with_downloads_deni
     fixture = pilot.create_fixture(tmp_path, manifest, label="offline")
 
     expected = {CACHE_DIR_ENV: str(cache), MANIFEST_URL_ENV: OFFLINE_MANIFEST_URL}
-    server_env = json.loads((fixture["root"] / "project" / ".mcp.json").read_text())[
-        "mcpServers"
-    ]["index-it-mcp"]["env"]
+    server_env = json.loads((fixture["root"] / "project" / ".mcp.json").read_text())["mcpServers"][
+        "index-it-mcp"
+    ]["env"]
     for env in (fixture["env"], server_env, *(env for _, env in commands)):
         assert {key: env.get(key) for key in expected} == expected
     # The fixture's fresh XDG cache would be cold; the explicit override wins.
@@ -1541,7 +1541,9 @@ def test_offline_fixture_env_reindexes_with_network_denied_only_from_a_prefetche
         cache = str(cold)
 
     repo, _ = build_temp_repo(
-        tmp_path, "pilot_grammar_repo", seed_files={"probe.py": "def pilot_probe():\n    return 1\n"}
+        tmp_path,
+        "pilot_grammar_repo",
+        seed_files={"probe.py": "def pilot_probe():\n    return 1\n"},
     )
     with boot_test_server(tmp_path, [repo], seed_indexes=False):
         pass
@@ -1555,7 +1557,7 @@ def test_offline_fixture_env_reindexes_with_network_denied_only_from_a_prefetche
         "MCP_SKIP_PLUGIN_PREINDEX": "true",
         "MCP_METRICS_PORT": "0",
     }
-    (reindex, search) = _raw_stdio_call(
+    reindex, search = _raw_stdio_call(
         [sys.executable, "-m", "mcp_server.cli.stdio_runner"],
         env,
         str(repo),
@@ -1565,7 +1567,11 @@ def test_offline_fixture_env_reindexes_with_network_denied_only_from_a_prefetche
                 "tools/call",
                 {
                     "name": "search_code",
-                    "arguments": {"repository": str(repo), "query": "pilot_probe", "semantic": False},
+                    "arguments": {
+                        "repository": str(repo),
+                        "query": "pilot_probe",
+                        "semantic": False,
+                    },
                 },
             ),
         ],

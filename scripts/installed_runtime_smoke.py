@@ -289,9 +289,7 @@ async def stdio_probe(root: Path, entrypoint: str) -> None:
     )
     for attempt in range(2):
         async with stdio_client(params) as (read, write):
-            async with ClientSession(
-                read, write, read_timeout_seconds=60.0
-            ) as client:
+            async with ClientSession(read, write, read_timeout_seconds=60.0) as client:
                 await client.initialize()
                 tools = await client.list_tools()
                 assert REQUIRED_TOOLS <= {tool.name for tool in tools.tools}

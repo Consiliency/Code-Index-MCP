@@ -29,6 +29,12 @@ from mcp_server import __version__
 from mcp_server.cli import tool_handlers
 from mcp_server.cli.bootstrap import initialize_stateless_services, timeout, validate_index
 from mcp_server.cli.handshake import HandshakeGate
+from mcp_server.cli.task_runtime import (
+    TaskCreated,
+    TaskRequest,
+    TaskRuntime,
+    tasks_capability,
+)
 from mcp_server.dispatcher.dispatcher_enhanced import EnhancedDispatcher
 from mcp_server.dispatcher.simple_dispatcher import SimpleDispatcher
 from mcp_server.health.repository_readiness import ReadinessClassifier
@@ -38,12 +44,6 @@ from mcp_server.metrics.prometheus_exporter import (
     record_tool_call,
 )
 from mcp_server.plugin_system import PluginManager
-from mcp_server.cli.task_runtime import (
-    TaskCreated,
-    TaskRequest,
-    TaskRuntime,
-    tasks_capability,
-)
 from mcp_server.storage.mcp_task_registry import MCPTaskRegistry
 from mcp_server.storage.sqlite_store import SQLiteStore
 from mcp_server.utils.index_discovery import IndexDiscovery
@@ -243,10 +243,10 @@ def _tool_annotations(
     open_world: bool,
 ) -> types.ToolAnnotations:
     return types.ToolAnnotations(
-        readOnlyHint=read_only,
-        destructiveHint=destructive,
-        idempotentHint=idempotent,
-        openWorldHint=open_world,
+        read_only_hint=read_only,
+        destructive_hint=destructive,
+        idempotent_hint=idempotent,
+        open_world_hint=open_world,
     )
 
 

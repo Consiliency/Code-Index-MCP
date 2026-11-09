@@ -8,9 +8,9 @@ from typing import Any
 import anyio
 import mcp.types as types
 
+from mcp_server.cli.task_runtime import TaskContext
 from mcp_server.config.settings import Settings
 from mcp_server.indexing.summarization import ComprehensiveChunkWriter
-from mcp_server.cli.task_runtime import TaskContext
 from mcp_server.storage.mcp_task_registry import MCPTaskRegistry
 
 

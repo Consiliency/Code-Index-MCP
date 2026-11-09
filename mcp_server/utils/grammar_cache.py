@@ -442,7 +442,7 @@ def classify_download_error(exc: BaseException) -> DownloadFailure:
 
 def _backoff_delay(attempt: int, jitter: Callable[[], float]) -> float:
     """Equal-jitter exponential backoff before attempt ``attempt + 1``."""
-    ceiling = min(PREFETCH_MAX_DELAY_SECONDS, PREFETCH_BASE_DELAY_SECONDS * 2 ** (attempt - 1))
+    ceiling = min(PREFETCH_MAX_DELAY_SECONDS, PREFETCH_BASE_DELAY_SECONDS * 2.0 ** (attempt - 1))
     return ceiling / 2 + jitter() * ceiling / 2
 
 
