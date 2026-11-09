@@ -187,13 +187,23 @@ REQUIRED_TOOLS = {"reindex", "search_code", "symbol_lookup", "get_status"}
 PROTOCOL_VERSION = "2025-06-18"
 
 
-def initialize_probe(root: Path, entrypoint: str, *, timeout: float = 60.0) -> None:
+def initialize_probe(
+    root: Path,
+    entrypoint: str,
+    *,
+    timeout: float = 60.0,
+    expected_version: str | None = None,
+) -> None:
     """MCP initialize and tools/list over raw newline-delimited JSON-RPC.
 
     Uses no MCP client library, so it proves the installed server starts and
     answers whatever ``mcp`` version the install resolved (an import error in
-    the server, such as mcp 2.x removing ``McpError``, fails here).
+    the server, such as mcp 2.x removing ``McpError``, fails here). The reply's
+    ``serverInfo.version`` must be the installed ``index-it-mcp`` version, not
+    the ``mcp`` library's (Consiliency/Code-Index-MCP#128).
     """
+    if expected_version is None:
+        expected_version = version("index-it-mcp")
     import queue
     import threading
 
@@ -252,6 +262,10 @@ def initialize_probe(root: Path, entrypoint: str, *, timeout: float = 60.0) -> N
             initialized = response(1)
             assert initialized["protocolVersion"], initialized
             assert initialized["serverInfo"]["name"], initialized
+            assert initialized["serverInfo"].get("version") == expected_version, (
+                f"serverInfo.version is {initialized['serverInfo'].get('version')!r}, "
+                f"expected {expected_version!r}"
+            )
             send({"jsonrpc": "2.0", "method": "notifications/initialized"})
             send({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
             names = {tool["name"] for tool in response(2)["tools"]}
@@ -273,6 +287,7 @@ def initialize_probe(root: Path, entrypoint: str, *, timeout: float = 60.0) -> N
             {
                 "stdio_initialize": "passed",
                 "protocol_version": initialized["protocolVersion"],
+                "server_version": initialized["serverInfo"]["version"],
                 "tools": len(names),
             }
         )

@@ -6,25 +6,26 @@ Code-Index-MCP is a fast, **local-first** search index for your code. It plugs i
 
 > **New to Code-Index-MCP?** Start with the [Getting Started Guide](docs/GETTING_STARTED.md).
 >
-> **Status:** v1.5.1 stable surface published — MCP tools (`search_code`, `symbol_lookup`) are the primary interface; a FastAPI admin gateway is available for diagnostics.
+> **Status:** v1.5.1 stable surface published; v1.6.0 candidate prepared — MCP tools (`search_code`, `symbol_lookup`) are the primary interface; a FastAPI admin gateway is available for diagnostics.
 
-> **Stable-surface release status**: This guide targets published `1.5.1`
-> (GitHub release, PyPI and signed GHCR digest, 2026-11-09 UTC), a corrective
-> release of `1.5.0` that caps `mcp<2`. Install it with
-> `pip install index-it-mcp==1.5.1`; its delivered acceptance passed for the
-> signed image and for the wheel installed with and without lock constraints.
-> Published `1.5.0` and `1.4.1` (2026-10-13) set no upper bound on `mcp`: do not
-> install either one, even as `index-it-mcp==1.5.0`, without constraining `mcp`
-> below 2, because `mcp` 2.x makes `index-it-mcp stdio` fail at import.
-> `1.4.1` also lacks the treesitter-chunker 6 / tree-sitter 0.26 parser upgrade
-> and the baml-bridge 0.23.0 runtime; `1.4.0` (2026-07-19) predates the v13
-> repairs.
+> **Stable-surface release status**: This guide targets the `1.6.0` prepared candidate,
+> which runs on the `mcp` 2.x SDK (`mcp>=2.2,<2.4`) and installs in the same
+> environment as PMCP 3.x. Remove any `mcp<2` pin installed alongside it: it
+> makes the install unresolvable. Published `1.5.1` (GitHub release, PyPI and
+> signed GHCR digest, 2026-11-09 UTC) is the current release: install it with
+> `pip install index-it-mcp==1.5.1`. Its delivered acceptance is partial: the
+> signed image and the wheel, with and without lock constraints, passed; PMCP
+> offline, rehearsal and browser checks were not run. `1.5.1` caps `mcp<2`, so
+> it cannot share an environment with PMCP 3.x. `1.3.0`, `1.3.1`, `1.4.0`,
+> `1.4.1` (2026-10-13) and `1.5.0` are yanked on PyPI: their `mcp` requirement
+> has no upper bound, and `mcp` 2.x makes their `index-it-mcp stdio` fail at
+> import.
 > MCP STDIO is primary; FastAPI is secondary admin only.
 > See [release preparation and acceptance](docs/operations/v13-release.md).
-> Deployment and fleet rollout remain separate gates.
+> Publication of `1.6.0`, deployment and fleet rollout remain separate gates.
 
 ## Project Status
-**Version**: 1.5.1 (published 2026-11-09 UTC; delivered acceptance passed for the wheel and image, PMCP offline/rehearsal/browser not run, see [release acceptance](docs/operations/v13-release.md); not deployed)
+**Version**: 1.6.0 (prepared candidate; publication tracked separately). Latest published: 1.5.1 (2026-11-09 UTC; delivered acceptance partial: wheel and image passed, PMCP offline/rehearsal/browser not run, see [release acceptance](docs/operations/v13-release.md); not deployed)
 **Python distribution**: `index-it-mcp`
 **Container image**: `ghcr.io/consiliency/code-index-mcp`
 **Primary surface**: MCP tools (`search_code`, `symbol_lookup`) via the STDIO runner when repository readiness is `ready`
@@ -168,9 +169,12 @@ quality or default sandbox behavior.
 ## 🚀 Quick Start
 
 Supported install paths are the digest-pinned container image published with
-the `v1.5.1` GitHub release, native Python/STDIO with `uv sync --locked`, and a
-published `index-it-mcp==1.5.1` wheel from PyPI, or a locally built wheel. The
-signed `v1.5.1` image and the PyPI wheel passed delivered acceptance. The
+the `v1.6.0` GitHub release, native Python/STDIO with `uv sync --locked`, and a
+locally built `index-it-mcp` wheel. Use the `v1.6.0` registry image and PyPI
+wheel only after protected-main publication and delivered artifact acceptance;
+until then use the candidate source, the local wheel, or published `1.5.1` (the
+signed `v1.5.1` image or `pip install index-it-mcp==1.5.1`), whose image and
+wheel passed delivered acceptance. The
 `ghcr.io/consiliency/code-index-mcp:local-smoke` image remains an optional dev
 path built from this checkout with `make release-smoke-container`.
 Language coverage is bounded by [docs/SUPPORT_MATRIX.md](docs/SUPPORT_MATRIX.md),
@@ -194,7 +198,7 @@ This automatically detects your environment and creates the appropriate `.mcp.js
 
 ### 🐳 Docker Setup
 
-The installer targets `v1.5.1` and resolves its `image-reference.txt` release
+The installer targets `v1.6.0` and resolves its `image-reference.txt` release
 asset to a signed GHCR digest. Version and `latest` image tags are not updated;
 the installer's `latest` option selects the latest GitHub release, then pins
 that release's digest. A missing release asset is an error, never a tag fallback.
@@ -203,8 +207,8 @@ checkout with `make release-smoke-container`.
 
 #### Option 1: Basic Search (No API Keys) - 2 Minutes
 ```bash
-# After v1.5.1 release acceptance, start STDIO with the published, signed image reference
-export MCP_IMAGE_REF=$(curl -fsSL https://github.com/Consiliency/Code-Index-MCP/releases/download/v1.5.1/image-reference.txt)
+# After v1.6.0 release acceptance, start STDIO with the published, signed image reference
+export MCP_IMAGE_REF=$(curl -fsSL https://github.com/Consiliency/Code-Index-MCP/releases/download/v1.6.0/image-reference.txt)
 [[ "$MCP_IMAGE_REF" =~ ^ghcr\.io/consiliency/code-index-mcp@sha256:[0-9a-f]{64}$ ]] || exit 1
 docker run -i --rm -v "$(pwd):/workspace" "$MCP_IMAGE_REF" index-it-mcp stdio
 ```
@@ -472,21 +476,22 @@ uv run mcp-index --version
 ```bash
 # From the repo root
 uv run --extra dev python -m build --wheel
-python -m pip install dist/index_it_mcp-1.5.1-py3-none-any.whl
+python -m pip install dist/index_it_mcp-1.6.0-py3-none-any.whl
 index-it-mcp --version
 ```
 
-The canonical Python distribution remains `index-it-mcp`. Published `1.5.1` is
-on PyPI: install it with `pip install index-it-mcp==1.5.1`. Its `mcp`
-requirement is capped below 2, and a plain install was checked during delivered
-acceptance. Do not install published `1.5.0` or `1.4.1` without constraining
-`mcp` below 2: their `mcp` requirement has no upper bound (even
-`index-it-mcp==1.5.0` resolves `mcp` 2.x), and `mcp` 2.x cannot start the STDIO
-server (see [docs/operations/v13-release.md](docs/operations/v13-release.md)).
+The canonical Python distribution remains `index-it-mcp`. The commands above
+install this prepared candidate. Published `1.5.1` is on PyPI: install it with
+`pip install index-it-mcp==1.5.1` until `1.6.0` is published and accepted. Its
+`mcp` requirement is capped below 2, so it cannot share an environment with
+PMCP 3.x. `1.3.0`, `1.3.1`, `1.4.0`, `1.4.1` and `1.5.0` are yanked: their `mcp`
+requirement has no upper bound, and `mcp` 2.x cannot start their STDIO server
+(see [docs/operations/v13-release.md](docs/operations/v13-release.md)).
 
-Source installs and wheels built from `main` require `mcp>=2.2,<2.4` (the `mcp`
-2.x SDK), so they install in the same environment as PMCP 3.x. Remove any
-`mcp<2` pin installed alongside them: it makes the install unresolvable. See
+`1.6.0`, source installs and wheels built from `main` require `mcp>=2.2,<2.4`
+(the `mcp` 2.x SDK), so they install in the same environment as PMCP 3.x.
+Remove any `mcp<2` pin installed alongside them: it makes the install
+unresolvable. See
 [docs/SUPPORT_MATRIX.md](docs/SUPPORT_MATRIX.md).
 
 ### Quick Start After Installation
@@ -1367,7 +1372,7 @@ make agent-gate
 
 # Only after accepted review, merge identity and publication authorization
 gh workflow run "Release Automation" --ref main \
-  -f mode=publish -f version=v1.5.1 -f auto_merge=false \
+  -f mode=publish -f version=v1.6.0 -f auto_merge=false \
   -f expected_commit="$ACCEPTED_MERGE_COMMIT" -f expected_tree="$ACCEPTED_MERGE_TREE"
 ```
 
@@ -1441,7 +1446,7 @@ For detailed architectural documentation, see the [architecture/](architecture/)
 
 See [ROADMAP.md](ROADMAP.md) for detailed development plans and current progress.
 
-**Current Status**: 1.5.1 corrective release (caps `mcp<2`) published; delivered acceptance passed for the wheel and image (PMCP offline/rehearsal/browser not run); 1.5.0 and 1.4.1 must not be installed without constraining `mcp` below 2; not deployed
+**Current Status**: 1.6.0 (`mcp` 2.x SDK, co-installs with PMCP 3.x) prepared; 1.5.1 corrective release (caps `mcp<2`) published with partial delivered acceptance (wheel and image passed; PMCP offline/rehearsal/browser not run); 1.3.0 through 1.5.0 yanked; not deployed
 - ✅ **Core Indexing**: SQLite + FTS5 for fast local search
 - ✅ **Multi-Language**: Specialized and registry-backed language coverage; see `docs/SUPPORT_MATRIX.md`
 - ✅ **MCP Protocol**: Verified official Python SDK compatibility over STDIO; see `docs/status/MCP_COMPATIBILITY_EVALUATION.md` for named client posture

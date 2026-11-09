@@ -1,7 +1,7 @@
-"""Release metadata assertions for the published v1.5.1 contract.
+"""Release metadata assertions for the prepared v1.6.0 contract.
 
-Published v1.5.1 is PUBLISHED_VERSION. Published v1.5.0 and v1.4.1
-(UNBOUNDED_MCP_VERSIONS) must not be installed without constraining mcp below 2.
+Published v1.5.1 (delivered acceptance partial) is PUBLISHED_VERSION. v1.3.0
+through v1.5.0, including YANKED_VERSIONS, are yanked for an unbounded mcp.
 
 Historical GARC soak target: v1.2.0-rc6.
 """
@@ -23,12 +23,12 @@ except ImportError:  # Python <3.11
 
 
 REPO = Path(__file__).parent.parent
-EXPECTED_VERSION = "1.5.1"
-EXPECTED_TAG = "v1.5.1"
-#: Latest published release (corrective; caps mcp<2).
+EXPECTED_VERSION = "1.6.0"
+EXPECTED_TAG = "v1.6.0"
+#: Latest published release (corrective; caps mcp<2; delivered acceptance partial).
 PUBLISHED_VERSION = "1.5.1"
-#: Published releases whose mcp requirement has no upper bound.
-UNBOUNDED_MCP_VERSIONS = ("1.5.0", "1.4.1")
+#: Yanked releases the docs name; their mcp requirement has no upper bound.
+YANKED_VERSIONS = ("1.5.0", "1.4.1")
 DOCKER_INSTALLERS = (
     "scripts/install-mcp-docker.sh",
     "scripts/install-mcp-docker.ps1",
@@ -373,11 +373,17 @@ def test_documented_publish_dispatch_binds_accepted_identity():
 def test_changelog_has_prepared_unpublished_contract_section():
     changelog = _read_text("CHANGELOG.md")
 
-    section = changelog.split(f"## [{EXPECTED_VERSION}] - 2026-11-08", 1)[1].split("\n## [", 1)[0]
-    assert "Prepared corrective release" in section
-    assert "`mcp>=1.27,<2`" in section
+    section = changelog.split(f"## [{EXPECTED_VERSION}] - 2026-11-09", 1)[1].split("\n## [", 1)[0]
+    assert "Prepared minor release" in section
+    assert "`mcp>=2.2,<2.4`" in section
     assert "Code-Index-MCP#124" in section
     assert "does not imply publication" in section
+    notes = section.split("### Upgrade notes", 1)[1]
+    for expected in ("`mcp<2`", "PMCP 3.x", "2026-07-28", "re-tested", "never pruned"):
+        assert expected in notes, expected
+    follow_ups = section.split("### Known follow-ups", 1)[1]
+    for issue in ("#133", "#134", "#121", "#117"):
+        assert f"Consiliency/Code-Index-MCP{issue}" in follow_ups, issue
 
 
 def test_runtime_mcp_requirement_is_bounded_to_the_mcp2_line():
@@ -485,7 +491,7 @@ def test_installers_and_download_helper_match_stable_identity_contract():
 
     readme = _read_text("README.md")
     quick_start = readme.split("## 🚀 Quick Start", 1)[1].split("## Using Against Many Repos", 1)[0]
-    assert "after protected-main publication" not in quick_start
+    assert "after protected-main publication" in quick_start
     assert "published, signed image reference" in quick_start
     assert f"signed `v{PUBLISHED_VERSION}`" in quick_start
     assert "image-reference.txt" in quick_start
@@ -505,20 +511,20 @@ def test_installers_and_download_helper_match_stable_identity_contract():
         assert expected in download_helper
 
 
-def test_active_docs_record_published_release_and_unbounded_mcp_warning():
+def test_active_docs_separate_candidate_from_published_and_yanked_releases():
     for path in ("README.md", "docs/GETTING_STARTED.md", "docs/MCP_CONFIGURATION.md"):
         text = _read_text(path)
-        assert EXPECTED_VERSION in text
-        assert "prepared candidate" not in text
-        assert f"published `{PUBLISHED_VERSION}`" in text
-        for version in UNBOUNDED_MCP_VERSIONS:
+        assert f"`{EXPECTED_VERSION}` prepared candidate" in text, path
+        assert f"Published `{PUBLISHED_VERSION}`" in text, path
+        assert "partial" in text, path
+        assert "yanked" in text, path
+        for version in YANKED_VERSIONS:
             assert f"`{version}`" in text, (path, version)
-        # "unpinned" was ambiguous: `index-it-mcp==1.5.0` looks pinned but is
-        # the broken install (#125 review S1). Name the real constraint.
-        assert "`mcp` below 2" in text
-        assert "unpinned" not in text
-        # 1.5.1 caps mcp<2; the docs no longer tell users to add "mcp<2".
+        # 1.6.0 requires the mcp 2.x line; users must drop the old pin, never add it.
+        assert "`mcp>=2.2,<2.4`" in text, path
+        assert "remove any `mcp<2` pin" in text.lower(), path
         assert '"mcp<2"' not in text
+        assert "unpinned" not in text
         assert "docs/operations/v13-release.md" in text or "operations/v13-release.md" in text
         assert "July 10, 2026 collision check" not in text
 
