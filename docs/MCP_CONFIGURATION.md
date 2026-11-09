@@ -2,11 +2,13 @@
 
 This guide provides comprehensive information on configuring the Code-Index-MCP for different environments and use cases.
 
-> **Stable-surface release status**: This guide targets published `1.5.0` (2026-11-09 UTC).
-> MCP STDIO is primary; FastAPI is secondary admin only. The signed `v1.5.0`
-> image passed delivered acceptance; a PyPI install needs `"mcp<2"` (see the
-> acceptance record). Earlier `1.4.1` lacks the parser-stack and baml-bridge
-> 0.23.0 upgrades, and `1.4.0` lacks the v13 repairs.
+> **Stable-surface release status**: This guide targets the `1.5.1` prepared candidate.
+> MCP STDIO is primary; FastAPI is secondary admin only. Docker examples require
+> the matching registry publication; the signed `v1.5.0` image passed delivered
+> acceptance. Published `1.5.0` and `1.4.1` wheels cannot start STDIO when
+> installed unpinned (their `mcp` requirement admits 2.x), so do not install
+> them unpinned; `1.5.1` caps `mcp<2`. `1.4.1` also lacks the parser-stack and
+> baml-bridge 0.23.0 upgrades, and `1.4.0` lacks the v13 repairs.
 > See [release preparation and acceptance](operations/v13-release.md).
 > That container image name is a container identity surface, not the canonical
 > Python distribution name.
@@ -21,7 +23,7 @@ For release containers, replace every `<published-digest>` placeholder below
 with the digest from the accepted GitHub release's `image-reference.txt` asset,
 or use the Docker installer's generated configuration. Set `MCP_DOCKER_IMAGE`
 to that full digest reference when using a client that expands environment
-variables. There is no version-tag or `latest`-tag fallback for `1.5.0`.
+variables. There is no version-tag or `latest`-tag fallback for `1.5.1`.
 >
 > **Public alpha repository model**: one server can serve many unrelated
 > repositories, with one registered worktree per git common directory. Only the

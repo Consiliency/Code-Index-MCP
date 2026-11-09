@@ -2,26 +2,41 @@
 
 ## Release Status
 
+`1.5.1` is the prepared corrective release for `1.5.0`. This document and the
+version bump do not claim that `1.5.1` has been published or deployed.
+
 `1.5.0` is published. It carries the treesitter-chunker 6 / tree-sitter 0.26
 parser-stack upgrade (Code-Index-MCP#115, merged in #116) and the baml-bridge
 0.23.0 alignment (Code-Index-MCP#119, merged in #120). It is recorded as
 published, not accepted and not deployed; see "1.5.0 Delivered Acceptance"
-below. The previous release, `v1.4.1` (Code-Index-MCP#97), was published
+below. Published `1.5.0` and `1.4.1` both set no upper bound on `mcp`: an
+unpinned install resolves `mcp` 2.x and `index-it-mcp stdio` fails at import
+(`McpError` was removed from `mcp.shared.exceptions`). Release smoke and the
+PMCP pilot installed under the lock (`mcp` 1.27.0), so neither saw it. `1.5.1`
+caps `mcp>=1.27,<2`, and `release_smoke.py --unconstrained` (part of
+`make release-smoke`) now installs the wheel with no lock constraints on Python
+3.12 and starts STDIO. Porting to `mcp` 2.x is Code-Index-MCP#124. Yanking
+`1.5.0` and `1.4.1` is a separate owner action after `1.5.1` is published and
+accepted.
+
+The previous accepted release, `v1.4.1` (Code-Index-MCP#97), was published
 October 13, 2026 and delivered-accepted as recorded in
 `docs/status/V13_EXECUTION.md`. The evidence and review narrative below records
 how `1.4.1` was accepted. The Publication Gate was written for `1.4.1`; for
 `1.5.0` the owner chose green CI, the existing reviews on #116 and #120, and
-post-publish acceptance of the published wheel and image. Its dispatch, recovery
-and delivered-acceptance rules are unchanged.
+post-publish acceptance of the published wheel and image. The owner decides
+which of its review seats and live checks apply to `1.5.1`. Its dispatch,
+recovery and delivered-acceptance rules are unchanged.
 The canonical source plan is `specs/phase-plans-v13.md`; execution progress is
 `docs/status/V13_EXECUTION.md`.
 
 Distribution: `index-it-mcp`; commands: `mcp-index` and `index-it-mcp`.
 Container: the signed `ghcr.io/consiliency/code-index-mcp@sha256:...` reference
-published in the `v1.5.0` GitHub release's `image-reference.txt` asset. Installers
-pin that exact reference; version/latest GHCR tags are left untouched. A PyPI
-install needs `"mcp<2"` (see below); `uv sync --locked` and the locally built
-`index_it_mcp-1.5.0-py3-none-any.whl` remain supported development paths.
+published in the `v1.5.1` GitHub release's `image-reference.txt` asset. Installers
+pin that exact reference; version/latest GHCR tags are left untouched. Until then,
+use `uv sync --locked`, the locally built `index_it_mcp-1.5.1-py3-none-any.whl`,
+or the signed `v1.5.0` image, which passed delivered acceptance. Do not install
+published `1.5.0` or `1.4.1` from PyPI unpinned (see below).
 The installer's `latest` selector means the latest GitHub release, not a mutable
 GHCR tag. It refuses a missing or malformed reference without falling back.
 
@@ -108,7 +123,7 @@ an approval substitute. Any candidate edit after review requires renewed review.
    available. Fetch protected main, confirm merge/source content and version
    inputs, and record independent publication authorization outside that tree.
 4. Check PyPI, GHCR, GitHub release and tag state for collisions or partial effects.
-   Dispatch `Release Automation` once with `mode=publish`, `version=v1.5.0`,
+   Dispatch `Release Automation` once with `mode=publish`, `version=v1.5.1`,
    `auto_merge=false`, `expected_commit=<recorded-main-sha>`,
    `expected_tree=<accepted-tree-sha>`, and `--ref main` only after the SHIP gate.
 5. Record workflow/run, tag/source, wheel/sdist/image digests and attestations.
@@ -137,7 +152,11 @@ no update/clobber flags and no automatic draft deletion on upload failure.
 An incomplete published release is preserved for owner-directed recovery.
 
 Delivered acceptance uses `release_smoke.py --wheel-path <downloaded-wheel>
---wheel-sha256 <registry-sha256> --image-ref <ghcr-name>@sha256:<registry-digest>`.
+--wheel-sha256 <registry-sha256> --unconstrained --image-ref
+<ghcr-name>@sha256:<registry-digest>`. `--unconstrained` also installs the
+delivered wheel alone, with no lock constraints, as `pip install index-it-mcp`
+would, and starts STDIO; lock-constrained checks cannot see an unbounded
+dependency that breaks the published install.
 For PMCP, run `v13_pmcp_pilot.py --mode prepare --root <owned-root> --wheel
 <downloaded-wheel> --wheel-sha256 <registry-sha256>`, then offline, rehearsal and
 browser modes against that manifest. These supplied-artifact paths never build

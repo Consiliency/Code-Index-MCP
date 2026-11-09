@@ -1715,7 +1715,7 @@ wheels = [
 
 [[package]]
 name = "index-it-mcp"
-version = "1.5.0"
+version = "1.5.1"
 source = { editable = "." }
 dependencies = [
     { name = "argon2-cffi" },
@@ -1913,7 +1913,7 @@ requires-dist = [
     { name = "jinja2", marker = "extra == 'semantic'", specifier = ">=3.1.2" },
     { name = "jupyter", marker = "extra == 'dev'", specifier = ">=1.0.0" },
     { name = "line-profiler", marker = "extra == 'dev'", specifier = ">=4.0.0" },
-    { name = "mcp", specifier = ">=1.0.0" },
+    { name = "mcp", specifier = ">=1.27,<2" },
     { name = "memory-profiler", marker = "extra == 'dev'", specifier = ">=0.61.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.5.1" },
     { name = "myst-parser", marker = "extra == 'dev'", specifier = ">=2.0.0" },
