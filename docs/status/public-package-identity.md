@@ -1,12 +1,27 @@
 # Public Package Identity
 
-Check date: 2026-07-06 UTC
+Check date: 2026-07-06 UTC; 1.5.0 publication recheck 2026-11-08
 
 ## Scope
 
 This note freezes the repo-owned public identity contract for PUBNAME.
 It is metadata-only evidence for the prepared `1.3.0` surface. It does not
 claim a new package or container publication.
+
+## 1.5.0 Publication Recheck (2026-11-08)
+
+`https://pypi.org/pypi/index-it-mcp/json` now reports `1.5.0` as the latest
+version, published from Release Automation run 42539192667 at tag `v1.5.0`
+(`81980d0`). The wheel and sdist digests match the GitHub release assets; see
+the delivered acceptance record in `docs/operations/v13-release.md`. Version
+parity for `index-it-mcp` is now proven for `1.5.0`. The project URLs still point
+to `https://github.com/ViperJuice/Code-Index-MCP`. `code-index-mcp` is still an
+external package (`2.17.1`, `johnhuang316/code-index-mcp`).
+
+The published `1.5.0` metadata declares `mcp>=1.0.0` with no upper bound, so an
+unconstrained `pip install index-it-mcp==1.5.0` resolves `mcp` 2.x, and STDIO
+fails to start. Public install docs therefore pin `"mcp<2"` beside the package.
+The sections below are the original 2026-07-06 PUBNAME evidence.
 
 ## Metadata Probes
 

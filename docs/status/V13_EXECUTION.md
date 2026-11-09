@@ -3,6 +3,19 @@
 Updated 2026-10-12. Branch: `codex/v13-audit-remediation`.
 Worktree: `/mnt/workspace/worktrees/viperjuice/Code-Index-MCP-v13-audit-remediation-closure`.
 
+## November 8 v1.5.0 Publication
+
+v1.5.0 was published once from `81980d0` (tree `5d43fdf`) by Release
+Automation run 42539192667: PyPI wheel and sdist, GitHub release, and signed
+image `ghcr.io/consiliency/code-index-mcp@sha256:6ef6aa54…`. It is recorded as
+published=true, accepted=false (partial), deployed=false. See "1.5.0 Delivered
+Acceptance" in `docs/operations/v13-release.md`. Registry digests, cosign
+verification, delivered release smoke, the lock-constrained wheel, the image and
+PMCP prepare passed on dev0. An unconstrained PyPI install resolves `mcp` 2.x and
+cannot start STDIO. PMCP offline failed on the pilot fixture's cold grammar
+cache, and rehearsal and browser were not run. dev0 still runs build `b79cc7c`.
+No issue closure is claimed.
+
 ## October 12 PREP Acceptance
 
 Exact candidate `799d9e8` (tree `dcfbbef`) passed the one October 12 pilot:
@@ -64,7 +77,7 @@ review before admission. PREP is not accepted.
 | DATA | Accepted | `docs/validation/v13/DATA.json`; IF-0-DATA-1 |
 | PILOT | Historical source accepted; repairs require revalidation | `docs/validation/v13/PILOT.json`; original IF-0-PILOT-1 unchanged |
 | PREP | Accepted | Exact `799d9e8`: October 12 live pilot, one signing dispatch and four-seat reconciliation passed; merged as `3453137` |
-| SHIP | Published and accepted | v1.4.1 run 38337612139; delivered acceptance passed; not deployed; no issue closure claimed |
+| SHIP | v1.4.1 published and accepted; v1.5.0 published, acceptance partial | v1.4.1 run 38337612139: delivered acceptance passed. v1.5.0 run 42539192667: published, not accepted (unbounded `mcp` pin; PMCP offline grammar-cache gap). Neither is deployed; no issue closure claimed |
 
 The four-seat reconciled roadmap remains unchanged at SHA-256
 `178b8328d8e7dc76ddc0804d7b72d3ccddb55e23577a3d52cb7cbd70d5fd5308`.
