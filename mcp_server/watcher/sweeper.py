@@ -9,9 +9,10 @@ import tempfile
 import threading
 import time
 from pathlib import Path
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
-from ..core.ignore_patterns import build_walker_filter, index_exclusion_reason
+from ..core.ignore_patterns import build_walker_filter
+from ..indexing.admission import index_admission_reason
 from ..metrics.prometheus_exporter import mcp_watcher_sweep_errors_total
 from ..plugins.language_registry import get_all_extensions
 from ..storage.sqlite_store import SQLiteStore
@@ -23,12 +24,39 @@ _CODE_EXTENSIONS = get_all_extensions()
 ENV_SWEEP_MINUTES: str = "MCP_WATCHER_SWEEP_MINUTES"
 DEFAULT_SWEEP_MINUTES: int = 60
 
+#: ``(repo_id, path, repo_root, is_excluded, size_bytes) -> reason or None``.
+#: ``None`` means the indexer stores the file. Production wiring passes
+#: ``EnhancedDispatcher.index_admission_reason`` so the sweep and the indexer
+#: share one predicate (Consiliency/Code-Index-MCP#114).
+AdmissionReason = Callable[[str, Path, Path, Callable[[Path], bool], Optional[int]], Optional[str]]
+
+_DRIFT_LOG_SAMPLE = 5
+#: Upper bound on sweeps skipped between retries of a failing reconciliation
+#: (backoff doubles from zero: retry next sweep, then skip 1, 3, 7, then 15).
+_MAX_DRIFT_RETRY_SKIPS = 15
+
+
+def _default_admission_reason(
+    _repo_id: str,
+    path: Path,
+    root: Path,
+    is_excluded: Callable[[Path], bool],
+    size_bytes: Optional[int],
+) -> Optional[str]:
+    return index_admission_reason(path, root, is_excluded, size_bytes)
+
 
 class WatcherSweeper:
     """Periodically diffs filesystem vs SQLite to recover missed watchdog events.
 
     Calls on_missed_path(repo_id, relative_path) for each code file present on disk
     but absent from the SQLite index. The caller is responsible for re-indexing the file.
+
+    The filesystem side is exactly the set of files the indexer would store, as
+    decided by the shared admission predicate. Drift that survives the
+    reconciliation it triggered is not acted on again until the tree or the
+    drift itself changes, so an unfixable difference cannot cause a rebuild on
+    every interval.
 
     Thread model: single daemon thread using Event.wait() for clean stop.
     """
@@ -45,6 +73,7 @@ class WatcherSweeper:
         interval_minutes: int = DEFAULT_SWEEP_MINUTES,
         clock: Callable[[], float] = time.monotonic,
         on_repository_drift: Optional[Callable[[str], None]] = None,
+        admission_reason: Optional[AdmissionReason] = None,
     ) -> None:
         self._on_missed_create = on_missed_create or on_missed_path or (lambda _r, _p: None)
         self._on_missed_delete = on_missed_delete or (lambda _r, _p: None)
@@ -54,6 +83,13 @@ class WatcherSweeper:
         self._store_provider = store_provider
         self._clock = clock
         self._on_repository_drift = on_repository_drift
+        self._admission_reason: AdmissionReason = admission_reason or _default_admission_reason
+        # repo_id -> signature of the drift the sweep last acted on.
+        self._acted_drift: Dict[str, str] = {}
+        # repo_id -> signature already logged as suppressed (log once).
+        self._suppressed_drift_logged: Dict[str, str] = {}
+        # repo_id -> (signature, consecutive failures, sweeps left to skip).
+        self._failed_drift: Dict[str, Tuple[str, int, int]] = {}
 
         # Env var overrides constructor arg when set
         env_val = os.environ.get(ENV_SWEEP_MINUTES)
@@ -119,6 +155,7 @@ class WatcherSweeper:
             gitignore_filter = build_walker_filter(repo_root)
             repo_has_drift = False
             tracked_blobs = None
+            tree_digest = ""
             transformed_paths: set[str] = set()
             if (repo_root / ".git").exists():
                 clean = subprocess.run(
@@ -138,6 +175,7 @@ class WatcherSweeper:
                     check=True,
                     timeout=30,
                 ).stdout
+                tree_digest = hashlib.sha256(listing).hexdigest()
                 for record in listing.split(b"\0"):
                     if not record:
                         continue
@@ -177,8 +215,12 @@ class WatcherSweeper:
                     blob = tracked_blobs.get(relative) if tracked_blobs is not None else None
                     if tracked_blobs is not None and blob is None:
                         continue
-                    if fs_path.suffix not in _CODE_EXTENSIONS or index_exclusion_reason(
-                        fs_path, repo_root, gitignore_filter, blob[1] if blob else None
+                    if self._admission_reason(
+                        repo_id,
+                        fs_path,
+                        repo_root,
+                        gitignore_filter,
+                        blob[1] if blob else None,
                     ):
                         continue
                     if fs_path.is_file():
@@ -208,19 +250,50 @@ class WatcherSweeper:
                 if fs_by_path[path]
                 != (known_by_path[path].get("content_hash") or known_by_path[path].get("hash"))
             }
+            retained = self._retained_paths(store, sqlite_repo_id)
             deleted = {
                 rel
                 for rel in set(known_by_path) - set(fs_by_path)
-                if self._indexed_path_should_report_delete(repo_root, rel, gitignore_filter)
+                if rel not in retained
+                and self._indexed_path_should_report_delete(repo_root, rel, gitignore_filter)
             }
             renamed = self._match_renames(created, deleted, fs_by_path, known_by_path)
             renamed_created = {new for _old, new in renamed}
             renamed_deleted = {old for old, _new in renamed}
 
+            if not (created or modified or deleted):
+                self._acted_drift.pop(repo_id, None)
+                self._suppressed_drift_logged.pop(repo_id, None)
+                self._failed_drift.pop(repo_id, None)
+                continue
+            signature = self._drift_signature(
+                tree_digest, created, modified, deleted, fs_by_path, known_by_path
+            )
+            if self._acted_drift.get(repo_id) == signature:
+                self._log_suppressed_drift(repo_id, signature, created, modified, deleted)
+                continue
+            self._suppressed_drift_logged.pop(repo_id, None)
+
             if self._on_repository_drift is not None:
-                if created or modified or deleted:
-                    self._on_repository_drift(repo_id)
-                    drifted.append(repo_id)
+                failure = self._failed_drift.get(repo_id)
+                if failure is not None and failure[0] == signature and failure[2] > 0:
+                    self._failed_drift[repo_id] = (failure[0], failure[1], failure[2] - 1)
+                    logger.debug("watcher sweep: reconcile retry for %s backed off", repo_id)
+                    continue
+                # Only a reconciliation that reports success (``True``) records
+                # the signature. A failed or refused sync, or one that raised,
+                # is retried with bounded backoff, never suppressed (#114 review).
+                try:
+                    reconciled = self._on_repository_drift(repo_id) is True
+                except Exception:
+                    self._record_reconcile_failure(repo_id, signature)
+                    raise
+                drifted.append(repo_id)
+                if reconciled:
+                    self._acted_drift[repo_id] = signature
+                    self._failed_drift.pop(repo_id, None)
+                else:
+                    self._record_reconcile_failure(repo_id, signature)
                 continue
 
             for old_rel, new_rel in sorted(renamed):
@@ -235,10 +308,82 @@ class WatcherSweeper:
                 self._on_missed_delete(repo_id, rel_str)
                 repo_has_drift = True
 
+            self._acted_drift[repo_id] = signature
             if repo_has_drift:
                 drifted.append(repo_id)
 
         return drifted
+
+    def _record_reconcile_failure(self, repo_id: str, signature: str) -> None:
+        previous = self._failed_drift.get(repo_id)
+        failures = previous[1] + 1 if previous is not None and previous[0] == signature else 1
+        skips = min(2 ** (failures - 1) - 1, _MAX_DRIFT_RETRY_SKIPS)
+        self._failed_drift[repo_id] = (signature, failures, skips)
+        logger.warning(
+            "watcher sweep: drift reconciliation for %s did not succeed (attempt %d); "
+            "retrying after %d more sweep(s)",
+            repo_id,
+            failures,
+            skips,
+        )
+
+    @staticmethod
+    def _retained_paths(store: SQLiteStore, repository_id: int) -> set:
+        """Paths a generation rebuild keeps by design; they are never delete drift."""
+        getter = getattr(store, "get_retained_relative_paths", None)
+        if not callable(getter):
+            return set()
+        try:
+            return set(getter(repository_id))
+        except Exception as exc:
+            logger.debug("retained path lookup failed: %s", type(exc).__name__)
+            return set()
+
+    @staticmethod
+    def _drift_signature(
+        tree_digest: str,
+        created: Iterable[str],
+        modified: Iterable[str],
+        deleted: Iterable[str],
+        fs_by_path: Dict[str, str],
+        known_by_path: Dict[str, Dict],
+    ) -> str:
+        """Identify one drift observation: the tree plus each drifted path's hashes."""
+
+        def known_hash(rel: str) -> str:
+            record = known_by_path.get(rel) or {}
+            return str(record.get("content_hash") or record.get("hash") or "")
+
+        digest = hashlib.sha256(tree_digest.encode("ascii"))
+        for marker, paths in (("C", created), ("M", modified), ("D", deleted)):
+            for rel in sorted(paths):
+                line = f"{marker}\0{rel}\0{fs_by_path.get(rel, '')}\0{known_hash(rel)}\n"
+                digest.update(line.encode("utf-8", "surrogateescape"))
+        return digest.hexdigest()
+
+    def _log_suppressed_drift(
+        self,
+        repo_id: str,
+        signature: str,
+        created: set,
+        modified: set,
+        deleted: set,
+    ) -> None:
+        if self._suppressed_drift_logged.get(repo_id) == signature:
+            logger.debug("watcher sweep: identical drift for %s still suppressed", repo_id)
+            return
+        self._suppressed_drift_logged[repo_id] = signature
+        sample = sorted(created | modified | deleted)[:_DRIFT_LOG_SAMPLE]
+        logger.warning(
+            "watcher sweep: drift for %s survived reconciliation (%d created, %d modified, "
+            "%d deleted; sample %s); not reconciling identical drift again until the tree "
+            "changes",
+            repo_id,
+            len(created),
+            len(modified),
+            len(deleted),
+            sample,
+        )
 
     def _hash_file(self, path: Path) -> str:
         return self._hash_stream(lambda: path.open("rb"))

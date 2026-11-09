@@ -359,7 +359,12 @@ Old and failed generations are retained deliberately. Rebuilds snapshot the whol
 committed tree and may copy retained vectors; capacity and latency must be measured
 before scaling. The first generation rebuild after upgrading legacy vector storage
 may re-embed the corpus and needs a separate inference budget. No automatic garbage
-collection or fleet indexing is authorized by this release.
+collection or fleet indexing is authorized by this release. Later builds that include
+Consiliency/Code-Index-MCP#114 bound retention instead: each successful publication
+keeps the live generation plus `MCP_INDEX_GENERATION_RETENTION` (default 2) previous
+generations and prunes older generations that build recorded. Generations from before
+the upgrade, registry-referenced, pinned (`<id>.keep`) and still-open generations are
+never pruned.
 
 The HTTP admin gateway requires external process supervision. Python cannot safely
 abandon a stuck mutating worker while it owns the repository fence. Failed or

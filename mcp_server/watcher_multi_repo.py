@@ -500,14 +500,29 @@ class MultiRepositoryWatcher:
             on_repository_drift=lambda repo_id: self._reconcile_repository_drift(
                 repo_id, owner=owners.get(repo_id)
             ),
+            # One admission predicate for the indexer and the sweep (#114).
+            admission_reason=self._sweep_admission_reason(),
         )
 
-    def _reconcile_repository_drift(self, repo_id: str, *, owner=None) -> None:
+    def _sweep_admission_reason(self):
+        """Share the dispatcher's admission predicate with the sweep when available."""
+        dispatcher = getattr(self, "dispatcher", None)
+        if isinstance(dispatcher, EnhancedDispatcher):
+            return dispatcher.index_admission_reason
+        return None
+
+    def _reconcile_repository_drift(self, repo_id: str, *, owner=None) -> bool:
+        """Rebuild after sweep drift; return True only if a generation was published.
+
+        The sweep suppresses identical drift only after a successful
+        reconciliation, so failed, refused and skipped attempts return False
+        and are retried (#114 review B2).
+        """
         repo = self.registry.get_repository(repo_id)
         if repo is None or not repo.auto_sync or not getattr(repo, "active", True):
-            return
+            return False
         if owner is not None and owner.registration_id != repo.registration_id:
-            return
+            return False
         result = self.index_manager.sync_repository_index(
             repo_id,
             force_full=True,
@@ -516,6 +531,8 @@ class MultiRepositoryWatcher:
         )
         if result.action in {"full_index", "incremental_update"}:
             self.mark_repository_changed(repo_id)
+            return True
+        return False
 
     def enqueue_full_rescan(self, repo_id: str) -> None:
         """Submit a force-full reindex to the thread pool; returns immediately."""

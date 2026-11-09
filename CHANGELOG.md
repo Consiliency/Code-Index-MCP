@@ -7,7 +7,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-[Unreleased]: # placeholder for post-rc5 work
+**Fixed** (Consiliency/Code-Index-MCP#114)
+- The watcher sweep counted files the indexer never stores (disabled-by-default
+  languages such as YAML, shell and JSON, and unsupported extensions) as
+  "created" drift. On this repository that was 112 files, so every sweep
+  (default 60 minutes) forced a full rebuild that could not clear the drift,
+  left readiness at `missing_provenance` during each rebuild, and published a
+  new generation each time. The sweep, the full index walk and single-file
+  indexing now share one admission predicate
+  (`mcp_server/indexing/admission.py`, `EnhancedDispatcher.index_admission_reason`):
+  the same extension, plugin-enablement and exclusion rules. Right after a full
+  rebuild the sweep reports no drift. Rows a rebuild deliberately retains
+  (imported documents and history) are no longer reported as deleted.
+- Drift that survives a *successful* reconciliation is not reconciled again
+  until the tracked tree or the drift itself changes; the sweep logs it once.
+  A reconciliation that failed, was refused or raised is retried on the next
+  sweep, then with exponential backoff capped at 16 sweeps.
+- Bounded generation retention. Each publication and each failed rebuild is
+  recorded in `generations/generation-history.json`, and only recorded
+  generations can be pruned: after a publication, recorded generations beyond
+  the live one plus the `MCP_INDEX_GENERATION_RETENTION` (default 2, minimum 1)
+  most recently live previous generations, and recorded failed generations
+  beyond the newest one. Never removed: generations without a record
+  (everything from before the upgrade, or after a lost history file), any
+  generation a registry entry references, generations pinned with a
+  `generations/<id>.keep` file, and any generation a reader may still hold (its
+  SQLite sidecars exist, or a process has it open). The semantic directory and
+  sidecars are removed before the database, and the history file is fsynced.
+  Quarantine copies and server-side Qdrant collections are not touched.
+- Sandboxed plugin workers kept per-file in-memory state keyed by each
+  rebuild's staging path, which grew by about 11 MB per rebuild of a 29-file
+  fixture. A staged build now releases the repository's plugin workers while
+  queries are still fenced; they restart on next use.
+
+**Fixed** (Consiliency/Code-Index-MCP#111)
+- Incremental sync failed with `Staged rebuild failed (RuntimeError)` when a
+  commit touched a file in a language with no enabled plugin, such as a
+  workflow `.yml`. Incremental sync now asks the shared admission predicate,
+  as the full walk does: files it rejects are ignored, an indexed file that is
+  no longer admitted is deleted, and a rename to a non-indexable path (for
+  example `notes.md` to `notes.txt`) deletes the old row. The result matches a
+  full rebuild. A file the predicate admits whose plugin fails to resolve (for
+  example a sandbox worker that does not start) is a failure in both the
+  incremental and the full path, so the previous generation is kept.
+- A failed staged rebuild's stored `last_sync_error` and the `repository sync`
+  output now include the message of the rebuild's own refusal and a bounded
+  summary of the per-file errors (at most five, checkout and staging paths
+  removed). Text from other exceptions is still reported by type only.
+- The shared secret redaction used for these errors and rerank diagnostics now
+  also covers GitHub tokens (`ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_`,
+  `github_pat_`), AWS access key ids, Slack tokens, PEM private keys, URL
+  credentials and `*secret*`/`*token*`/`*password*` key-value pairs.
+
+**Upgrade notes**
+- After deploying, hosts that worked around Consiliency/Code-Index-MCP#114 with
+  a long `MCP_WATCHER_SWEEP_MINUTES` (for example 1440) can return to the
+  default.
+- Generations that exist before the upgrade are never pruned automatically;
+  remove them by hand once they are no longer needed. Only generations
+  published or failed after the upgrade count towards retention.
 
 ## [1.5.1] - 2026-11-08
 

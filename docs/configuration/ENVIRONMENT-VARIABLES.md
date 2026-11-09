@@ -291,12 +291,21 @@ This document provides a comprehensive reference of all environment variables su
   ```
 
 ### `MCP_WATCHER_SWEEP_MINUTES`
-- **Description**: Interval in minutes between full-tree periodic sweeps performed by `WatcherSweeper` to recover events dropped by inotify/FSEvents. Introduced in P14 SL-5 (`mcp_server/watcher/sweeper.py`).
+- **Description**: Interval in minutes between full-tree periodic sweeps performed by `WatcherSweeper` to recover events dropped by inotify/FSEvents. Introduced in P14 SL-5 (`mcp_server/watcher/sweeper.py`). The sweep compares the index with exactly the files the indexer stores (the shared admission predicate), and does not reconcile identical drift again until the tracked tree changes (Consiliency/Code-Index-MCP#114).
 - **Type**: Integer (minutes)
 - **Default**: `60`
 - **Example**:
   ```bash
   export MCP_WATCHER_SWEEP_MINUTES=30  # Sweep every 30 minutes
+  ```
+
+### `MCP_INDEX_GENERATION_RETENTION`
+- **Description**: Number of previous index generations kept for rollback, besides the live one, when a rebuild publishes a new generation. Only generations recorded in `generations/generation-history.json` (published or failed by this version) are ever pruned, together with their SQLite sidecars and local semantic directory; the newest failed generation is kept as evidence. Never pruned: generations without a record (for example from before the upgrade), generations any registry entry references, generations pinned with an empty `generations/<id>.keep` file, and generations a reader may still hold open. Quarantine copies and Qdrant server collections are not touched (Consiliency/Code-Index-MCP#114).
+- **Type**: Integer
+- **Default**: `2` (values below `1` are treated as `1`)
+- **Example**:
+  ```bash
+  export MCP_INDEX_GENERATION_RETENTION=3  # Keep live plus three previous generations
   ```
 
 ## Cloud Sync Configuration (Optional)

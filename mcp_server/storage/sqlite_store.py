@@ -1723,6 +1723,22 @@ class SQLiteStore:
             row = cursor.fetchone()
             return self._normalize_file_record(row) if row else None
 
+    def get_retained_relative_paths(self, repository_id: int) -> List[str]:
+        """Return relative paths whose rows a generation rebuild retains.
+
+        ``prepare_generation`` keeps files that own preserved document or
+        imported history chunks, so they are expected to outlive their source.
+        """
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                "SELECT DISTINCT f.relative_path FROM files f "
+                "JOIN code_chunks c ON c.file_id = f.id "
+                "WHERE f.repository_id = ? AND f.relative_path IS NOT NULL "
+                "AND (c.chunk_type = ? OR c.chunk_id LIKE 'history:%')",
+                (repository_id, PRESERVED_CHUNK_TYPE),
+            ).fetchall()
+        return [str(row[0]).replace("\\", "/") for row in rows]
+
     def get_all_files(self, repository_id: Optional[int] = None) -> List[Dict[str, Any]]:
         """Get all non-deleted files with normalized paths and content hashes."""
         with self._get_connection() as conn:

@@ -16,6 +16,20 @@ def get_artifact_retention_days() -> int:
     return int(os.getenv("MCP_ARTIFACT_RETENTION_DAYS", "30"))
 
 
+#: Superseded index generations kept for rollback besides the live one.
+DEFAULT_INDEX_GENERATION_RETENTION = 2
+
+
+def get_index_generation_retention() -> int:
+    """Return how many superseded generations to keep for rollback (at least 1)."""
+    raw = os.getenv("MCP_INDEX_GENERATION_RETENTION")
+    try:
+        value = int(raw) if raw is not None else DEFAULT_INDEX_GENERATION_RETENTION
+    except ValueError:
+        value = DEFAULT_INDEX_GENERATION_RETENTION
+    return max(1, value)
+
+
 def get_disk_readonly_threshold_mb() -> int:
     return int(os.getenv("MCP_DISK_READONLY_THRESHOLD_MB", "100"))
 

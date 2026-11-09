@@ -6386,11 +6386,16 @@ class TestEnhancedDispatcherProtocolConformance:
             "_index_file_with_lexical_timeout",
             _fake_index_file_with_lexical_timeout,
         )
-        original_get_all_extensions = dispatcher_module.get_all_extensions
+        # Admit the shell half of the pair as if its plugin were enabled.
+        original_admission = dispatcher_module._index_admission_reason
         monkeypatch.setattr(
             dispatcher_module,
-            "get_all_extensions",
-            lambda: set(original_get_all_extensions()) | {".sh"},
+            "_index_admission_reason",
+            lambda path, root, is_excluded, size_bytes=None, **kwargs: (
+                None
+                if path.suffix == ".sh"
+                else original_admission(path, root, is_excluded, size_bytes, **kwargs)
+            ),
         )
 
         def _explode_before_semantic_progress(self, _ctx, _paths, progress_callback=None):
