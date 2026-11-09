@@ -1,4 +1,6 @@
-"""Release metadata assertions for the published v1.5.0 contract.
+"""Release metadata assertions for the prepared v1.5.1 contract.
+
+Published v1.5.0 (delivered acceptance partial) is PUBLISHED_VERSION.
 
 Historical GARC soak target: v1.2.0-rc6.
 """
@@ -20,8 +22,10 @@ except ImportError:  # Python <3.11
 
 
 REPO = Path(__file__).parent.parent
-EXPECTED_VERSION = "1.5.0"
-EXPECTED_TAG = "v1.5.0"
+EXPECTED_VERSION = "1.5.1"
+EXPECTED_TAG = "v1.5.1"
+#: Latest published release; delivered acceptance partial (unbounded mcp).
+PUBLISHED_VERSION = "1.5.0"
 DOCKER_INSTALLERS = (
     "scripts/install-mcp-docker.sh",
     "scripts/install-mcp-docker.ps1",
@@ -367,9 +371,19 @@ def test_changelog_has_prepared_unpublished_contract_section():
     changelog = _read_text("CHANGELOG.md")
 
     section = changelog.split(f"## [{EXPECTED_VERSION}] - 2026-11-08", 1)[1].split("\n## [", 1)[0]
-    assert "Prepared" in section
-    assert "Code-Index-MCP#115" in section
+    assert "Prepared corrective release" in section
+    assert "`mcp>=1.27,<2`" in section
+    assert "Code-Index-MCP#124" in section
     assert "does not imply publication" in section
+
+
+def test_runtime_mcp_requirement_is_capped_below_2_until_the_port():
+    """1.5.0/1.4.1 declared mcp>=1.0.0; mcp 2.x cannot start STDIO (#124)."""
+    project = tomllib.loads(_read_text("pyproject.toml"))["project"]
+    assert "mcp>=1.27,<2" in project["dependencies"]
+    lock = tomllib.loads(_read_text("uv.lock"))
+    (mcp,) = [package for package in lock["package"] if package["name"] == "mcp"]
+    assert mcp["version"].split(".")[0] == "1"
 
 
 def test_release_workflow_separates_prepare_from_protected_main_publish():
@@ -455,8 +469,9 @@ def test_installers_and_download_helper_match_stable_identity_contract():
 
     readme = _read_text("README.md")
     quick_start = readme.split("## 🚀 Quick Start", 1)[1].split("## Using Against Many Repos", 1)[0]
-    assert "after protected-main publication" not in quick_start
+    assert "after protected-main publication" in quick_start
     assert "published, signed image reference" in quick_start
+    assert f"signed `v{PUBLISHED_VERSION}`" in quick_start
     assert "image-reference.txt" in quick_start
     for installer in (shell, powershell):
         assert "image-reference.txt" in installer
@@ -474,13 +489,18 @@ def test_installers_and_download_helper_match_stable_identity_contract():
         assert expected in download_helper
 
 
-def test_active_docs_record_publication_separately_from_acceptance():
+def test_active_docs_separate_candidate_from_partially_accepted_release():
     for path in ("README.md", "docs/GETTING_STARTED.md", "docs/MCP_CONFIGURATION.md"):
         text = _read_text(path)
         assert EXPECTED_VERSION in text
-        assert "prepared candidate" not in text
-        assert f"published `{EXPECTED_VERSION}`" in text
-        assert '"mcp<2"' in text
+        assert "prepared candidate" in text
+        assert f"Published `{PUBLISHED_VERSION}`" in text
+        # "unpinned" was ambiguous: `index-it-mcp==1.5.0` looks pinned but is
+        # the broken install (#125 review S1). Name the real constraint.
+        assert "`mcp` below 2" in text
+        assert "unpinned" not in text
+        # 1.5.1 caps mcp<2; the docs no longer tell users to add "mcp<2".
+        assert '"mcp<2"' not in text
         assert "docs/operations/v13-release.md" in text or "operations/v13-release.md" in text
         assert "July 10, 2026 collision check" not in text
 

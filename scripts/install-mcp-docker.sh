@@ -13,8 +13,8 @@ NC='\033[0m' # No Color
 
 # Configuration
 # Canonical release image: ghcr.io/consiliency/code-index-mcp, pinned by digest.
-MCP_VERSION="${MCP_VERSION:-v1.5.0}"
-MCP_VARIANT="${MCP_VARIANT:-v1.5.0}"
+MCP_VERSION="${MCP_VERSION:-v1.5.1}"
+MCP_VARIANT="${MCP_VARIANT:-v1.5.1}"
 DOCKER_REGISTRY="${DOCKER_REGISTRY:-ghcr.io}"
 MCP_IMAGE="${DOCKER_REGISTRY}/consiliency/code-index-mcp"
 
@@ -116,7 +116,7 @@ install_docker() {
 choose_variant() {
     echo
     echo "Choose MCP Index variant:"
-    echo "1) v1.5.0      - Versioned release image (requires publication)"
+    echo "1) v1.5.1      - Versioned release image (requires publication)"
     echo "2) local-smoke - Locally built via make release-smoke-container"
     echo "3) latest      - Latest GitHub release, pinned by digest"
     echo
@@ -134,8 +134,8 @@ choose_variant() {
             print_info "Selected: latest"
             ;;
         *)
-            MCP_VARIANT="v1.5.0"
-            print_info "Selected: v1.5.0"
+            MCP_VARIANT="v1.5.1"
+            print_info "Selected: v1.5.1"
             ;;
     esac
 }

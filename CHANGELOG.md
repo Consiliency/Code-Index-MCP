@@ -9,6 +9,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 [Unreleased]: # placeholder for post-rc5 work
 
+## [1.5.1] - 2026-11-08
+
+Prepared corrective release for published `1.5.0` and `1.4.1`: cap `mcp` below
+2 so a plain install, with no separate `mcp` constraint, can start STDIO.
+This section does not imply publication; protected-main dispatch and
+independent delivered-artifact acceptance are separate gates.
+
+### Fixed
+- **Plain installs could not start STDIO.** `1.5.0` and `1.4.1` declare
+  `mcp>=1.0.0` with no upper bound, so `pip install index-it-mcp==1.5.0`
+  resolves `mcp` 2.x, and `index-it-mcp stdio` fails at import with
+  `ImportError: cannot import name 'McpError' from 'mcp.shared.exceptions'`.
+  Release smoke and the PMCP pilot install under `uv.lock` (`mcp` 1.27.0), so
+  neither caught it. The requirement is now `mcp>=1.27,<2`; the locked version
+  stays 1.27.0.
+
+### Added
+- `scripts/release_smoke.py --unconstrained`, run by `make release-smoke` and
+  so by the CI agent gate and Release Automation. It installs the built (or
+  delivered) wheel into a fresh Python 3.12 venv with no lock constraints, so
+  the newest versions the wheel allows resolve. It then checks
+  `index-it-mcp --version`, prefetches grammars into an explicit
+  `TREE_SITTER_LANGUAGE_PACK_CACHE_DIR`, and runs an MCP initialize and
+  tools/list exchange over raw JSON-RPC, then the lexical STDIO queries. It
+  fails on `1.5.0`'s requirements (`mcp` 2.3.0) and passes with the cap
+  (`mcp` 1.30.0).
+
+### Upgrade notes
+- **Do not install `1.5.0` or `1.4.1` without constraining `mcp` below 2**,
+  even as `index-it-mcp==1.5.0`. Install `1.5.1`. Hosts that
+  must stay on `1.4.1` (for example glibc older than 2.34) add `"mcp<2"` to the
+  same install command. After `1.5.1` is published and accepted, the owner plans
+  to yank `1.5.0` and `1.4.1`.
+- **No co-install with `mcp` 2.x.** Environments that need `mcp` 2.x, such as
+  PMCP 3.x, cannot install `1.5.1` in the same environment. Run it in its own
+  environment until the port lands.
+- No index, schema or configuration changes from `1.5.0`; its upgrade notes
+  still apply when upgrading from `1.4.x`.
+
+### Known follow-ups
+- Consiliency/Code-Index-MCP#124: port the STDIO server to `mcp` 2.x and lift
+  the cap.
+
 ## [1.5.0] - 2026-11-08
 
 Prepared minor release for Code-Index-MCP#115 and Code-Index-MCP#119: the

@@ -182,6 +182,104 @@ def unavailable(value, state, *, code="index_unavailable"):
     assert value["readiness"]["state"] == state, value
 
 
+#: Tools every STDIO session must list.
+REQUIRED_TOOLS = {"reindex", "search_code", "symbol_lookup", "get_status"}
+#: A protocol revision mcp 1.27 serves; the server may negotiate another.
+PROTOCOL_VERSION = "2025-06-18"
+
+
+def initialize_probe(root: Path, entrypoint: str, *, timeout: float = 60.0) -> None:
+    """MCP initialize and tools/list over raw newline-delimited JSON-RPC.
+
+    Uses no MCP client library, so it proves the installed server starts and
+    answers whatever ``mcp`` version the install resolved (an import error in
+    the server, such as mcp 2.x removing ``McpError``, fails here).
+    """
+    import queue
+    import threading
+
+    log_path = root / "initialize-stderr.log"
+    with log_path.open("wb") as log:
+        server = subprocess.Popen(
+            [entrypoint, "stdio"],
+            cwd=root,
+            env=environment(root),
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=log,
+        )
+        lines: queue.Queue[bytes | None] = queue.Queue()
+
+        def read() -> None:
+            for line in server.stdout:
+                lines.put(line)
+            lines.put(None)  # EOF: the server exited or closed stdout
+
+        threading.Thread(target=read, daemon=True).start()
+
+        def send(message: dict) -> None:
+            server.stdin.write(json.dumps(message).encode() + b"\n")
+            server.stdin.flush()
+
+        def response(request_id: int) -> dict:
+            while True:
+                try:
+                    line = lines.get(timeout=timeout)
+                except queue.Empty:
+                    raise RuntimeError(f"No JSON-RPC response {request_id} from STDIO") from None
+                if line is None:
+                    raise RuntimeError(
+                        f"STDIO server exited before response {request_id} "
+                        f"(exit code {server.wait(timeout=30)})"
+                    )
+                message = json.loads(line)
+                if message.get("id") == request_id:
+                    assert "error" not in message, message
+                    return message["result"]
+
+        try:
+            send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "initialize",
+                    "params": {
+                        "protocolVersion": PROTOCOL_VERSION,
+                        "capabilities": {},
+                        "clientInfo": {"name": "release-smoke", "version": "0"},
+                    },
+                }
+            )
+            initialized = response(1)
+            assert initialized["protocolVersion"], initialized
+            assert initialized["serverInfo"]["name"], initialized
+            send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+            send({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
+            names = {tool["name"] for tool in response(2)["tools"]}
+            assert REQUIRED_TOOLS <= names, sorted(names)
+        except BaseException:
+            server.kill()
+            server.wait(timeout=30)
+            # Synthetic smoke root only: no operator configuration or credentials.
+            sys.stderr.write(log_path.read_text(errors="replace")[-4000:])
+            raise
+        server.stdin.close()
+        try:
+            server.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            server.kill()
+            server.wait(timeout=30)
+    print(
+        json.dumps(
+            {
+                "stdio_initialize": "passed",
+                "protocol_version": initialized["protocolVersion"],
+                "tools": len(names),
+            }
+        )
+    )
+
+
 async def stdio_probe(root: Path, entrypoint: str) -> None:
     from mcp import ClientSession, StdioServerParameters
     from mcp.client.stdio import stdio_client
@@ -197,9 +295,7 @@ async def stdio_probe(root: Path, entrypoint: str) -> None:
             ) as client:
                 await client.initialize()
                 tools = await client.list_tools()
-                assert {"reindex", "search_code", "symbol_lookup", "get_status"} <= {
-                    tool.name for tool in tools.tools
-                }
+                assert REQUIRED_TOOLS <= {tool.name for tool in tools.tools}
                 if attempt == 0:
                     rebuilt = payload(await client.call_tool("reindex", {"repository": fixture}))
                     assert "error" not in rebuilt, rebuilt
@@ -345,7 +441,9 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument(
-        "--mode", choices=["prepare", "schema", "python", "stdio", "http"], required=True
+        "--mode",
+        choices=["prepare", "schema", "python", "initialize", "stdio", "http"],
+        required=True,
     )
     parser.add_argument("--entrypoint", default="index-it-mcp")
     parser.add_argument("--url", default="http://127.0.0.1:8000")
@@ -359,6 +457,8 @@ def main() -> None:
             schema_probe(args.root)
         elif args.mode == "python":
             python_probe(args.root)
+        elif args.mode == "initialize":
+            initialize_probe(args.root, args.entrypoint)
         elif args.mode == "stdio":
             asyncio.run(stdio_probe(args.root, args.entrypoint))
         else:

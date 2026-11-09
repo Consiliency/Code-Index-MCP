@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from tests.test_release_metadata import EXPECTED_VERSION
+from tests.test_release_metadata import EXPECTED_VERSION, PUBLISHED_VERSION
 
 REPO = Path(__file__).resolve().parents[2]
 
@@ -27,9 +27,14 @@ def test_public_install_docs_use_source_or_local_wheel_proof():
     getting_started = _read("docs/GETTING_STARTED.md")
     for text in (readme, getting_started):
         assert f"dist/index_it_mcp-{EXPECTED_VERSION}-py3-none-any.whl" in text
-        assert "prepared candidate" not in text
-        assert f"published `{EXPECTED_VERSION}`" in text
-        assert f'pip install index-it-mcp=={EXPECTED_VERSION} \"mcp<2\"' in text
+        assert "prepared candidate" in text
+        assert f"Published `{PUBLISHED_VERSION}`" in text
+        # "unpinned" was ambiguous: `index-it-mcp==1.5.0` looks pinned but is
+        # the broken install (#125 review S1). Name the real constraint.
+        assert "`mcp` below 2" in text
+        assert "unpinned" not in text
+        # 1.5.1 caps mcp<2, so #123's separate "mcp<2" install pin is gone.
+        assert '"mcp<2"' not in text
         assert "operations/v13-release.md" in text
 
 

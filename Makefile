@@ -50,7 +50,7 @@ help:
 	@echo "  coverage        Generate coverage report"
 	@echo "  benchmark       Run performance benchmarks"
 	@echo "  security        Run security checks"
-	@echo "  release-smoke   Run wheel and lexical MCP release smoke"
+	@echo "  release-smoke   Run locked and unconstrained wheel/STDIO release smoke"
 	@echo "  release-smoke-container Run production container release smoke"
 	@echo "  alpha-production-matrix Run P33 production multi-repo release gate"
 	@echo "  agent-doctor    Report local/offload validation readiness"
@@ -184,7 +184,7 @@ docker:
 	docker build -t mcp-server:latest .
 
 release-smoke:
-	$(UV_RUN) --extra dev python scripts/release_smoke.py --wheel --stdio
+	$(UV_RUN) --extra dev python scripts/release_smoke.py --wheel --stdio --unconstrained
 
 release-smoke-container:
 	$(UV_RUN) --extra dev python scripts/release_smoke.py --container

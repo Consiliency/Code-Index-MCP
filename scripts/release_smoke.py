@@ -165,7 +165,39 @@ def validate_wheel_source(wheel: Path, repo: Path = REPO) -> dict:
     }
 
 
+def build_wheel(dist: Path) -> tuple[Path, str]:
+    """Build one wheel from this checkout; return it with its SHA256."""
+    _run(["uv", "build", "--wheel", "--out-dir", str(dist)], timeout=300)
+    wheels = sorted(dist.glob("index_it_mcp-*.whl"))
+    if len(wheels) != 1:
+        raise RuntimeError("Expected exactly one built wheel")
+    return wheels[0], hashlib.sha256(wheels[0].read_bytes()).hexdigest()
+
+
+def _stage_wheel(dist: Path, wheel_path: Path | None, expected_sha256: str | None) -> Path:
+    """Build or copy the wheel into ``dist``, check its digest and bind it to source."""
+    if (wheel_path is None) != (expected_sha256 is None):
+        raise ValueError("Delivered wheel requires its registry SHA256")
+    if wheel_path is None:
+        wheel, digest = build_wheel(dist)
+    else:
+        dist.mkdir()
+        wheel = dist / wheel_path.name
+        shutil.copyfile(wheel_path, wheel)
+        if len(list(dist.glob("index_it_mcp-*.whl"))) != 1:
+            raise RuntimeError("Expected exactly one built wheel")
+        digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
+        if not re.fullmatch(r"[0-9a-f]{64}", expected_sha256) or digest != expected_sha256:
+            raise ValueError("Delivered wheel registry digest mismatch")
+    contract = validate_wheel_source(wheel)
+    print(
+        json.dumps({"wheel": wheel.name, "sha256": digest, "source_contract": contract}), flush=True
+    )
+    return wheel
+
+
 def smoke_wheel(wheel_path: Path | None = None, expected_sha256: str | None = None) -> None:
+    """Install the wheel under the lock's versions and exercise the installed runtime."""
     if (wheel_path is None) != (expected_sha256 is None):
         raise ValueError("Delivered wheel requires its registry SHA256")
     with tempfile.TemporaryDirectory(prefix="mcp-release-wheel-") as tmp:
@@ -175,30 +207,7 @@ def smoke_wheel(wheel_path: Path | None = None, expected_sha256: str | None = No
         probe = runtime / PROBE.name
         shutil.copyfile(PROBE, probe)
         shutil.copyfile(SAFETY_PROBE, runtime / SAFETY_PROBE.name)
-        if wheel_path is None:
-            _run(["uv", "build", "--wheel", "--out-dir", str(dist)], timeout=300)
-        else:
-            dist.mkdir()
-            shutil.copyfile(wheel_path, dist / wheel_path.name)
-        wheels = sorted(dist.glob("index_it_mcp-*.whl"))
-        if len(wheels) != 1:
-            raise RuntimeError("Expected exactly one built wheel")
-        if expected_sha256 is not None and (
-            not re.fullmatch(r"[0-9a-f]{64}", expected_sha256)
-            or hashlib.sha256(wheels[0].read_bytes()).hexdigest() != expected_sha256
-        ):
-            raise ValueError("Delivered wheel registry digest mismatch")
-        contract = validate_wheel_source(wheels[0])
-        print(
-            json.dumps(
-                {
-                    "wheel": wheels[0].name,
-                    "sha256": hashlib.sha256(wheels[0].read_bytes()).hexdigest(),
-                    "source_contract": contract,
-                }
-            ),
-            flush=True,
-        )
+        wheels = [_stage_wheel(dist, wheel_path, expected_sha256)]
         requirements = root / "requirements.txt"
         _run(
             [
@@ -266,6 +275,164 @@ def smoke_wheel(wheel_path: Path | None = None, expected_sha256: str | None = No
             env=env,
             timeout=300,
         )
+
+
+#: Python for the unconstrained install: the oldest supported interpreter, the
+#: one release smoke and the PMCP pilot run on.
+UNCONSTRAINED_PYTHON = "3.12"
+#: The only environment the unconstrained install sees. Any other installer
+#: setting (``UV_OFFLINE``, ``UV_DEFAULT_INDEX``, ``UV_FIND_LINKS``,
+#: ``UV_EXCLUDE``, constraints, overrides, date cutoffs...) could resolve older
+#: versions than a PyPI user gets, and ``--no-config`` does not block
+#: environment variables, so everything else is dropped (#125 review S2).
+#: These cover locating the interpreter, the uv cache, temp space, locale,
+#: TLS trust and proxies; none of them selects package versions.
+_UNCONSTRAINED_ENV_ALLOW = (
+    "PATH",
+    "HOME",
+    "TMPDIR",
+    "TMP",
+    "TEMP",
+    "SYSTEMROOT",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "XDG_CACHE_HOME",
+    "XDG_DATA_HOME",
+    "UV_CACHE_DIR",
+    "UV_PYTHON_INSTALL_DIR",
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "NO_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "no_proxy",
+)
+#: Resolve against public PyPI, the index a ``pip install index-it-mcp`` user gets.
+UNCONSTRAINED_INDEX = "https://pypi.org/simple"
+
+
+def _unconstrained_install_env() -> dict[str, str]:
+    return {key: os.environ[key] for key in _UNCONSTRAINED_ENV_ALLOW if key in os.environ}
+
+
+def _output(cmd: list[str], *, cwd: Path = REPO, env: dict[str, str] | None = None) -> str:
+    print("+", " ".join(cmd), flush=True)
+    return subprocess.run(
+        cmd, cwd=cwd, env=env, check=True, timeout=120, capture_output=True, text=True
+    ).stdout
+
+
+def smoke_wheel_unconstrained(
+    wheel_path: Path | None = None,
+    expected_sha256: str | None = None,
+    *,
+    python: str = UNCONSTRAINED_PYTHON,
+) -> dict[str, str]:
+    """Install the wheel with no lock constraints and start the installed STDIO server.
+
+    ``smoke_wheel`` installs under ``uv.lock``; a user running ``pip install
+    index-it-mcp`` gets the newest versions the wheel's requirements allow
+    instead. 1.4.1 and 1.5.0 declared ``mcp>=1.0.0``, which resolves mcp 2.x
+    and cannot import ``mcp.shared.exceptions.McpError``; lock-constrained smoke
+    and the PMCP pilot (mcp 1.27.0) could not see that. This smoke installs the
+    wheel alone into a fresh venv, prefetches grammars into an explicit cache,
+    and checks ``--version``, a client-independent MCP initialize and
+    tools/list, and the lexical STDIO query probe.
+    """
+    if (wheel_path is None) != (expected_sha256 is None):
+        raise ValueError("Delivered wheel requires its registry SHA256")
+    with tempfile.TemporaryDirectory(prefix="mcp-release-unconstrained-") as tmp:
+        root = Path(tmp)
+        dist, venv_dir, runtime = root / "dist", root / "venv", root / "runtime"
+        runtime.mkdir()
+        probe = runtime / PROBE.name
+        shutil.copyfile(PROBE, probe)
+        wheel = _stage_wheel(dist, wheel_path, expected_sha256)
+        install_env = _unconstrained_install_env()
+        _run(
+            ["uv", "venv", "--no-config", "--python", python, str(venv_dir)],
+            cwd=root,
+            env=install_env,
+        )
+        venv_python = _venv_bin(venv_dir, "python")
+        # No -c/--constraint and no project or user uv config: only the wheel's
+        # own Requires-Dist bounds the resolution.
+        _run(
+            [
+                "uv",
+                "pip",
+                "install",
+                "--no-config",
+                "--default-index",
+                UNCONSTRAINED_INDEX,
+                "--resolution",
+                "highest",
+                "--python",
+                str(venv_python),
+                str(wheel),
+            ],
+            cwd=root,
+            env=install_env,
+            timeout=900,
+        )
+        _run(["uv", "pip", "check", "--python", str(venv_python)], cwd=root, env=install_env)
+        frozen = _output(
+            ["uv", "pip", "freeze", "--python", str(venv_python)], cwd=root, env=install_env
+        )
+        from packaging.requirements import Requirement
+        from packaging.utils import canonicalize_name
+
+        installed = {
+            canonicalize_name(name): version
+            for name, version in (
+                line.split("==", 1) for line in frozen.splitlines() if "==" in line
+            )
+        }
+        project = tomllib.loads((REPO / "pyproject.toml").read_text())["project"]
+        direct = sorted(
+            {canonicalize_name(Requirement(value).name) for value in project["dependencies"]}
+        )
+        resolved = {name: installed.get(name, "missing") for name in direct}
+        print(json.dumps({"unconstrained_resolution": resolved}), flush=True)
+
+        # Grammar location only (never credentials); an explicit cache root the
+        # prefetch and every later process share. A caller's LIBS_DIR is
+        # dropped: it holds parser libraries for the locked language pack.
+        cache = Path(os.environ.get(_GRAMMAR_ENV[0]) or root / "grammar-cache")
+        env = {key: value for key, value in _clean_env(root).items() if key not in _GRAMMAR_ENV}
+        env[_GRAMMAR_ENV[0]] = str(cache)
+        entrypoint = _venv_bin(venv_dir, "index-it-mcp")
+        reported = _output([str(entrypoint), "--version"], cwd=runtime, env=env)
+        if f"version {project['version']}" not in reported:
+            raise RuntimeError(f"Installed --version differs from source: {reported.strip()}")
+        _run(
+            [str(entrypoint), "grammars", "prefetch", "--cache-dir", str(cache)],
+            cwd=runtime,
+            env=env,
+            timeout=600,
+        )
+        for mode in ("prepare", "initialize", "stdio"):
+            _run(
+                [
+                    str(venv_python),
+                    "-I",
+                    str(probe),
+                    "--root",
+                    str(runtime),
+                    "--entrypoint",
+                    str(entrypoint),
+                    "--mode",
+                    mode,
+                ],
+                cwd=runtime,
+                env=env,
+                timeout=300,
+            )
+        print(json.dumps({"unconstrained_smoke": "passed", "python": python}), flush=True)
+        return resolved
 
 
 def smoke_stdio() -> None:
@@ -553,7 +720,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--container", action="store_true", help="Exercise the configured non-root image"
     )
-    parser.add_argument("--all", action="store_true", help="Run wheel/STDIO and container smoke")
+    parser.add_argument(
+        "--unconstrained",
+        action="store_true",
+        help="Also install the wheel with no lock constraints and start STDIO",
+    )
+    parser.add_argument(
+        "--unconstrained-python",
+        default=UNCONSTRAINED_PYTHON,
+        help="Python version for the unconstrained venv (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--all", action="store_true", help="Run wheel/STDIO, unconstrained and container smoke"
+    )
     parser.add_argument("--docker-network", choices=("bridge", "host"), default="bridge")
     parser.add_argument("--wheel-path", type=Path, help="Use a delivered wheel without building")
     parser.add_argument("--wheel-sha256", help="Expected SHA256 from the package registry")
@@ -575,20 +754,30 @@ def main() -> None:
         raise SystemExit("--image-signer-sha requires --image-ref")
     delivered = args.wheel_path is not None or args.image_ref is not None
     if args.all:
-        args.wheel = args.stdio = args.container = True
+        args.wheel = args.stdio = args.unconstrained = args.container = True
     args.wheel = args.wheel or args.wheel_path is not None
     args.container = args.container or args.image_ref is not None
     if delivered and (
-        (args.wheel or args.stdio)
+        (args.wheel or args.stdio or args.unconstrained)
         and args.wheel_path is None
         or args.container
         and args.image_ref is None
     ):
         raise SystemExit("Delivered mode cannot mix registry artifacts with local builds")
-    if not (args.wheel or args.stdio or args.container):
-        raise SystemExit("Choose --wheel, --stdio, --container, or --all")
-    if args.wheel or args.stdio:
-        smoke_wheel(args.wheel_path, args.wheel_sha256)
+    if not (args.wheel or args.stdio or args.unconstrained or args.container):
+        raise SystemExit("Choose --wheel, --stdio, --unconstrained, --container, or --all")
+    if args.wheel or args.stdio or args.unconstrained:
+        # Build once so the locked and unconstrained smokes test the same bytes.
+        with tempfile.TemporaryDirectory(prefix="mcp-release-build-") as tmp:
+            wheel_path, wheel_sha256 = args.wheel_path, args.wheel_sha256
+            if wheel_path is None:
+                wheel_path, wheel_sha256 = build_wheel(Path(tmp))
+            if args.wheel or args.stdio:
+                smoke_wheel(wheel_path, wheel_sha256)
+            if args.unconstrained:
+                smoke_wheel_unconstrained(
+                    wheel_path, wheel_sha256, python=args.unconstrained_python
+                )
     if args.container:
         smoke_container(
             args.image_ref, network=args.docker_network, image_signer_sha=args.image_signer_sha

@@ -20,7 +20,9 @@ external package (`2.17.1`, `johnhuang316/code-index-mcp`).
 
 The published `1.5.0` metadata declares `mcp>=1.0.0` with no upper bound, so an
 unconstrained `pip install index-it-mcp==1.5.0` resolves `mcp` 2.x, and STDIO
-fails to start. Public install docs therefore pin `"mcp<2"` beside the package.
+fails to start. The prepared `1.5.1` corrective release caps `mcp>=1.27,<2`,
+so public install docs do not add a separate pin; they say not to install
+`1.5.0` or `1.4.1` without constraining `mcp` below 2.
 The sections below are the original 2026-07-06 PUBNAME evidence.
 
 ## Metadata Probes

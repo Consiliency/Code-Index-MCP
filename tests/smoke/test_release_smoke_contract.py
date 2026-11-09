@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import subprocess
+import sys
+import tempfile
 import zipfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -83,7 +86,7 @@ def test_release_smoke_entrypoints_exist():
     makefile = _read("Makefile")
     assert re.search(r"^release-smoke:", makefile, re.MULTILINE)
     assert re.search(r"^release-smoke-container:", makefile, re.MULTILINE)
-    assert "scripts/release_smoke.py --wheel --stdio" in makefile
+    assert "scripts/release_smoke.py --wheel --stdio --unconstrained" in makefile
     assert "scripts/release_smoke.py --container" in makefile
 
 
@@ -108,6 +111,189 @@ def test_delivered_wheel_never_builds_and_checks_registry_digest(tmp_path, monke
     with pytest.raises(RuntimeError, match="reached install"):
         smoke.smoke_wheel(wheel, hashlib.sha256(wheel.read_bytes()).hexdigest())
     assert calls and all(command[:2] != ["uv", "build"] for command in calls)
+
+
+def _fake_unconstrained_tools(monkeypatch, smoke, *, version="1.5.1", mcp="1.30.0"):
+    calls = []
+    monkeypatch.setattr(smoke, "validate_wheel_source", lambda *args: {"version": version})
+
+    def run(command, **kwargs):
+        calls.append((command, kwargs.get("env")))
+
+    def output(command, **kwargs):
+        calls.append((command, kwargs.get("env")))
+        if command[-1] == "--version":
+            return f"code-index-mcp, version {version}\n"
+        return f"index-it-mcp @ file:///dist/x.whl\nmcp=={mcp}\nopenai==3.46.0\n"
+
+    monkeypatch.setattr(smoke, "_run", run)
+    monkeypatch.setattr(smoke, "_output", output)
+    return calls
+
+
+def test_unconstrained_smoke_installs_the_wheel_alone_and_starts_stdio(tmp_path, monkeypatch):
+    """1.5.0/1.4.1 shipped mcp>=1.0.0: only an install without the lock sees mcp 2.x."""
+    from scripts import release_smoke as smoke
+
+    wheel = tmp_path / "index_it_mcp-1.5.1-py3-none-any.whl"
+    wheel.write_bytes(b"registry fixture")
+    cache = tmp_path / "grammar-cache"
+    monkeypatch.setenv("TREE_SITTER_LANGUAGE_PACK_CACHE_DIR", str(cache))
+    monkeypatch.setenv("TREE_SITTER_LANGUAGE_PACK_LIBS_DIR", str(tmp_path / "locked-libs"))
+    monkeypatch.setenv("UV_CONSTRAINT", str(tmp_path / "requirements.txt"))
+    monkeypatch.setenv("PIP_CONSTRAINT", str(tmp_path / "requirements.txt"))
+    # Settings --no-config does not block, which could resolve older versions
+    # than a PyPI user gets (#125 review S2).
+    for key, value in {
+        "UV_OFFLINE": "1",
+        "UV_DEFAULT_INDEX": "https://mirror.invalid/simple",
+        "UV_INDEX_URL": "https://mirror.invalid/simple",
+        "UV_FIND_LINKS": str(tmp_path / "links"),
+        "UV_EXCLUDE": "mcp",
+        "UV_EXCLUDE_NEWER": "2026-01-01",
+    }.items():
+        monkeypatch.setenv(key, value)
+    calls = _fake_unconstrained_tools(monkeypatch, smoke)
+
+    resolved = smoke.smoke_wheel_unconstrained(
+        wheel, hashlib.sha256(b"registry fixture").hexdigest()
+    )
+
+    commands = [command for command, _ in calls]
+    assert resolved["mcp"] == "1.30.0" and resolved["openai"] == "3.46.0"
+    assert not any(command[:2] in (["uv", "build"], ["uv", "export"]) for command in commands)
+    venv_command = next(command for command in commands if command[:2] == ["uv", "venv"])
+    assert venv_command[venv_command.index("--python") + 1] == "3.12"
+    install, install_env = next(
+        (command, env) for command, env in calls if command[:3] == ["uv", "pip", "install"]
+    )
+    assert "--no-config" in install and install[-1].endswith(wheel.name)
+    assert not {"-c", "--constraint", "-r", "--requirement", "--override"} & set(install)
+    assert install[install.index("--default-index") + 1] == "https://pypi.org/simple"
+    assert set(install_env) <= set(smoke._UNCONSTRAINED_ENV_ALLOW)
+    assert not any(
+        key.startswith(("UV_", "PIP_"))
+        and key
+        not in (
+            "UV_CACHE_DIR",
+            "UV_PYTHON_INSTALL_DIR",
+        )
+        for key in install_env
+    )
+    assert ["uv", "pip", "check"] == commands[commands.index(install) + 1][:3]
+    version = next(command for command in commands if command[-1] == "--version")
+    assert version[0].endswith("index-it-mcp")
+    prefetch, prefetch_env = next(
+        (command, env) for command, env in calls if command[1:3] == ["grammars", "prefetch"]
+    )
+    assert prefetch[-2:] == ["--cache-dir", str(cache)]
+    assert prefetch_env["TREE_SITTER_LANGUAGE_PACK_CACHE_DIR"] == str(cache)
+    assert "TREE_SITTER_LANGUAGE_PACK_LIBS_DIR" not in prefetch_env
+    modes = [command[-1] for command in commands if "--mode" in command]
+    assert modes == ["prepare", "initialize", "stdio"]
+    first_probe = next(command for command in commands if "--mode" in command)
+    assert commands.index(version) < commands.index(prefetch) < commands.index(first_probe)
+    probe_env = next(env for command, env in calls if "--mode" in command)
+    assert probe_env["TREE_SITTER_LANGUAGE_PACK_CACHE_DIR"] == str(cache)
+    assert probe_env["HOME"] != os.environ.get("HOME")
+
+
+def test_unconstrained_smoke_uses_a_private_grammar_cache_by_default(tmp_path, monkeypatch):
+    from scripts import release_smoke as smoke
+
+    wheel = tmp_path / "index_it_mcp-1.5.1-py3-none-any.whl"
+    wheel.write_bytes(b"registry fixture")
+    monkeypatch.delenv("TREE_SITTER_LANGUAGE_PACK_CACHE_DIR", raising=False)
+    calls = _fake_unconstrained_tools(monkeypatch, smoke)
+    smoke.smoke_wheel_unconstrained(wheel, hashlib.sha256(b"registry fixture").hexdigest())
+    prefetch = next(command for command, _ in calls if command[1:3] == ["grammars", "prefetch"])
+    assert prefetch[-1].startswith(tempfile.gettempdir()) and prefetch[-1].endswith("grammar-cache")
+
+
+def test_unconstrained_smoke_refuses_a_wheel_reporting_another_version(tmp_path, monkeypatch):
+    from scripts import release_smoke as smoke
+
+    wheel = tmp_path / "index_it_mcp-1.5.1-py3-none-any.whl"
+    wheel.write_bytes(b"registry fixture")
+    calls = _fake_unconstrained_tools(monkeypatch, smoke, version="1.4.1")
+    with pytest.raises(RuntimeError, match="--version differs"):
+        smoke.smoke_wheel_unconstrained(wheel, hashlib.sha256(b"registry fixture").hexdigest())
+    assert not any("--mode" in command for command, _ in calls)
+    with pytest.raises(ValueError, match="registry SHA256"):
+        smoke.smoke_wheel_unconstrained(wheel)
+
+
+def test_release_smoke_cli_builds_once_for_locked_and_unconstrained(tmp_path, monkeypatch):
+    from scripts import release_smoke as smoke
+
+    built = tmp_path / "index_it_mcp-1.5.1-py3-none-any.whl"
+    seen = []
+    monkeypatch.setattr(
+        smoke, "build_wheel", lambda dist: (seen.append("build"), (built, "a" * 64))[1]
+    )
+    monkeypatch.setattr(smoke, "smoke_wheel", lambda *args: seen.append(("locked", args)))
+    monkeypatch.setattr(
+        smoke,
+        "smoke_wheel_unconstrained",
+        lambda *args, **kwargs: seen.append(("unconstrained", args, kwargs)),
+    )
+    monkeypatch.setattr(smoke.sys, "argv", ["smoke", "--wheel", "--stdio", "--unconstrained"])
+    smoke.main()
+    assert seen == [
+        "build",
+        ("locked", (built, "a" * 64)),
+        ("unconstrained", (built, "a" * 64), {"python": "3.12"}),
+    ]
+
+    monkeypatch.setattr(
+        smoke.sys,
+        "argv",
+        ["smoke", "--unconstrained", "--image-ref", GHCR_IMAGE + "@sha256:" + "a" * 64],
+    )
+    with pytest.raises(SystemExit, match="cannot mix"):
+        smoke.main()
+
+
+def _fake_stdio_server(tmp_path, body):
+    server = tmp_path / "fake-index-it-mcp"
+    server.write_text(f"#!{sys.executable}\nimport json, sys\n{body}\n")
+    server.chmod(0o755)
+    return str(server)
+
+
+def test_initialize_probe_speaks_raw_json_rpc_without_an_mcp_client(tmp_path, capsys):
+    probe = _load_runtime_probe()
+    tools = [{"name": name} for name in sorted(probe.REQUIRED_TOOLS)]
+    server = _fake_stdio_server(
+        tmp_path,
+        f"""
+assert sys.argv[1:] == ["stdio"]
+for line in sys.stdin:
+    message = json.loads(line)
+    if message.get("method") == "initialize":
+        result = {{"protocolVersion": message["params"]["protocolVersion"],
+                   "serverInfo": {{"name": "fake"}}, "capabilities": {{}}}}
+    elif message.get("method") == "tools/list":
+        print(json.dumps({{"jsonrpc": "2.0", "method": "notifications/message"}}), flush=True)
+        result = {{"tools": {tools!r}}}
+    else:
+        continue
+    print(json.dumps({{"jsonrpc": "2.0", "id": message["id"], "result": result}}), flush=True)
+""",
+    )
+    probe.initialize_probe(tmp_path, server, timeout=20)
+    assert '"stdio_initialize": "passed"' in capsys.readouterr().out
+
+
+def test_initialize_probe_fails_fast_when_the_server_cannot_import(tmp_path, capsys):
+    probe = _load_runtime_probe()
+    server = _fake_stdio_server(
+        tmp_path,
+        "sys.stderr.write(\"ImportError: cannot import name 'McpError'\\n\"); sys.exit(1)",
+    )
+    with pytest.raises(RuntimeError, match="exited before response 1"):
+        probe.initialize_probe(tmp_path, server, timeout=20)
+    assert "McpError" in capsys.readouterr().err
 
 
 @pytest.fixture(scope="module")
@@ -136,9 +322,9 @@ def test_wheel_source_binding(reviewed_wheel, tmp_path, damage):
     if damage == "name":
         content[metadata] = content[metadata].replace(b"Name: index-it-mcp", b"Name: other-package")
     elif damage == "version":
-        content[metadata] = content[metadata].replace(b"Version: 1.5.0", b"Version: 1.4.1")
+        content[metadata] = content[metadata].replace(b"Version: 1.5.1", b"Version: 1.5.0")
     elif damage == "dependency":
-        content[metadata] = content[metadata].replace(b"Requires-Dist: mcp>=1.0.0\n", b"")
+        content[metadata] = content[metadata].replace(b"Requires-Dist: mcp<2,>=1.27\n", b"")
     elif damage == "entrypoint":
         content[entrypoints] = content[entrypoints].replace(
             b"mcp_server.cli:cli", b"mcp_server.old:cli"
@@ -158,7 +344,7 @@ def test_wheel_source_binding(reviewed_wheel, tmp_path, damage):
             smoke.validate_wheel_source(wheel)
     else:
         result = smoke.validate_wheel_source(wheel)
-        assert result["version"] == "1.5.0"
+        assert result["version"] == "1.5.1"
         assert result["source_files_verified"] > 290
 
 
@@ -197,7 +383,7 @@ def test_delivered_image_never_builds_and_requires_immutable_reference(
     monkeypatch.setattr(smoke.shutil, "which", lambda _: "/usr/bin/docker")
     source = "c" * 40
     labels = {
-        "org.opencontainers.image.version": "v1.5.0",
+        "org.opencontainers.image.version": "v1.5.1",
         "org.opencontainers.image.revision": source,
     }
     if damage in {"version", "revision"}:
@@ -271,7 +457,7 @@ def test_delivered_image_accepts_explicit_recovery_signer_commit(monkeypatch):
         if "{{json .Config.Labels}}" in command:
             return json.dumps(
                 {
-                    "org.opencontainers.image.version": "v1.5.0",
+                    "org.opencontainers.image.version": "v1.5.1",
                     "org.opencontainers.image.revision": source,
                 }
             )
