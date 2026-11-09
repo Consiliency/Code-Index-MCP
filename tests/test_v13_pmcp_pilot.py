@@ -405,6 +405,7 @@ def test_prepare_delivered_wheel_never_builds(tmp_path, monkeypatch, valid):
         "browser_node",
         "pmcp_version",
         "helper_sha256",
+        "grammar_cache",
     ],
 )
 def test_prepared_runtime_identity_rejects_manifest_tampering(tmp_path, monkeypatch, field):
@@ -441,6 +442,7 @@ def test_prepared_runtime_identity_rejects_manifest_tampering(tmp_path, monkeypa
         },
         "uvx_prefix": pilot.uvx_prefix(tmp_path, wheel, python),
         "python": python,
+        "grammar_cache": str(tmp_path),
         "pmcp_path": str(executable),
         "pmcp_sha256": pilot.digest_file(executable),
         "pmcp_distribution": {"version": "2.7.3"},
@@ -449,6 +451,9 @@ def test_prepared_runtime_identity_rejects_manifest_tampering(tmp_path, monkeypa
         "helper_sha256": {name: pilot.digest_file(tmp_path / name) for name in pilot.PILOT_HELPERS},
     }
     pilot.validate_manifest(tmp_path, manifest)
+    # A manifest whose prefetched grammar cache is gone cannot start any mode (#127).
+    with pytest.raises(PilotRefused, match="grammar_cache_unavailable"):
+        pilot.validate_manifest(tmp_path, {**manifest, "grammar_cache": str(tmp_path / "gone")})
     original = manifest[field]
     manifest[field] = "tampered"
     with pytest.raises(PilotRefused):
@@ -1341,3 +1346,237 @@ async def test_runtime_provenance_counts_points_separately_from_mappings(tmp_pat
     assert records[0]["point_count"] == 1
     assert records[0]["mapping_count"] == 2
     assert records[0]["point_ids"] == ["1"]
+
+
+# ---------------------------------------------------------------------------
+# Prefetched grammar cache for fixtures and sandbox workers (#127)
+# ---------------------------------------------------------------------------
+
+
+def _prepare_fakes(monkeypatch, pilot, calls):
+    from scripts import release_smoke
+
+    monkeypatch.setattr(pilot, "source_identity", lambda: {"source": "a" * 40})
+    monkeypatch.setattr(
+        pilot,
+        "pmcp_distribution_identity",
+        lambda path, expected=None: {"version": "2.7.3", "node_executable": None},
+    )
+    monkeypatch.setattr(
+        pilot, "browser_node_identity", lambda path: {"path": str(path), "sha256": "node"}
+    )
+    monkeypatch.setattr(release_smoke, "validate_wheel_source", lambda *args: {"version": "1.6.0"})
+
+    def run(command, directory, label, **kwargs):
+        calls.append((label, command, kwargs.get("env")))
+        if label == "pilot-lock-export":
+            (directory / "constraints.txt").write_text("dependency==1\n")
+        return '{"version": "1.6.0"}' if label == "installed-identity" else "pmcp 2.7.3"
+
+    monkeypatch.setattr(pilot, "run_command", run)
+
+
+@pytest.mark.parametrize("source", ["default", "argument", "environment"])
+def test_prepare_prefetches_grammars_into_an_explicit_cache(tmp_path, monkeypatch, source):
+    from scripts import v13_pmcp_pilot as pilot
+
+    wheel = tmp_path / "index_it_mcp-1.6.0-py3-none-any.whl"
+    wheel.write_bytes(b"registry wheel fixture")
+    root = tmp_path / "owned"
+    operator_cache = tmp_path / "operator-grammars"
+    monkeypatch.delenv(pilot.GRAMMAR_CACHE_ENV, raising=False)
+    if source == "environment":
+        monkeypatch.setenv(pilot.GRAMMAR_CACHE_ENV, str(operator_cache))
+    calls = []
+    _prepare_fakes(monkeypatch, pilot, calls)
+
+    manifest = pilot.prepare(
+        root,
+        wheel,
+        pilot.digest_file(wheel),
+        operator_cache if source == "argument" else None,
+    )
+
+    expected = root / "grammar-cache" if source == "default" else operator_cache
+    assert manifest["grammar_cache"] == str(expected)
+    if source == "default":
+        assert expected.is_dir() and expected.stat().st_mode & 0o777 == 0o700
+    (label, command, env), = [call for call in calls if call[0] == "grammar-prefetch"]
+    assert command[: len(manifest["uvx_prefix"])] == manifest["uvx_prefix"]
+    assert command[len(manifest["uvx_prefix"]) :] == [
+        "mcp-index",
+        "grammars",
+        "prefetch",
+        "--cache-dir",
+        str(expected),
+    ]
+    # Prefetch is the one step allowed to reach the network.
+    assert env[pilot.GRAMMAR_CACHE_ENV] == str(expected)
+    assert pilot.GRAMMAR_MANIFEST_URL_ENV not in env
+    labels = [call[0] for call in calls]
+    assert labels.index("installed-identity") < labels.index("grammar-prefetch")
+
+
+def test_relative_grammar_cache_is_refused(tmp_path, monkeypatch):
+    from scripts import v13_pmcp_pilot as pilot
+
+    monkeypatch.delenv(pilot.GRAMMAR_CACHE_ENV, raising=False)
+    with pytest.raises(PilotRefused, match="grammar_cache_not_absolute"):
+        pilot.resolve_grammar_cache(tmp_path, Path("relative/cache"))
+
+
+def test_fixture_server_and_workers_get_the_prefetched_cache_with_downloads_denied(
+    tmp_path, monkeypatch
+):
+    from mcp_server.utils.grammar_cache import CACHE_DIR_ENV, MANIFEST_URL_ENV, OFFLINE_MANIFEST_URL
+    from scripts import v13_pmcp_pilot as pilot
+
+    # The pilot runs standalone, so it mirrors these names; they must not drift.
+    assert pilot.GRAMMAR_CACHE_ENV == CACHE_DIR_ENV
+    assert pilot.GRAMMAR_MANIFEST_URL_ENV == MANIFEST_URL_ENV
+    assert pilot.OFFLINE_GRAMMAR_MANIFEST_URL == OFFLINE_MANIFEST_URL
+
+    cache = tmp_path / "grammar-cache"
+    cache.mkdir()
+    manifest = {
+        "grammar_cache": str(cache),
+        "pmcp_path": str(tmp_path / "pmcp"),
+        "pmcp_distribution": {"console": "x", "launcher": "x"},
+        "uvx_prefix": ["uvx", "--from", "index-it-mcp"],
+    }
+    commands = []
+    monkeypatch.setattr(
+        pilot,
+        "run_command",
+        lambda command, directory, label, **kwargs: commands.append((label, kwargs.get("env"))),
+    )
+    monkeypatch.setattr(pilot, "commit_fixture", lambda path, env: None)
+
+    fixture = pilot.create_fixture(tmp_path, manifest, label="offline")
+
+    expected = {CACHE_DIR_ENV: str(cache), MANIFEST_URL_ENV: OFFLINE_MANIFEST_URL}
+    server_env = json.loads((fixture["root"] / "project" / ".mcp.json").read_text())[
+        "mcpServers"
+    ]["index-it-mcp"]["env"]
+    for env in (fixture["env"], server_env, *(env for _, env in commands)):
+        assert {key: env.get(key) for key in expected} == expected
+    # The fixture's fresh XDG cache would be cold; the explicit override wins.
+    assert server_env["XDG_CACHE_HOME"] != str(cache)
+
+
+def _raw_stdio_call(command, env, cwd, calls):
+    """Initialize, then answer each (method, params) over raw STDIO JSON-RPC."""
+    messages = [
+        {
+            "jsonrpc": "2.0",
+            "id": 0,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-11-25",
+                "capabilities": {},
+                "clientInfo": {"name": "pilot-grammar-contract", "version": "0"},
+            },
+        },
+        {"jsonrpc": "2.0", "method": "notifications/initialized"},
+    ] + [
+        {"jsonrpc": "2.0", "id": index, "method": method, "params": params}
+        for index, (method, params) in enumerate(calls, start=1)
+    ]
+    process = subprocess.Popen(
+        command,
+        cwd=cwd,
+        env=env,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+    )
+    try:
+        replies = {}
+        for message in messages:
+            process.stdin.write(json.dumps(message) + "\n")
+            process.stdin.flush()
+            if "id" not in message:
+                continue
+            while message["id"] not in replies:
+                line = process.stdout.readline()
+                assert line, "server closed STDIO"
+                reply = json.loads(line)
+                if "id" in reply:
+                    replies[reply["id"]] = reply
+        return [replies[index] for index in range(1, len(calls) + 1)]
+    finally:
+        process.stdin.close()
+        try:
+            process.wait(timeout=60)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+
+
+@pytest.mark.parametrize("cache_state", ["prefetched", "cold"])
+def test_offline_fixture_env_reindexes_with_network_denied_only_from_a_prefetched_cache(
+    tmp_path, cache_state
+):
+    """End to end: the pilot's fixture grammar env reaches network-denied workers.
+
+    With grammar downloads refused (offline manifest URL) and sandbox workers
+    denying network, reindex succeeds from the prefetched cache and fails
+    closed with ``grammar_unavailable`` from a cold one.
+    """
+    from mcp_server.utils import grammar_cache
+    from scripts import v13_pmcp_pilot as pilot
+    from tests.fixtures.multi_repo import boot_test_server, build_temp_repo
+
+    warm = os.environ.get(grammar_cache.CACHE_DIR_ENV)
+    if cache_state == "prefetched":
+        if not warm or grammar_cache.missing_grammars(["python"]):
+            if os.environ.get("MCP_REQUIRE_GRAMMARS") == "1":
+                pytest.fail("MCP_REQUIRE_GRAMMARS=1 requires a prefetched grammar cache")
+            pytest.skip("needs TREE_SITTER_LANGUAGE_PACK_CACHE_DIR with prefetched grammars")
+        cache = warm
+    else:
+        cold = tmp_path / "cold-grammars"
+        cold.mkdir(mode=0o700)
+        cache = str(cold)
+
+    repo, _ = build_temp_repo(
+        tmp_path, "pilot_grammar_repo", seed_files={"probe.py": "def pilot_probe():\n    return 1\n"}
+    )
+    with boot_test_server(tmp_path, [repo], seed_indexes=False):
+        pass
+    env = {
+        **pilot.clean_env(tmp_path),
+        **pilot.grammar_env({"grammar_cache": cache}),
+        "PYTHONPATH": str(pilot.REPO),
+        "MCP_REPO_REGISTRY": str(tmp_path / "registry.json"),
+        "MCP_ALLOWED_ROOTS": str(tmp_path),
+        "SEMANTIC_SEARCH_ENABLED": "false",
+        "MCP_SKIP_PLUGIN_PREINDEX": "true",
+        "MCP_METRICS_PORT": "0",
+    }
+    (reindex, search) = _raw_stdio_call(
+        [sys.executable, "-m", "mcp_server.cli.stdio_runner"],
+        env,
+        str(repo),
+        [
+            ("tools/call", {"name": "reindex", "arguments": {"repository": str(repo)}}),
+            (
+                "tools/call",
+                {
+                    "name": "search_code",
+                    "arguments": {"repository": str(repo), "query": "pilot_probe", "semantic": False},
+                },
+            ),
+        ],
+    )
+    payload = reindex["result"]["structuredContent"]
+    if cache_state == "prefetched":
+        assert reindex["result"]["isError"] is False, payload
+        assert payload["mutation_performed"] is True
+        assert search["result"]["structuredContent"]["results"]
+    else:
+        assert reindex["result"]["isError"] is True
+        # The network-denied worker's offline guard refused the download.
+        assert "not in the local grammar cache" in json.dumps(payload)
+        assert not any(Path(cache).iterdir()), "a network-denied run wrote the cold cache"

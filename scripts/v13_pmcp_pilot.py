@@ -46,6 +46,15 @@ PILOT_HELPERS = (
     "v13_pilot_budget.py",
 )
 REHEARSAL_INDEX_DELAY_SECONDS = 4
+#: Tree-sitter grammar cache root the language pack and sandbox workers read.
+GRAMMAR_CACHE_ENV = "TREE_SITTER_LANGUAGE_PACK_CACHE_DIR"
+#: The pack's download manifest URL. Pointing it at
+#: ``mcp_server.utils.grammar_cache.OFFLINE_MANIFEST_URL`` makes every grammar
+#: download fail before a socket is opened.
+GRAMMAR_MANIFEST_URL_ENV = "TREE_SITTER_LANGUAGE_PACK_MANIFEST_URL"
+OFFLINE_GRAMMAR_MANIFEST_URL = "sandbox-offline://network-denied"
+#: Default prefetched grammar cache, under the pilot's owned root.
+GRAMMAR_CACHE_DIR_NAME = "grammar-cache"
 GOALS = {
     "offline": {
         "installed_identity",
@@ -537,6 +546,33 @@ def clean_env(root: Path) -> dict[str, str]:
     }
 
 
+def resolve_grammar_cache(root: Path, override: Path | None = None) -> Path:
+    """Pick the grammar cache the pilot prefetches and its fixtures read.
+
+    ``--grammar-cache``, else the caller's ``TREE_SITTER_LANGUAGE_PACK_CACHE_DIR``,
+    else ``<root>/grammar-cache`` (Consiliency/Code-Index-MCP#127).
+    """
+    value = str(override) if override is not None else os.environ.get(GRAMMAR_CACHE_ENV, "")
+    path = Path(value.strip()).expanduser() if value.strip() else root / GRAMMAR_CACHE_DIR_NAME
+    if not path.is_absolute():
+        raise PilotRefused("grammar_cache_not_absolute")
+    return path.resolve()
+
+
+def grammar_env(manifest: dict) -> dict[str, str]:
+    """Grammar settings for every fixture, server and sandbox worker.
+
+    The prefetched cache is passed through (sandbox workers keep
+    ``TREE_SITTER_LANGUAGE_PACK_CACHE_DIR`` when they scrub their environment),
+    and the download manifest points at a URL that refuses before any socket
+    opens: after ``prepare``, no pilot process may download a grammar.
+    """
+    return {
+        GRAMMAR_CACHE_ENV: manifest["grammar_cache"],
+        GRAMMAR_MANIFEST_URL_ENV: OFFLINE_GRAMMAR_MANIFEST_URL,
+    }
+
+
 def pmcp_env(root: Path, executable: Path, identity: dict) -> dict[str, str]:
     env = clean_env(root)
     env["PYTHONUSERBASE"] = str(executable.parents[1])
@@ -576,11 +612,17 @@ def uvx_prefix(root: Path, wheel: Path, python: str) -> list[str]:
     ]
 
 
-def prepare(root: Path, wheel_path: Path | None = None, expected_sha256: str | None = None) -> dict:
+def prepare(
+    root: Path,
+    wheel_path: Path | None = None,
+    expected_sha256: str | None = None,
+    grammar_cache: Path | None = None,
+) -> dict:
     if (wheel_path is None) != (expected_sha256 is None):
         raise PilotRefused("delivered_wheel_digest_required")
     identity = source_identity()
     root.mkdir(mode=0o700, parents=True, exist_ok=False)
+    grammar_cache = resolve_grammar_cache(root, grammar_cache)
     (root / "home").mkdir()
     python = str(Path(sys.base_prefix) / "bin" / "python3.12")
     if sys.version_info[:2] != (3, 12) or not Path(python).is_file():
@@ -648,6 +690,18 @@ def prepare(root: Path, wheel_path: Path | None = None, expected_sha256: str | N
     )
     if installed.get("version") != wheel_contract["version"]:
         raise PilotRefused("installed_version_mismatch")
+    # Network is available here and nowhere after: prefetch (or verify an
+    # operator's warm cache) with the installed wheel's own CLI, so fixtures and
+    # network-denied sandbox workers never need a first-use download (#127).
+    if grammar_cache == root / GRAMMAR_CACHE_DIR_NAME:
+        grammar_cache.mkdir(mode=0o700)
+    run_command(
+        prefix + ["mcp-index", "grammars", "prefetch", "--cache-dir", str(grammar_cache)],
+        root,
+        "grammar-prefetch",
+        env={**clean_env(root), GRAMMAR_CACHE_ENV: str(grammar_cache)},
+        timeout=900,
+    )
     pmcp_path = Path(shutil.which("pmcp") or "pmcp").resolve()
     pmcp_identity = pmcp_distribution_identity(pmcp_path)
     node_path = pmcp_identity["node_executable"] or shutil.which("node") or "node"
@@ -664,6 +718,7 @@ def prepare(root: Path, wheel_path: Path | None = None, expected_sha256: str | N
         "installed": installed,
         "uvx_prefix": prefix,
         "python": python,
+        "grammar_cache": str(grammar_cache),
         "pmcp_path": str(pmcp_path),
         "pmcp_sha256": digest_file(pmcp_path),
         "pmcp_distribution": pmcp_identity,
@@ -733,6 +788,13 @@ def validate_manifest(root: Path, manifest: dict, *, execute: bool = False) -> N
         root, wheel, python
     ):
         raise PilotRefused("runtime_command_changed")
+    grammar_cache = manifest.get("grammar_cache")
+    if (
+        not isinstance(grammar_cache, str)
+        or not Path(grammar_cache).is_absolute()
+        or not Path(grammar_cache).is_dir()
+    ):
+        raise PilotRefused("grammar_cache_unavailable")
     installed = manifest.get("installed")
     if (
         not isinstance(installed, dict)
@@ -795,6 +857,16 @@ def validate_manifest(root: Path, manifest: dict, *, execute: bool = False) -> N
             env=pmcp_env(root, pmcp, expected_pmcp),
         ).strip() != manifest.get("pmcp_version"):
             raise PilotRefused("runtime_identity_changed")
+        try:
+            run_command(
+                manifest["uvx_prefix"]
+                + ["mcp-index", "grammars", "check", "--cache-dir", grammar_cache],
+                root,
+                "grammar-check",
+                env={**clean_env(root), **grammar_env(manifest)},
+            )
+        except PilotRefused as exc:
+            raise PilotRefused("grammar_cache_unavailable") from exc
 
 
 def load_manifest(root: Path) -> dict:
@@ -819,6 +891,7 @@ def create_fixture(root: Path, manifest: dict, *, label: str) -> dict:
     env = clean_env(fixture)
     env.update(pmcp_env(fixture, Path(manifest["pmcp_path"]), manifest["pmcp_distribution"]))
     env["UV_CACHE_DIR"] = str(root / "uv-cache")
+    env.update(grammar_env(manifest))
     secret = secrets.token_urlsafe(36)
     env.update(
         {
@@ -1369,6 +1442,7 @@ async def offline(root: Path, manifest: dict) -> dict:
         ],
         lifecycle_root,
         "prepare",
+        env={**clean_env(lifecycle_root), **grammar_env(manifest)},
     )
     output = run_command(
         [
@@ -1382,6 +1456,7 @@ async def offline(root: Path, manifest: dict) -> dict:
         ],
         lifecycle_root,
         "lifecycle",
+        env={**clean_env(lifecycle_root), **grammar_env(manifest)},
     )
     lifecycle = json.loads(output.strip().splitlines()[-1])
     cases = lifecycle["cases"]
@@ -2734,6 +2809,14 @@ def main():
     parser.add_argument("--root", type=Path)
     parser.add_argument("--wheel", type=Path)
     parser.add_argument("--wheel-sha256")
+    parser.add_argument(
+        "--grammar-cache",
+        type=Path,
+        help=(
+            "prepare: prefetch into this tree-sitter grammar cache (default: "
+            "$TREE_SITTER_LANGUAGE_PACK_CACHE_DIR, else <root>/grammar-cache)"
+        ),
+    )
     parser.add_argument("--inspector", type=Path)
     parser.add_argument("--qdrant-network", choices=("bridge", "host"), default="bridge")
     args = parser.parse_args()
@@ -2742,6 +2825,8 @@ def main():
         return
     if args.mode != "prepare" and (args.wheel is not None or args.wheel_sha256 is not None):
         raise PilotRefused("delivered_wheel_requires_prepare_mode")
+    if args.mode != "prepare" and args.grammar_cache is not None:
+        raise PilotRefused("grammar_cache_requires_prepare_mode")
     root = args.root or REPO / ".phase-loop" / "runs" / (
         "v13-PILOT-" + source_identity()["source"][:12]
     )
@@ -2750,7 +2835,7 @@ def main():
     if root.parent != expected or not root.name.startswith("v13-PILOT-"):
         raise PilotRefused("scratch_root_outside_plan")
     if args.mode == "prepare":
-        result = prepare(root, args.wheel, args.wheel_sha256)
+        result = prepare(root, args.wheel, args.wheel_sha256, args.grammar_cache)
     elif args.mode == "offline":
         result = asyncio.run(offline(root, load_manifest(root)))
     elif args.mode == "browser":
