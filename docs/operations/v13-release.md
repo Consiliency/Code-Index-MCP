@@ -355,7 +355,7 @@ a successful rebuild. Unregistered watcher contexts refuse mutation explicitly.
 Older registries that recorded `main` for an actual `master` repository need
 re-registration with the correct tracked branch.
 
-Old and failed generations are retained deliberately. Rebuilds snapshot the whole
+In this release, old and failed generations are retained deliberately. Rebuilds snapshot the whole
 committed tree and may copy retained vectors; capacity and latency must be measured
 before scaling. The first generation rebuild after upgrading legacy vector storage
 may re-embed the corpus and needs a separate inference budget. No automatic garbage
@@ -364,7 +364,8 @@ Consiliency/Code-Index-MCP#114 bound retention instead: each successful publicat
 keeps the live generation plus `MCP_INDEX_GENERATION_RETENTION` (default 2) previous
 generations and prunes older generations that build recorded. Generations from before
 the upgrade, registry-referenced, pinned (`<id>.keep`) and still-open generations are
-never pruned.
+never pruned. Of the generations recorded as failed, only the newest is kept as
+evidence.
 
 The HTTP admin gateway requires external process supervision. Python cannot safely
 abandon a stuck mutating worker while it owns the repository fence. Failed or

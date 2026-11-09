@@ -766,3 +766,27 @@ def test_admission_does_not_depend_on_which_repository_workers_are_loaded(tmp_pa
         assert injected.index_admission_reason("r", style, tmp_path, never) is None
     finally:
         injected.shutdown()
+
+
+def test_generation_kept_when_its_semantic_directory_cannot_be_removed(tmp_path, monkeypatch):
+    """#129 re-check nit: if the local semantic directory survives removal, the
+    database (and so its history record) is kept, so the next prune retries
+    instead of orphaning the directory forever."""
+    from mcp_server.storage import git_index_manager as gim
+
+    real_rmtree = gim.shutil.rmtree
+
+    database = tmp_path / "abc123.db"
+    database.write_bytes(b"db")
+    semantic = database.with_suffix(".semantic")
+    semantic.mkdir()
+    (semantic / "vectors.bin").write_bytes(b"v" * 16)
+
+    monkeypatch.setattr(gim.shutil, "rmtree", lambda *args, **kwargs: None)
+    assert gim._remove_generation_files(database) is None
+    assert database.exists() and semantic.exists()
+
+    monkeypatch.setattr(gim.shutil, "rmtree", real_rmtree)
+    freed = gim._remove_generation_files(database)
+    assert freed is not None and freed >= 18
+    assert not database.exists() and not semantic.exists()
