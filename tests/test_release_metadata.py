@@ -495,7 +495,10 @@ def test_active_docs_separate_candidate_from_partially_accepted_release():
         assert EXPECTED_VERSION in text
         assert "prepared candidate" in text
         assert f"Published `{PUBLISHED_VERSION}`" in text
-        assert "unpinned" in text
+        # "unpinned" was ambiguous: `index-it-mcp==1.5.0` looks pinned but is
+        # the broken install (#125 review S1). Name the real constraint.
+        assert "`mcp` below 2" in text
+        assert "unpinned" not in text
         # 1.5.1 caps mcp<2; the docs no longer tell users to add "mcp<2".
         assert '"mcp<2"' not in text
         assert "docs/operations/v13-release.md" in text or "operations/v13-release.md" in text

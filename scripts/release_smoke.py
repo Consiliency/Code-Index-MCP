@@ -280,20 +280,42 @@ def smoke_wheel(wheel_path: Path | None = None, expected_sha256: str | None = No
 #: Python for the unconstrained install: the oldest supported interpreter, the
 #: one release smoke and the PMCP pilot run on.
 UNCONSTRAINED_PYTHON = "3.12"
-#: Installer settings that could silently re-apply a lock, pin or date cutoff to
-#: the unconstrained install. They are dropped (with ``--no-config``) so the
-#: newest versions the wheel's own requirements allow are what resolve.
-_PIN_ENV = (
-    "UV_CONSTRAINT",
-    "UV_OVERRIDE",
-    "UV_BUILD_CONSTRAINT",
-    "UV_EXCLUDE_NEWER",
-    "UV_RESOLUTION",
-    "UV_PRERELEASE",
-    "UV_NO_CONFIG",
-    "UV_CONFIG_FILE",
-    "PIP_CONSTRAINT",
+#: The only environment the unconstrained install sees. Any other installer
+#: setting (``UV_OFFLINE``, ``UV_DEFAULT_INDEX``, ``UV_FIND_LINKS``,
+#: ``UV_EXCLUDE``, constraints, overrides, date cutoffs...) could resolve older
+#: versions than a PyPI user gets, and ``--no-config`` does not block
+#: environment variables, so everything else is dropped (#125 review S2).
+#: These cover locating the interpreter, the uv cache, temp space, locale,
+#: TLS trust and proxies; none of them selects package versions.
+_UNCONSTRAINED_ENV_ALLOW = (
+    "PATH",
+    "HOME",
+    "TMPDIR",
+    "TMP",
+    "TEMP",
+    "SYSTEMROOT",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "XDG_CACHE_HOME",
+    "XDG_DATA_HOME",
+    "UV_CACHE_DIR",
+    "UV_PYTHON_INSTALL_DIR",
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "NO_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "no_proxy",
 )
+#: Resolve against public PyPI, the index a ``pip install index-it-mcp`` user gets.
+UNCONSTRAINED_INDEX = "https://pypi.org/simple"
+
+
+def _unconstrained_install_env() -> dict[str, str]:
+    return {key: os.environ[key] for key in _UNCONSTRAINED_ENV_ALLOW if key in os.environ}
 
 
 def _output(cmd: list[str], *, cwd: Path = REPO, env: dict[str, str] | None = None) -> str:
@@ -329,7 +351,7 @@ def smoke_wheel_unconstrained(
         probe = runtime / PROBE.name
         shutil.copyfile(PROBE, probe)
         wheel = _stage_wheel(dist, wheel_path, expected_sha256)
-        install_env = {key: value for key, value in os.environ.items() if key not in _PIN_ENV}
+        install_env = _unconstrained_install_env()
         _run(
             ["uv", "venv", "--no-config", "--python", python, str(venv_dir)],
             cwd=root,
@@ -344,6 +366,8 @@ def smoke_wheel_unconstrained(
                 "pip",
                 "install",
                 "--no-config",
+                "--default-index",
+                UNCONSTRAINED_INDEX,
                 "--resolution",
                 "highest",
                 "--python",

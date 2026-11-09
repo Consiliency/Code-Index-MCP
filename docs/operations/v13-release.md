@@ -10,7 +10,8 @@ parser-stack upgrade (Code-Index-MCP#115, merged in #116) and the baml-bridge
 0.23.0 alignment (Code-Index-MCP#119, merged in #120). It is recorded as
 published, not accepted and not deployed; see "1.5.0 Delivered Acceptance"
 below. Published `1.5.0` and `1.4.1` both set no upper bound on `mcp`: an
-unpinned install resolves `mcp` 2.x and `index-it-mcp stdio` fails at import
+install that does not also constrain `mcp` below 2 (even `index-it-mcp==1.5.0`)
+resolves `mcp` 2.x and `index-it-mcp stdio` fails at import
 (`McpError` was removed from `mcp.shared.exceptions`). Release smoke and the
 PMCP pilot installed under the lock (`mcp` 1.27.0), so neither saw it. `1.5.1`
 caps `mcp>=1.27,<2`, and `release_smoke.py --unconstrained` (part of
@@ -36,7 +37,8 @@ published in the `v1.5.1` GitHub release's `image-reference.txt` asset. Installe
 pin that exact reference; version/latest GHCR tags are left untouched. Until then,
 use `uv sync --locked`, the locally built `index_it_mcp-1.5.1-py3-none-any.whl`,
 or the signed `v1.5.0` image, which passed delivered acceptance. Do not install
-published `1.5.0` or `1.4.1` from PyPI unpinned (see below).
+published `1.5.0` or `1.4.1` from PyPI without constraining `mcp` below 2 (see
+below).
 The installer's `latest` selector means the latest GitHub release, not a mutable
 GHCR tag. It refuses a missing or malformed reference without falling back.
 
@@ -156,7 +158,11 @@ Delivered acceptance uses `release_smoke.py --wheel-path <downloaded-wheel>
 <ghcr-name>@sha256:<registry-digest>`. `--unconstrained` also installs the
 delivered wheel alone, with no lock constraints, as `pip install index-it-mcp`
 would, and starts STDIO; lock-constrained checks cannot see an unbounded
-dependency that breaks the published install.
+dependency that breaks the published install. It resolves against public PyPI
+with only a short allowlist of environment variables, so operator mirror,
+offline or date-cutoff settings cannot make it pass on older versions. If it
+fails in the release gates, the fix is a dependency bound in a new reviewed
+change, never a rerun of the same dispatch.
 For PMCP, run `v13_pmcp_pilot.py --mode prepare --root <owned-root> --wheel
 <downloaded-wheel> --wheel-sha256 <registry-sha256>`, then offline, rehearsal and
 browser modes against that manifest. These supplied-artifact paths never build

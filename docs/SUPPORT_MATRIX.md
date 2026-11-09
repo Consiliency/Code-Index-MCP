@@ -4,8 +4,9 @@ This matrix is the canonical support statement for the `1.5.1` prepared
 candidate, a corrective release of `1.5.0` that caps `mcp<2`. MCP STDIO is the
 primary LLM surface and FastAPI is secondary admin.
 Published `1.5.0` (2026-11-09 UTC) has partial delivered acceptance: `1.5.0` and
-`1.4.1` (2026-10-13) set no upper bound on `mcp`, so an unpinned install resolves
-`mcp` 2.x and STDIO fails at import; do not install either of them unpinned.
+`1.4.1` (2026-10-13) set no upper bound on `mcp`, so installing either one, even
+as `index-it-mcp==1.5.0`, resolves `mcp` 2.x unless the install also constrains
+`mcp` below 2, and STDIO then fails at import.
 `1.4.1` also lacks the parser-stack upgrade and the BAML 0.23 summarization
 runtime described below; `1.4.0` is historical distribution evidence.
 See [release preparation and acceptance](operations/v13-release.md) for the

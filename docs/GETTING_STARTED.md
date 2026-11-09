@@ -5,9 +5,9 @@ This guide walks you through installing and using Code-Index-MCP to index and se
 > **Stable-surface release status**: This guide targets the `1.5.1` prepared candidate,
 > a corrective release. Published `1.5.0` (2026-11-09 UTC) has partial delivered
 > acceptance: the signed image and the lock-constrained wheel passed, but `1.5.0`
-> and `1.4.1` set no upper bound on `mcp`, so an unpinned install resolves `mcp`
-> 2.x and STDIO fails at import. Do not install either of them unpinned; `1.5.1`
-> caps `mcp<2`. `1.4.1` also lacks the treesitter-chunker 6 / tree-sitter 0.26
+> and `1.4.1` set no upper bound on `mcp`, so installing either one, even as
+> `index-it-mcp==1.5.0`, resolves `mcp` 2.x unless you also constrain
+> `mcp` below 2, and STDIO then fails at import; `1.5.1` caps `mcp<2` itself. `1.4.1` also lacks the treesitter-chunker 6 / tree-sitter 0.26
 > upgrade, and `1.4.0` predates the v13 repairs. Use source or a locally built
 > wheel until `1.5.1` passes protected-main publication and delivered-artifact
 > acceptance.

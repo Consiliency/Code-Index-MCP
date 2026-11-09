@@ -12,12 +12,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.5.1] - 2026-11-08
 
 Prepared corrective release for published `1.5.0` and `1.4.1`: cap `mcp` below
-2 so an unpinned install can start STDIO.
+2 so a plain install, with no separate `mcp` constraint, can start STDIO.
 This section does not imply publication; protected-main dispatch and
 independent delivered-artifact acceptance are separate gates.
 
 ### Fixed
-- **Unpinned installs could not start STDIO.** `1.5.0` and `1.4.1` declare
+- **Plain installs could not start STDIO.** `1.5.0` and `1.4.1` declare
   `mcp>=1.0.0` with no upper bound, so `pip install index-it-mcp==1.5.0`
   resolves `mcp` 2.x, and `index-it-mcp stdio` fails at import with
   `ImportError: cannot import name 'McpError' from 'mcp.shared.exceptions'`.
@@ -37,7 +37,8 @@ independent delivered-artifact acceptance are separate gates.
   (`mcp` 1.30.0).
 
 ### Upgrade notes
-- **Do not install `1.5.0` or `1.4.1` unpinned.** Install `1.5.1`. Hosts that
+- **Do not install `1.5.0` or `1.4.1` without constraining `mcp` below 2**,
+  even as `index-it-mcp==1.5.0`. Install `1.5.1`. Hosts that
   must stay on `1.4.1` (for example glibc older than 2.34) add `"mcp<2"` to the
   same install command. After `1.5.1` is published and accepted, the owner plans
   to yank `1.5.0` and `1.4.1`.

@@ -142,6 +142,17 @@ def test_unconstrained_smoke_installs_the_wheel_alone_and_starts_stdio(tmp_path,
     monkeypatch.setenv("TREE_SITTER_LANGUAGE_PACK_LIBS_DIR", str(tmp_path / "locked-libs"))
     monkeypatch.setenv("UV_CONSTRAINT", str(tmp_path / "requirements.txt"))
     monkeypatch.setenv("PIP_CONSTRAINT", str(tmp_path / "requirements.txt"))
+    # Settings --no-config does not block, which could resolve older versions
+    # than a PyPI user gets (#125 review S2).
+    for key, value in {
+        "UV_OFFLINE": "1",
+        "UV_DEFAULT_INDEX": "https://mirror.invalid/simple",
+        "UV_INDEX_URL": "https://mirror.invalid/simple",
+        "UV_FIND_LINKS": str(tmp_path / "links"),
+        "UV_EXCLUDE": "mcp",
+        "UV_EXCLUDE_NEWER": "2026-01-01",
+    }.items():
+        monkeypatch.setenv(key, value)
     calls = _fake_unconstrained_tools(monkeypatch, smoke)
 
     resolved = smoke.smoke_wheel_unconstrained(
@@ -158,7 +169,17 @@ def test_unconstrained_smoke_installs_the_wheel_alone_and_starts_stdio(tmp_path,
     )
     assert "--no-config" in install and install[-1].endswith(wheel.name)
     assert not {"-c", "--constraint", "-r", "--requirement", "--override"} & set(install)
-    assert "UV_CONSTRAINT" not in install_env and "PIP_CONSTRAINT" not in install_env
+    assert install[install.index("--default-index") + 1] == "https://pypi.org/simple"
+    assert set(install_env) <= set(smoke._UNCONSTRAINED_ENV_ALLOW)
+    assert not any(
+        key.startswith(("UV_", "PIP_"))
+        and key
+        not in (
+            "UV_CACHE_DIR",
+            "UV_PYTHON_INSTALL_DIR",
+        )
+        for key in install_env
+    )
     assert ["uv", "pip", "check"] == commands[commands.index(install) + 1][:3]
     version = next(command for command in commands if command[-1] == "--version")
     assert version[0].endswith("index-it-mcp")
