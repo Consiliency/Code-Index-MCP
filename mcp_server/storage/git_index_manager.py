@@ -2175,10 +2175,26 @@ class GitAwareIndexManager:
                 )
                 # Plugin workers built per-file state against the disposable
                 # staging copy; drop them while queries are still fenced so that
-                # state cannot accumulate across rebuilds (#114).
+                # state cannot accumulate across rebuilds (#114). Worker eviction
+                # is repository-wide, so a stale stage whose registration or
+                # generation was replaced must leave the replacement's workers.
                 release_workers = getattr(self.dispatcher, "release_staged_plugin_workers", None)
-                if callable(release_workers):
+                if callable(release_workers) and self._stage_owner_is_current(repo_id, repo_info):
                     release_workers(repo_id)
+
+    def _stage_owner_is_current(self, repo_id: str, owner: Any) -> bool:
+        """Return True while the registry still names the stage's admitted owner."""
+        try:
+            current = self.registry.get_repository(repo_id)
+        except Exception as exc:
+            logger.debug("Stage owner lookup failed: %s", type(exc).__name__)
+            return False
+        return (
+            current is not None
+            and getattr(current, "registration_id", None) == getattr(owner, "registration_id", None)
+            and getattr(current, "index_generation", None)
+            == getattr(owner, "index_generation", None)
+        )
 
     def _cleanup_runtime_snapshot(self, snapshot: RuntimeSnapshot) -> None:
         shutil.rmtree(snapshot.backup_dir, ignore_errors=True)
