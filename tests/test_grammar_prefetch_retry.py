@@ -146,9 +146,22 @@ def test_checksum_mismatches_and_other_failures_are_never_retried(error):
 @pytest.mark.parametrize(
     "error",
     [
+        _http_error(408),
         _http_error(429),
         _http_error(500),
         _http_error(502),
+        # Real tree-sitter-language-pack 1.20 messages (#132 review N4).
+        RuntimeError(
+            f"Download error: Failed to fetch manifest from {MANIFEST}: io: Connection refused"
+        ),
+        RuntimeError(
+            f"Download error: Failed to fetch manifest from {MANIFEST}: io: failed to lookup "
+            "address information: Name or service not known"
+        ),
+        RuntimeError(
+            f"Download error: Failed to download {MANIFEST}: dns error: Temporary failure in "
+            "name resolution"
+        ),
         RuntimeError(
             f"Download error: Failed to fetch manifest from {MANIFEST}: "
             "io: Connection reset by peer (os error 104)"

@@ -10,7 +10,7 @@ This guide walks you through installing and using Code-Index-MCP to index and se
 > even as `index-it-mcp==1.5.0`, without constraining `mcp` below 2, because
 > STDIO then fails at import. `1.4.1` also lacks the treesitter-chunker 6 /
 > tree-sitter 0.26 upgrade, and `1.4.0` predates the v13 repairs.
-> Source installs and wheels built from `main` require `mcp>=2.2,<3` and
+> Source installs and wheels built from `main` require `mcp>=2.2,<2.4` and
 > install in the same environment as PMCP 3.x; remove any `mcp<2` pin
 > installed alongside them.
 > See [release preparation and acceptance](operations/v13-release.md).

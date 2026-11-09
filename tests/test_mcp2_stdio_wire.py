@@ -329,3 +329,246 @@ async def test_modern_revision_serves_the_same_tools_and_results(monkeypatch):
         "message": "Method not found",
         "data": "tasks/list",
     }
+
+
+# ---------------------------------------------------------------------------
+# Consiliency/Code-Index-MCP#132 review fixes
+# ---------------------------------------------------------------------------
+
+
+def _ok_result():
+    return types.CallToolResult(
+        content=[types.TextContent(type="text", text="{}")], structured_content={}
+    )
+
+
+def _blocking_task_call_tool(release):
+    async def fake_call_tool(name, arguments, *, session=None, task_request=None):
+        async def work(task):
+            await release.wait()
+            return _ok_result()
+
+        return await task_request.run_task(work)
+
+    return fake_call_tool
+
+
+@pytest.mark.asyncio
+async def test_concurrent_task_results_for_one_task_are_all_answered(monkeypatch):
+    """S2: a second tasks/result used to orphan the first, which never replied."""
+    release = anyio.Event()
+    monkeypatch.setattr(stdio_runner, "call_tool", _blocking_task_call_tool(release))
+
+    async with _connected() as (wire, _):
+        created = await wire.result(
+            "tools/call", {"name": "reindex", "arguments": {}, "task": {"ttl": 60_000}}
+        )
+        task_id = created["task"]["taskId"]
+        for request_id in (101, 102, 103):
+            await wire._send.send(
+                SessionMessage(
+                    types.JSONRPCRequest(
+                        jsonrpc="2.0",
+                        id=request_id,
+                        method="tasks/result",
+                        params={"taskId": task_id},
+                    )
+                )
+            )
+        await anyio.sleep(0.2)
+        release.set()
+        replies = {}
+        with anyio.fail_after(5):
+            while len(replies) < 3:
+                message = await wire._receive.receive()
+                data = message.message.model_dump(by_alias=True, mode="json", exclude_none=True)
+                if data.get("id") in (101, 102, 103):
+                    replies[data["id"]] = data
+
+    assert sorted(replies) == [101, 102, 103]
+    for reply in replies.values():
+        assert reply["result"]["_meta"] == {RELATED_TASK_METADATA_KEY: {"taskId": task_id}}
+
+
+@pytest.mark.asyncio
+async def test_client_disconnect_mid_task_finishes_the_task_without_crashing(monkeypatch):
+    release = anyio.Event()
+    finished = anyio.Event()
+    runtime = TaskRuntime(MCPTaskRegistry())
+    server = stdio_runner._build_server(runtime)
+
+    async def fake_call_tool(name, arguments, *, session=None, task_request=None):
+        async def work(task):
+            await release.wait()
+            await task.update_status("after disconnect")
+            finished.set()
+            return _ok_result()
+
+        return await task_request.run_task(work)
+
+    monkeypatch.setattr(stdio_runner, "call_tool", fake_call_tool)
+    served = anyio.Event()
+    async with create_client_server_memory_streams() as (client_streams, server_streams):
+        async with anyio.create_task_group() as tg:
+
+            async def serve():
+                async with runtime.running():
+                    await server.run(
+                        server_streams[0],
+                        server_streams[1],
+                        stdio_runner._initialization_options(server),
+                    )
+                served.set()
+
+            tg.start_soon(serve)
+            wire = _Wire(client_streams[1], client_streams[0])
+            await wire.result(
+                "initialize",
+                {
+                    "protocolVersion": "2025-11-25",
+                    "capabilities": {},
+                    "clientInfo": {"name": "x", "version": "0"},
+                },
+            )
+            await wire.notify("notifications/initialized")
+            created = await wire.result(
+                "tools/call", {"name": "reindex", "arguments": {}, "task": {}}
+            )
+            await client_streams[1].aclose()
+            await client_streams[0].aclose()
+            await anyio.sleep(0.2)
+            release.set()
+            with anyio.fail_after(5):
+                await served.wait()
+
+    assert finished.is_set()
+    task = await runtime.registry.get_task(created["task"]["taskId"])
+    assert task is not None and task.status == "completed"
+
+
+def test_startup_refuses_an_mcp_without_the_middleware_contract():
+    """S1: Server.middleware is provisional in mcp 2.x; fail clearly, not per request."""
+    from mcp_server.cli.task_runtime import TESTED_MCP_RANGE, ensure_middleware_contract
+
+    ensure_middleware_contract(stdio_runner._build_server(None))
+
+    class _NoMiddleware:
+        middleware = None
+
+    with pytest.raises(RuntimeError) as refused:
+        ensure_middleware_contract(_NoMiddleware())
+    assert TESTED_MCP_RANGE in str(refused.value)
+    assert "Server.middleware is not a list" in str(refused.value)
+    assert TESTED_MCP_RANGE == ">=2.2,<2.4"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("task", "expected_ttl"),
+    [({}, 3_600_000), ({"ttl": 10**12}, 3_600_000), ({"ttl": 60_000}, 60_000)],
+)
+async def test_task_ttl_is_clamped_and_defaulted(monkeypatch, task, expected_ttl):
+    release = anyio.Event()
+    release.set()
+    monkeypatch.setattr(stdio_runner, "call_tool", _blocking_task_call_tool(release))
+    async with _connected() as (wire, _):
+        created = await wire.result(
+            "tools/call", {"name": "reindex", "arguments": {}, "task": task}
+        )
+    assert created["task"]["ttl"] == expected_ttl
+
+
+@pytest.mark.asyncio
+async def test_task_retention_evicts_finished_tasks_and_refuses_when_all_run():
+    registry = MCPTaskRegistry(max_tasks=2)
+    first = await registry.create_task(types.TaskMetadata())
+    await registry.update_task(first.task_id, status="completed")
+    second = await registry.create_task(types.TaskMetadata())
+    third = await registry.create_task(types.TaskMetadata())
+
+    assert await registry.get_task(first.task_id) is None
+    assert {(await registry.get_task(t.task_id)).status for t in (second, third)} == {"working"}
+    with pytest.raises(ValueError, match="Too many running tasks"):
+        await registry.create_task(types.TaskMetadata())
+
+
+@pytest.mark.asyncio
+async def test_running_tasks_never_expire_and_deleting_wakes_waiters():
+    registry = MCPTaskRegistry(max_ttl_ms=0)
+    running = await registry.create_task(types.TaskMetadata(ttl=0))
+    await anyio.sleep(0.01)
+    assert await registry.get_task(running.task_id) is not None
+
+    woke = anyio.Event()
+
+    async def waiter():
+        await registry.wait_for_update(running.task_id)
+        woke.set()
+
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(waiter)
+        tg.start_soon(waiter)
+        await anyio.sleep(0.05)
+        assert await registry.delete_task(running.task_id)
+        with anyio.fail_after(2):
+            await woke.wait()
+
+    finished = await registry.create_task(types.TaskMetadata())
+    await registry.update_task(finished.task_id, status="completed")
+    await anyio.sleep(0.01)
+    assert await registry.get_task(finished.task_id) is None
+
+
+@pytest.mark.asyncio
+async def test_malformed_stdio_lines_get_json_rpc_errors_and_valid_lines_pass():
+    import asyncio
+    import json
+
+    reader = asyncio.StreamReader()
+    for line in (
+        b"not json\n",
+        b"\n",
+        b'{"jsonrpc":"2.0","id":8}\n',
+        b'{"jsonrpc":"2.0","id":1,"method":"ping"}\n',
+    ):
+        reader.feed_data(line)
+    reader.feed_eof()
+
+    class _Output:
+        def __init__(self):
+            self.lines = []
+
+        async def write(self, value):
+            self.lines.append(json.loads(value))
+
+    output = _Output()
+    eof = []
+    passed = [
+        line async for line in stdio_runner._stdio_input(reader, lambda: eof.append(1), output)
+    ]
+
+    assert passed == ['{"jsonrpc":"2.0","id":1,"method":"ping"}\n']
+    assert output.lines == [
+        {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "Parse error"}},
+        {"jsonrpc": "2.0", "id": 8, "error": {"code": -32600, "message": "Invalid Request"}},
+    ]
+    assert eof == [1]
+
+
+@pytest.mark.parametrize(
+    ("protocol_version", "expected"), [("2025-11-25", True), ("2026-07-28", False)]
+)
+def test_sampling_is_skipped_on_protocol_revisions_without_back_channel(
+    monkeypatch, protocol_version, expected
+):
+    from types import SimpleNamespace
+
+    from mcp_server.indexing import summarization
+
+    monkeypatch.setattr(summarization, "commercial_egress_allowed", lambda: True)
+    writer = object.__new__(summarization.ChunkWriter)
+    writer.session = SimpleNamespace(
+        protocol_version=protocol_version,
+        client_params=SimpleNamespace(capabilities=SimpleNamespace(sampling=object())),
+    )
+    assert writer._has_sampling_capability() is expected

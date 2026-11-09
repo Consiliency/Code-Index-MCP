@@ -41,9 +41,14 @@ The client/transport compatibility reducer for the current MCP surface is
 - Remote Streamable HTTP MCP remains deferred until a later roadmap phase adds
   a distinct endpoint, transport tests, and transport-specific auth.
 - MCP SDK: source installs and wheels built from `main` run on the `mcp` 2.x
-  SDK and require `mcp>=2.2,<3` (Consiliency/Code-Index-MCP#124). They install
-  in the same environment as PMCP 3.x and `phase-loop-runtime==0.7.30` with a
-  clean `uv pip check`, so PMCP 3.x no longer needs a separate environment.
+  SDK and require `mcp>=2.2,<2.4` (Consiliency/Code-Index-MCP#124). They install
+  in the same environment as PMCP 3.x (`mcp>=2.2,<3`) and
+  `phase-loop-runtime==0.7.30` with a clean `uv pip check`, so PMCP 3.x no
+  longer needs a separate environment. Only mcp 2.2 and 2.3 are verified. The
+  Tasks runtime depends on `Server.middleware`, which mcp marks provisional, so
+  each new mcp minor must be re-tested before the cap is widened. The server
+  refuses to start with a clear message if the installed mcp lacks the
+  middleware contract it needs.
   Remove any `mcp<2` pin installed alongside them: it makes the install
   unresolvable. Published `1.5.1` still caps `mcp<2`, so it cannot share an
   environment with PMCP 3.x.

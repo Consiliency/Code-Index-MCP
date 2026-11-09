@@ -1016,15 +1016,57 @@ def _force_shutdown() -> None:
         os._exit(1)
 
 
+def _malformed_line_reply(line: str) -> dict[str, Any] | None:
+    """JSON-RPC error for a line the SDK would drop, or ``None`` to pass it on.
+
+    The mcp 2.x STDIO transport discards a line that is not a valid JSON-RPC
+    message without answering, so a client waiting on that id hangs. JSON-RPC
+    2.0 says to reply: -32700 (Parse error) for invalid JSON and -32600
+    (Invalid Request) for JSON that is not a request, with ``id`` null when it
+    cannot be determined (#132 review N3).
+    """
+    try:
+        types.jsonrpc_message_adapter.validate_json(line, by_name=False)
+        return None
+    except (ValueError, RecursionError):
+        pass
+    try:
+        payload = json.loads(line)
+    except (ValueError, RecursionError):
+        error = {"code": types.PARSE_ERROR, "message": "Parse error"}
+        request_id: Any = None
+    else:
+        error = {"code": types.INVALID_REQUEST, "message": "Invalid Request"}
+        request_id = payload.get("id") if isinstance(payload, dict) else None
+        if isinstance(request_id, bool) or not isinstance(request_id, (str, int)):
+            request_id = None
+    return {"jsonrpc": "2.0", "id": request_id, "error": error}
+
+
 async def _stdio_input(
-    reader: asyncio.StreamReader, on_eof: Callable[[], None]
+    reader: asyncio.StreamReader,
+    on_eof: Callable[[], None],
+    output: "_StdioOutput | None" = None,
 ) -> AsyncIterator[str]:
     while True:
         line = await reader.readline()
         if not line:
             on_eof()
             return
-        yield line.decode("utf-8", errors="replace")
+        text = line.decode("utf-8", errors="replace")
+        if output is not None:
+            if not text.strip():
+                continue
+            reply = _malformed_line_reply(text)
+            if reply is not None:
+                logger.warning(
+                    "Rejected a malformed JSON-RPC line (%d bytes) with error %d",
+                    len(line),
+                    reply["error"]["code"],
+                )
+                await output.write(json.dumps(reply) + "\n")
+                continue
+        yield text
 
 
 class _StdioOutput:
@@ -1863,9 +1905,10 @@ async def _serve(registry_path=None) -> None:
                 )
                 transports.append(transport)
                 writer = asyncio.StreamWriter(transport, protocol, None, _loop)
+                stdout = _StdioOutput(writer)
                 transport_options = {
-                    "stdin": _stdio_input(reader, _handle_signal),
-                    "stdout": _StdioOutput(writer),
+                    "stdin": _stdio_input(reader, _handle_signal, stdout),
+                    "stdout": stdout,
                 }
             async with stdio_server(**transport_options) as (read_stream, write_stream):
                 async with task_runtime.running():

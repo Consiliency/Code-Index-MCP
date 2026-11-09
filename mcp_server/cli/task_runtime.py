@@ -8,9 +8,11 @@ mcp 2.x removed that runtime when Tasks left the specification; only the
 
 ``reindex`` and ``write_summaries`` advertise ``execution.taskSupport =
 "optional"`` and the README documents the task-augmented path, so this module
-keeps the same wire behaviour on connections negotiated at a handshake-era
-protocol version (2025-11-25 and earlier), where the protocol schema still
-defines Tasks (Consiliency/Code-Index-MCP#124):
+keeps the same wire behaviour on every connection negotiated through the
+``initialize`` handshake (protocol revisions 2024-11-05 through 2025-11-25),
+as the v1 SDK did (Consiliency/Code-Index-MCP#124). The specification defines
+Tasks only from 2025-11-25; the v1 SDK never gated them on the negotiated
+version, and neither does this runtime:
 
 - the ``tasks`` server capability is advertised in the ``initialize`` result;
 - a task-augmented ``tools/call`` returns ``CreateTaskResult`` and runs the work
@@ -26,21 +28,38 @@ the SDK strips ``execution`` from ``tools/list`` there, task metadata on a
 
 from __future__ import annotations
 
+import inspect
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _distribution_version
 from typing import Any
 
 import anyio
 import anyio.abc
 import mcp.types as types
 from mcp.server import Server, ServerRequestContext
-from mcp.server.context import CallNext, HandlerResult
 from mcp.shared.exceptions import MCPError
 from mcp.types.methods import serialize_server_result
 from mcp.types.version import HANDSHAKE_PROTOCOL_VERSIONS
 
 from mcp_server.storage.mcp_task_registry import MCPTaskRegistry, is_terminal
+
+#: mcp releases the Tasks runtime has been verified against. ``pyproject.toml``
+#: pins the same window; re-test and widen both for each new mcp minor.
+TESTED_MCP_RANGE = ">=2.2,<2.4"
+_MIDDLEWARE_CONTRACT_HELP = (
+    "index-it-mcp's Tasks runtime needs the mcp SDK's Server.middleware contract "
+    f"(a list of (ctx, call_next) middleware), verified for mcp{TESTED_MCP_RANGE}. "
+    f"Install a supported release, for example `pip install 'mcp{TESTED_MCP_RANGE}'`, "
+    "or report the installed mcp version."
+)
+
+try:  # noqa: E402 - guarded so an unsupported mcp fails with an actionable message
+    from mcp.server.context import CallNext, HandlerResult, ServerMiddleware
+except ImportError as exc:  # pragma: no cover - only on an unsupported mcp
+    raise ImportError(f"{_MIDDLEWARE_CONTRACT_HELP} ({exc})") from exc
 
 logger = logging.getLogger(__name__)
 
@@ -51,8 +70,47 @@ TaskWork = Callable[["TaskContext"], Awaitable[types.Result]]
 
 
 def supports_tasks(protocol_version: str | None) -> bool:
-    """Return whether ``protocol_version`` is a handshake era that defines Tasks."""
+    """Return whether the runtime serves Tasks on ``protocol_version``.
+
+    True for every ``initialize``-handshake revision, as in the v1 SDK; the
+    specification itself defines Tasks only from 2025-11-25.
+    """
     return protocol_version in HANDSHAKE_PROTOCOL_VERSIONS
+
+
+def _installed_mcp_version() -> str:
+    try:
+        return _distribution_version("mcp")
+    except PackageNotFoundError:  # pragma: no cover - mcp is a hard dependency
+        return "unknown"
+
+
+def ensure_middleware_contract(server: Any) -> None:
+    """Fail fast when the SDK's middleware contract is not the one verified.
+
+    ``Server.middleware`` is marked provisional in mcp 2.x ("may change in a 2.x
+    minor release"). The Tasks runtime appends one ``(ctx, call_next)``
+    middleware to it, so check that shape before serving instead of failing on
+    every request, or silently breaking task-augmented calls, after an mcp
+    upgrade (Consiliency/Code-Index-MCP#132 review S1).
+    """
+    problems = []
+    if not isinstance(getattr(server, "middleware", None), list):
+        problems.append("Server.middleware is not a list")
+    try:
+        parameters = list(inspect.signature(ServerMiddleware.__call__).parameters)
+    except (TypeError, ValueError):
+        parameters = []
+    if parameters[1:] != ["ctx", "call_next"]:
+        problems.append(
+            f"ServerMiddleware.__call__ takes {parameters[1:]}, not ['ctx', 'call_next']"
+        )
+    if problems:
+        raise RuntimeError(
+            f"{_MIDDLEWARE_CONTRACT_HELP} Installed mcp {_installed_mcp_version()}: "
+            + "; ".join(problems)
+            + "."
+        )
 
 
 def tasks_capability() -> types.ServerTasksCapability:
@@ -280,6 +338,7 @@ class TaskRuntime:
         )
         server.add_request_handler("tasks/list", types.PaginatedRequestParams, self._list_tasks)
         server.add_request_handler("tasks/cancel", types.CancelTaskRequestParams, self._cancel_task)
+        ensure_middleware_contract(server)
         server.middleware.append(self.middleware)
 
     async def middleware(

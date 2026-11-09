@@ -363,16 +363,22 @@ PREFETCH_ATTEMPTS = 5
 PREFETCH_BASE_DELAY_SECONDS = 4.0
 PREFETCH_MAX_DELAY_SECONDS = 60.0
 #: Wall-clock budget for one prefetch: no retry starts that would sleep past it.
+#: It bounds the backoff, not a single attempt, which the pack may let hang.
 PREFETCH_DEADLINE_SECONDS = 120.0
 
 _HTTP_STATUS = re.compile(r"http status:\s*(\d{3})", re.IGNORECASE)
 _URL = re.compile(r"[a-z][a-z0-9+.-]*://[^\s'\"<>]+", re.IGNORECASE)
-#: Transport failures worth retrying: connection resets and timeouts.
+#: Transport failures worth retrying: connection resets, timeouts, refused
+#: connections and DNS lookup failures (#132 review N4).
 _TRANSIENT_TRANSPORT = re.compile(
     r"connection reset|reset by peer|connection aborted|broken pipe|"
-    r"unexpected end of file|timed out|timeout",
+    r"unexpected end of file|timed out|timeout|connection refused|"
+    r"dns error|failed to lookup|temporary failure in name resolution|"
+    r"name or service not known",
     re.IGNORECASE,
 )
+#: HTTP statuses worth retrying besides 5xx.
+_TRANSIENT_HTTP_STATUSES = frozenset({408, 429})
 
 
 class GrammarPrefetchError(RuntimeError):
@@ -421,9 +427,9 @@ def _safe_url(message: str) -> Optional[str]:
 def classify_download_error(exc: BaseException) -> DownloadFailure:
     """Decide whether a language-pack download failure is worth retrying.
 
-    Retried: HTTP 5xx and 429, connection resets and timeouts. Never retried:
-    other HTTP statuses (4xx such as 404), checksum mismatches and anything
-    unrecognized. The pack reports failures as ``RuntimeError("Download error:
+    Retried: HTTP 5xx, 408 and 429, connection resets, timeouts, refused
+    connections and DNS lookup failures. Never retried: other HTTP statuses
+    (4xx such as 404), checksum mismatches and anything unrecognized. The pack reports failures as ``RuntimeError("Download error:
     Failed to fetch manifest from <url>: http status: 504")`` and similar.
     """
     message = str(exc)
@@ -433,7 +439,8 @@ def classify_download_error(exc: BaseException) -> DownloadFailure:
     status_match = _HTTP_STATUS.search(message)
     if status_match is not None:
         status = int(status_match.group(1))
-        return DownloadFailure(status == 429 or 500 <= status <= 599, "http status", url, status)
+        transient = status in _TRANSIENT_HTTP_STATUSES or 500 <= status <= 599
+        return DownloadFailure(transient, "http status", url, status)
     transport = _TRANSIENT_TRANSPORT.search(message)
     if transport is not None:
         return DownloadFailure(True, transport.group(0).lower(), url)
@@ -460,9 +467,11 @@ def prefetch(
 
     Defaults to every grammar the language registry advertises. The manifest
     and parser bundle come from GitHub release assets, so transient failures
-    (HTTP 5xx and 429, connection resets, timeouts) are retried with bounded
-    exponential backoff and jitter: at most ``attempts`` tries within
-    ``deadline_seconds`` (Consiliency/Code-Index-MCP#131). Other failures,
+    (HTTP 5xx, 408 and 429, connection resets, timeouts, refused connections
+    and DNS lookup failures) are retried with bounded exponential backoff and
+    jitter: at most ``attempts`` tries, and no retry starts that would sleep
+    past ``deadline_seconds`` (Consiliency/Code-Index-MCP#131). The budget
+    bounds the backoff, not one attempt, which the pack may let hang. Other failures,
     such as HTTP 404 or a checksum mismatch, fail on the first attempt.
     Retries log only the URL (no query string) and the status.
 

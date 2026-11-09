@@ -9,7 +9,7 @@ This guide provides comprehensive information on configuring the Code-Index-MCP 
 > also constrains `mcp` below 2 (their `mcp` requirement admits 2.x, even for
 > `index-it-mcp==1.5.0`). `1.4.1` also lacks the parser-stack and
 > baml-bridge 0.23.0 upgrades, and `1.4.0` lacks the v13 repairs.
-> Source installs and wheels built from `main` require `mcp>=2.2,<3` and
+> Source installs and wheels built from `main` require `mcp>=2.2,<2.4` and
 > install in the same environment as PMCP 3.x; remove any `mcp<2` pin
 > installed alongside them.
 > See [release preparation and acceptance](operations/v13-release.md).

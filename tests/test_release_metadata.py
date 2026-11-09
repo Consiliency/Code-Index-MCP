@@ -387,11 +387,16 @@ def test_runtime_mcp_requirement_is_bounded_to_the_mcp2_line():
     capped mcp<2. After the port the requirement keeps a major upper bound.
     """
     project = tomllib.loads(_read_text("pyproject.toml"))["project"]
-    assert "mcp>=2.2,<3" in project["dependencies"]
-    assert not any(
-        dep.startswith("mcp") and "<2" in dep and not dep.startswith("mcp-")
-        for dep in project["dependencies"]
-    )
+    # Capped below the first unverified minor: Server.middleware is provisional (#132 S1).
+    assert "mcp>=2.2,<2.4" in project["dependencies"]
+    from packaging.requirements import Requirement
+
+    (mcp_requirement,) = [
+        Requirement(dep) for dep in project["dependencies"] if Requirement(dep).name == "mcp"
+    ]
+    assert "2.3.0" in mcp_requirement.specifier
+    assert "1.30.0" not in mcp_requirement.specifier
+    assert "2.4.0" not in mcp_requirement.specifier
     lock = tomllib.loads(_read_text("uv.lock"))
     (mcp,) = [package for package in lock["package"] if package["name"] == "mcp"]
     assert mcp["version"].split(".")[0] == "2"
