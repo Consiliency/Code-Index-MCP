@@ -1016,7 +1016,11 @@ def _force_shutdown() -> None:
         os._exit(1)
 
 
-def _malformed_line_reply(line: str) -> dict[str, Any] | None:
+#: Verdict for a malformed line that is a response: drop it, never answer it.
+_DROP_LINE: Any = object()
+
+
+def _malformed_line_reply(line: str) -> dict[str, Any] | Any | None:
     """JSON-RPC error for a line the SDK would drop, or ``None`` to pass it on.
 
     The mcp 2.x STDIO transport discards a line that is not a valid JSON-RPC
@@ -1024,6 +1028,12 @@ def _malformed_line_reply(line: str) -> dict[str, Any] | None:
     2.0 says to reply: -32700 (Parse error) for invalid JSON and -32600
     (Invalid Request) for JSON that is not a request, with ``id`` null when it
     cannot be determined (#132 review N3).
+
+    A malformed *response* (an object with ``result`` or ``error`` and no
+    ``method``) returns :data:`_DROP_LINE` instead. Responses are never
+    answered, and its ``id`` belongs to the server's own request-id space, so
+    echoing it could make the client fail an unrelated call of its own with the
+    same id (#132 re-check R2).
     """
     try:
         types.jsonrpc_message_adapter.validate_json(line, by_name=False)
@@ -1036,6 +1046,12 @@ def _malformed_line_reply(line: str) -> dict[str, Any] | None:
         error = {"code": types.PARSE_ERROR, "message": "Parse error"}
         request_id: Any = None
     else:
+        if (
+            isinstance(payload, dict)
+            and ("result" in payload or "error" in payload)
+            and "method" not in payload
+        ):
+            return _DROP_LINE
         error = {"code": types.INVALID_REQUEST, "message": "Invalid Request"}
         request_id = payload.get("id") if isinstance(payload, dict) else None
         if isinstance(request_id, bool) or not isinstance(request_id, (str, int)):
@@ -1058,6 +1074,12 @@ async def _stdio_input(
             if not text.strip():
                 continue
             reply = _malformed_line_reply(text)
+            if reply is _DROP_LINE:
+                logger.debug(
+                    "Dropped a malformed JSON-RPC response (%d bytes); responses are not answered",
+                    len(line),
+                )
+                continue
             if reply is not None:
                 logger.warning(
                     "Rejected a malformed JSON-RPC line (%d bytes) with error %d",

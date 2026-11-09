@@ -28,7 +28,7 @@ from mcp_server.cli.task_runtime import (
     TaskRuntime,
     supports_tasks,
 )
-from mcp_server.storage.mcp_task_registry import MCPTaskRegistry
+from mcp_server.storage.mcp_task_registry import MCPTaskRegistry, TaskCapacityError
 
 HANDSHAKE_VERSIONS = ("2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25")
 
@@ -67,8 +67,9 @@ class _Wire:
 @asynccontextmanager
 async def _connected(
     protocol_version: str | None = "2025-11-25",
+    registry: MCPTaskRegistry | None = None,
 ) -> AsyncIterator[tuple[_Wire, dict[str, Any] | None]]:
-    runtime = TaskRuntime(MCPTaskRegistry())
+    runtime = TaskRuntime(registry if registry is not None else MCPTaskRegistry())
     server = stdio_runner._build_server(runtime)
     async with create_client_server_memory_streams() as (client_streams, server_streams):
         client_read, client_write = client_streams
@@ -465,7 +466,14 @@ def test_startup_refuses_an_mcp_without_the_middleware_contract():
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("task", "expected_ttl"),
-    [({}, 3_600_000), ({"ttl": 10**12}, 3_600_000), ({"ttl": 60_000}, 60_000)],
+    [
+        ({}, 3_600_000),
+        ({"ttl": 10**12}, 3_600_000),
+        ({"ttl": 60_000}, 60_000),
+        # #132 re-check R1: a one-minute floor.
+        ({"ttl": 0}, 60_000),
+        ({"ttl": 1}, 60_000),
+    ],
 )
 async def test_task_ttl_is_clamped_and_defaulted(monkeypatch, task, expected_ttl):
     release = anyio.Event()
@@ -480,7 +488,8 @@ async def test_task_ttl_is_clamped_and_defaulted(monkeypatch, task, expected_ttl
 
 @pytest.mark.asyncio
 async def test_task_retention_evicts_finished_tasks_and_refuses_when_all_run():
-    registry = MCPTaskRegistry(max_tasks=2)
+    # min_ttl_ms=0: this case is about eviction order, not the retention floor.
+    registry = MCPTaskRegistry(max_tasks=2, min_ttl_ms=0)
     first = await registry.create_task(types.TaskMetadata())
     await registry.update_task(first.task_id, status="completed")
     second = await registry.create_task(types.TaskMetadata())
@@ -488,7 +497,7 @@ async def test_task_retention_evicts_finished_tasks_and_refuses_when_all_run():
 
     assert await registry.get_task(first.task_id) is None
     assert {(await registry.get_task(t.task_id)).status for t in (second, third)} == {"working"}
-    with pytest.raises(ValueError, match="Too many running tasks"):
+    with pytest.raises(TaskCapacityError, match="retry after one finishes"):
         await registry.create_task(types.TaskMetadata())
 
 
@@ -529,6 +538,11 @@ async def test_malformed_stdio_lines_get_json_rpc_errors_and_valid_lines_pass():
         b"not json\n",
         b"\n",
         b'{"jsonrpc":"2.0","id":8}\n',
+        # #132 re-check R2: malformed responses are dropped, never answered.
+        b'{"jsonrpc":"2.0","id":11,"error":{"code":"x"}}\n',
+        b'{"jsonrpc":"2.0","id":12,"result":1}\n',
+        b'{"jsonrpc":"2.0","id":13,"error":{"message":"no code"}}\n',
+        b'{"jsonrpc":"1.0","id":14,"result":{}}\n',
         b'{"jsonrpc":"2.0","id":1,"method":"ping"}\n',
     ):
         reader.feed_data(line)
@@ -572,3 +586,130 @@ def test_sampling_is_skipped_on_protocol_revisions_without_back_channel(
         client_params=SimpleNamespace(capabilities=SimpleNamespace(sampling=object())),
     )
     assert writer._has_sampling_capability() is expected
+
+
+# ---------------------------------------------------------------------------
+# Consiliency/Code-Index-MCP#132 re-check nits
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_ttl_zero_task_result_still_reaches_the_waiting_client(monkeypatch):
+    """R1: ttl 0 used to expire the finished task before the woken waiter read it."""
+    release = anyio.Event()
+    monkeypatch.setattr(stdio_runner, "call_tool", _blocking_task_call_tool(release))
+    async with _connected() as (wire, _):
+        created = await wire.result(
+            "tools/call", {"name": "reindex", "arguments": {}, "task": {"ttl": 0}}
+        )
+        task_id = created["task"]["taskId"]
+        assert created["task"]["ttl"] == 60_000
+
+        async def finish_later():
+            await anyio.sleep(0.1)
+            release.set()
+
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(finish_later)
+            payload = await wire.result("tasks/result", {"taskId": task_id})
+        assert payload["_meta"] == {RELATED_TASK_METADATA_KEY: {"taskId": task_id}}
+        assert payload["structuredContent"] == {}
+        assert (await wire.result("tasks/get", {"taskId": task_id}))["status"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_finished_task_within_the_floor_survives_its_expiry():
+    """R1: even an already-due expiry keeps a task that finished under a minute ago."""
+    from datetime import datetime, timedelta, timezone
+
+    registry = MCPTaskRegistry()
+    task = await registry.create_task(types.TaskMetadata(ttl=0))
+    await registry.store_result(task.task_id, _ok_result())
+    await registry.update_task(task.task_id, status="completed")
+    registry._tasks[task.task_id].expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+
+    assert (await registry.get_task(task.task_id)).status == "completed"
+    assert await registry.get_result(task.task_id) is not None
+
+    registry._tasks[task.task_id].finished_at = datetime.now(timezone.utc) - timedelta(minutes=2)
+    assert await registry.get_task(task.task_id) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("with_waiter", [True, False])
+async def test_full_registry_keeps_a_just_finished_task_instead_of_evicting_it(with_waiter):
+    """R1, 255 running plus one just-finished task: refuse the new task, keep the result.
+
+    This is the reviewer's eviction-after-wake case: the finished task's waiter
+    has been woken but not yet scheduled when another task is created.
+    """
+    registry = MCPTaskRegistry()  # 256 slots
+    for _ in range(255):
+        await registry.create_task(types.TaskMetadata())
+    finished = await registry.create_task(types.TaskMetadata())
+    await registry.store_result(finished.task_id, _ok_result())
+    results = []
+
+    async def waiter():
+        while (await registry.get_task(finished.task_id)).status != "completed":
+            await registry.wait_for_update(finished.task_id)
+        results.append(await registry.get_result(finished.task_id))
+
+    async with anyio.create_task_group() as tg:
+        if with_waiter:
+            tg.start_soon(waiter)
+            await anyio.sleep(0.05)  # park the waiter
+        # Completing wakes the waiter; creating a task before it runs must not evict it.
+        await registry.update_task(finished.task_id, status="completed")
+        with pytest.raises(TaskCapacityError, match="retry after one finishes"):
+            await registry.create_task(types.TaskMetadata())
+
+    assert (await registry.get_task(finished.task_id)).status == "completed"
+    if with_waiter:
+        assert results and results[0] is not None
+
+
+@pytest.mark.asyncio
+async def test_eviction_takes_older_finished_tasks_before_recent_ones():
+    from datetime import datetime, timedelta, timezone
+
+    registry = MCPTaskRegistry(max_tasks=3)
+    old = await registry.create_task(types.TaskMetadata())
+    await registry.update_task(old.task_id, status="completed")
+    registry._tasks[old.task_id].finished_at = datetime.now(timezone.utc) - timedelta(minutes=5)
+    recent = await registry.create_task(types.TaskMetadata())
+    await registry.update_task(recent.task_id, status="completed")
+    await registry.create_task(types.TaskMetadata())  # running
+
+    new = await registry.create_task(types.TaskMetadata())
+
+    assert await registry.get_task(old.task_id) is None
+    assert (await registry.get_task(recent.task_id)).status == "completed"
+    assert (await registry.get_task(new.task_id)).status == "working"
+
+
+@pytest.mark.asyncio
+async def test_full_task_slots_return_the_actionable_message_through_call_tool(monkeypatch):
+    """R4: the capacity refusal reached clients only as "details": "ValueError"."""
+    release = anyio.Event()
+
+    async def fake_handle_reindex(**kwargs):
+        async def work(task):
+            await release.wait()
+            return _ok_result()
+
+        return await kwargs["request_experimental"].run_task(work)
+
+    monkeypatch.setattr(stdio_runner, "dispatcher", object())
+    monkeypatch.setattr(stdio_runner.tool_handlers, "handle_reindex", fake_handle_reindex)
+    call = {"name": "reindex", "arguments": {}, "task": {"ttl": 60_000}}
+    async with _connected(registry=MCPTaskRegistry(max_tasks=1)) as (wire, _):
+        first = await wire.result("tools/call", call)
+        refused = await wire.result("tools/call", call)
+        release.set()
+
+    assert first["task"]["status"] == "working"
+    assert refused["isError"] is True
+    text = refused["content"][0]["text"]
+    assert text == "Too many tasks (1 running or awaiting retrieval); retry after one finishes"
+    assert "ValueError" not in text

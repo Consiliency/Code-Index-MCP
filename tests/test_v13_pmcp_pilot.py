@@ -1451,6 +1451,10 @@ def test_fixture_server_and_workers_get_the_prefetched_cache_with_downloads_deni
         lambda command, directory, label, **kwargs: commands.append((label, kwargs.get("env"))),
     )
     monkeypatch.setattr(pilot, "commit_fixture", lambda path, env: None)
+    # create_fixture imports the pilot's sibling helper module as the pilot does
+    # when run as a script; do not rely on another test having put scripts/ on
+    # sys.path (failed under xdist scheduling on the #132 re-check branch).
+    monkeypatch.syspath_prepend(str(pilot.REPO / "scripts"))
 
     fixture = pilot.create_fixture(tmp_path, manifest, label="offline")
 
