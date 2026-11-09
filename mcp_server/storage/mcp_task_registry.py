@@ -21,9 +21,18 @@ DEFAULT_POLL_INTERVAL_MS = 500
 #: clamped to this, and a request without one gets it; the effective value is
 #: returned in the task, as the protocol allows (#132 review N1).
 MAX_TASK_TTL_MS = 60 * 60 * 1000
-#: Most tasks retained at once. The oldest terminal tasks are evicted first; a
-#: new task is refused only when every retained task is still running.
+#: Shortest a finished task and its result are kept, whatever ``ttl`` the client
+#: asks for: a ``tasks/result`` woken by the completion must still find the
+#: result (#132 re-check R1).
+MIN_TASK_TTL_MS = 60 * 1000
+#: Most tasks retained at once. The oldest finished tasks are evicted first; a
+#: new task is refused when every retained task is running, has a waiter, or
+#: finished within ``MIN_TASK_TTL_MS``.
 MAX_RETAINED_TASKS = 256
+
+
+class TaskCapacityError(ValueError):
+    """No task slot is free; the message tells the client to retry later."""
 
 
 _DATETIME_ADAPTER: TypeAdapter[datetime] = TypeAdapter(datetime)
@@ -44,11 +53,16 @@ def is_terminal(status: TaskStatus) -> bool:
     return status in TERMINAL_TASK_STATUSES
 
 
-def effective_ttl_ms(requested: int | None, maximum: int = MAX_TASK_TTL_MS) -> int:
-    """Clamp a client-requested task TTL to the server's retention bound."""
+def effective_ttl_ms(
+    requested: int | None,
+    maximum: int = MAX_TASK_TTL_MS,
+    minimum: int = MIN_TASK_TTL_MS,
+) -> int:
+    """Clamp a client-requested task TTL to the server's retention bounds."""
+    minimum = min(minimum, maximum)
     if requested is None:
         return maximum
-    return max(0, min(requested, maximum))
+    return max(minimum, min(requested, maximum))
 
 
 def create_task_state(
@@ -81,6 +95,7 @@ class TaskRecord:
     terminal_result: Result | None = None
     terminal_error: str | None = None
     expires_at: datetime | None = None
+    finished_at: datetime | None = None
 
 
 class MCPTaskRegistry:
@@ -91,12 +106,16 @@ class MCPTaskRegistry:
         page_size: int = 50,
         *,
         max_ttl_ms: int = MAX_TASK_TTL_MS,
+        min_ttl_ms: int = MIN_TASK_TTL_MS,
         max_tasks: int = MAX_RETAINED_TASKS,
     ) -> None:
         self._tasks: dict[str, TaskRecord] = {}
         self._page_size = page_size
         self._max_ttl_ms = max_ttl_ms
+        self._min_ttl_ms = min(min_ttl_ms, max_ttl_ms)
         self._max_tasks = max_tasks
+        # Waiters parked in (or just woken from) wait_for_update, per task.
+        self._waiters: dict[str, int] = {}
         # One shared event per task with waiters. ``notify_update`` sets it and
         # drops it, so every parked waiter wakes and the next wait gets a fresh
         # one; a second ``tasks/result`` can no longer orphan the first
@@ -118,8 +137,21 @@ class MCPTaskRegistry:
         del self._tasks[task_id]
         self._wake(task_id)
 
+    def _retained(self, task_id: str, record: TaskRecord, now: datetime) -> bool:
+        """Whether a finished task must be kept regardless of TTL or capacity.
+
+        A task with a waiter, including one woken by the completion that has
+        not yet read the result, or one that finished within the minimum TTL,
+        is never expired or evicted (#132 re-check R1).
+        """
+        if self._waiters.get(task_id):
+            return True
+        return record.finished_at is not None and now - record.finished_at < timedelta(
+            milliseconds=self._min_ttl_ms
+        )
+
     def _cleanup_expired(self) -> None:
-        """Drop terminal tasks past their TTL; running tasks never expire."""
+        """Drop finished tasks past their TTL; running tasks never expire."""
         now = datetime.now(timezone.utc)
         expired = [
             task_id
@@ -127,24 +159,27 @@ class MCPTaskRegistry:
             if is_terminal(record.task.status)
             and record.expires_at is not None
             and now >= record.expires_at
+            and not self._retained(task_id, record, now)
         ]
         for task_id in expired:
             self._forget(task_id)
 
     def _make_room(self) -> None:
-        """Keep at most ``max_tasks``: evict the oldest terminal tasks first."""
+        """Keep at most ``max_tasks``: evict the oldest evictable finished tasks."""
         if len(self._tasks) < self._max_tasks:
             return
-        terminal = sorted(
-            (record.updated_at, task_id)
+        now = datetime.now(timezone.utc)
+        evictable = sorted(
+            (record.finished_at or record.updated_at, task_id)
             for task_id, record in self._tasks.items()
-            if is_terminal(record.task.status)
+            if is_terminal(record.task.status) and not self._retained(task_id, record, now)
         )
-        for _, task_id in terminal[: len(self._tasks) - self._max_tasks + 1]:
+        for _, task_id in evictable[: len(self._tasks) - self._max_tasks + 1]:
             self._forget(task_id)
         if len(self._tasks) >= self._max_tasks:
-            raise ValueError(
-                f"Too many running tasks ({self._max_tasks}); retry after one finishes"
+            raise TaskCapacityError(
+                f"Too many tasks ({self._max_tasks} running or awaiting retrieval); "
+                "retry after one finishes"
             )
 
     def _copy_task(self, task: Task) -> Task:
@@ -163,7 +198,9 @@ class MCPTaskRegistry:
     ) -> Task:
         self._cleanup_expired()
         task = create_task_state(
-            metadata, task_id, ttl_ms=effective_ttl_ms(metadata.ttl, self._max_ttl_ms)
+            metadata,
+            task_id,
+            ttl_ms=effective_ttl_ms(metadata.ttl, self._max_ttl_ms, self._min_ttl_ms),
         )
         if task.task_id in self._tasks:
             raise ValueError(f"Task with ID {task.task_id} already exists")
@@ -206,6 +243,8 @@ class MCPTaskRegistry:
 
         record.updated_at = datetime.now(timezone.utc)
         record.task.last_updated_at = wire_time(record.updated_at)
+        if status_changed and is_terminal(record.task.status):
+            record.finished_at = record.updated_at
         if status is not None and is_terminal(status) and record.task.ttl is not None:
             record.expires_at = self._calculate_expiry(record.task.ttl)
         if status == "failed":
@@ -255,7 +294,15 @@ class MCPTaskRegistry:
         event = self._update_events.get(task_id)
         if event is None:
             event = self._update_events[task_id] = anyio.Event()
-        await event.wait()
+        self._waiters[task_id] = self._waiters.get(task_id, 0) + 1
+        try:
+            await event.wait()
+        finally:
+            remaining = self._waiters.get(task_id, 0) - 1
+            if remaining > 0:
+                self._waiters[task_id] = remaining
+            else:
+                self._waiters.pop(task_id, None)
 
     async def notify_update(self, task_id: str) -> None:
         self._wake(task_id)

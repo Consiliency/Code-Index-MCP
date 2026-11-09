@@ -44,7 +44,7 @@ from mcp.shared.exceptions import MCPError
 from mcp.types.methods import serialize_server_result
 from mcp.types.version import HANDSHAKE_PROTOCOL_VERSIONS
 
-from mcp_server.storage.mcp_task_registry import MCPTaskRegistry, is_terminal
+from mcp_server.storage.mcp_task_registry import MCPTaskRegistry, TaskCapacityError, is_terminal
 
 #: mcp releases the Tasks runtime has been verified against. ``pyproject.toml``
 #: pins the same window; re-test and widen both for each new mcp minor.
@@ -307,7 +307,12 @@ class TaskRuntime:
     ) -> types.CreateTaskResult:
         if self._task_group is None:
             raise RuntimeError("Task runtime is not running.")
-        task = await self.registry.create_task(metadata, task_id)
+        try:
+            task = await self.registry.create_task(metadata, task_id)
+        except TaskCapacityError as exc:
+            # MCPError passes through call_tool, so the client sees this
+            # actionable message instead of "details": "ValueError" (#132 re-check R4).
+            raise MCPError(types.INVALID_REQUEST, str(exc)) from exc
         task_ctx = TaskContext(task, self.registry, session)
 
         async def execute() -> None:

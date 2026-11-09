@@ -97,20 +97,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The PMCP pilot's client uses `streamable_http_client` with an `httpx2`
   client, because the 2.x SDK removed `streamablehttp_client`.
 
-- Task retention is bounded. A task's `ttl` is clamped to one hour, a task
-  without one gets one hour, and the effective value is returned. Expiry starts
-  when a task finishes, so a running task is never purged. At most 256 tasks
-  are kept: the oldest finished tasks are evicted first, and a new task is
-  refused only while 256 are still running.
+- Task retention is bounded. A task's `ttl` is clamped to between one minute
+  and one hour, a task without one gets one hour, and the effective value is
+  returned. The one-minute floor means a `tasks/result` woken by the completion
+  always finds the result, even for `ttl: 0`. Expiry starts when a task
+  finishes, so a running task is never purged. At most 256 tasks are kept: the
+  oldest finished tasks are evicted first, but never a task that still has a
+  `tasks/result` waiter or that finished within the last minute. When every
+  slot holds a running, awaited or just-finished task, a new task is refused,
+  and the client gets that reason ("Too many tasks (256 running or awaiting
+  retrieval); retry after one finishes") rather than an opaque
+  `"details": "ValueError"`. (Consiliency/Code-Index-MCP#132 re-check)
 - Concurrent `tasks/result` requests for the same task are all answered when
   the task finishes. Previously, as in the 1.x SDK runtime, a second request
   left the first one waiting forever. Deleting or expiring a task now wakes its
   waiters, which get `-32602`.
-- A line on STDIO that is not a valid JSON-RPC message gets a JSON-RPC error
-  instead of no reply (the 2.x transport drops it silently): `-32700` (Parse
-  error, `id` null) for invalid JSON, and `-32600` (Invalid Request) for other
-  JSON, echoing a string or integer `id`. Blank lines are ignored. A warning
-  logs only the size and the error code.
+- On the POSIX STDIO transport, a line that is not a valid JSON-RPC message
+  gets a JSON-RPC error instead of no reply (the 2.x transport drops it
+  silently): `-32700` (Parse error, `id` null) for invalid JSON, and `-32600`
+  (Invalid Request) for other JSON, echoing a string or integer `id`. A
+  malformed *response* (`result` or `error` with no `method`) is dropped with a
+  debug log instead, because responses are never answered and its `id` belongs
+  to the server's own requests. Blank lines are ignored. A warning logs only the
+  size and the error code. On Windows the SDK's own STDIO reader is used, and
+  malformed lines are still dropped silently.
 - On protocol 2026-07-28, which has no server-to-client requests, summarization
   no longer attempts MCP sampling for every chunk. It logs once and uses the
   next summarization path.
