@@ -2,12 +2,12 @@
 
 This guide provides comprehensive information on configuring the Code-Index-MCP for different environments and use cases.
 
-> **Stable-surface release status**: This guide targets the `1.5.1` prepared candidate.
-> MCP STDIO is primary; FastAPI is secondary admin only. Docker examples require
-> the matching registry publication; the signed `v1.5.0` image passed delivered
-> acceptance. Published `1.5.0` and `1.4.1` wheels cannot start STDIO unless the
-> install also constrains `mcp` below 2 (their `mcp` requirement admits 2.x, even
-> for `index-it-mcp==1.5.0`); `1.5.1` caps `mcp<2` itself. `1.4.1` also lacks the parser-stack and
+> **Stable-surface release status**: This guide targets published `1.5.1` (2026-11-09 UTC).
+> MCP STDIO is primary; FastAPI is secondary admin only. The signed `v1.5.1`
+> image and the PyPI wheel passed delivered acceptance; `1.5.1` caps `mcp<2`.
+> Published `1.5.0` and `1.4.1` wheels cannot start STDIO unless the install
+> also constrains `mcp` below 2 (their `mcp` requirement admits 2.x, even for
+> `index-it-mcp==1.5.0`). `1.4.1` also lacks the parser-stack and
 > baml-bridge 0.23.0 upgrades, and `1.4.0` lacks the v13 repairs.
 > See [release preparation and acceptance](operations/v13-release.md).
 > That container image name is a container identity surface, not the canonical

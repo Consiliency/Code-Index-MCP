@@ -2,15 +2,14 @@
 
 This guide walks you through installing and using Code-Index-MCP to index and search your codebase.
 
-> **Stable-surface release status**: This guide targets the `1.5.1` prepared candidate,
-> a corrective release. Published `1.5.0` (2026-11-09 UTC) has partial delivered
-> acceptance: the signed image and the lock-constrained wheel passed, but `1.5.0`
-> and `1.4.1` set no upper bound on `mcp`, so installing either one, even as
-> `index-it-mcp==1.5.0`, resolves `mcp` 2.x unless you also constrain
-> `mcp` below 2, and STDIO then fails at import; `1.5.1` caps `mcp<2` itself. `1.4.1` also lacks the treesitter-chunker 6 / tree-sitter 0.26
-> upgrade, and `1.4.0` predates the v13 repairs. Use source or a locally built
-> wheel until `1.5.1` passes protected-main publication and delivered-artifact
-> acceptance.
+> **Stable-surface release status**: This guide targets published `1.5.1`
+> (2026-11-09 UTC), a corrective release that caps `mcp<2`. Install it with
+> `pip install index-it-mcp==1.5.1`; its delivered acceptance passed for the
+> signed image and for the wheel with and without lock constraints. Published
+> `1.5.0` and `1.4.1` set no upper bound on `mcp`: do not install either one,
+> even as `index-it-mcp==1.5.0`, without constraining `mcp` below 2, because
+> STDIO then fails at import. `1.4.1` also lacks the treesitter-chunker 6 /
+> tree-sitter 0.26 upgrade, and `1.4.0` predates the v13 repairs.
 > See [release preparation and acceptance](operations/v13-release.md).
 > The [GA readiness checklist](validation/ga-readiness-checklist.md) retains
 > the release gates and support limits; a stable identifier does not widen them.
@@ -57,6 +56,7 @@ uv run mcp-index --version
 # From the repo root
 uv run --extra dev python -m build --wheel
 python -m pip install dist/index_it_mcp-1.5.1-py3-none-any.whl
+# Or the published wheel: python -m pip install index-it-mcp==1.5.1
 index-it-mcp --version
 
 # Prefetch tree-sitter grammars while network access is available (mandatory)
