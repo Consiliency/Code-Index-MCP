@@ -373,6 +373,12 @@ def _remove_generation_files(database: Path) -> Optional[int]:
                 except OSError:
                     pass
         shutil.rmtree(semantic, ignore_errors=True)
+        if semantic.exists():
+            # Keep the database and its history record so the next prune
+            # retries; deleting them now would orphan the semantic directory
+            # forever (#129 re-check nit).
+            logger.warning("Generation semantic directory kept: %s", semantic.name)
+            return None
     for path in reversed(_generation_paths(database)):
         try:
             size = path.stat().st_size

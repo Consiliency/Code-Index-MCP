@@ -291,7 +291,7 @@ This document provides a comprehensive reference of all environment variables su
   ```
 
 ### `MCP_WATCHER_SWEEP_MINUTES`
-- **Description**: Interval in minutes between full-tree periodic sweeps performed by `WatcherSweeper` to recover events dropped by inotify/FSEvents. Introduced in P14 SL-5 (`mcp_server/watcher/sweeper.py`). The sweep compares the index with exactly the files the indexer stores (the shared admission predicate), and does not reconcile identical drift again until the tracked tree changes (Consiliency/Code-Index-MCP#114).
+- **Description**: Interval in minutes between full-tree periodic sweeps performed by `WatcherSweeper` to recover events dropped by inotify/FSEvents. Introduced in P14 SL-5 (`mcp_server/watcher/sweeper.py`). The sweep compares the index with exactly the files the indexer stores (the shared admission predicate), and does not reconcile identical drift again until the tracked tree changes. Drift is only treated as handled after a reconciling rebuild actually published; a failed or refused rebuild is retried on the next sweep, then with backoff (skipping 1, 3, 7 and at most 15 sweeps) until one succeeds or the tree changes (Consiliency/Code-Index-MCP#114).
 - **Type**: Integer (minutes)
 - **Default**: `60`
 - **Example**:
