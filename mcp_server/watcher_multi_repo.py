@@ -500,7 +500,16 @@ class MultiRepositoryWatcher:
             on_repository_drift=lambda repo_id: self._reconcile_repository_drift(
                 repo_id, owner=owners.get(repo_id)
             ),
+            # One admission predicate for the indexer and the sweep (#114).
+            admission_reason=self._sweep_admission_reason(),
         )
+
+    def _sweep_admission_reason(self):
+        """Share the dispatcher's admission predicate with the sweep when available."""
+        dispatcher = getattr(self, "dispatcher", None)
+        if isinstance(dispatcher, EnhancedDispatcher):
+            return dispatcher.index_admission_reason
+        return None
 
     def _reconcile_repository_drift(self, repo_id: str, *, owner=None) -> None:
         repo = self.registry.get_repository(repo_id)

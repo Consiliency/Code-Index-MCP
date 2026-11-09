@@ -10,6 +10,7 @@ import json
 import logging
 import math
 import os
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -23,7 +24,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from ..artifacts.commit_artifacts import CommitArtifactManager
-from ..config.env_vars import get_max_file_size_bytes
+from ..config.env_vars import get_index_generation_retention, get_max_file_size_bytes
 from ..core.ignore_patterns import EXCLUDED_DIR_PARTS
 from ..core.path_resolver import PathResolver
 from ..core.repo_context import RepoContext
@@ -32,6 +33,8 @@ from ..dispatcher.dispatcher_enhanced import (
     EnhancedDispatcher,
     IndexResult,
     IndexResultStatus,
+    _redact_secrets,
+    is_unsupported_file_result,
 )
 from ..health.repo_status import build_health_row
 from ..health.repository_readiness import (
@@ -129,6 +132,9 @@ class UpdateResult:
     moved: int = 0
     failed: int = 0
     skipped: int = 0
+    #: Changed files that no plugin stores (for example a disabled-by-default
+    #: language). Ignored exactly as the full walk ignores them (#111).
+    ignored: int = 0
     errors: List[str] = None
     semantic: Optional[Dict[str, Any]] = None
     low_level: Optional[Dict[str, Any]] = None
@@ -170,6 +176,129 @@ class RuntimeRestoreResult:
     counts_after: Dict[str, int]
 
 
+#: Bounds for the per-file error summary carried by a failed sync's stored error
+#: and CLI output (#111).
+_SYNC_ERROR_MAX_ITEMS = 5
+_SYNC_ERROR_ITEM_CHARS = 300
+_SYNC_ERROR_TOTAL_CHARS = 2000
+_EXTRA_SECRET_PATTERNS = (
+    re.compile(r"\bpa-[A-Za-z0-9._\-]{8,}"),
+    # Credentials embedded in URLs (scheme://user:password@host).
+    re.compile(r"(?<=://)[^/\s:@]+:[^/\s@]+@"),
+)
+
+
+def _safe_error_text(text: object, strip_prefixes: List[str]) -> str:
+    """Redact secret-like substrings and absolute checkout/stage prefixes."""
+    value = str(text)
+    for prefix in sorted(strip_prefixes, key=len, reverse=True):
+        if prefix:
+            value = value.replace(prefix.rstrip("/\\") + os.sep, "").replace(prefix, "")
+    value = _redact_secrets(value) or ""
+    for pattern in _EXTRA_SECRET_PATTERNS:
+        value = pattern.sub("[REDACTED]", value)
+    value = " ".join(value.split())
+    if len(value) > _SYNC_ERROR_ITEM_CHARS:
+        value = value[: _SYNC_ERROR_ITEM_CHARS - 3] + "..."
+    return value
+
+
+def _format_rebuild_error(
+    exc: BaseException, result: "UpdateResult", *, strip_prefixes: List[str]
+) -> str:
+    """Describe a failed staged rebuild with its message and a bounded error summary."""
+    message = (
+        _safe_error_text(exc, strip_prefixes) if isinstance(exc, _DESCRIBED_REBUILD_ERRORS) else ""
+    )
+    error = f"Staged rebuild failed ({type(exc).__name__}" + (f": {message})" if message else ")")
+    errors = [item for item in (result.errors or []) if str(item).strip()]
+    if errors:
+        details = [
+            _safe_error_text(item, strip_prefixes) for item in errors[:_SYNC_ERROR_MAX_ITEMS]
+        ]
+        error += f"; {len(errors)} file error(s): " + "; ".join(details)
+        if len(errors) > _SYNC_ERROR_MAX_ITEMS:
+            error += f"; and {len(errors) - _SYNC_ERROR_MAX_ITEMS} more"
+    if len(error) > _SYNC_ERROR_TOTAL_CHARS:
+        error = error[: _SYNC_ERROR_TOTAL_CHARS - 3] + "..."
+    return error
+
+
+_GENERATION_HISTORY_FILE = "published-generations.json"
+_GENERATION_ID_PATTERN = re.compile(r"[0-9a-f]{32}")
+_GENERATION_SIDECARS = ("-wal", "-shm", "-journal")
+
+
+def _is_generation_id(value: str) -> bool:
+    return bool(_GENERATION_ID_PATTERN.fullmatch(value))
+
+
+def _read_generation_history(path: Path) -> List[str]:
+    """Return published generation ids, oldest first; tolerate a missing file."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return []
+    except (OSError, ValueError) as exc:
+        logger.warning("Generation history unreadable (%s); rebuilding it", type(exc).__name__)
+        return []
+    items = data.get("published", []) if isinstance(data, dict) else []
+    history: List[str] = []
+    for item in items:
+        if isinstance(item, str) and _is_generation_id(item) and item not in history:
+            history.append(item)
+    return history
+
+
+def _write_generation_history(path: Path, history: List[str]) -> None:
+    payload = json.dumps({"version": 1, "published": history}, indent=2) + "\n"
+    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        temporary.write_text(payload, encoding="utf-8")
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _remove_generation_files(database: Path) -> Optional[int]:
+    """Remove one generation's database, sidecars and semantic directory.
+
+    Returns the bytes freed, or ``None`` when the database could not be removed
+    (for example a Windows reader still holds it), in which case nothing else is
+    touched.
+    """
+    freed = 0
+    try:
+        size = database.stat().st_size
+        database.unlink()
+        freed += size
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        logger.warning("Superseded generation kept (%s): %s", type(exc).__name__, database.name)
+        return None
+    for suffix in _GENERATION_SIDECARS:
+        sidecar = Path(f"{database}{suffix}")
+        try:
+            size = sidecar.stat().st_size
+            sidecar.unlink()
+            freed += size
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            logger.warning("Generation sidecar kept (%s): %s", type(exc).__name__, sidecar.name)
+    semantic = database.with_suffix(".semantic")
+    if semantic.is_dir() and not semantic.is_symlink():
+        for root, _dirs, files in os.walk(semantic):
+            for name in files:
+                try:
+                    freed += (Path(root) / name).stat().st_size
+                except OSError:
+                    pass
+        shutil.rmtree(semantic, ignore_errors=True)
+    return freed
+
+
 #: Test-only seam for the installed-wheel shutdown smoke: when both are set and
 #: the hold file exists, the staged rebuild parks at that checkpoint (writing
 #: ``<hold file>.held``) until the file is removed or shutdown is requested.
@@ -181,6 +310,16 @@ _REBUILD_HOLD_FILE_ENV = "MCP_TEST_REBUILD_HOLD_FILE"
 
 class RebuildShutdownRequested(RuntimeError):
     """The owning service is shutting down; abandon the unpublished generation."""
+
+
+class StagedRebuildError(RuntimeError):
+    """A staged rebuild refused to publish; its message is fixed, safe text."""
+
+
+#: Exceptions whose messages are authored here and safe to store and print.
+#: Other exception text (OS, SQLite, plugin errors) can carry private detail, so
+#: only their type is reported; per-file detail comes from ``UpdateResult.errors``.
+_DESCRIBED_REBUILD_ERRORS = (StagedRebuildError, RebuildShutdownRequested)
 
 
 class GitAwareIndexManager:
@@ -756,7 +895,7 @@ class GitAwareIndexManager:
             self._rebuild_checkpoint("stage_created")
             if getattr(self.dispatcher, "_semantic_enabled", False) is True:
                 if not callable(getattr(self.dispatcher, "_semantic_lease", None)):
-                    raise RuntimeError("Staged semantic integration unavailable")
+                    raise StagedRebuildError("Staged semantic integration unavailable")
                 self._copy_retained_vectors(repo_id, stage_ctx)
             if stage_operation is not None:
                 result = stage_operation(stage_ctx)
@@ -807,7 +946,7 @@ class GitAwareIndexManager:
                     raise RebuildShutdownRequested(
                         "service shutdown requested during the index walk"
                     )
-                raise RuntimeError("Staged full index did not complete cleanly")
+                raise StagedRebuildError("Staged full index did not complete cleanly")
             if getattr(self.dispatcher, "_semantic_enabled", False) is True:
                 self._finalize_staged_vectors(repo_id, stage_ctx)
             stage_store.rebuild_generation_indexes()
@@ -824,7 +963,7 @@ class GitAwareIndexManager:
                     connection, "index_generation", generation, "Durable generation"
                 )
             if not self._index_path_has_durable_rows(generation_path):
-                raise RuntimeError("Staged index has no durable rows")
+                raise StagedRebuildError("Staged index has no durable rows")
 
             self._rebuild_checkpoint("before_replacement")
             self._release_runtime_handles(repo_id, repo_info, stage_ctx)
@@ -836,7 +975,7 @@ class GitAwareIndexManager:
             self._rebuild_checkpoint("after_replacement")
             self._rebuild_checkpoint("before_provenance")
             if not self._git_source_unchanged(repo_path, current_commit, current_branch):
-                raise RuntimeError("Repository changed while the generation was building")
+                raise StagedRebuildError("Repository changed while the generation was building")
             # Last shutdown check: only the registry publish write itself remains.
             self._rebuild_checkpoint("before_publish")
             self.registry.publish_generation(
@@ -856,6 +995,11 @@ class GitAwareIndexManager:
             repo_info.last_indexed_branch = current_branch
             repo_info.staleness_reason = None
             ReadinessClassifier.clear_index_inspection_cache()
+            self._prune_superseded_generations(
+                generation_dir,
+                live_generation=generation,
+                previous_index_path=active_path,
+            )
             if force_full:
                 try:
                     self._write_force_full_exit_trace(
@@ -887,7 +1031,15 @@ class GitAwareIndexManager:
                 duration_seconds=(datetime.now() - start_time).total_seconds(),
             )
         except Exception as exc:
-            error = f"Staged rebuild failed ({type(exc).__name__})"
+            error = _format_rebuild_error(
+                exc,
+                result,
+                strip_prefixes=[
+                    str(prefix)
+                    for prefix in (stage_dir / "source" if stage_dir else None, repo_path)
+                    if prefix is not None
+                ],
+            )
             if mutation_admitted:
                 self.registry.fail_generation_mutation(
                     repo_id,
@@ -938,6 +1090,108 @@ class GitAwareIndexManager:
             if stage_dir is not None:
                 shutil.rmtree(stage_dir, ignore_errors=True)
 
+    def _prune_superseded_generations(
+        self,
+        generation_dir: Path,
+        *,
+        live_generation: str,
+        previous_index_path: Optional[Path],
+    ) -> List[str]:
+        """Bound generation retention after a successful publication (#114).
+
+        Keeps the live generation, every generation any registry entry still
+        references, and the ``MCP_INDEX_GENERATION_RETENTION`` most recently
+        published superseded generations (at least one, for rollback). Older
+        published generations are removed with their SQLite sidecars and local
+        semantic directory. Unpublished (failed or pre-upgrade) generation files
+        are removed only when they are older than every retained rollback
+        generation, so recent failure evidence survives. Quarantine copies are
+        never touched. Pruning never fails a publication.
+        """
+        try:
+            return self._prune_superseded_generations_unchecked(
+                generation_dir,
+                live_generation=live_generation,
+                previous_index_path=previous_index_path,
+            )
+        except Exception as exc:
+            logger.warning("Generation retention skipped: %s", type(exc).__name__)
+            return []
+
+    def _prune_superseded_generations_unchecked(
+        self,
+        generation_dir: Path,
+        *,
+        live_generation: str,
+        previous_index_path: Optional[Path],
+    ) -> List[str]:
+        retention = get_index_generation_retention()
+        generation_dir = generation_dir.resolve()
+        history_path = generation_dir / _GENERATION_HISTORY_FILE
+        history = _read_generation_history(history_path)
+        # History is ordered by when each generation was last live, so after an
+        # operator rollback the generation that was live (not the one rolled
+        # back from) takes the newest rollback slot. A previous generation that
+        # predates the history file is recorded here too.
+        if previous_index_path is not None:
+            previous = Path(previous_index_path)
+            if (
+                previous.parent.resolve() == generation_dir
+                and _is_generation_id(previous.stem)
+                and previous.suffix == ".db"
+            ):
+                history = [item for item in history if item != previous.stem] + [previous.stem]
+        history = [item for item in history if item != live_generation] + [live_generation]
+
+        present = {
+            path.stem: path
+            for path in generation_dir.glob("*.db")
+            if path.is_file() and _is_generation_id(path.stem)
+        }
+        referenced = {live_generation}
+        for repo in self.registry.get_all_repositories().values():
+            index_path = getattr(repo, "index_path", None)
+            if not index_path:
+                continue
+            candidate = Path(index_path)
+            if candidate.parent.resolve(strict=False) == generation_dir:
+                referenced.add(candidate.stem)
+
+        superseded = [item for item in history[:-1] if item in present]
+        rollback = set(superseded[-retention:])
+        keep = referenced | rollback
+        kept_times = [present[item].stat().st_mtime for item in keep if item in present]
+        oldest_kept = min(kept_times) if kept_times else None
+
+        published = set(history)
+        pruned: List[str] = []
+        reclaimed = 0
+        for generation_id, path in sorted(present.items()):
+            if generation_id in keep:
+                continue
+            if generation_id not in published and (
+                oldest_kept is None or path.stat().st_mtime >= oldest_kept
+            ):
+                continue
+            freed = _remove_generation_files(path)
+            if freed is None:
+                continue
+            pruned.append(generation_id)
+            reclaimed += freed
+
+        remaining = set(present) - set(pruned)
+        history = [item for item in history if item in remaining or item == live_generation]
+        _write_generation_history(history_path, history)
+        if pruned:
+            logger.info(
+                "Pruned %d superseded index generation(s), reclaimed %d bytes; kept live "
+                "plus %d rollback generation(s)",
+                len(pruned),
+                reclaimed,
+                len(rollback),
+            )
+        return pruned
+
     @staticmethod
     def _git_source_unchanged(repo_path: Path, commit: str, branch: Optional[str]) -> bool:
         try:
@@ -981,7 +1235,7 @@ class GitAwareIndexManager:
                 only_collection=staged.collection,
             )
             if drained["groups_failed"]:
-                raise RuntimeError("Staged vector cleanup did not complete")
+                raise StagedRebuildError("Staged vector cleanup did not complete")
             with ctx.sqlite_store._get_connection() as connection:
                 records = connection.execute(
                     "SELECT point_id, collection FROM semantic_points WHERE profile_id=?",
@@ -990,9 +1244,9 @@ class GitAwareIndexManager:
             if records:
                 record = staged._indexed_profile_record()
                 if not record or not record.get("attested"):
-                    raise RuntimeError("Staged vectors lack attested provenance")
+                    raise StagedRebuildError("Staged vectors lack attested provenance")
             if any(row["collection"] != staged.collection for row in records):
-                raise RuntimeError("Staged vectors belong to another generation")
+                raise StagedRebuildError("Staged vectors belong to another generation")
             ids = list(dict.fromkeys(row["point_id"] for row in records))
             if not ids and not any(
                 collection.name == staged.collection
@@ -1007,7 +1261,7 @@ class GitAwareIndexManager:
                 ),
             ).count
             if remote_count != len(ids):
-                raise RuntimeError("Staged vector ownership is incomplete")
+                raise StagedRebuildError("Staged vector ownership is incomplete")
             relative_paths = set()
             complete_corpus = True
             for start in range(0, len(ids), 256):
@@ -1019,7 +1273,7 @@ class GitAwareIndexManager:
                     with_vectors=False,
                 )
                 if {point.id for point in points} != set(batch):
-                    raise RuntimeError("Staged vector mappings are incomplete")
+                    raise StagedRebuildError("Staged vector mappings are incomplete")
                 for point in points:
                     relative_path = (point.payload or {}).get("relative_path")
                     if isinstance(relative_path, str) and relative_path:
@@ -1451,6 +1705,24 @@ class GitAwareIndexManager:
                             self.dispatcher.index_file(ctx, full_path),
                             path=full_path,
                         )
+                        if is_unsupported_file_result(mutation):
+                            # No plugin stores this file; the full walk ignores
+                            # it, so incremental sync must too (#111).
+                            self._merge_semantic_result(result, mutation.semantic)
+                            result.ignored += 1
+                            if path in changes.modified:
+                                # A full rebuild would drop the stale row.
+                                self._record_required_mutation_result(
+                                    result,
+                                    self._coerce_index_result(
+                                        self.dispatcher.remove_file(ctx, full_path),
+                                        path=full_path,
+                                    ),
+                                    success_status=IndexResultStatus.DELETED,
+                                    success_counter="deleted",
+                                    action_label=f"Failed to remove unindexable {path}",
+                                )
+                            continue
                         self._record_required_mutation_result(
                             result,
                             mutation,
@@ -1901,6 +2173,12 @@ class GitAwareIndexManager:
                 self.dispatcher.evict_repository_state(
                     repo_id, repo_info.path, expected_owner=ctx.registry_entry
                 )
+                # Plugin workers built per-file state against the disposable
+                # staging copy; drop them while queries are still fenced so that
+                # state cannot accumulate across rebuilds (#114).
+                release_workers = getattr(self.dispatcher, "release_staged_plugin_workers", None)
+                if callable(release_workers):
+                    release_workers(repo_id)
 
     def _cleanup_runtime_snapshot(self, snapshot: RuntimeSnapshot) -> None:
         shutil.rmtree(snapshot.backup_dir, ignore_errors=True)

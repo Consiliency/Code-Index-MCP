@@ -113,7 +113,7 @@ def _store_file(store, repo_id_int: int, relative_path: str, content_hash: str =
 class TestSweeperRecoversMissedEvent:
     """Sweeper detects a file present on disk but absent from SQLite."""
 
-    @pytest.mark.parametrize("extension", [".md", ".txt", ".pyw", ".mjs", ".yaml"])
+    @pytest.mark.parametrize("extension", [".md", ".pyw", ".mjs"])
     def test_sweep_recovers_every_supported_file_family(self, tmp_path, extension):
         root = tmp_path / "repo"
         root.mkdir()
@@ -129,6 +129,89 @@ class TestSweeperRecoversMissedEvent:
         try:
             assert sweeper.sweep_once() == ["repo"]
             assert calls == [("repo", f"missed{extension}")]
+        finally:
+            store.close()
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "notes.txt",
+            "ci.yml",
+            "compose.yaml",
+            "post_create.sh",
+            "settings.json",
+            "a.toml",
+            "x.cfg",
+        ],
+    )
+    def test_sweep_ignores_files_the_indexer_never_stores(self, tmp_path, monkeypatch, name):
+        """Disabled-by-default and unsupported files are not drift (#114)."""
+        monkeypatch.delenv("MCP_PLUGIN_SANDBOX_DISABLE", raising=False)
+        root = tmp_path / "repo"
+        root.mkdir()
+        (root / name).write_text("synthetic: content\n")
+        store = _make_sqlite_store(tmp_path)
+        store.create_repository(str(root), "repo")
+        calls = []
+        drift = []
+        sweeper = WatcherSweeper(
+            on_missed_path=lambda repo, path: calls.append((repo, path)),
+            repo_roots_provider=lambda: {"repo": root},
+            store=store,
+        )
+        drift_sweeper = WatcherSweeper(
+            None, lambda: {"repo": root}, store, on_repository_drift=drift.append
+        )
+        try:
+            assert sweeper.sweep_once() == []
+            assert drift_sweeper.sweep_once() == []
+            assert calls == [] and drift == []
+        finally:
+            store.close()
+
+    def test_sweep_follows_plugin_enablement(self, tmp_path, monkeypatch):
+        """With the sandbox disabled YAML is indexed, so a missing YAML row is drift."""
+        monkeypatch.setenv("MCP_PLUGIN_SANDBOX_DISABLE", "1")
+        root = tmp_path / "repo"
+        root.mkdir()
+        (root / "ci.yaml").write_text("key: value\n")
+        store = _make_sqlite_store(tmp_path)
+        store.create_repository(str(root), "repo")
+        calls = []
+        sweeper = WatcherSweeper(
+            lambda repo, path: calls.append((repo, path)), lambda: {"repo": root}, store
+        )
+        try:
+            assert sweeper.sweep_once() == ["repo"]
+            assert calls == [("repo", "ci.yaml")]
+        finally:
+            store.close()
+
+    def test_sweep_uses_the_injected_admission_predicate(self, tmp_path):
+        root = tmp_path / "repo"
+        root.mkdir()
+        (root / "kept.py").write_text("a = 1\n")
+        (root / "skipped.py").write_text("b = 2\n")
+        store = _make_sqlite_store(tmp_path)
+        store.create_repository(str(root), "repo")
+        calls = []
+        seen = []
+
+        def admission(repo_id, path, repo_root, is_excluded, size_bytes):
+            seen.append((repo_id, path.name, repo_root))
+            return "test_rejected" if path.name == "skipped.py" else None
+
+        sweeper = WatcherSweeper(
+            lambda repo, path: calls.append(path),
+            lambda: {"repo": root},
+            store,
+            admission_reason=admission,
+        )
+        try:
+            assert sweeper.sweep_once() == ["repo"]
+            assert calls == ["kept.py"]
+            assert {item[1] for item in seen} == {"kept.py", "skipped.py"}
+            assert all(item[0] == "repo" and item[2] == root for item in seen)
         finally:
             store.close()
 
@@ -434,9 +517,9 @@ class TestSweeperNoopWhenNoDrift:
         repo_root.mkdir()
         subprocess.run(["git", "init", "-q", str(repo_root)], check=True)
         subprocess.run(["git", "config", "core.autocrlf", "true"], cwd=repo_root, check=True)
-        source = repo_root / "source.txt"
+        source = repo_root / "source.py"
         source.write_bytes(b"a\nb\nc\n")
-        subprocess.run(["git", "add", "source.txt"], cwd=repo_root, check=True)
+        subprocess.run(["git", "add", "source.py"], cwd=repo_root, check=True)
         subprocess.run(
             [
                 "git",
@@ -452,7 +535,7 @@ class TestSweeperNoopWhenNoDrift:
             check=True,
         )
         source.unlink()
-        subprocess.run(["git", "checkout-index", "--", "source.txt"], cwd=repo_root, check=True)
+        subprocess.run(["git", "checkout-index", "--", "source.py"], cwd=repo_root, check=True)
         assert source.read_bytes() == b"a\r\nb\r\nc\r\n"
         monkeypatch.setenv("MCP_MAX_FILE_SIZE_BYTES", "7")
 
@@ -460,9 +543,9 @@ class TestSweeperNoopWhenNoDrift:
         repo_id = store.create_repository(str(repo_root), "repo")
         store.store_file(
             file_path=source,
-            language="plaintext",
+            language="python",
             repository_id=repo_id,
-            relative_path="source.txt",
+            relative_path="source.py",
             content_hash=hashlib.sha256(b"a\nb\nc\n").hexdigest(),
         )
         drift_calls = []
@@ -495,8 +578,8 @@ class TestSweeperNoopWhenNoDrift:
             cwd=repo_root,
             check=True,
         )
-        (repo_root / ".gitattributes").write_text("*.txt filter=demo\n")
-        source = repo_root / "source.txt"
+        (repo_root / ".gitattributes").write_text("*.py filter=demo\n")
+        source = repo_root / "source.py"
         source.write_bytes(b"RAW\n")
         subprocess.run(["git", "add", "."], cwd=repo_root, check=True)
         subprocess.run(
@@ -514,7 +597,7 @@ class TestSweeperNoopWhenNoDrift:
             check=True,
         )
         source.unlink()
-        subprocess.run(["git", "checkout-index", "--", "source.txt"], cwd=repo_root, check=True)
+        subprocess.run(["git", "checkout-index", "--", "source.py"], cwd=repo_root, check=True)
         assert source.read_bytes() == b"SMUDGED-LARGE-CONTENT\n"
         assert subprocess.run(["git", "diff", "--quiet", "HEAD"], cwd=repo_root).returncode == 0
         monkeypatch.setenv("MCP_MAX_FILE_SIZE_BYTES", str(limit))
@@ -523,9 +606,9 @@ class TestSweeperNoopWhenNoDrift:
         repo_id = store.create_repository(str(repo_root), "repo")
         store.store_file(
             file_path=source,
-            language="plaintext",
+            language="python",
             repository_id=repo_id,
-            relative_path="source.txt",
+            relative_path="source.py",
             content_hash=hashlib.sha256(b"RAW\n").hexdigest(),
         )
         drift_calls = []
@@ -561,3 +644,159 @@ class TestSweeperStartStop:
         sweeper.stop()
         sweeper._thread.join(timeout=3)
         assert not sweeper._thread.is_alive()
+
+
+# ---------------------------------------------------------------------------
+# Drift backoff and retained rows (Consiliency/Code-Index-MCP#114)
+# ---------------------------------------------------------------------------
+
+
+def _git(repo_root: Path, *args: str) -> None:
+    subprocess.run(
+        ["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid", *args],
+        cwd=repo_root,
+        check=True,
+        capture_output=True,
+    )
+
+
+def _committed_repo(tmp_path: Path, files: dict) -> Path:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo_root)], check=True)
+    for name, content in files.items():
+        (repo_root / name).write_text(content)
+    _git(repo_root, "add", ".")
+    _git(repo_root, "commit", "-qm", "fixture")
+    return repo_root
+
+
+def _normalized_hash(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+class TestSweeperDriftBackoff:
+    def test_unfixed_drift_is_reconciled_once_until_the_tree_changes(self, tmp_path, caplog):
+        repo_root = _committed_repo(tmp_path, {"a.py": "a = 1\n"})
+        store = _make_sqlite_store(tmp_path)
+        repo_row = store.create_repository(str(repo_root), "repo")
+        drift_calls = []
+        # The reconciliation callback does not fix the drift (a futile rebuild).
+        sweeper = WatcherSweeper(
+            None, lambda: {"repo": repo_root}, store, on_repository_drift=drift_calls.append
+        )
+        try:
+            assert sweeper.sweep_once() == ["repo"]
+            with caplog.at_level("WARNING", logger="mcp_server.watcher.sweeper"):
+                assert sweeper.sweep_once() == []
+                assert sweeper.sweep_once() == []
+            assert drift_calls == ["repo"]
+            suppressed = [r for r in caplog.records if "survived reconciliation" in r.message]
+            assert len(suppressed) == 1
+
+            # A new commit changes the tree: the sweep reconciles again.
+            (repo_root / "a.py").write_text("a = 2\n")
+            _git(repo_root, "commit", "-qam", "change")
+            assert sweeper.sweep_once() == ["repo"]
+            assert drift_calls == ["repo", "repo"]
+
+            # Once the index matches, the remembered drift is cleared ...
+            _store_file(store, repo_row, "a.py", _normalized_hash("a = 2\n"))
+            assert sweeper.sweep_once() == []
+            assert sweeper._acted_drift == {}
+            # ... so the same drift reappearing later is reconciled again.
+            with store._get_connection() as conn:
+                conn.execute("DELETE FROM files WHERE relative_path = 'a.py'")
+            assert sweeper.sweep_once() == ["repo"]
+            assert drift_calls == ["repo", "repo", "repo"]
+        finally:
+            store.close()
+
+    def test_changed_drift_content_is_reconciled_without_a_commit(self, tmp_path):
+        repo_root = _committed_repo(tmp_path, {"a.py": "a = 1\n"})
+        store = _make_sqlite_store(tmp_path)
+        repo_row = store.create_repository(str(repo_root), "repo")
+        _store_file(store, repo_row, "a.py", _normalized_hash("stale = 0\n"))
+        drift_calls = []
+        sweeper = WatcherSweeper(
+            None, lambda: {"repo": repo_root}, store, on_repository_drift=drift_calls.append
+        )
+        try:
+            assert sweeper.sweep_once() == ["repo"]
+            assert sweeper.sweep_once() == []
+            # The indexed side changed (for example a partial reconciliation).
+            with store._get_connection() as conn:
+                conn.execute(
+                    "UPDATE files SET content_hash = ? WHERE relative_path = 'a.py'",
+                    (_normalized_hash("other = 3\n"),),
+                )
+            assert sweeper.sweep_once() == ["repo"]
+            assert drift_calls == ["repo", "repo"]
+        finally:
+            store.close()
+
+    def test_reconciliation_that_raised_is_retried_on_the_next_sweep(self, tmp_path):
+        repo_root = _committed_repo(tmp_path, {"a.py": "a = 1\n"})
+        store = _make_sqlite_store(tmp_path)
+        store.create_repository(str(repo_root), "repo")
+        attempts = []
+
+        def flaky_reconcile(repo_id):
+            attempts.append(repo_id)
+            if len(attempts) == 1:
+                raise TimeoutError("writer lock busy")
+
+        sweeper = WatcherSweeper(
+            None, lambda: {"repo": repo_root}, store, on_repository_drift=flaky_reconcile
+        )
+        try:
+            with pytest.raises(TimeoutError):
+                sweeper.sweep_once()
+            assert sweeper.sweep_once() == ["repo"]
+            assert sweeper.sweep_once() == []
+            assert attempts == ["repo", "repo"]
+        finally:
+            store.close()
+
+    def test_per_file_callbacks_back_off_too(self, tmp_path):
+        repo_root = _committed_repo(tmp_path, {"a.py": "a = 1\n"})
+        store = _make_sqlite_store(tmp_path)
+        store.create_repository(str(repo_root), "repo")
+        calls = []
+        sweeper = WatcherSweeper(
+            lambda repo, path: calls.append(path), lambda: {"repo": repo_root}, store
+        )
+        try:
+            assert sweeper.sweep_once() == ["repo"]
+            assert sweeper.sweep_once() == []
+            assert calls == ["a.py"]
+        finally:
+            store.close()
+
+
+def test_rows_a_rebuild_retains_are_not_delete_drift(tmp_path):
+    repo_root = _committed_repo(tmp_path, {"a.py": "a = 1\n"})
+    store = _make_sqlite_store(tmp_path)
+    repo_row = store.create_repository(str(repo_root), "repo")
+    _store_file(store, repo_row, "a.py", _normalized_hash("a = 1\n"))
+    _store_file(store, repo_row, "imported/history.md", _normalized_hash("issue\n"))
+    with store._get_connection() as conn:
+        file_id = conn.execute(
+            "SELECT id FROM files WHERE relative_path = 'imported/history.md'"
+        ).fetchone()[0]
+        conn.execute(
+            "INSERT INTO code_chunks (file_id, content, content_start, content_end, "
+            "line_start, line_end, chunk_id, node_id, treesitter_file_id, chunk_type) "
+            "VALUES (?, 'issue', 0, 5, 1, 1, 'history:1', 'n', 't', 'document')",
+            (file_id,),
+        )
+    assert store.get_retained_relative_paths(repo_row) == ["imported/history.md"]
+    drift_calls = []
+    sweeper = WatcherSweeper(
+        None, lambda: {"repo": repo_root}, store, on_repository_drift=drift_calls.append
+    )
+    try:
+        assert sweeper.sweep_once() == []
+        assert drift_calls == []
+    finally:
+        store.close()

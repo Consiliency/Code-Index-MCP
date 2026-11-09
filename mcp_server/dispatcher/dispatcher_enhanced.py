@@ -22,10 +22,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, Union
 from ..config.settings import reload_settings
 from ..core.errors import IndexingError, TransientArtifactError, record_handled_error
 from ..core.ignore_patterns import EXCLUDED_DIR_PARTS as _INDEX_EXCLUDED_DIRS
-from ..core.ignore_patterns import (
-    build_walker_filter,
-    index_exclusion_reason,
-)
+from ..core.ignore_patterns import build_walker_filter
 from ..core.repo_context import RepoContext, index_generation_key
 from ..graph import (
     CHUNKER_AVAILABLE,
@@ -35,12 +32,15 @@ from ..graph import (
     GraphNode,
     XRefAdapter,
 )
+from ..indexing.admission import EXACT_BOUNDED_PYTHON_PATHS as _EXACT_BOUNDED_PYTHON_PATHS
+from ..indexing.admission import EXACT_BOUNDED_SHELL_PATHS as _EXACT_BOUNDED_SHELL_PATHS
+from ..indexing.admission import index_admission_reason as _index_admission_reason
+from ..indexing.admission import plugin_admission_reason as _plugin_admission_reason
 from ..indexing.source_metadata import extract_matching_source_metadata
 from ..plugin_base import IPlugin, SearchResult, SymbolDef
 from ..plugins.generic_treesitter_plugin import GenericTreeSitterPlugin
 from ..plugins.language_registry import (
     LANGUAGE_CONFIGS,
-    get_all_extensions,
     get_language_by_extension,
 )
 from ..plugins.plugin_factory import PluginFactory, PluginUnavailableError
@@ -127,6 +127,21 @@ class IndexResult:
     semantic: Optional[Dict[str, Any]] = None
 
 
+#: Prefix of the mutation error the indexer reports for a file no plugin stores.
+NO_PLUGIN_ERROR_PREFIX = "No plugin for "
+
+
+def is_unsupported_file_result(mutation: IndexResult) -> bool:
+    """Return True when no plugin stores the mutated file (ignored, not failed).
+
+    The full walk and the incremental path both classify this outcome as an
+    ignored file (Consiliency/Code-Index-MCP#111).
+    """
+    return mutation.status == IndexResultStatus.ERROR and bool(
+        mutation.error and mutation.error.startswith(NO_PLUGIN_ERROR_PREFIX)
+    )
+
+
 @dataclass
 class _GraphState:
     analyzer: Optional[GraphAnalyzer] = None
@@ -140,69 +155,6 @@ class _GraphState:
         if self.edges is None:
             self.edges = []
 
-
-_EXACT_BOUNDED_PYTHON_PATHS = {
-    "tests/root_tests/run_reranking_tests.py": "exact_run_reranking_tests_rebound",
-    "tests/root_tests/test_swift_plugin.py": "exact_test_swift_plugin_rebound",
-    "tests/root_tests/test_mcp_database_efficiency.py": (
-        "exact_test_mcp_database_efficiency_rebound"
-    ),
-    "tests/security/test_route_auth_coverage.py": "exact_test_route_auth_coverage_rebound",
-    "tests/security/test_p24_sandbox_degradation.py": (
-        "exact_test_p24_sandbox_degradation_rebound"
-    ),
-    "tests/test_p24_plugin_availability.py": ("exact_test_p24_plugin_availability_rebound"),
-    "tests/test_dispatcher_extension_gating.py": ("exact_test_dispatcher_extension_gating_rebound"),
-    "scripts/validate_mcp_comprehensive.py": "exact_validate_mcp_comprehensive_rebound",
-    "scripts/migrate_large_index_to_multi_repo.py": "exact_migrate_large_index_to_multi_repo_rebound",
-    "scripts/check_index_languages.py": "exact_check_index_languages_rebound",
-    "scripts/check_test_index_schema.py": "exact_check_test_index_schema_rebound",
-    "scripts/ensure_test_repos_indexed.py": "exact_ensure_test_repos_indexed_rebound",
-    "scripts/index_missing_repos_semantic.py": "exact_index_missing_repos_semantic_rebound",
-    "scripts/identify_working_indexes.py": "exact_identify_working_indexes_rebound",
-    "scripts/utilities/prepare_index_for_upload.py": ("exact_prepare_index_for_upload_rebound"),
-    "scripts/utilities/verify_tool_usage.py": "exact_verify_tool_usage_rebound",
-    "scripts/map_repos_to_qdrant.py": "exact_map_repos_to_qdrant_rebound",
-    "scripts/create_claude_code_aware_report.py": ("exact_create_claude_code_aware_report_rebound"),
-    "scripts/execute_optimized_analysis.py": "exact_execute_optimized_analysis_rebound",
-    "scripts/index-artifact-upload-v2.py": "exact_index_artifact_upload_v2_rebound",
-    "scripts/analyze_claude_code_edits.py": "exact_analyze_claude_code_edits_rebound",
-    "scripts/verify_mcp_retrieval.py": "exact_verify_mcp_retrieval_rebound",
-    "scripts/run_comprehensive_query_test.py": "exact_run_comprehensive_query_test_rebound",
-    "scripts/index_all_repos_semantic_full.py": ("exact_index_all_repos_semantic_full_rebound"),
-    "scripts/real_strategic_recommendations.py": ("exact_real_strategic_recommendations_rebound"),
-    "scripts/migrate_to_centralized.py": "exact_migrate_to_centralized_rebound",
-    "scripts/reindex_current_repository.py": "exact_reindex_current_repository_rebound",
-    "scripts/demo_centralized_indexes.py": "exact_demo_centralized_indexes_rebound",
-    "scripts/test_mcp_protocol_direct.py": "exact_test_mcp_protocol_direct_rebound",
-    "scripts/verify_embeddings.py": "exact_verify_embeddings_rebound",
-    "scripts/claude_code_behavior_simulator.py": "exact_claude_code_behavior_simulator_rebound",
-    "scripts/create_semantic_embeddings.py": "exact_create_semantic_embeddings_rebound",
-    "scripts/consolidate_real_performance_data.py": (
-        "exact_consolidate_real_performance_data_rebound"
-    ),
-    "mcp_server/visualization/quick_charts.py": "exact_visualization_quick_charts_rebound",
-    "tests/docs/test_mre2e_evidence_contract.py": "exact_mre2e_docs_contract_rebound",
-    "tests/docs/test_gagov_governance_contract.py": "exact_gagov_docs_contract_rebound",
-    "tests/docs/test_gaclose_evidence_closeout.py": "exact_gaclose_docs_contract_rebound",
-    "tests/docs/test_p8_deployment_security.py": "exact_p8_security_docs_contract_rebound",
-    "tests/docs/test_semincr_contract.py": "exact_semincr_docs_contract_rebound",
-    "tests/docs/test_gabase_ga_readiness_contract.py": ("exact_gabase_docs_contract_rebound"),
-    "tests/docs/test_garc_rc_soak_contract.py": "exact_garc_docs_contract_rebound",
-    "tests/docs/test_garel_ga_release_contract.py": ("exact_garel_docs_contract_rebound"),
-    "tests/docs/test_p23_doc_truth.py": "exact_p23_docs_truth_rebound",
-    "tests/docs/test_semdogfood_evidence_contract.py": (
-        "exact_semdogfood_evidence_contract_rebound"
-    ),
-    "tests/security/fixtures/mock_plugin/plugin.py": "exact_mock_plugin_fixture_rebound",
-    "tests/security/fixtures/mock_plugin/__init__.py": "exact_mock_plugin_fixture_init_rebound",
-    "tests/integration/__init__.py": "exact_integration_package_marker_rebound",
-    "tests/integration/obs/test_obs_smoke.py": "exact_integration_obs_smoke_rebound",
-}
-
-_EXACT_BOUNDED_SHELL_PATHS = {
-    "scripts/preflight_upgrade.sh": "exact_preflight_upgrade_rebound",
-}
 
 _REPO_SCOPE_SUMMARY_PASS_BUDGET = 8
 
@@ -1046,7 +998,7 @@ class EnhancedDispatcher:
             if route_result:
                 return route_result.plugin
 
-        raise RuntimeError(f"No plugin for {target_path}")
+        raise RuntimeError(f"{NO_PLUGIN_ERROR_PREFIX}{target_path}")
 
     def get_plugins_for_file(self, ctx: RepoContext, path: Path) -> List[Tuple[IPlugin, float]]:
         """Get all plugins that can handle a file with confidence scores."""
@@ -1808,6 +1760,24 @@ class EnhancedDispatcher:
             )
         return evicted
 
+    def release_staged_plugin_workers(self, repo_id: str) -> bool:
+        """Close a repository's plugin workers after a staged build retires.
+
+        Workers index the disposable staging copy, and their in-memory per-file
+        state is keyed by staging paths that disappear with the stage, so it
+        would otherwise grow with every rebuild (Consiliency/Code-Index-MCP#114).
+        Callers invoke this while queries are fenced; workers restart lazily.
+        """
+        evict = getattr(self._plugin_set_registry, "evict", None)
+        if not callable(evict):
+            return False
+        try:
+            evict(repo_id)
+        except Exception as exc:
+            logger.warning("Plugin worker release failed for %s: %s", repo_id, type(exc).__name__)
+            return False
+        return True
+
     @_semantic_operation
     def search(
         self,
@@ -2546,6 +2516,16 @@ class EnhancedDispatcher:
                 plugin_lang = "plaintext"
                 shard = bounded_jsonl_shard
             else:
+                # The shared admission predicate decides whether any plugin
+                # stores this file, so the walk, incremental sync and the
+                # watcher sweep agree on the stored file set (#114, #111).
+                admission = _plugin_admission_reason(
+                    path,
+                    ctx.workspace_root,
+                    plugin_supports=self._admission_plugin_supports(ctx.repo_id),
+                )
+                if admission is not None:
+                    raise RuntimeError(f"{NO_PLUGIN_ERROR_PREFIX}{path} ({admission})")
                 # Find the appropriate plugin
                 plugin = self._match_plugin(ctx, path)
                 plugin_language = get_language_by_extension(path.suffix.lower()) or plugin.language
@@ -3724,9 +3704,6 @@ class EnhancedDispatcher:
         # recovery failure can never block the reindex.
         self._drain_pending_vector_deletions(ctx)
 
-        # Get all supported extensions
-        supported_extensions = get_all_extensions()
-
         stats = {
             "total_files": 0,
             "indexed_files": 0,
@@ -3809,92 +3786,46 @@ class EnhancedDispatcher:
 
             stats["total_files"] += 1
 
-            exclusion = index_exclusion_reason(path, directory, is_excluded)
-            if exclusion == "unreadable":
+            admission = self.index_admission_reason(ctx.repo_id, path, directory, is_excluded)
+            if admission == "unreadable":
                 continue
-            if exclusion:
-                if exclusion == "oversized":
+            if admission:
+                if admission == "oversized":
                     logger.warning("skipping oversized file: %s", path)
                 stats["ignored_files"] += 1
                 continue
 
-            exact_bounded_jsonl = GenericTreeSitterPlugin.uses_exact_bounded_jsonl_path(
-                path, directory
-            )
-
-            # Try to find a plugin that supports this file
-            # This allows us to index ALL files, including .env, .key, etc.
             try:
-                # First try to match by extension
-                if path.suffix in supported_extensions or exact_bounded_jsonl:
-                    mutation = self._index_file_with_lexical_timeout(
-                        ctx,
-                        path,
-                        stats,
-                        progress_callback=emit_progress,
-                    )
-                    if mutation.status == IndexResultStatus.INDEXED:
-                        stats["indexed_files"] += 1
-                        semantically_indexed_paths.append(path.resolve())
-                        emit_progress("lexical_walking", "lexical", "lexical_mutation")
-                    elif self._is_non_indexable_result(mutation):
-                        stats["ignored_files"] += 1
-                    else:
-                        stats["failed_files"] += 1
-                        if mutation.error:
-                            stats.setdefault("errors", []).append(f"{path}: {mutation.error}")
-                        if self._is_storage_lock_error(mutation.error):
-                            self._record_low_level_blocker(
-                                ctx,
-                                stats,
-                                code="sqlite_runtime_failure",
-                                message=mutation.error,
-                                path=path,
-                                stage="blocked_storage_error",
-                            )
-                            break
-                # For files without recognized extensions, try each plugin's supports() method
-                # This allows plugins to match by filename patterns (e.g., .env, Dockerfile)
+                mutation = self._index_file_with_lexical_timeout(
+                    ctx,
+                    path,
+                    stats,
+                    progress_callback=emit_progress,
+                )
+                if mutation.status == IndexResultStatus.INDEXED:
+                    stats["indexed_files"] += 1
+                    semantically_indexed_paths.append(path.resolve())
+                    emit_progress("lexical_walking", "lexical", "lexical_mutation")
+                elif self._is_non_indexable_result(mutation):
+                    stats["ignored_files"] += 1
+                    if is_unsupported_file_result(mutation):
+                        # Admission accepted the file but no plugin resolved; the
+                        # watcher sweep will report it as drift once (#114).
+                        logger.warning("admitted file had no plugin: %s", path)
                 else:
-                    matched = False
-                    for plugin in self._plugin_set_registry.plugins_for(ctx.repo_id):
-                        if plugin.supports(path):
-                            mutation = self._index_file_with_lexical_timeout(
-                                ctx,
-                                path,
-                                stats,
-                                progress_callback=emit_progress,
-                            )
-                            if mutation.status == IndexResultStatus.INDEXED:
-                                stats["indexed_files"] += 1
-                                semantically_indexed_paths.append(path.resolve())
-                                emit_progress("lexical_walking", "lexical", "lexical_mutation")
-                            elif self._is_non_indexable_result(mutation):
-                                stats["ignored_files"] += 1
-                            else:
-                                stats["failed_files"] += 1
-                                if mutation.error:
-                                    stats.setdefault("errors", []).append(
-                                        f"{path}: {mutation.error}"
-                                    )
-                                if self._is_storage_lock_error(mutation.error):
-                                    self._record_low_level_blocker(
-                                        ctx,
-                                        stats,
-                                        code="sqlite_runtime_failure",
-                                        message=mutation.error,
-                                        path=path,
-                                        stage="blocked_storage_error",
-                                    )
-                                    break
-                            matched = True
-                            break
-
-                    # If no plugin matched but we want to index everything,
-                    # we could add a fallback here to index as plaintext
-                    # For now, we'll skip unmatched files
-                    if not matched:
-                        logger.debug(f"No plugin found for {path}")
+                    stats["failed_files"] += 1
+                    if mutation.error:
+                        stats.setdefault("errors", []).append(f"{path}: {mutation.error}")
+                    if self._is_storage_lock_error(mutation.error):
+                        self._record_low_level_blocker(
+                            ctx,
+                            stats,
+                            code="sqlite_runtime_failure",
+                            message=mutation.error,
+                            path=path,
+                            stage="blocked_storage_error",
+                        )
+                        break
 
                 # Track by language
                 language = get_language_by_extension(path.suffix)
@@ -4095,8 +4026,55 @@ class EnhancedDispatcher:
             IndexResultStatus.SKIPPED_TOCTOU,
         }:
             return True
-        return mutation.status == IndexResultStatus.ERROR and bool(
-            mutation.error and mutation.error.startswith("No plugin for ")
+        return is_unsupported_file_result(mutation)
+
+    def _admission_plugin_supports(self, repo_id: Optional[str]) -> Callable[[Path], bool]:
+        """Return the loaded-plugin ``supports()`` check used by admission.
+
+        Mirrors :meth:`_match_plugin` for files whose language is not
+        ``enabled``: explicitly registered or lazily loaded plugins, the plugins
+        already loaded for the repository, then the compatibility plugin
+        :meth:`_ensure_plugin_loaded` provides (an unavailable language is
+        remembered after its first attempt, so repeated checks stay cheap).
+        """
+
+        def supports(path: Path) -> bool:
+            plugins = list(self._legacy_plugins)
+            if repo_id is not None:
+                try:
+                    plugins.extend(self._plugin_set_registry.plugins_for(repo_id))
+                except Exception as exc:  # pragma: no cover - defensive
+                    logger.debug("Loaded plugin lookup failed: %s", type(exc).__name__)
+            for plugin in plugins:
+                try:
+                    if plugin.supports(path):
+                        return True
+                except Exception as exc:
+                    logger.debug("Plugin supports() failed for %s: %s", path, type(exc).__name__)
+            language = get_language_by_extension(path.suffix.lower())
+            return bool(language) and self._ensure_plugin_loaded(language) is not None
+
+        return supports
+
+    def index_admission_reason(
+        self,
+        repo_id: Optional[str],
+        path: Path,
+        root: Path,
+        is_excluded: Callable[[Path], bool],
+        size_bytes: Optional[int] = None,
+    ) -> Optional[str]:
+        """Return why the indexer would not store ``path``, or ``None``.
+
+        This is the single admission predicate shared by :meth:`index_directory`,
+        :meth:`index_file` and the watcher sweep.
+        """
+        return _index_admission_reason(
+            path,
+            root,
+            is_excluded,
+            size_bytes,
+            plugin_supports=self._admission_plugin_supports(repo_id),
         )
 
     def search_documentation(

@@ -828,7 +828,7 @@ def test_full_index_without_durable_rows_does_not_advance_commit(tmp_path):
     result = manager.sync_repository_index(repo_info.repository_id, force_full=True)
 
     assert result.action == "failed"
-    assert result.error == "Staged rebuild failed (RuntimeError)"
+    assert result.error.startswith("Staged rebuild failed (StagedRebuildError: ")
     registry.begin_generation_mutation.assert_called_once_with(
         repo_info.repository_id,
         expected_registration_id=repo_info.registration_id,
@@ -1207,7 +1207,7 @@ def test_force_full_timeout_fences_active_runtime_and_preserves_exact_blocker(tm
     result = manager.sync_repository_index(repo_info.repository_id, force_full=True)
 
     assert result.action == "failed"
-    assert result.error == "Staged rebuild failed (RuntimeError)"
+    assert result.error.startswith("Staged rebuild failed (StagedRebuildError: ")
     assert "runtime restored via" not in result.error
     assert result.semantic is not None
     assert result.semantic["summary_call_timed_out"] is True
@@ -1311,7 +1311,7 @@ def test_force_full_storage_closeout_fences_runtime_and_preserves_exact_blocker(
     trace_path = Path(repo_info.index_location) / "force_full_exit_trace.json"
     trace = json.loads(trace_path.read_text(encoding="utf-8"))
     assert result.action == "failed"
-    assert result.error == "Staged rebuild failed (RuntimeError)"
+    assert result.error.startswith("Staged rebuild failed (StagedRebuildError: ")
     assert "runtime restored via" not in result.error
     assert result.semantic is not None
     assert result.semantic["storage_failure_reason"] == "disk_io_error"
@@ -1711,7 +1711,7 @@ def test_force_full_sync_does_not_advance_commit_when_semantic_stage_is_blocked(
     result = manager.sync_repository_index(repo_info.repository_id, force_full=True)
 
     assert result.action == "failed"
-    assert result.error == "Staged rebuild failed (RuntimeError)"
+    assert result.error.startswith("Staged rebuild failed (StagedRebuildError: ")
     assert result.semantic["semantic_stage"] == "blocked_summary_plateau"
     registry.begin_generation_mutation.assert_called_once_with(
         repo_info.repository_id,
@@ -2716,7 +2716,7 @@ def test_force_full_sync_does_not_advance_commit_when_low_level_blocker_fires(tm
     result = manager.sync_repository_index(repo_info.repository_id, force_full=True)
 
     assert result.action == "failed"
-    assert result.error == "Staged rebuild failed (RuntimeError)"
+    assert result.error.startswith("Staged rebuild failed (StagedRebuildError: ")
 
 
 def test_force_full_sync_does_not_advance_commit_when_later_script_pair_blocks(tmp_path):

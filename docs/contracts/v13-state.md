@@ -33,7 +33,8 @@ legacy thread-only utility contract.
 Rebuilds write a sibling staging database, validate durable rows, and publish a
 unique `generations/<generation>.db` path. They do not replace an active database
 or unlink its WAL/SHM. Old files and held reader transactions survive. No eager
-generation reclamation is promised. Publication interruption leaves the old
+generation reclamation is promised; since Consiliency/Code-Index-MCP#114 a successful
+publication prunes only generations older than the configured rollback window. Publication interruption leaves the old
 registration fenced until a validated rebuild succeeds. Failed in-place updates
 remain unavailable; recovery never deletes live SQLite/Qdrant data to simulate
 rollback.

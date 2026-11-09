@@ -7,7 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-[Unreleased]: # placeholder for post-rc5 work
+**Fixed** (Consiliency/Code-Index-MCP#114)
+- The watcher sweep counted files the indexer never stores (disabled-by-default
+  languages such as YAML, shell and JSON, and unsupported extensions) as
+  "created" drift. On this repository that was 112 files, so every sweep
+  (default 60 minutes) forced a full rebuild that could not clear the drift,
+  left readiness at `missing_provenance` during each rebuild, and published a
+  new generation each time. The sweep, the full index walk and single-file
+  indexing now share one admission predicate
+  (`mcp_server/indexing/admission.py`, `EnhancedDispatcher.index_admission_reason`):
+  the same extension, plugin-enablement and exclusion rules. Right after a full
+  rebuild the sweep reports no drift. Rows a rebuild deliberately retains
+  (imported documents and history) are no longer reported as deleted.
+- Drift that survives the reconciliation it triggered is not reconciled again
+  until the tracked tree or the drift itself changes. The sweep logs it once
+  as a warning instead of rebuilding on every interval.
+- Superseded index generations are pruned after each successful publication.
+  The live generation, any generation a registry entry references, and the
+  `MCP_INDEX_GENERATION_RETENTION` (default 2, minimum 1) most recently live
+  generations are kept for rollback. Unpublished (failed or pre-upgrade)
+  generation files are removed only when they are older than every kept
+  rollback generation. Quarantine copies and server-side Qdrant collections are
+  not touched.
+- Sandboxed plugin workers kept per-file in-memory state keyed by each
+  rebuild's staging path, which grew by about 11 MB per rebuild of a 29-file
+  fixture. A staged build now releases the repository's plugin workers while
+  queries are still fenced; they restart on next use.
+
+**Fixed** (Consiliency/Code-Index-MCP#111)
+- Incremental sync failed with `Staged rebuild failed (RuntimeError)` when a
+  commit touched a file in a language with no enabled plugin, such as a
+  workflow `.yml`. It now ignores such files as the full walk does, and drops
+  a previously indexed row that no plugin stores any more, so the result
+  matches a full rebuild.
+- A failed staged rebuild's stored `last_sync_error` and the `repository sync`
+  output now include the message of the rebuild's own refusal and a bounded
+  summary of the per-file errors (at most five, secrets redacted, checkout and
+  staging paths removed). Text from other exceptions is still reported by type
+  only.
+
+**Upgrade notes**
+- After deploying, hosts that worked around Consiliency/Code-Index-MCP#114 with
+  a long `MCP_WATCHER_SWEEP_MINUTES` (for example 1440) can return to the
+  default.
+- The first publication after upgrading prunes older generations, keeping the
+  previously live generation for rollback. Back up any older generation you
+  still need before upgrading, or raise `MCP_INDEX_GENERATION_RETENTION`.
 
 ## [1.5.1] - 2026-11-08
 
