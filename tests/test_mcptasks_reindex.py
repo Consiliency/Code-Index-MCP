@@ -97,7 +97,7 @@ async def test_file_task_preserves_failure_and_unchanged_result(tmp_path, failur
     target.write_text("value = 1\n")
     registry = MCPTaskRegistry()
     state = await registry.create_task(TaskMetadata())
-    task = _FakeTask(state.taskId)
+    task = _FakeTask(state.task_id)
     store = MagicMock()
     store.path_resolver.normalize_path.return_value = "example.py"
     store._get_connection.return_value.__enter__.return_value.execute.return_value.fetchone.return_value = (
@@ -128,8 +128,8 @@ async def test_file_task_preserves_failure_and_unchanged_result(tmp_path, failur
     )
     if failure == "unchanged":
         result = await run_reindex_task(**arguments)
-        assert result.structuredContent["indexed_files"] == 0
-        assert result.structuredContent["mutation_performed"] is False
+        assert result.structured_content["indexed_files"] == 0
+        assert result.structured_content["mutation_performed"] is False
     else:
         with pytest.raises(Exception):
             await run_reindex_task(**arguments)
@@ -146,7 +146,7 @@ async def test_run_reindex_task_returns_merge_payload_and_clears_checkpoint(tmp_
 
     registry = MCPTaskRegistry()
     task_state = await registry.create_task(TaskMetadata())
-    task = _FakeTask(task_state.taskId)
+    task = _FakeTask(task_state.task_id)
     active_store = MagicMock()
     active_store.ensure_repository_row.return_value = "repo-row"
     active_store.rebuild_fts_code.return_value = 2
@@ -166,7 +166,7 @@ async def test_run_reindex_task_returns_merge_payload_and_clears_checkpoint(tmp_
         requested_path=None,
     )
 
-    payload = result.structuredContent
+    payload = result.structured_content
     assert payload["mode"] == "merge"
     assert payload["mutation_performed"] is True
     assert payload["indexed_files"] == 2
@@ -182,8 +182,8 @@ async def test_run_reindex_task_marks_terminal_payload_cancelled(tmp_path: Path)
 
     registry = MCPTaskRegistry()
     task_state = await registry.create_task(TaskMetadata())
-    await registry.request_cancellation(task_state.taskId)
-    task = _FakeTask(task_state.taskId)
+    await registry.request_cancellation(task_state.task_id)
+    task = _FakeTask(task_state.task_id)
     active_store = MagicMock()
     active_store.ensure_repository_row.return_value = "repo-row"
     ctx = SimpleNamespace(repo_id="repo-1", workspace_root=repo)
@@ -198,9 +198,9 @@ async def test_run_reindex_task_marks_terminal_payload_cancelled(tmp_path: Path)
         requested_path=None,
     )
 
-    payload = result.structuredContent
+    payload = result.structured_content
     assert payload["cancelled"] is True
-    record = await registry.get_record(task_state.taskId)
+    record = await registry.get_record(task_state.task_id)
     assert record.task.status == "cancelled"
     assert record.terminal_result is not None
 
@@ -214,7 +214,7 @@ async def test_run_reindex_task_rejects_path_outside_selected_repo(tmp_path: Pat
 
     registry = MCPTaskRegistry()
     task_state = await registry.create_task(TaskMetadata())
-    task = _FakeTask(task_state.taskId)
+    task = _FakeTask(task_state.task_id)
     dispatcher = MagicMock()
     active_store = MagicMock()
     ctx = SimpleNamespace(repo_id="repo-1", workspace_root=repo)
@@ -229,13 +229,13 @@ async def test_run_reindex_task_rejects_path_outside_selected_repo(tmp_path: Pat
         requested_path=str(outside),
     )
 
-    assert result.isError is True
-    assert result.structuredContent["code"] == "path_outside_selected_repository"
-    assert result.structuredContent["mutation_performed"] is False
+    assert result.is_error is True
+    assert result.structured_content["code"] == "path_outside_selected_repository"
+    assert result.structured_content["mutation_performed"] is False
     dispatcher.index_file.assert_not_called()
     dispatcher.index_directory.assert_not_called()
     active_store.store_file.assert_not_called()
-    record = await registry.get_record(task_state.taskId)
+    record = await registry.get_record(task_state.task_id)
     assert record.task.status == "failed"
 
 

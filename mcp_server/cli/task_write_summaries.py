@@ -7,24 +7,24 @@ from typing import Any
 
 import anyio
 import mcp.types as types
-from mcp.server.experimental.task_context import ServerTaskContext
 
 from mcp_server.config.settings import Settings
 from mcp_server.indexing.summarization import ComprehensiveChunkWriter
+from mcp_server.cli.task_runtime import TaskContext
 from mcp_server.storage.mcp_task_registry import MCPTaskRegistry
 
 
 def _call_tool_result(payload: dict[str, Any], *, is_error: bool = False) -> types.CallToolResult:
     return types.CallToolResult(
         content=[types.TextContent(type="text", text=json.dumps(payload, indent=2))],
-        structuredContent=payload,
-        isError=is_error,
+        structured_content=payload,
+        is_error=is_error,
     )
 
 
 async def run_write_summaries_task(
     *,
-    task: ServerTaskContext,
+    task: TaskContext,
     registry: MCPTaskRegistry,
     active_store: Any,
     current_session: Any,

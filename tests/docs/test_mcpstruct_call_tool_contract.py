@@ -47,8 +47,8 @@ def test_call_tool_returns_call_tool_result_with_object_structured_content(monke
     result = _run(stdio_runner.call_tool("search_code", {"query": "demo"}))
 
     assert isinstance(result, types.CallToolResult)
-    assert result.isError is False
-    assert result.structuredContent == {"results": payload}
+    assert result.is_error is False
+    assert result.structured_content == {"results": payload}
     assert json.loads(result.content[0].text) == payload
 
 
@@ -72,6 +72,6 @@ def test_call_tool_sets_is_error_for_structured_error_payloads(monkeypatch):
     result = _run(stdio_runner.call_tool("search_code", {"query": "demo"}))
 
     assert isinstance(result, types.CallToolResult)
-    assert result.isError is True
-    assert result.structuredContent == payload
+    assert result.is_error is True
+    assert result.structured_content == payload
     assert json.loads(result.content[0].text) == payload

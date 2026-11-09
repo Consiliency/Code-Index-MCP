@@ -12,6 +12,7 @@ import pytest
 from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
 
+from mcp_server import __version__
 from mcp_server.storage.repository_registry import RepositoryRegistry
 from tests.fixtures.multi_repo import boot_test_server, build_temp_repo
 from tests.test_release_metadata import EXPECTED_VERSION
@@ -65,8 +66,11 @@ async def test_official_sdk_client_can_initialize_list_tools_and_call_baseline_t
     async with stdio_client(params) as (read_stream, write_stream):
         async with ClientSession(read_stream, write_stream) as session:
             init = await session.initialize()
-            assert init.protocolVersion == "2025-11-25"
-            assert version("mcp") == "1.27.0"
+            assert init.protocol_version == "2025-11-25"
+            assert version("mcp").split(".")[0] == "2"
+            # serverInfo reports the package, not the mcp library (Consiliency/Code-Index-MCP#128).
+            assert init.server_info.name == "code-index-mcp-fast-search"
+            assert init.server_info.version == __version__ == EXPECTED_VERSION
 
             tools = await session.list_tools()
             assert {tool.name for tool in tools.tools} == EXPECTED_TOOLS
@@ -166,9 +170,9 @@ async def test_reindexed_decorated_symbols_survive_stdio_restart(tmp_path: Path)
                         result = await session.call_tool(
                             "reindex", {"path": str(repo_path / filename)}
                         )
-                        assert not result.isError
+                        assert not result.is_error
                         payload = _text_payload(result)
-                        assert payload == result.structuredContent
+                        assert payload == result.structured_content
                         assert payload["mutation_performed"] is True
                         assert payload["indexed_files"] == 1
                 registration = RepositoryRegistry(tmp_path / "registry.json").get(repo_id)
@@ -186,9 +190,9 @@ async def test_reindexed_decorated_symbols_survive_stdio_restart(tmp_path: Path)
                     result = await session.call_tool(
                         "symbol_lookup", {"repository": str(repo_path), "symbol": name}
                     )
-                    assert not result.isError
+                    assert not result.is_error
                     payload = _text_payload(result)
-                    assert payload == result.structuredContent
+                    assert payload == result.structured_content
                     assert payload["symbol"] == name
                     assert payload["kind"] == kind
                     assert payload["line"] == start

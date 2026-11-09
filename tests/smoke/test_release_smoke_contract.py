@@ -324,7 +324,7 @@ def test_wheel_source_binding(reviewed_wheel, tmp_path, damage):
     elif damage == "version":
         content[metadata] = content[metadata].replace(b"Version: 1.5.1", b"Version: 1.5.0")
     elif damage == "dependency":
-        content[metadata] = content[metadata].replace(b"Requires-Dist: mcp<2,>=1.27\n", b"")
+        content[metadata] = content[metadata].replace(b"Requires-Dist: mcp<3,>=2.2\n", b"")
     elif damage == "entrypoint":
         content[entrypoints] = content[entrypoints].replace(
             b"mcp_server.cli:cli", b"mcp_server.old:cli"

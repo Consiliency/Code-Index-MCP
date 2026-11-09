@@ -24,7 +24,6 @@ import time
 import uuid
 import zipfile
 from contextlib import asynccontextmanager, contextmanager
-from datetime import timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -1109,7 +1108,7 @@ class OwnedContainer:
 
 def tool_payload(value):
     if hasattr(value, "model_dump"):
-        value = value.model_dump()
+        value = value.model_dump(by_alias=True, mode="json")
     if isinstance(value, str):
         value = json.loads(value)
     if isinstance(value, dict) and "content" in value:
@@ -1120,8 +1119,9 @@ def tool_payload(value):
 
 @asynccontextmanager
 async def gateway(fixture: dict, label: str):
+    import httpx2
     from mcp import ClientSession
-    from mcp.client.streamable_http import streamablehttp_client
+    from mcp.client.streamable_http import streamable_http_client
 
     root, env = fixture["root"], fixture["env"]
     port = free_port()
@@ -1167,13 +1167,14 @@ async def gateway(fixture: dict, label: str):
                 await asyncio.sleep(0.1)
             else:
                 raise PilotRefused("pmcp_startup_timeout")
-        async with streamablehttp_client(
-            f"http://127.0.0.1:{port}/mcp",
-            httpx_client_factory=lambda **kwargs: httpx.AsyncClient(trust_env=False, **kwargs),
-        ) as (read, write, _):
-            async with ClientSession(
-                read, write, read_timeout_seconds=timedelta(seconds=120)
-            ) as client:
+        # mcp 2.x: streamablehttp_client was removed; streamable_http_client takes
+        # a caller-owned httpx2 client (v1's default timeouts kept explicitly).
+        async with httpx2.AsyncClient(
+            trust_env=False, timeout=httpx2.Timeout(30, read=300)
+        ) as mcp_http, streamable_http_client(
+            f"http://127.0.0.1:{port}/mcp", http_client=mcp_http
+        ) as (read, write):
+            async with ClientSession(read, write, read_timeout_seconds=120.0) as client:
                 await client.initialize()
                 yield client, owner
     finally:

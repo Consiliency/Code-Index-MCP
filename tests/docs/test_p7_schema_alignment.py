@@ -28,7 +28,7 @@ class TestP7SchemaAlignment:
         ]
         for tool_name in path_tools:
             assert tool_name in self.tools, f"Tool {tool_name} not found in tool list"
-            input_schema = self.tools[tool_name].inputSchema
+            input_schema = self.tools[tool_name].input_schema
             assert (
                 "properties" in input_schema
             ), f"Tool {tool_name} missing properties in inputSchema"
@@ -49,7 +49,7 @@ class TestP7SchemaAlignment:
             "summarize_sample",
         ]
         for tool_name in path_tools:
-            actual_description = self.tools[tool_name].inputSchema["properties"]["repository"][
+            actual_description = self.tools[tool_name].input_schema["properties"]["repository"][
                 "description"
             ]
             assert actual_description == expected_description, (
@@ -68,7 +68,7 @@ class TestP7SchemaAlignment:
             "summarize_sample",
         ]
         for tool_name in path_tools:
-            repo_prop = self.tools[tool_name].inputSchema["properties"]["repository"]
+            repo_prop = self.tools[tool_name].input_schema["properties"]["repository"]
             assert (
                 repo_prop.get("type") == "string"
             ), f"Tool {tool_name} repository property must have type='string'"
@@ -83,7 +83,7 @@ class TestP7SchemaAlignment:
             "summarize_sample",
         ]
         for tool_name in path_tools:
-            input_schema = self.tools[tool_name].inputSchema
+            input_schema = self.tools[tool_name].input_schema
             required = input_schema.get("required", [])
             assert (
                 "repository" not in required
@@ -99,7 +99,7 @@ class TestP7SchemaAlignment:
             "summarize_sample",
         ]
         for tool_name in path_tools:
-            input_schema = self.tools[tool_name].inputSchema
+            input_schema = self.tools[tool_name].input_schema
             assert (
                 input_schema.get("additionalProperties") is False
             ), f"Tool {tool_name} must set additionalProperties=false"
@@ -109,7 +109,7 @@ class TestP7SchemaAlignment:
         non_path_tools = ["handshake", "get_status", "list_plugins"]
         for tool_name in non_path_tools:
             assert tool_name in self.tools, f"Tool {tool_name} not found in tool list"
-            input_schema = self.tools[tool_name].inputSchema
+            input_schema = self.tools[tool_name].input_schema
             properties = input_schema.get("properties", {})
             assert (
                 "repository" not in properties

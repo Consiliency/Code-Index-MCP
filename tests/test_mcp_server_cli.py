@@ -124,8 +124,8 @@ def _structured_and_text_payload(result: types.CallToolResult) -> tuple[dict, ob
     assert isinstance(result, types.CallToolResult)
     assert result.content
     assert isinstance(result.content[0], types.TextContent)
-    assert result.structuredContent is not None
-    return result.structuredContent, json.loads(result.content[0].text)
+    assert result.structured_content is not None
+    return result.structured_content, json.loads(result.content[0].text)
 
 
 # ---------------------------------------------------------------------------
@@ -566,8 +566,9 @@ async def test_call_tool_preserves_create_task_result_branch():
             taskId="task-1",
             status="working",
             statusMessage="queued",
-            createdAt=datetime.now(timezone.utc),
-            lastUpdatedAt=datetime.now(timezone.utc),
+            # mcp 2.x types task timestamps as ISO strings.
+            createdAt=datetime.now(timezone.utc).isoformat(),
+            lastUpdatedAt=datetime.now(timezone.utc).isoformat(),
             ttl=None,
             pollInterval=500,
         )

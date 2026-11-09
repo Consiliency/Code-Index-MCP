@@ -37,7 +37,7 @@ ZERO_ARGUMENT_TOOLS = {"get_status", "list_plugins"}
 
 
 def test_staged_reindex_output_matches_advertised_schema():
-    schema = next(t.outputSchema for t in _build_tool_list() if t.name == "reindex")
+    schema = next(t.output_schema for t in _build_tool_list() if t.name == "reindex")
     result = {
         "path": "/synthetic/fixture",
         "mode": "staged_full",
@@ -99,7 +99,7 @@ def _handler_extracts_repository(handler) -> bool:
 def test_schema_advertises_repository_implies_handler_accepts_it():
     """Every tool whose schema has 'repository' must have a handler that extracts it."""
     tool_list = _build_tool_list()
-    schema_map = {t.name: t.inputSchema for t in tool_list}
+    schema_map = {t.name: t.input_schema for t in tool_list}
 
     failures = []
     for tool_name, handler in TOOL_NAME_TO_HANDLER.items():
@@ -117,7 +117,7 @@ def test_schema_advertises_repository_implies_handler_accepts_it():
 def test_handler_accepts_repository_implies_schema_advertises_it():
     """Every handler that extracts 'repository' must have a schema that advertises it."""
     tool_list = _build_tool_list()
-    schema_map = {t.name: t.inputSchema for t in tool_list}
+    schema_map = {t.name: t.input_schema for t in tool_list}
 
     failures = []
     for tool_name, handler in TOOL_NAME_TO_HANDLER.items():
@@ -136,12 +136,12 @@ def test_every_public_tool_has_output_schema_and_annotations():
     tool_list = _build_tool_list()
 
     for tool in tool_list:
-        assert tool.outputSchema is not None, f"{tool.name} must advertise outputSchema"
+        assert tool.output_schema is not None, f"{tool.name} must advertise outputSchema"
         assert tool.annotations is not None, f"{tool.name} must advertise annotations"
 
 
 def test_mcpstruct_output_schemas_stay_object_shaped_for_structured_results():
-    schema_map = {t.name: t.outputSchema for t in _build_tool_list()}
+    schema_map = {t.name: t.output_schema for t in _build_tool_list()}
     search_branch_types = [
         branch.get("type")
         for branch in schema_map["search_code"]["oneOf"]
@@ -156,7 +156,7 @@ def test_mcpstruct_output_schemas_stay_object_shaped_for_structured_results():
 
 
 def test_zero_argument_tools_remain_zero_argument_after_metadata_refactor():
-    schema_map = {t.name: t.inputSchema for t in _build_tool_list()}
+    schema_map = {t.name: t.input_schema for t in _build_tool_list()}
 
     for tool_name in ZERO_ARGUMENT_TOOLS:
         schema = schema_map[tool_name]
@@ -181,4 +181,4 @@ def test_zero_argument_tools_remain_zero_argument_after_metadata_refactor():
 def test_annotations_match_read_only_posture(tool_name: str, expected_read_only: bool):
     tools = {tool.name: tool for tool in _build_tool_list()}
     assert tools[tool_name].annotations is not None
-    assert tools[tool_name].annotations.readOnlyHint is expected_read_only
+    assert tools[tool_name].annotations.read_only_hint is expected_read_only

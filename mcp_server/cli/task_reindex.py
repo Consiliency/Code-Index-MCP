@@ -10,21 +10,21 @@ from typing import Any, cast
 
 import anyio
 import mcp.types as types
-from mcp.server.experimental.task_context import ServerTaskContext
 
 from mcp_server.core.repo_resolver import RepositoryMutationCancelled, run_repository_mutation
 from mcp_server.dispatcher.dispatcher_enhanced import IndexResult, IndexResultStatus
 from mcp_server.indexing.checkpoint import ReindexCheckpoint
 from mcp_server.indexing.checkpoint import clear as clear_checkpoint
 from mcp_server.indexing.checkpoint import save
+from mcp_server.cli.task_runtime import TaskContext
 from mcp_server.storage.mcp_task_registry import MCPTaskRegistry
 
 
 def _call_tool_result(payload: dict[str, Any], *, is_error: bool = False) -> types.CallToolResult:
     return types.CallToolResult(
         content=[types.TextContent(type="text", text=json.dumps(payload, indent=2))],
-        structuredContent=payload,
-        isError=is_error,
+        structured_content=payload,
+        is_error=is_error,
     )
 
 
@@ -111,7 +111,7 @@ def _save_checkpoint(
 
 async def run_reindex_task(
     *,
-    task: ServerTaskContext,
+    task: TaskContext,
     registry: MCPTaskRegistry,
     dispatcher: Any,
     ctx: Any,

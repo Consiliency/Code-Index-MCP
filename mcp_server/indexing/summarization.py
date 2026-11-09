@@ -5,12 +5,14 @@ import logging
 import os
 import re
 import sqlite3
+import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, cast
 
 import mcp.types as types
+from mcp.shared.exceptions import MCPDeprecationWarning
 
 from ..config.settings import commercial_egress_allowed, learned_models_allowed
 from ..setup.semantic_preflight import EnrichmentModelResolution, resolve_enrichment_model
@@ -549,16 +551,22 @@ class ChunkWriter:
         # Path 1: MCP sampling (client performs the inference, no file context)
         if self._has_sampling_capability():
             try:
-                result = await self.session.create_message(
-                    messages=[
-                        types.SamplingMessage(
-                            role="user",
-                            content=types.TextContent(type="text", text=sampling_prompt),
-                        )
-                    ],
-                    system_prompt=_SYSTEM_PROMPT,
-                    max_tokens=150,
-                )
+                # mcp 2.x marks sampling deprecated (SEP-2577) but it still works
+                # on handshake-era connections; the warning is emitted when the
+                # coroutine is created, so silence it only for that call.
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", MCPDeprecationWarning)
+                    pending = self.session.create_message(
+                        messages=[
+                            types.SamplingMessage(
+                                role="user",
+                                content=types.TextContent(type="text", text=sampling_prompt),
+                            )
+                        ],
+                        system_prompt=_SYSTEM_PROMPT,
+                        max_tokens=150,
+                    )
+                result = await pending
                 content_block = result.content
                 if hasattr(content_block, "text"):
                     summary_text = content_block.text

@@ -48,7 +48,7 @@ def test_generation_transition_matches_declared_schema(tool):
     from mcp_server.cli.stdio_runner import _build_tool_list
     from mcp_server.cli.tool_handlers import _resolution_transition_response
 
-    schema = next(item.outputSchema for item in _build_tool_list() if item.name == tool)
+    schema = next(item.output_schema for item in _build_tool_list() if item.name == tool)
     payload = json.loads(_resolution_transition_response(tool)[0].text)
     jsonschema.validate(payload, schema)
     assert payload["mutation_performed"] is False
@@ -261,7 +261,7 @@ async def test_task_cancellation_reports_actual_staged_publication(
 
     path, repo_id = build_temp_repo(tmp_path, "task-cancel")
     tasks = MCPTaskRegistry()
-    task = _FakeTask((await tasks.create_task(TaskMetadata())).taskId)
+    task = _FakeTask((await tasks.create_task(TaskMetadata())).task_id)
     with boot_test_server(tmp_path, [path]) as server:
         resolver = server.repo_resolver
         ctx = resolver.resolve_ready(path)
@@ -301,13 +301,13 @@ async def test_task_cancellation_reports_actual_staged_publication(
             repo_resolver=resolver,
         )
         published = timing != "during_work"
-        assert bool(result.structuredContent.get("cancelled")) is (timing != "no_cancel")
-        assert result.structuredContent["mutation_performed"] is published
+        assert bool(result.structured_content.get("cancelled")) is (timing != "no_cancel")
+        assert result.structured_content["mutation_performed"] is published
         after = server.registry.get(repo_id)
         assert (after.index_generation != before.index_generation) is published
         assert resolver.classify(path).ready is published
         if timing == "no_cancel":
-            assert result.structuredContent["durable_files"] >= 1
+            assert result.structured_content["durable_files"] >= 1
         else:
             assert (await tasks.get_record(task.task_id)).task.status == "cancelled"
 

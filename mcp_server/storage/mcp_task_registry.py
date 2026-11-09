@@ -6,10 +6,49 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from uuid import uuid4
+
 import anyio
-from mcp.shared.experimental.tasks.helpers import create_task_state, is_terminal
-from mcp.shared.experimental.tasks.store import TaskStore
 from mcp.types import Result, Task, TaskMetadata, TaskStatus
+from pydantic import TypeAdapter
+
+# mcp 2.x removed the experimental Tasks runtime (``mcp.shared.experimental``)
+# when SEP-1686 left the specification; the ``Task*`` wire types remain in
+# ``mcp.types``. These helpers keep the v1 SDK semantics this registry relied on
+# (Consiliency/Code-Index-MCP#124).
+TERMINAL_TASK_STATUSES: frozenset[str] = frozenset({"completed", "failed", "cancelled"})
+DEFAULT_POLL_INTERVAL_MS = 500
+
+
+_DATETIME_ADAPTER: TypeAdapter[datetime] = TypeAdapter(datetime)
+
+
+def wire_time(moment: datetime) -> str:
+    """Serialize ``moment`` as the v1 SDK put task timestamps on the wire.
+
+    mcp 2.x types ``Task.created_at``/``last_updated_at`` as ISO strings where
+    v1 used ``datetime``; pydantic's JSON form keeps the wire value identical
+    (for example ``2026-11-09T15:59:10.123456Z``).
+    """
+    return _DATETIME_ADAPTER.dump_python(moment, mode="json")
+
+
+def is_terminal(status: TaskStatus) -> bool:
+    """Return whether ``status`` is terminal (completed, failed or cancelled)."""
+    return status in TERMINAL_TASK_STATUSES
+
+
+def create_task_state(metadata: TaskMetadata, task_id: str | None = None) -> Task:
+    """Create a new task in ``working`` status, as the v1 SDK helper did."""
+    now = datetime.now(timezone.utc)
+    return Task(
+        task_id=task_id or str(uuid4()),
+        status="working",
+        created_at=wire_time(now),
+        last_updated_at=wire_time(now),
+        ttl=metadata.ttl,
+        poll_interval=DEFAULT_POLL_INTERVAL_MS,
+    )
 
 
 @dataclass
@@ -29,7 +68,7 @@ class TaskRecord:
     expires_at: datetime | None = None
 
 
-class MCPTaskRegistry(TaskStore):
+class MCPTaskRegistry:
     """Single-process task store with extra repo-local bookkeeping."""
 
     def __init__(self, page_size: int = 50) -> None:
@@ -69,11 +108,11 @@ class MCPTaskRegistry(TaskStore):
     ) -> Task:
         self._cleanup_expired()
         task = create_task_state(metadata, task_id)
-        if task.taskId in self._tasks:
-            raise ValueError(f"Task with ID {task.taskId} already exists")
+        if task.task_id in self._tasks:
+            raise ValueError(f"Task with ID {task.task_id} already exists")
 
         now = datetime.now(timezone.utc)
-        self._tasks[task.taskId] = TaskRecord(
+        self._tasks[task.task_id] = TaskRecord(
             task=task,
             metadata=metadata,
             created_at=now,
@@ -104,10 +143,10 @@ class MCPTaskRegistry(TaskStore):
             record.task.status = status
             status_changed = True
         if status_message is not None:
-            record.task.statusMessage = status_message
+            record.task.status_message = status_message
 
         record.updated_at = datetime.now(timezone.utc)
-        record.task.lastUpdatedAt = record.updated_at
+        record.task.last_updated_at = wire_time(record.updated_at)
         if status is not None and is_terminal(status) and record.task.ttl is not None:
             record.expires_at = self._calculate_expiry(record.task.ttl)
         if status == "failed":
@@ -182,9 +221,9 @@ class MCPTaskRegistry(TaskStore):
             raise ValueError(f"Cannot cancel task in terminal state '{record.task.status}'")
         record.cancellation_requested = True
         if status_message is not None:
-            record.task.statusMessage = status_message
+            record.task.status_message = status_message
         record.updated_at = datetime.now(timezone.utc)
-        record.task.lastUpdatedAt = record.updated_at
+        record.task.last_updated_at = wire_time(record.updated_at)
         await self.notify_update(task_id)
         return self._copy_task(record.task)
 
@@ -201,8 +240,8 @@ class MCPTaskRegistry(TaskStore):
         record = self._get_record(task_id)
         record.progress = dict(progress)
         record.updated_at = datetime.now(timezone.utc)
-        record.task.lastUpdatedAt = record.updated_at
-        record.task.statusMessage = status_message
+        record.task.last_updated_at = wire_time(record.updated_at)
+        record.task.status_message = status_message
         await self.notify_update(task_id)
         return self._copy_task(record.task)
 

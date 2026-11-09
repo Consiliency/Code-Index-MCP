@@ -54,17 +54,17 @@ def test_annotations_are_explicit_for_every_public_tool():
         annotations = tools[tool_name].annotations
         assert annotations is not None
         assert (
-            annotations.readOnlyHint,
-            annotations.destructiveHint,
-            annotations.idempotentHint,
-            annotations.openWorldHint,
+            annotations.read_only_hint,
+            annotations.destructive_hint,
+            annotations.idempotent_hint,
+            annotations.open_world_hint,
         ) == expected
 
 
 def test_output_schema_drafts_exist_with_only_planned_task_execution_metadata():
     for tool in _build_tool_list():
-        assert tool.outputSchema is not None
-        assert "oneOf" in tool.outputSchema
+        assert tool.output_schema is not None
+        assert "oneOf" in tool.output_schema
         dumped = tool.model_dump(mode="json", by_alias=True, exclude_none=True)
         assert "structuredContent" not in dumped
         if tool.name in {"reindex", "write_summaries"}:
