@@ -681,9 +681,12 @@ class TestSweeperDriftBackoff:
         store = _make_sqlite_store(tmp_path)
         repo_row = store.create_repository(str(repo_root), "repo")
         drift_calls = []
-        # The reconciliation callback does not fix the drift (a futile rebuild).
+        # The reconciliation succeeds but does not fix the drift (a futile rebuild).
         sweeper = WatcherSweeper(
-            None, lambda: {"repo": repo_root}, store, on_repository_drift=drift_calls.append
+            None,
+            lambda: {"repo": repo_root},
+            store,
+            on_repository_drift=lambda repo: drift_calls.append(repo) or True,
         )
         try:
             assert sweeper.sweep_once() == ["repo"]
@@ -719,7 +722,10 @@ class TestSweeperDriftBackoff:
         _store_file(store, repo_row, "a.py", _normalized_hash("stale = 0\n"))
         drift_calls = []
         sweeper = WatcherSweeper(
-            None, lambda: {"repo": repo_root}, store, on_repository_drift=drift_calls.append
+            None,
+            lambda: {"repo": repo_root},
+            store,
+            on_repository_drift=lambda repo: drift_calls.append(repo) or True,
         )
         try:
             assert sweeper.sweep_once() == ["repo"]
@@ -745,6 +751,7 @@ class TestSweeperDriftBackoff:
             attempts.append(repo_id)
             if len(attempts) == 1:
                 raise TimeoutError("writer lock busy")
+            return True
 
         sweeper = WatcherSweeper(
             None, lambda: {"repo": repo_root}, store, on_repository_drift=flaky_reconcile
@@ -755,6 +762,111 @@ class TestSweeperDriftBackoff:
             assert sweeper.sweep_once() == ["repo"]
             assert sweeper.sweep_once() == []
             assert attempts == ["repo", "repo"]
+        finally:
+            store.close()
+
+    def test_failed_sync_is_retried_not_suppressed(self, tmp_path, caplog):
+        """#114 review B2 (probe_backoff_failed_sync), real reconcile callback."""
+        from types import SimpleNamespace
+
+        from mcp_server.storage.git_index_manager import IndexSyncResult
+        from mcp_server.watcher_multi_repo import MultiRepositoryWatcher
+
+        repo_root = _committed_repo(tmp_path, {"a.py": "a = 1\n"})
+        store = _make_sqlite_store(tmp_path)
+        store.create_repository(str(repo_root), "repo")
+        attempts = []
+
+        def sync(repo_id, **_kwargs):
+            attempts.append(repo_id)
+            if len(attempts) == 1:  # transient failure, e.g. a storage outage
+                return IndexSyncResult(action="failed", commit="x", error="Staged rebuild failed")
+            return IndexSyncResult(action="full_index", commit="x")
+
+        watcher = SimpleNamespace(
+            registry=SimpleNamespace(
+                get_repository=lambda _r: SimpleNamespace(
+                    auto_sync=True, active=True, registration_id="reg"
+                )
+            ),
+            index_manager=SimpleNamespace(sync_repository_index=sync),
+            mark_repository_changed=lambda _r: None,
+        )
+        sweeper = WatcherSweeper(
+            None,
+            lambda: {"repo": repo_root},
+            store,
+            on_repository_drift=lambda repo_id: MultiRepositoryWatcher._reconcile_repository_drift(
+                watcher, repo_id
+            ),
+        )
+        try:
+            with caplog.at_level("WARNING", logger="mcp_server.watcher.sweeper"):
+                assert sweeper.sweep_once() == ["repo"]  # failed
+                assert sweeper.sweep_once() == ["repo"]  # retried, succeeds
+                assert sweeper.sweep_once() == []  # identical drift now suppressed
+            assert attempts == ["repo", "repo"]
+            assert any("did not succeed" in r.message for r in caplog.records)
+        finally:
+            store.close()
+
+    def test_persistent_failures_back_off_exponentially_with_a_cap(self, tmp_path):
+        repo_root = _committed_repo(tmp_path, {"a.py": "a = 1\n"})
+        store = _make_sqlite_store(tmp_path)
+        store.create_repository(str(repo_root), "repo")
+        attempts = []
+        sweeper = WatcherSweeper(
+            None,
+            lambda: {"repo": repo_root},
+            store,
+            on_repository_drift=lambda repo: attempts.append(repo) or False,
+        )
+        try:
+            pattern = [bool(sweeper.sweep_once()) for _ in range(60)]
+        finally:
+            store.close()
+        attempted_at = [index for index, attempted in enumerate(pattern) if attempted]
+        gaps = [b - a for a, b in zip(attempted_at, attempted_at[1:])]
+        assert gaps[:5] == [1, 2, 4, 8, 16]
+        assert set(gaps[5:]) == {16}
+
+    def test_refused_or_disabled_reconcile_is_retried(self, tmp_path):
+        """A repository whose auto-sync is off returns False and is retried later."""
+        from types import SimpleNamespace
+
+        from mcp_server.watcher_multi_repo import MultiRepositoryWatcher
+
+        repo_root = _committed_repo(tmp_path, {"a.py": "a = 1\n"})
+        store = _make_sqlite_store(tmp_path)
+        store.create_repository(str(repo_root), "repo")
+        state = {"auto_sync": False}
+        syncs = []
+        watcher = SimpleNamespace(
+            registry=SimpleNamespace(
+                get_repository=lambda _r: SimpleNamespace(
+                    auto_sync=state["auto_sync"], active=True, registration_id="reg"
+                )
+            ),
+            index_manager=SimpleNamespace(
+                sync_repository_index=lambda repo_id, **_k: syncs.append(repo_id)
+                or SimpleNamespace(action="full_index")
+            ),
+            mark_repository_changed=lambda _r: None,
+        )
+        sweeper = WatcherSweeper(
+            None,
+            lambda: {"repo": repo_root},
+            store,
+            on_repository_drift=lambda repo_id: MultiRepositoryWatcher._reconcile_repository_drift(
+                watcher, repo_id
+            ),
+        )
+        try:
+            sweeper.sweep_once()
+            assert syncs == []
+            state["auto_sync"] = True
+            sweeper.sweep_once()  # retry slot after one failure is the next sweep
+            assert syncs == ["repo"]
         finally:
             store.close()
 

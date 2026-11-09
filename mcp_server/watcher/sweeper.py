@@ -9,7 +9,7 @@ import tempfile
 import threading
 import time
 from pathlib import Path
-from typing import Callable, Dict, Iterable, List, Optional
+from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
 from ..core.ignore_patterns import build_walker_filter
 from ..indexing.admission import index_admission_reason
@@ -31,6 +31,9 @@ DEFAULT_SWEEP_MINUTES: int = 60
 AdmissionReason = Callable[[str, Path, Path, Callable[[Path], bool], Optional[int]], Optional[str]]
 
 _DRIFT_LOG_SAMPLE = 5
+#: Upper bound on sweeps skipped between retries of a failing reconciliation
+#: (backoff doubles from zero: retry next sweep, then skip 1, 3, 7, then 15).
+_MAX_DRIFT_RETRY_SKIPS = 15
 
 
 def _default_admission_reason(
@@ -85,6 +88,8 @@ class WatcherSweeper:
         self._acted_drift: Dict[str, str] = {}
         # repo_id -> signature already logged as suppressed (log once).
         self._suppressed_drift_logged: Dict[str, str] = {}
+        # repo_id -> (signature, consecutive failures, sweeps left to skip).
+        self._failed_drift: Dict[str, Tuple[str, int, int]] = {}
 
         # Env var overrides constructor arg when set
         env_val = os.environ.get(ENV_SWEEP_MINUTES)
@@ -259,6 +264,7 @@ class WatcherSweeper:
             if not (created or modified or deleted):
                 self._acted_drift.pop(repo_id, None)
                 self._suppressed_drift_logged.pop(repo_id, None)
+                self._failed_drift.pop(repo_id, None)
                 continue
             signature = self._drift_signature(
                 tree_digest, created, modified, deleted, fs_by_path, known_by_path
@@ -268,14 +274,26 @@ class WatcherSweeper:
                 continue
             self._suppressed_drift_logged.pop(repo_id, None)
 
-            # The signature is recorded only after reconciliation returns: an
-            # attempt that raised (for example writer-lock contention) retries
-            # on the next sweep, while a completed attempt that left the same
-            # drift behind backs off.
             if self._on_repository_drift is not None:
-                self._on_repository_drift(repo_id)
-                self._acted_drift[repo_id] = signature
+                failure = self._failed_drift.get(repo_id)
+                if failure is not None and failure[0] == signature and failure[2] > 0:
+                    self._failed_drift[repo_id] = (failure[0], failure[1], failure[2] - 1)
+                    logger.debug("watcher sweep: reconcile retry for %s backed off", repo_id)
+                    continue
+                # Only a reconciliation that reports success (``True``) records
+                # the signature. A failed or refused sync, or one that raised,
+                # is retried with bounded backoff, never suppressed (#114 review).
+                try:
+                    reconciled = self._on_repository_drift(repo_id) is True
+                except Exception:
+                    self._record_reconcile_failure(repo_id, signature)
+                    raise
                 drifted.append(repo_id)
+                if reconciled:
+                    self._acted_drift[repo_id] = signature
+                    self._failed_drift.pop(repo_id, None)
+                else:
+                    self._record_reconcile_failure(repo_id, signature)
                 continue
 
             for old_rel, new_rel in sorted(renamed):
@@ -295,6 +313,19 @@ class WatcherSweeper:
                 drifted.append(repo_id)
 
         return drifted
+
+    def _record_reconcile_failure(self, repo_id: str, signature: str) -> None:
+        previous = self._failed_drift.get(repo_id)
+        failures = previous[1] + 1 if previous is not None and previous[0] == signature else 1
+        skips = min(2 ** (failures - 1) - 1, _MAX_DRIFT_RETRY_SKIPS)
+        self._failed_drift[repo_id] = (signature, failures, skips)
+        logger.warning(
+            "watcher sweep: drift reconciliation for %s did not succeed (attempt %d); "
+            "retrying after %d more sweep(s)",
+            repo_id,
+            failures,
+            skips,
+        )
 
     @staticmethod
     def _retained_paths(store: SQLiteStore, repository_id: int) -> set:
