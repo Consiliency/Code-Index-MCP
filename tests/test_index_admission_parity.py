@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import subprocess
 import time
 from contextlib import closing
@@ -278,15 +279,113 @@ def test_failed_incremental_sync_stores_and_reports_file_errors(parity_runtime, 
     monkeypatch.setattr(dispatcher, "index_file", failing_index_file)
     result = manager.sync_repository_index(repo_id)
     assert result.action == "failed"
-    assert "Staged full index did not complete cleanly" in result.error
+    assert "Staged index update did not complete cleanly" in result.error
     assert "Failed to index hello.py: parser exploded" in result.error
     stored = RepositoryRegistry(registry.registry_path).get(repo_id)
     assert stored.last_sync_error == result.error
 
 
+def _simulate_plugin_that_will_not_resolve(dispatcher, name: str, monkeypatch):
+    """A supported-language plugin whose worker fails to start for one file."""
+    original = dispatcher._plugin_set_registry.plugins_for_file
+    monkeypatch.setattr(
+        dispatcher._plugin_set_registry,
+        "plugins_for_file",
+        lambda ctx, path: [] if str(path).endswith(name) else original(ctx, path),
+    )
+
+
+def _indexed(registry: RepositoryRegistry, repo_id: str, relative_path: str) -> bool:
+    files, _symbols = _index_snapshot(registry, repo_id)
+    return any(path == relative_path for path, _hash in files)
+
+
+def test_incremental_sync_keeps_old_generation_when_a_supported_plugin_fails(
+    parity_runtime, monkeypatch
+):
+    """#111 review B3 (probe_admitted_noplugin): no silent loss of real source."""
+    repo, registry, repo_id, dispatcher, manager = parity_runtime
+    assert manager.sync_repository_index(repo_id, force_full=True).action == "full_index"
+    before = RepositoryRegistry(registry.registry_path).get(repo_id).index_generation
+    (repo / "hello.py").write_text("def hello():\n    return 2\n")
+    _git(repo, "commit", "-qam", "edit py")
+    _simulate_plugin_that_will_not_resolve(dispatcher, "hello.py", monkeypatch)
+
+    result = manager.sync_repository_index(repo_id)
+
+    assert result.action == "failed"
+    assert "Failed to index hello.py: No plugin for" in result.error
+    current = RepositoryRegistry(registry.registry_path).get(repo_id)
+    assert current.index_generation == before
+    assert current.staleness_reason == "partial_index_failure"
+    assert _indexed(registry, repo_id, "hello.py")
+
+
+def test_full_rebuild_fails_when_an_admitted_file_has_no_plugin(parity_runtime, monkeypatch):
+    repo, registry, repo_id, dispatcher, manager = parity_runtime
+    assert manager.sync_repository_index(repo_id, force_full=True).action == "full_index"
+    before = RepositoryRegistry(registry.registry_path).get(repo_id).index_generation
+    _simulate_plugin_that_will_not_resolve(dispatcher, "hello.py", monkeypatch)
+
+    result = manager.sync_repository_index(repo_id, force_full=True)
+
+    assert result.action == "failed"
+    assert RepositoryRegistry(registry.registry_path).get(repo_id).index_generation == before
+    assert _indexed(registry, repo_id, "hello.py")
+
+
+def test_rename_to_a_non_indexable_path_syncs_incrementally(parity_runtime):
+    """#111 review S1 (probe_rename): delete the old path, ignore the new one."""
+    repo, registry, repo_id, _dispatcher, manager = parity_runtime
+    assert manager.sync_repository_index(repo_id, force_full=True).action == "full_index"
+    assert _indexed(registry, repo_id, "README.md")
+    _git(repo, "mv", "README.md", "README.txt")
+    (repo / "hello.py").write_text("def hello():\n    return 2\n")
+    _git(repo, "commit", "-qam", "rename md to txt")
+
+    incremental = manager.sync_repository_index(repo_id)
+    assert incremental.action == "incremental_update", incremental.error
+    incremental_snapshot = _index_snapshot(registry, repo_id)
+    stored = {path for path, _hash in incremental_snapshot[0]}
+    assert "README.md" not in stored and "README.txt" not in stored
+
+    assert manager.sync_repository_index(repo_id, force_full=True).action == "full_index"
+    assert _index_snapshot(registry, repo_id) == incremental_snapshot
+
+
+def test_error_summary_redacts_common_credential_formats():
+    """#111 review S2: synthetic values only."""
+    synthetic = {
+        "github_classic": "ghp_" + "A1b2C3d4E5" * 4,
+        "github_fine_grained": "github_pat_" + "11ABCDEFG0" * 3,
+        "aws_access_key": "AKIA" + "ABCDEFGHIJ234567",
+        "slack": "xoxb-" + "1234567890-abcdef",
+        "url_credentials": "https://deploy:hunter2-synthetic@example.invalid/repo.git",
+        "aws_secret": "aws_secret_access_key=SyntheticSecretValue0123456789",
+    }
+    errors = [f"Failed to index f{i}.py: {value}" for i, value in enumerate(synthetic.values())]
+    message = _format_rebuild_error(
+        StagedRebuildError("Staged index update did not complete cleanly"),
+        UpdateResult(failed=len(errors), errors=errors[:5]),
+        strip_prefixes=[],
+    )
+    message += _format_rebuild_error(
+        StagedRebuildError("x"), UpdateResult(failed=1, errors=errors[5:]), strip_prefixes=[]
+    )
+    for name, value in synthetic.items():
+        secret = value.split("=", 1)[-1] if name == "aws_secret" else value
+        if name == "url_credentials":
+            secret = "hunter2-synthetic"
+        assert secret not in message, name
+    assert message.count("[REDACTED]") >= len(synthetic)
+    assert "Failed to index f0.py" in message
+
+
 # ---------------------------------------------------------------------------
 # Generation retention (#114)
 # ---------------------------------------------------------------------------
+
+HISTORY_FILE = "generation-history.json"
 
 
 def _generation_files(registry: RepositoryRegistry, repo_id: str):
@@ -295,7 +394,11 @@ def _generation_files(registry: RepositoryRegistry, repo_id: str):
     return info, sorted(path.stem for path in generations.glob("*.db"))
 
 
-def test_repeated_rebuilds_keep_live_plus_bounded_rollback_generations(parity_runtime, monkeypatch):
+def _history(generations: Path) -> dict:
+    return json.loads((generations / HISTORY_FILE).read_text())["generations"]
+
+
+def test_repeated_rebuilds_keep_live_plus_bounded_previous_generations(parity_runtime, monkeypatch):
     repo, registry, repo_id, _dispatcher, manager = parity_runtime
     monkeypatch.setenv("MCP_INDEX_GENERATION_RETENTION", "2")
     published = []
@@ -309,11 +412,10 @@ def test_repeated_rebuilds_keep_live_plus_bounded_rollback_generations(parity_ru
         assert len(present) <= 3
     info, present = _generation_files(registry, repo_id)
     assert set(present) == set(published[-3:])
-    history = json.loads((Path(info.index_path).parent / "published-generations.json").read_text())
-    assert history["published"] == published[-3:]
+    assert set(_history(Path(info.index_path).parent)) == set(published[-3:])
 
 
-def test_retention_never_drops_below_one_rollback_generation(parity_runtime, monkeypatch):
+def test_retention_never_drops_below_one_previous_generation(parity_runtime, monkeypatch):
     repo, registry, repo_id, _dispatcher, manager = parity_runtime
     monkeypatch.setenv("MCP_INDEX_GENERATION_RETENTION", "0")
     published = [
@@ -324,15 +426,41 @@ def test_retention_never_drops_below_one_rollback_generation(parity_runtime, mon
     assert set(present) == set(published[-2:])
 
 
+def test_failed_rebuilds_keep_only_the_newest_failed_generation(parity_runtime, monkeypatch):
+    """#114 review N6: failed stages no longer accumulate without bound."""
+    repo, registry, repo_id, _dispatcher, manager = parity_runtime
+    live = manager.sync_repository_index(repo_id, force_full=True).readiness["index_generation"]
+
+    def fail_before_publish(stage):
+        if stage == "before_provenance":
+            raise RuntimeError("synthetic publication failure")
+
+    monkeypatch.setattr(manager, "_rebuild_checkpoint", fail_before_publish)
+    for _ in range(3):
+        assert manager.rebuild_repository_index(repo_id).action == "failed"
+    info, present = _generation_files(registry, repo_id)
+    assert info.index_generation == live
+    failed = [key for key in present if key != live]
+    assert len(failed) == 1
+    assert _history(Path(info.index_path).parent)[failed[0]]["state"] == "failed"
+
+
 def _fake_generation(directory: Path, generation: str, mtime: float, semantic=False) -> Path:
     path = directory / f"{generation}.db"
     path.write_bytes(b"x" * 10)
-    Path(f"{path}-wal").write_bytes(b"w")
     if semantic:
         (directory / f"{generation}.semantic").mkdir()
         (directory / f"{generation}.semantic" / "segment").write_bytes(b"v")
     os.utime(path, (mtime, mtime))
     return path
+
+
+def _write_history(directory: Path, entries: dict) -> None:
+    (directory / HISTORY_FILE).write_text(json.dumps({"version": 2, "generations": entries}))
+
+
+def _published(last_live_at: float) -> dict:
+    return {"state": "published", "recorded_at": last_live_at, "last_live_at": last_live_at}
 
 
 def _retention_manager(index_paths):
@@ -343,7 +471,36 @@ def _retention_manager(index_paths):
     return GitAwareIndexManager(registry, MagicMock())
 
 
-def test_prune_policy_keeps_live_referenced_rollback_and_recent_failures(tmp_path, monkeypatch):
+@pytest.mark.parametrize("retention", ["2", "10"])
+def test_first_prune_after_upgrade_never_deletes_unrecorded_generations(
+    tmp_path, monkeypatch, retention
+):
+    """#114 review B1 (probe_prune_first_run): dev0-like layout, no history file."""
+    monkeypatch.setenv("MCP_INDEX_GENERATION_RETENTION", retention)
+    generations = tmp_path / "generations"
+    generations.mkdir()
+    now = time.time()
+    names = {
+        "a" * 32: ("rollback_v4", now - 3 * 86400),
+        "b" * 32: ("replay_validated", now - 2 * 86400),
+        "c" * 32: ("hourly_churn", now - 86400),
+        "d" * 32: ("previous_live", now - 3600),
+        "e" * 32: ("new_live", now),
+    }
+    paths = {key: _fake_generation(generations, key, mtime) for key, (_n, mtime) in names.items()}
+    manager = _retention_manager([paths["e" * 32]])
+
+    pruned = manager._prune_superseded_generations(
+        generations, live_generation="e" * 32, previous_index_path=paths["d" * 32]
+    )
+
+    assert pruned == []
+    assert all(path.exists() for path in paths.values())
+    # Only the generation this code published is recorded.
+    assert set(_history(generations)) == {"e" * 32}
+
+
+def test_prune_policy_only_removes_recorded_superseded_generations(tmp_path, monkeypatch):
     monkeypatch.setenv("MCP_INDEX_GENERATION_RETENTION", "1")
     generations = tmp_path / "generations"
     generations.mkdir()
@@ -351,30 +508,43 @@ def test_prune_policy_keeps_live_referenced_rollback_and_recent_failures(tmp_pat
     quarantined = generations / "quarantine" / "current.db.corrupt_sqlite.20261108T000000Z"
     quarantined.write_bytes(b"q")
     now = time.time()
-    ids = {name: name * 32 for name in "abcdefg"}
-    old_published = _fake_generation(generations, ids["a"], now - 600, semantic=True)
-    old_unpublished = _fake_generation(generations, ids["b"], now - 500)
-    other_repo_live = _fake_generation(generations, ids["c"], now - 450)
-    previous = _fake_generation(generations, ids["d"], now - 400)
-    recent_failure = _fake_generation(generations, ids["e"], now - 300)
-    live = _fake_generation(generations, ids["f"], now - 100)
-    (generations / "published-generations.json").write_text(
-        json.dumps({"version": 1, "published": [ids["a"], ids["d"]]})
+    # Generation ids are 32 hex characters.
+    ids = {name: char * 32 for name, char in zip("abcdefgh", "abcdef01")}
+    old_published = _fake_generation(generations, ids["a"], now - 900, semantic=True)
+    unknown = _fake_generation(generations, ids["b"], now - 800)
+    other_repo_live = _fake_generation(generations, ids["c"], now - 700)
+    pinned = _fake_generation(generations, ids["d"], now - 650)
+    (generations / f"{ids['d']}.keep").write_text("")
+    previous = _fake_generation(generations, ids["e"], now - 600)
+    old_failure = _fake_generation(generations, ids["f"], now - 500)
+    new_failure = _fake_generation(generations, ids["g"], now - 300)
+    live = _fake_generation(generations, ids["h"], now - 100)
+    _write_history(
+        generations,
+        {
+            ids["a"]: _published(now - 900),
+            ids["c"]: _published(now - 700),
+            ids["d"]: _published(now - 650),
+            ids["e"]: _published(now - 600),
+            ids["f"]: {"state": "failed", "recorded_at": now - 500, "last_live_at": None},
+            ids["g"]: {"state": "failed", "recorded_at": now - 300, "last_live_at": None},
+        },
     )
     manager = _retention_manager([live, other_repo_live])
 
     pruned = manager._prune_superseded_generations(
-        generations, live_generation=ids["f"], previous_index_path=previous
+        generations, live_generation=ids["h"], previous_index_path=previous
     )
 
-    assert sorted(pruned) == sorted([ids["a"], ids["b"]])
-    assert not old_published.exists() and not Path(f"{old_published}-wal").exists()
+    assert sorted(pruned) == sorted([ids["a"], ids["f"]])
+    assert not old_published.exists()
     assert not (generations / f"{ids['a']}.semantic").exists()
-    assert not old_unpublished.exists()
-    for kept in (other_repo_live, previous, recent_failure, live, quarantined):
+    assert not old_failure.exists()
+    for kept in (unknown, other_repo_live, pinned, previous, new_failure, live, quarantined):
         assert kept.exists()
-    history = json.loads((generations / "published-generations.json").read_text())
-    assert history["published"] == [ids["d"], ids["f"]]
+    history = _history(generations)
+    assert set(history) == {ids[key] for key in "cdegh"}
+    assert history[ids["h"]]["state"] == "published"
 
 
 def test_prune_after_operator_rollback_keeps_the_previously_live_generation(tmp_path, monkeypatch):
@@ -387,8 +557,9 @@ def test_prune_after_operator_rollback_keeps_the_previously_live_generation(tmp_
     restored = _fake_generation(generations, rolled_back_to, now - 300)
     bad = _fake_generation(generations, rolled_back_from, now - 200)
     live = _fake_generation(generations, new_live, now - 100)
-    (generations / "published-generations.json").write_text(
-        json.dumps({"version": 1, "published": [rolled_back_to, rolled_back_from]})
+    _write_history(
+        generations,
+        {rolled_back_to: _published(now - 300), rolled_back_from: _published(now - 200)},
     )
     manager = _retention_manager([live])
 
@@ -398,6 +569,94 @@ def test_prune_after_operator_rollback_keeps_the_previously_live_generation(tmp_
 
     assert pruned == [rolled_back_from]
     assert restored.exists() and live.exists() and not bad.exists()
+
+
+def test_generations_an_active_reader_holds_are_never_pruned(tmp_path, monkeypatch):
+    """#114 review S3: pruning skips generations still open by a reader."""
+    monkeypatch.setenv("MCP_INDEX_GENERATION_RETENTION", "1")
+    generations = tmp_path / "generations"
+    generations.mkdir()
+    now = time.time()
+    wal_reader, fd_reader, idle, previous, live = (c * 32 for c in "abcde")
+    wal_path = generations / f"{wal_reader}.db"
+    with closing(sqlite3.connect(wal_path)) as setup:
+        setup.execute("PRAGMA journal_mode=WAL")
+        setup.execute("CREATE TABLE t (x)")
+        setup.commit()
+    fd_path = _fake_generation(generations, fd_reader, now - 400)
+    idle_path = _fake_generation(generations, idle, now - 350)
+    previous_path = _fake_generation(generations, previous, now - 300)
+    live_path = _fake_generation(generations, live, now - 100)
+    _write_history(
+        generations,
+        {
+            key: _published(now - 500 + index)
+            for index, key in enumerate((wal_reader, fd_reader, idle))
+        }
+        | {previous: _published(now - 300)},
+    )
+    manager = _retention_manager([live_path])
+    reader = sqlite3.connect(wal_path)
+    handle = open(fd_path, "rb")
+    try:
+        reader.execute("SELECT * FROM t").fetchall()
+        pruned = manager._prune_superseded_generations(
+            generations, live_generation=live, previous_index_path=previous_path
+        )
+    finally:
+        handle.close()
+        reader.close()
+    assert idle in pruned and not idle_path.exists()
+    assert wal_reader not in pruned and wal_path.exists()
+    if Path("/proc/self/fd").is_dir():
+        assert fd_reader not in pruned and fd_path.exists()
+    assert previous_path.exists() and live_path.exists()
+
+
+def test_interrupted_removal_keeps_the_record_and_is_retried(tmp_path, monkeypatch):
+    """#114 review N1: semantic data and sidecars go first, the database last."""
+    monkeypatch.setenv("MCP_INDEX_GENERATION_RETENTION", "1")
+    generations = tmp_path / "generations"
+    generations.mkdir()
+    now = time.time()
+    old, previous, live = "a" * 32, "b" * 32, "c" * 32
+    old_path = _fake_generation(generations, old, now - 300, semantic=True)
+    previous_path = _fake_generation(generations, previous, now - 200)
+    live_path = _fake_generation(generations, live, now - 100)
+    _write_history(generations, {old: _published(now - 300), previous: _published(now - 200)})
+    manager = _retention_manager([live_path])
+    original_unlink = Path.unlink
+
+    def failing_unlink(self, *args, **kwargs):
+        if self == old_path:
+            raise PermissionError("database busy")
+        return original_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", failing_unlink)
+    assert (
+        manager._prune_superseded_generations(
+            generations, live_generation=live, previous_index_path=previous_path
+        )
+        == []
+    )
+    assert old_path.exists() and not (generations / f"{old}.semantic").exists()
+    assert old in _history(generations)
+
+    monkeypatch.setattr(Path, "unlink", original_unlink)
+    assert manager._prune_superseded_generations(generations, failed_generation=None) == [old]
+    assert not old_path.exists()
+
+
+def test_history_writes_are_durable(tmp_path, monkeypatch):
+    """#114 review N2: the history file and its directory are fsynced."""
+    from mcp_server.storage import git_index_manager as gim
+
+    synced = []
+    real_fsync = os.fsync
+    monkeypatch.setattr(gim.os, "fsync", lambda fd: synced.append(fd) or real_fsync(fd))
+    gim._write_generation_history(tmp_path / HISTORY_FILE, {"a" * 32: _published(1.0)})
+    assert len(synced) >= (1 if os.name == "nt" else 2)
+    assert set(_history(tmp_path)) == {"a" * 32}
 
 
 def test_prune_failure_never_fails_publication(tmp_path, caplog):
@@ -414,24 +673,25 @@ def test_prune_failure_never_fails_publication(tmp_path, caplog):
     assert "Generation retention skipped" in caplog.text
 
 
-def test_unreadable_history_is_rebuilt_without_deleting_rollback(tmp_path, monkeypatch):
+@pytest.mark.parametrize("content", ["{not json", '{"version": 1, "published": []}'])
+def test_unreadable_history_prunes_nothing(tmp_path, monkeypatch, content):
     monkeypatch.setenv("MCP_INDEX_GENERATION_RETENTION", "1")
     generations = tmp_path / "generations"
     generations.mkdir()
     now = time.time()
-    previous = _fake_generation(generations, "a" * 32, now - 200)
-    live = _fake_generation(generations, "b" * 32, now - 100)
-    (generations / "published-generations.json").write_text("{not json")
+    older = _fake_generation(generations, "a" * 32, now - 300)
+    previous = _fake_generation(generations, "b" * 32, now - 200)
+    live = _fake_generation(generations, "c" * 32, now - 100)
+    (generations / HISTORY_FILE).write_text(content)
     manager = _retention_manager([live])
     assert (
         manager._prune_superseded_generations(
-            generations, live_generation="b" * 32, previous_index_path=previous
+            generations, live_generation="c" * 32, previous_index_path=previous
         )
         == []
     )
-    assert previous.exists() and live.exists()
-    with closing(open(generations / "published-generations.json")) as handle:
-        assert json.load(handle)["published"] == ["a" * 32, "b" * 32]
+    assert older.exists() and previous.exists() and live.exists()
+    assert set(_history(generations)) == {"c" * 32}
 
 
 # ---------------------------------------------------------------------------
@@ -465,3 +725,44 @@ def test_release_staged_plugin_workers_evicts_only_that_repository():
 
     plugin_sets.evict.side_effect = RuntimeError("worker gone")
     assert dispatcher.release_staged_plugin_workers("repo-a") is False
+
+
+def test_admission_does_not_depend_on_which_repository_workers_are_loaded(tmp_path, monkeypatch):
+    """#114 review N4: releasing or loading repo workers cannot change admission."""
+    monkeypatch.delenv("MCP_PLUGIN_SANDBOX_DISABLE", raising=False)
+
+    class ClaimsScss:
+        lang = "css"
+        language = "css"
+
+        def supports(self, path):
+            return str(path).endswith(".scss")
+
+    style = tmp_path / "style.scss"
+    style.write_text("a { color: red; }\n")
+    never = lambda _path: False  # noqa: E731
+
+    def build(plugins):
+        return EnhancedDispatcher(
+            plugins=plugins,
+            enable_advanced_features=False,
+            use_plugin_factory=False,
+            semantic_search_enabled=False,
+            memory_aware=False,
+            multi_repo_enabled=False,
+        )
+
+    lazy = build([])
+    try:
+        before = lazy.index_admission_reason("r", style, tmp_path, never)
+        monkeypatch.setattr(lazy._plugin_set_registry, "plugins_for", lambda _r: [ClaimsScss()])
+        assert lazy.index_admission_reason("r", style, tmp_path, never) == before
+        assert before is not None and before.startswith("plugin_")
+    finally:
+        lazy.shutdown()
+
+    injected = build([ClaimsScss()])
+    try:
+        assert injected.index_admission_reason("r", style, tmp_path, never) is None
+    finally:
+        injected.shutdown()

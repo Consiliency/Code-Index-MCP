@@ -35,6 +35,7 @@ from ..graph import (
 from ..indexing.admission import EXACT_BOUNDED_PYTHON_PATHS as _EXACT_BOUNDED_PYTHON_PATHS
 from ..indexing.admission import EXACT_BOUNDED_SHELL_PATHS as _EXACT_BOUNDED_SHELL_PATHS
 from ..indexing.admission import index_admission_reason as _index_admission_reason
+from ..indexing.admission import is_plugin_admission_reason
 from ..indexing.admission import plugin_admission_reason as _plugin_admission_reason
 from ..indexing.source_metadata import extract_matching_source_metadata
 from ..plugin_base import IPlugin, SearchResult, SymbolDef
@@ -131,15 +132,26 @@ class IndexResult:
 NO_PLUGIN_ERROR_PREFIX = "No plugin for "
 
 
-def is_unsupported_file_result(mutation: IndexResult) -> bool:
-    """Return True when no plugin stores the mutated file (ignored, not failed).
+_NOT_ADMITTED_ERROR = re.compile(r"^No plugin for .* \((?P<reason>[a-z_]+)\)$", re.DOTALL)
 
-    The full walk and the incremental path both classify this outcome as an
-    ignored file (Consiliency/Code-Index-MCP#111).
+
+def not_admitted_error(path: Union[str, Path], reason: str) -> str:
+    """Error text for a file the shared admission predicate rejected."""
+    return f"{NO_PLUGIN_ERROR_PREFIX}{path} ({reason})"
+
+
+def is_unsupported_file_result(mutation: IndexResult) -> bool:
+    """Return True only when the shared admission predicate rejected the file.
+
+    Such files are ignored, not failed, by the full walk and by incremental
+    sync (Consiliency/Code-Index-MCP#111). A ``No plugin for`` result for a file
+    the predicate admitted (for example a plugin worker that failed to start)
+    is a real failure and keeps the previous generation.
     """
-    return mutation.status == IndexResultStatus.ERROR and bool(
-        mutation.error and mutation.error.startswith(NO_PLUGIN_ERROR_PREFIX)
-    )
+    if mutation.status != IndexResultStatus.ERROR or not mutation.error:
+        return False
+    match = _NOT_ADMITTED_ERROR.match(mutation.error)
+    return bool(match) and is_plugin_admission_reason(match.group("reason"))
 
 
 @dataclass
@@ -204,10 +216,24 @@ _COMMERCIAL_RERANKER_TYPES = frozenset({"voyage", "cohere"})
 # Redact bearer tokens, api keys, and token-like substrings before any exception
 # text enters rerank diagnostics or logs. Kept deliberately small and defensive.
 _SECRET_REDACTION_PATTERN = re.compile(
-    r"(?i)"
-    r"(?:bearer\s+[A-Za-z0-9._\-]+)"
-    r"|(?:(?:api[_-]?key|apikey|token|secret|password|authorization)\s*[=:]\s*[^\s,;'\"]+)"
-    r"|(?:sk-[A-Za-z0-9]{6,})"
+    r"(?i:bearer\s+[A-Za-z0-9._\-]+)"
+    # key=value / key: value where the key names a credential (api_key, token,
+    # aws_secret_access_key, password, ...).
+    r"|(?i:[A-Za-z0-9_.\-]*(?:api[_-]?key|apikey|token|secret|passw(?:or)?d|authorization|"
+    r"credential)[A-Za-z0-9_.\-]*\s*[=:]\s*[^\s,;'\"]+)"
+    r"|(?:sk-[A-Za-z0-9_\-]{6,})"
+    r"|(?:\bpa-[A-Za-z0-9._\-]{8,})"
+    # GitHub tokens: classic (ghp_/gho_/ghu_/ghs_/ghr_) and fine-grained PATs.
+    r"|(?:\bgh[pousr]_[A-Za-z0-9]{20,})"
+    r"|(?:\bgithub_pat_[A-Za-z0-9_]{20,})"
+    # AWS access key ids.
+    r"|(?:\b(?:AKIA|ASIA)[0-9A-Z]{16}\b)"
+    # Slack tokens.
+    r"|(?:\bxox[abprs]-[A-Za-z0-9\-]{10,})"
+    # PEM private key blocks (or their header when truncated).
+    r"|(?:-----BEGIN [A-Z ]*PRIVATE KEY-----(?:[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----)?)"
+    # Credentials embedded in URLs (scheme://user:password@host).
+    r"|(?:(?<=://)[^/\s:@]+:[^/\s@]+@)"
 )
 
 
@@ -593,6 +619,9 @@ class EnhancedDispatcher:
                 self._register_plugins_with_router()
         elif use_plugin_factory and not lazy_load:
             self._load_all_plugins()
+        # Plugins fixed at construction; admission never depends on plugins that
+        # are loaded or released later (#114 review N4).
+        self._admission_plugins: Tuple[IPlugin, ...] = tuple(self._legacy_plugins)
 
         # Compile document query patterns for performance
         self._compiled_doc_patterns = [
@@ -726,6 +755,21 @@ class EnhancedDispatcher:
         language = language.lower().replace("-", "_")
 
         # Check if already loaded
+        if language in self._lang_cache:
+            return self._lang_cache[language]
+
+        # The sweep thread and indexing threads can both reach this; serialize
+        # the load so plugin collections are never mutated concurrently.
+        with self._plugin_load_guard():
+            return self._ensure_plugin_loaded_locked(language)
+
+    def _plugin_load_guard(self) -> threading.RLock:
+        lock = self.__dict__.get("_plugin_load_lock")
+        if lock is None:
+            lock = self.__dict__.setdefault("_plugin_load_lock", threading.RLock())
+        return lock
+
+    def _ensure_plugin_loaded_locked(self, language: str) -> Optional[IPlugin]:
         if language in self._lang_cache:
             return self._lang_cache[language]
 
@@ -2525,7 +2569,7 @@ class EnhancedDispatcher:
                     plugin_supports=self._admission_plugin_supports(ctx.repo_id),
                 )
                 if admission is not None:
-                    raise RuntimeError(f"{NO_PLUGIN_ERROR_PREFIX}{path} ({admission})")
+                    raise RuntimeError(not_admitted_error(path, admission))
                 # Find the appropriate plugin
                 plugin = self._match_plugin(ctx, path)
                 plugin_language = get_language_by_extension(path.suffix.lower()) or plugin.language
@@ -3807,11 +3851,10 @@ class EnhancedDispatcher:
                     semantically_indexed_paths.append(path.resolve())
                     emit_progress("lexical_walking", "lexical", "lexical_mutation")
                 elif self._is_non_indexable_result(mutation):
+                    # Unchanged files, or files admission rejected at index time.
+                    # An admitted file whose plugin did not resolve is a failure
+                    # below, so the previous generation is kept (#111 review).
                     stats["ignored_files"] += 1
-                    if is_unsupported_file_result(mutation):
-                        # Admission accepted the file but no plugin resolved; the
-                        # watcher sweep will report it as drift once (#114).
-                        logger.warning("admitted file had no plugin: %s", path)
                 else:
                     stats["failed_files"] += 1
                     if mutation.error:
@@ -4029,22 +4072,21 @@ class EnhancedDispatcher:
         return is_unsupported_file_result(mutation)
 
     def _admission_plugin_supports(self, repo_id: Optional[str]) -> Callable[[Path], bool]:
-        """Return the loaded-plugin ``supports()`` check used by admission.
+        """Return the plugin ``supports()`` check used by admission.
 
-        Mirrors :meth:`_match_plugin` for files whose language is not
-        ``enabled``: explicitly registered or lazily loaded plugins, the plugins
-        already loaded for the repository, then the compatibility plugin
-        :meth:`_ensure_plugin_loaded` provides (an unavailable language is
-        remembered after its first attempt, so repeated checks stay cheap).
+        Admission must not depend on which workers happen to be loaded, or the
+        sweep and the build could disagree after workers are released. It
+        consults only the plugins fixed when the dispatcher was built (injected
+        or loaded at startup), then the compatibility plugin
+        :meth:`_ensure_plugin_loaded` provides for the file's own language (an
+        unavailable language is remembered after its first attempt). Plugins
+        loaded later for the repository do not widen admission, and
+        :meth:`index_file` rejects anything admission rejects, so the stored
+        set stays deterministic. ``repo_id`` is accepted for interface symmetry.
         """
 
         def supports(path: Path) -> bool:
-            plugins = list(self._legacy_plugins)
-            if repo_id is not None:
-                try:
-                    plugins.extend(self._plugin_set_registry.plugins_for(repo_id))
-                except Exception as exc:  # pragma: no cover - defensive
-                    logger.debug("Loaded plugin lookup failed: %s", type(exc).__name__)
+            plugins = list(getattr(self, "_admission_plugins", ()))
             for plugin in plugins:
                 try:
                     if plugin.supports(path):
