@@ -19,16 +19,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the same extension, plugin-enablement and exclusion rules. Right after a full
   rebuild the sweep reports no drift. Rows a rebuild deliberately retains
   (imported documents and history) are no longer reported as deleted.
-- Drift that survives the reconciliation it triggered is not reconciled again
-  until the tracked tree or the drift itself changes. The sweep logs it once
-  as a warning instead of rebuilding on every interval.
-- Superseded index generations are pruned after each successful publication.
-  The live generation, any generation a registry entry references, and the
-  `MCP_INDEX_GENERATION_RETENTION` (default 2, minimum 1) most recently live
-  generations are kept for rollback. Unpublished (failed or pre-upgrade)
-  generation files are removed only when they are older than every kept
-  rollback generation. Quarantine copies and server-side Qdrant collections are
-  not touched.
+- Drift that survives a *successful* reconciliation is not reconciled again
+  until the tracked tree or the drift itself changes; the sweep logs it once.
+  A reconciliation that failed, was refused or raised is retried on the next
+  sweep, then with exponential backoff capped at 16 sweeps.
+- Bounded generation retention. Each publication and each failed rebuild is
+  recorded in `generations/generation-history.json`, and only recorded
+  generations can be pruned: after a publication, recorded generations beyond
+  the live one plus the `MCP_INDEX_GENERATION_RETENTION` (default 2, minimum 1)
+  most recently live previous generations, and recorded failed generations
+  beyond the newest one. Never removed: generations without a record
+  (everything from before the upgrade, or after a lost history file), any
+  generation a registry entry references, generations pinned with a
+  `generations/<id>.keep` file, and any generation a reader may still hold (its
+  SQLite sidecars exist, or a process has it open). The semantic directory and
+  sidecars are removed before the database, and the history file is fsynced.
+  Quarantine copies and server-side Qdrant collections are not touched.
 - Sandboxed plugin workers kept per-file in-memory state keyed by each
   rebuild's staging path, which grew by about 11 MB per rebuild of a 29-file
   fixture. A staged build now releases the repository's plugin workers while
@@ -37,22 +43,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 **Fixed** (Consiliency/Code-Index-MCP#111)
 - Incremental sync failed with `Staged rebuild failed (RuntimeError)` when a
   commit touched a file in a language with no enabled plugin, such as a
-  workflow `.yml`. It now ignores such files as the full walk does, and drops
-  a previously indexed row that no plugin stores any more, so the result
-  matches a full rebuild.
+  workflow `.yml`. Incremental sync now asks the shared admission predicate,
+  as the full walk does: files it rejects are ignored, an indexed file that is
+  no longer admitted is deleted, and a rename to a non-indexable path (for
+  example `notes.md` to `notes.txt`) deletes the old row. The result matches a
+  full rebuild. A file the predicate admits whose plugin fails to resolve (for
+  example a sandbox worker that does not start) is a failure in both the
+  incremental and the full path, so the previous generation is kept.
 - A failed staged rebuild's stored `last_sync_error` and the `repository sync`
   output now include the message of the rebuild's own refusal and a bounded
-  summary of the per-file errors (at most five, secrets redacted, checkout and
-  staging paths removed). Text from other exceptions is still reported by type
-  only.
+  summary of the per-file errors (at most five, checkout and staging paths
+  removed). Text from other exceptions is still reported by type only.
+- The shared secret redaction used for these errors and rerank diagnostics now
+  also covers GitHub tokens (`ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_`,
+  `github_pat_`), AWS access key ids, Slack tokens, PEM private keys, URL
+  credentials and `*secret*`/`*token*`/`*password*` key-value pairs.
 
 **Upgrade notes**
 - After deploying, hosts that worked around Consiliency/Code-Index-MCP#114 with
   a long `MCP_WATCHER_SWEEP_MINUTES` (for example 1440) can return to the
   default.
-- The first publication after upgrading prunes older generations, keeping the
-  previously live generation for rollback. Back up any older generation you
-  still need before upgrading, or raise `MCP_INDEX_GENERATION_RETENTION`.
+- Generations that exist before the upgrade are never pruned automatically;
+  remove them by hand once they are no longer needed. Only generations
+  published or failed after the upgrade count towards retention.
 
 ## [1.5.1] - 2026-11-08
 

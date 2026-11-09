@@ -300,12 +300,12 @@ This document provides a comprehensive reference of all environment variables su
   ```
 
 ### `MCP_INDEX_GENERATION_RETENTION`
-- **Description**: Number of superseded index generations kept for rollback, besides the live one, when a rebuild publishes a new generation. Older published generations, with their SQLite sidecars and local semantic directory, are pruned; generations any registry entry references are always kept. Unpublished (failed or pre-upgrade) generation files are pruned only when older than every kept rollback generation. Quarantine copies and Qdrant server collections are not touched (Consiliency/Code-Index-MCP#114).
+- **Description**: Number of previous index generations kept for rollback, besides the live one, when a rebuild publishes a new generation. Only generations recorded in `generations/generation-history.json` (published or failed by this version) are ever pruned, together with their SQLite sidecars and local semantic directory; the newest failed generation is kept as evidence. Never pruned: generations without a record (for example from before the upgrade), generations any registry entry references, generations pinned with an empty `generations/<id>.keep` file, and generations a reader may still hold open. Quarantine copies and Qdrant server collections are not touched (Consiliency/Code-Index-MCP#114).
 - **Type**: Integer
 - **Default**: `2` (values below `1` are treated as `1`)
 - **Example**:
   ```bash
-  export MCP_INDEX_GENERATION_RETENTION=3  # Keep live plus three rollback generations
+  export MCP_INDEX_GENERATION_RETENTION=3  # Keep live plus three previous generations
   ```
 
 ## Cloud Sync Configuration (Optional)

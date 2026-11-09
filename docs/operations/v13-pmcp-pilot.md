@@ -157,7 +157,11 @@ each affected repository after installing the corrective package. Restarting or
 running an incremental sync can retain unchanged files with missing definitions.
 Back up the registry, client configuration and index using the existing recovery
 procedure, retain prior generations, and run the installed command in the same
-lexical environment as the downstream child:
+lexical environment as the downstream child. Builds that include
+Consiliency/Code-Index-MCP#114 prune generations they published beyond the live one
+plus `MCP_INDEX_GENERATION_RETENTION` previous generations; generations from before
+that upgrade are never pruned. To keep a specific later generation, copy it outside
+`generations/` or create an empty `generations/<id>.keep` pin before rebuilding:
 
 ```bash
 mcp-index repository sync --repo-id <id> --force-full

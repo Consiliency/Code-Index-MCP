@@ -33,8 +33,16 @@ legacy thread-only utility contract.
 Rebuilds write a sibling staging database, validate durable rows, and publish a
 unique `generations/<generation>.db` path. They do not replace an active database
 or unlink its WAL/SHM. Old files and held reader transactions survive. No eager
-generation reclamation is promised; since Consiliency/Code-Index-MCP#114 a successful
-publication prunes only generations older than the configured rollback window. Publication interruption leaves the old
+generation reclamation is promised. Since Consiliency/Code-Index-MCP#114, pruning
+removes only generations recorded in `generations/generation-history.json` as
+published and since superseded beyond the live generation plus
+`MCP_INDEX_GENERATION_RETENTION` previous generations, or as failed beyond the newest
+failure. Unrecorded (for example pre-upgrade) generations, registry-referenced and
+pinned (`<id>.keep`) generations are never removed. Borrowers are protected without a
+cross-process registry: a generation whose SQLite sidecars exist, or that any process
+the server can inspect through `/proc` has open, is skipped; on POSIX an unlinked file
+stays readable to existing descriptors; and the immediately previous generation is
+always retained. Publication interruption leaves the old
 registration fenced until a validated rebuild succeeds. Failed in-place updates
 remain unavailable; recovery never deletes live SQLite/Qdrant data to simulate
 rollback.
