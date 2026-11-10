@@ -1,3 +1,4 @@
+import functools
 import inspect
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -145,20 +146,59 @@ def _construction_parameters(target: Any) -> list[inspect.Parameter]:
             method = target.__new__
         else:
             return []
-        try:
-            parameters = list(inspect.signature(method).parameters.values())
-        except (TypeError, ValueError):
-            return []
-        if parameters and parameters[0].kind in (
-            inspect.Parameter.POSITIONAL_ONLY,
-            inspect.Parameter.POSITIONAL_OR_KEYWORD,
-        ):
-            parameters = parameters[1:]  # self / cls
-        return parameters
+        return _hook_parameters(method)
     try:
         return list(inspect.signature(target).parameters.values())
     except (TypeError, ValueError):
         return []
+
+
+def _hook_parameters(method: Any) -> list[inspect.Parameter]:
+    """Parameters of a class's ``__init__``/``__new__`` without ``self``/``cls``."""
+    try:
+        parameters = list(inspect.signature(method).parameters.values())
+    except (TypeError, ValueError):
+        return []
+    if parameters and parameters[0].kind in (
+        inspect.Parameter.POSITIONAL_ONLY,
+        inspect.Parameter.POSITIONAL_OR_KEYWORD,
+    ):
+        parameters = parameters[1:]  # self / cls
+    return parameters
+
+
+def _custom_new_parameters(target: Any) -> list[inspect.Parameter]:
+    """``__new__`` parameters when a class defines both a custom ``__new__`` and ``__init__``."""
+    if not isinstance(target, type):
+        return []
+    init = getattr(target, "__init__", None)
+    new = getattr(target, "__new__", object.__new__)
+    if init is None or init is object.__init__ or new is object.__new__:
+        return []
+    return _hook_parameters(new)
+
+
+def _prebound_semantic(target: Any) -> bool:
+    """Whether a ``functools.partial`` already binds a truthy ``enable_semantic``."""
+    if not isinstance(target, functools.partial):
+        return False
+    try:
+        bound = inspect.signature(target.func).bind_partial(*target.args, **target.keywords)
+    except (TypeError, ValueError):
+        return bool(target.keywords.get("enable_semantic"))
+    return bool(bound.arguments.get("enable_semantic"))
+
+
+def _semantic_enabled_on(plugin: Any) -> bool:
+    """Whether a constructed plugin ended up with plugin-level semantic search on.
+
+    Reads the instance's own attributes only, so test doubles that synthesize
+    any attribute (``MagicMock``) are not mistaken for enabled plugins.
+    """
+    state = getattr(plugin, "__dict__", None)
+    if not isinstance(state, dict):
+        return False
+    return state.get("_enable_semantic") is True or state.get("_semantic_indexer") is not None
 
 
 def construct_plugin(plugin_cls: Any, *, sqlite_store: Any = None, enable_semantic: bool = False):
@@ -176,6 +216,12 @@ def construct_plugin(plugin_cls: Any, *, sqlite_store: Any = None, enable_semant
     triggering a retry with different arguments.
     """
     values = {"sqlite_store": sqlite_store, "enable_semantic": bool(enable_semantic)}
+    label = getattr(plugin_cls, "__qualname__", plugin_cls)
+    if not enable_semantic and _prebound_semantic(plugin_cls):
+        raise TypeError(
+            f"{label!r} pre-binds enable_semantic=True; plugin-level semantic search "
+            "is deprecated and construct_plugin will not enable it implicitly"
+        )
     parameters = _construction_parameters(plugin_cls)
 
     # Positional-only parameters can only be passed positionally, in order. Fill
@@ -193,7 +239,7 @@ def construct_plugin(plugin_cls: Any, *, sqlite_store: Any = None, enable_semant
             positional.append(parameter.default)
         else:
             raise TypeError(
-                f"{getattr(plugin_cls, '__qualname__', plugin_cls)!r} requires positional-only argument "
+                f"{label!r} requires positional-only argument "
                 f"{parameter.name!r}, which construct_plugin cannot supply"
             )
     positional = positional[:supplied]
@@ -206,4 +252,20 @@ def construct_plugin(plugin_cls: Any, *, sqlite_store: Any = None, enable_semant
         kwargs["sqlite_store"] = sqlite_store
     if "enable_semantic" not in passed and "enable_semantic" in named:
         kwargs["enable_semantic"] = values["enable_semantic"]
-    return plugin_cls(*positional, **kwargs)
+    elif "enable_semantic" not in passed and var_keyword:
+        # A custom __new__ that names the flag also receives __init__'s kwargs.
+        new_named = {
+            p.name for p in _custom_new_parameters(plugin_cls) if p.kind in _NAMED_PARAMETER_KINDS
+        }
+        if "enable_semantic" in new_named:
+            kwargs["enable_semantic"] = values["enable_semantic"]
+    plugin = plugin_cls(*positional, **kwargs)
+    # Fail closed for constructors introspection cannot see through (opaque
+    # signatures, wrappers): a plugin that still enabled the deprecated
+    # plugin-level semantic path is refused rather than returned.
+    if not enable_semantic and _semantic_enabled_on(plugin):
+        raise RuntimeError(
+            f"{label!r} enabled plugin-level semantic search although "
+            "enable_semantic=False was requested; refusing the plugin (#121)"
+        )
+    return plugin

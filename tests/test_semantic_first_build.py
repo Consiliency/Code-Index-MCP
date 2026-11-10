@@ -747,6 +747,52 @@ class TestCentralConstructorAndSandbox:
         # Bare **kwargs never implies plugin-level semantic support.
         assert received == [("s", False), {"sqlite_store": "s"}]
 
+    def test_construct_plugin_passes_flag_to_custom_new_behind_kwargs_init(self):
+        received = []
+
+        class _NewAndKwargsInit:
+            def __new__(cls, sqlite_store=None, enable_semantic=True, **_kwargs):
+                received.append(enable_semantic)
+                return super().__new__(cls)
+
+            def __init__(self, **kwargs):
+                pass
+
+        construct_plugin(_NewAndKwargsInit, sqlite_store=None, enable_semantic=False)
+
+        assert received == [False]
+
+    def test_construct_plugin_rejects_partial_prebinding_semantic(self):
+        import functools
+
+        def factory(sqlite_store=None, enable_semantic=False):
+            return object()
+
+        with pytest.raises(TypeError, match="pre-binds enable_semantic=True"):
+            construct_plugin(functools.partial(factory, None, True), enable_semantic=False)
+        with pytest.raises(TypeError, match="pre-binds enable_semantic=True"):
+            construct_plugin(
+                functools.partial(factory, enable_semantic=True), enable_semantic=False
+            )
+        # A partial that binds nothing semantic still constructs.
+        assert construct_plugin(functools.partial(factory, None), enable_semantic=False)
+
+    def test_construct_plugin_refuses_plugin_that_enabled_semantic_anyway(self):
+        class _Opaque:
+            # Introspection sees no enable_semantic, but the plugin turns it on.
+            def __init__(self, *args, **kwargs):
+                self._enable_semantic = True
+
+        with pytest.raises(RuntimeError, match="enabled plugin-level semantic search"):
+            construct_plugin(_Opaque, sqlite_store=None, enable_semantic=False)
+
+    def test_construct_plugin_guard_ignores_mock_attributes(self):
+        from unittest.mock import MagicMock
+
+        plugin = construct_plugin(MagicMock, sqlite_store=None, enable_semantic=False)
+
+        assert isinstance(plugin, MagicMock)
+
     def test_sandbox_instantiate_positional_only_semantic_off(self):
         from mcp_server.sandbox import worker_main
 
