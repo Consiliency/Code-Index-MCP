@@ -161,9 +161,88 @@ def test_serialized_response_keys(tmp_path):
         "last_indexed_commit",
         "index_path",
         "remediation",
+        "coverage",
     }
     assert readiness.to_dict()["state"] == "ready"
     assert readiness.to_dict()["code"] is None
+    # No degradation marker: complete coverage (#117).
+    assert readiness.to_dict()["coverage"] == {"state": "complete"}
+
+
+def _write_degradation_marker(index_path: Path, value: str) -> None:
+    with sqlite3.connect(index_path) as conn:
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS index_config "
+            "(config_key TEXT PRIMARY KEY, config_value TEXT, description TEXT)"
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO index_config (config_key, config_value) VALUES (?, ?)",
+            ("grammar_degradation", value),
+        )
+
+
+@pytest.fixture
+def grammar_set(monkeypatch):
+    """Fake the offline grammar set (no pack, no network)."""
+    from mcp_server.plugins.language_registry import get_required_grammars
+    from mcp_server.utils import grammar_cache
+
+    state = {"missing": set()}
+
+    def cached():
+        return sorted(set(get_required_grammars()) - state["missing"])
+
+    monkeypatch.setattr(grammar_cache, "cached_grammars", cached)
+    monkeypatch.setattr(grammar_cache, "_offline_grammars", None)
+
+    def set_missing(*names):
+        state["missing"] = set(names)
+        grammar_cache._offline_grammar_set(refresh=True)
+
+    return set_missing
+
+
+def test_coverage_degraded_keeps_state_ready(tmp_path, grammar_set):
+    """#117: a generation that left a language out stays ``ready`` and reports
+    the left-out language, its missing grammar and the deferred file count."""
+    grammar_set("rust")
+    info = make_repo_info(tmp_path)
+    _write_degradation_marker(
+        Path(info.index_path),
+        '{"version": 1, "languages": {"rust": {"grammars": ["rust"], "deferred_files": 3}}}',
+    )
+    readiness = ReadinessClassifier.classify_registered(info)
+    assert readiness.state == RepositoryReadinessState.READY and readiness.ready
+    assert readiness.coverage_degraded
+    coverage = readiness.to_dict()["coverage"]
+    assert coverage["state"] == "degraded"
+    assert coverage["unavailable_languages"] == ["rust"]
+    assert coverage["missing_grammars"] == ["rust"]
+    assert coverage["deferred_files"] == 3
+    assert coverage["recoverable"] is False
+    assert "grammars prefetch" in coverage["remediation"]
+
+    # Once the grammar loads, the same generation is reported recoverable.
+    grammar_set()
+    coverage = ReadinessClassifier.classify_registered(info).coverage
+    assert coverage["state"] == "degraded" and coverage["recoverable"] is True
+
+
+def test_coverage_unreadable_marker_is_degraded_not_complete(tmp_path, grammar_set):
+    info = make_repo_info(tmp_path)
+    _write_degradation_marker(Path(info.index_path), '{"version": 99}')
+    readiness = ReadinessClassifier.classify_registered(info)
+    assert readiness.ready
+    assert readiness.coverage["state"] == "degraded"
+    assert readiness.coverage["unreadable"] is True
+    assert readiness.coverage["recoverable"] is False
+
+
+def test_coverage_is_unknown_without_an_index(tmp_path):
+    readiness = ReadinessClassifier.classify_registered(
+        make_repo_info(tmp_path, missing_index=True)
+    )
+    assert readiness.to_dict()["coverage"] is None
 
 
 def _seed_semantic_rows(

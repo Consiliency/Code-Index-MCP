@@ -8,14 +8,19 @@ import sqlite3
 import subprocess
 import threading
 from collections import OrderedDict
+from contextlib import closing
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Any, Optional
 
 from mcp_server.storage.repo_identity import compute_repo_id
-from mcp_server.storage.sqlite_store import evaluate_chunk_scheme
+from mcp_server.storage.sqlite_store import evaluate_chunk_scheme, read_grammar_degradation
 from mcp_server.utils.subprocess_env import get_full_env
+
+#: ``coverage.state`` values (Consiliency/Code-Index-MCP#117).
+COVERAGE_COMPLETE = "complete"
+COVERAGE_DEGRADED = "degraded"
 
 
 class RepositoryReadinessState(str, Enum):
@@ -59,6 +64,12 @@ class RepositoryReadiness:
     last_indexed_commit: Optional[str] = None
     index_path: Optional[str] = None
     remediation: Optional[str] = None
+    #: Language coverage of the published generation
+    #: (Consiliency/Code-Index-MCP#117): ``{"state": "complete"}``, or
+    #: ``{"state": "degraded", ...}`` when languages were left out because
+    #: their grammars were unavailable. Additive: ``state`` stays ``ready``.
+    #: None when no index could be inspected.
+    coverage: Optional[dict[str, Any]] = None
 
     @property
     def ready(self) -> bool:
@@ -67,6 +78,10 @@ class RepositoryReadiness:
     @property
     def code(self) -> Optional[str]:
         return None if self.ready else self.state.value
+
+    @property
+    def coverage_degraded(self) -> bool:
+        return bool(self.coverage) and self.coverage.get("state") == COVERAGE_DEGRADED
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -83,6 +98,7 @@ class RepositoryReadiness:
             "last_indexed_commit": self.last_indexed_commit,
             "index_path": self.index_path,
             "remediation": self.remediation,
+            "coverage": self.coverage,
         }
 
 
@@ -231,9 +247,101 @@ def _inspect_index_snapshot(
     return None
 
 
+_coverage_marker_cache: OrderedDict[tuple[str, _IndexSignature], Optional[dict]] = OrderedDict()
+_coverage_marker_cache_lock = threading.Lock()
+_UNREAD = object()
+
+
+def _read_coverage_marker(index_path: Path) -> Any:
+    """Return the generation's grammar-degradation marker, cached by file signature.
+
+    Returns ``_UNREAD`` when the database cannot be read, so the caller reports
+    unknown coverage instead of complete.
+    """
+    key = (str(index_path), _index_integrity_signature(index_path))
+    with _coverage_marker_cache_lock:
+        if key in _coverage_marker_cache:
+            _coverage_marker_cache.move_to_end(key)
+            return _coverage_marker_cache[key]
+    try:
+        with closing(sqlite3.connect(index_path.resolve().as_uri() + "?mode=ro", uri=True)) as conn:
+            marker = read_grammar_degradation(conn)
+    except (sqlite3.Error, OSError, ValueError):
+        return _UNREAD
+    with _coverage_marker_cache_lock:
+        for stale in [cached for cached in _coverage_marker_cache if cached[0] == key[0]]:
+            _coverage_marker_cache.pop(stale, None)
+        _coverage_marker_cache[key] = marker
+        while len(_coverage_marker_cache) > _HEALTHY_INDEX_CACHE_SIZE:
+            _coverage_marker_cache.popitem(last=False)
+    return marker
+
+
+def coverage_from_marker(marker: Optional[dict]) -> dict[str, Any]:
+    """Build the readiness ``coverage`` object from a degradation marker.
+
+    ``recoverable`` is true when every left-out language's grammars load now,
+    so the next sync re-indexes those files. It reads the grammar set the
+    process last loaded and never re-reads the cache itself: the ref poller
+    and sync do that.
+    """
+    if not marker:
+        return {"state": COVERAGE_COMPLETE}
+    from mcp_server.utils import grammar_cache
+
+    entries = marker.get("languages") or {}
+    languages = sorted(entries)
+    missing = sorted({grammar for entry in entries.values() for grammar in entry["grammars"]})
+    deferred = sum(entry["deferred_files"] for entry in entries.values())
+    unreadable = bool(marker.get("unreadable"))
+    recoverable = (
+        not unreadable
+        and bool(languages)
+        and not grammar_cache.unavailable_languages(languages, refresh=False)
+    )
+    if unreadable:
+        remediation = (
+            "This index records left-out languages in a format this version cannot "
+            "read; run reindex to rebuild it."
+        )
+    elif recoverable:
+        remediation = (
+            "The missing grammars now load; the next sync or reindex indexes the " "deferred files."
+        )
+    else:
+        remediation = (
+            "Files in these languages are not indexed and never appear in results. Run "
+            "`mcp-index grammars prefetch` as the service user (or set "
+            "TREE_SITTER_LANGUAGE_PACK_LIBS_DIR); the next sync then indexes them."
+        )
+    coverage: dict[str, Any] = {
+        "state": COVERAGE_DEGRADED,
+        "unavailable_languages": languages,
+        "missing_grammars": missing,
+        "deferred_files": deferred,
+        "recoverable": recoverable,
+        "remediation": remediation,
+    }
+    if unreadable:
+        coverage["unreadable"] = True
+    return coverage
+
+
+def classify_coverage(index_path: Optional[Path]) -> Optional[dict[str, Any]]:
+    """Return the coverage object for a published index (None if unreadable)."""
+    if index_path is None or not index_path.exists():
+        return None
+    marker = _read_coverage_marker(index_path)
+    if marker is _UNREAD:
+        return None
+    return coverage_from_marker(marker)
+
+
 def _clear_index_inspection_cache() -> None:
     with _healthy_index_cache_lock:
         _healthy_index_cache.clear()
+    with _coverage_marker_cache_lock:
+        _coverage_marker_cache.clear()
 
 
 class ReadinessClassifier:
@@ -274,6 +382,7 @@ class ReadinessClassifier:
 
         state = RepositoryReadinessState.READY
         remediation = None
+        coverage = None
 
         if live_git_required and (current_branch is None or current_commit is None):
             state = RepositoryReadinessState.UNREGISTERED_REPOSITORY
@@ -292,6 +401,12 @@ class ReadinessClassifier:
             remediation = "Run reindex or pull the latest artifact for this repository."
         else:
             db_state = cls._inspect_index(index_path)
+            if db_state not in {
+                RepositoryReadinessState.INDEX_LOCKED,
+                RepositoryReadinessState.CORRUPT_SQLITE,
+                RepositoryReadinessState.MISSING_SCHEMA,
+            }:
+                coverage = classify_coverage(index_path)
 
             if db_state == RepositoryReadinessState.INDEX_LOCKED:
                 state = RepositoryReadinessState.INDEX_LOCKED
@@ -347,6 +462,7 @@ class ReadinessClassifier:
             last_indexed_commit=last_indexed_commit,
             index_path=str(index_path) if index_path else None,
             remediation=remediation,
+            coverage=coverage,
         )
 
     @classmethod

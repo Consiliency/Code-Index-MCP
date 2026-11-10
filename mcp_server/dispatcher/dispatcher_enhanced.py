@@ -127,10 +127,24 @@ class IndexResult:
     actual_hash: str | None
     error: str | None = None
     semantic: Optional[Dict[str, Any]] = None
+    #: Registry language of a ``grammar_unavailable`` failure (#117).
+    language: str | None = None
 
 
 #: Prefix of the mutation error the indexer reports for a file no plugin stores.
 NO_PLUGIN_ERROR_PREFIX = "No plugin for "
+
+#: Prefix of the mutation error for a file whose grammar cannot load offline.
+GRAMMAR_UNAVAILABLE_ERROR_PREFIX = "grammar_unavailable:"
+
+
+def is_grammar_unavailable_result(mutation: IndexResult) -> bool:
+    """Return True when the file failed only because its grammar is unavailable."""
+    return (
+        mutation.status == IndexResultStatus.ERROR
+        and bool(mutation.error)
+        and str(mutation.error).startswith(GRAMMAR_UNAVAILABLE_ERROR_PREFIX)
+    )
 
 
 _NOT_ADMITTED_ERROR = re.compile(r"^No plugin for .* \((?P<reason>[a-z_]+)\)$", re.DOTALL)
@@ -2600,6 +2614,7 @@ class EnhancedDispatcher:
                         observed_hash=None,
                         actual_hash=None,
                         error=grammar_error,
+                        language=plugin_language,
                     )
             try:
                 self._persist_index_shard(ctx, path, content, plugin_language, shard)
@@ -2674,6 +2689,9 @@ class EnhancedDispatcher:
             )
 
         except RuntimeError as e:
+            grammar_result = self._grammar_unavailable_result(path, e)
+            if grammar_result is not None:
+                return grammar_result
             # No plugin found for this file type
             logger.debug(f"No plugin for {path}: {type(e).__name__}")
             return IndexResult(
@@ -2684,6 +2702,9 @@ class EnhancedDispatcher:
                 error=str(e),
             )
         except Exception as e:
+            grammar_result = self._grammar_unavailable_result(path, e)
+            if grammar_result is not None:
+                return grammar_result
             logger.error(f"Error indexing {path}: {type(e).__name__}")
             return IndexResult(
                 status=IndexResultStatus.ERROR,
@@ -2692,6 +2713,37 @@ class EnhancedDispatcher:
                 actual_hash=None,
                 error=str(e),
             )
+
+    def _grammar_unavailable_result(self, path: Path, exc: BaseException) -> Optional[IndexResult]:
+        """Report a plugin failure caused by a missing grammar as ``grammar_unavailable``.
+
+        A plugin can fail before the post-parse check runs: the TypeScript
+        plugin loads the ``javascript`` and ``tsx`` grammars when it is
+        constructed, so a missing one raised an unrelated error for ``.ts``
+        files (Consiliency/Code-Index-MCP#117). Files the admission predicate
+        rejected keep their ``No plugin for`` error.
+        """
+        message = str(exc)
+        if _NOT_ADMITTED_ERROR.match(message):
+            return None
+        from mcp_server.utils import grammar_cache
+
+        if isinstance(exc, grammar_cache.GrammarUnavailableError):
+            language = exc.language
+            error = message
+        else:
+            language = get_language_by_extension(path.suffix.lower())
+            error = self._grammar_unavailable_error(language)
+            if error is None:
+                return None
+        return IndexResult(
+            status=IndexResultStatus.ERROR,
+            path=path,
+            observed_hash=None,
+            actual_hash=None,
+            error=error,
+            language=language,
+        )
 
     def _build_exact_bounded_json_shard(
         self, path: Path, content: str, workspace_root: Path
@@ -2931,6 +2983,7 @@ class EnhancedDispatcher:
                     observed_hash=expected_hash,
                     actual_hash=actual_hash,
                     error=grammar_error,
+                    language=language,
                 )
             try:
                 self._persist_index_shard(ctx, path, content, language, shard)

@@ -438,12 +438,25 @@ async def handle_symbol_lookup(
         }
         if readiness is not None:
             response_data["readiness"] = readiness.to_dict()
+            if readiness.coverage_degraded:
+                # The symbol may live in a language this generation left out
+                # because its grammar was unavailable (#117).
+                response_data["coverage"] = readiness.coverage
+                response_data["note"] = _coverage_note(readiness.coverage)
         if sqlite_store is not None:
             validation_result = validate_index(sqlite_store, Path.cwd())
             if not validation_result["valid"]:
                 response_data["index_issues"] = validation_result["issues"]
                 response_data["suggestion"] = "Index may be stale. Run 'reindex' tool."
         return [types.TextContent(type="text", text=_ensure_response(response_data))]
+
+
+def _coverage_note(coverage: dict) -> str:
+    languages = ", ".join(coverage.get("unavailable_languages") or []) or "unknown"
+    return (
+        f"Index coverage is degraded: files in {languages} are not indexed because "
+        "their tree-sitter grammars are unavailable, so results never include them."
+    )
 
 
 async def handle_search_code(
@@ -560,6 +573,9 @@ async def handle_search_code(
     history_repos = list(result.history_repos)
     include_source_metadata = result.include_source_metadata
     readiness = result.readiness
+    coverage = getattr(result, "coverage", None)
+    if not (isinstance(coverage, dict) and coverage.get("state") == "degraded"):
+        coverage = None
     semantic_readiness = result.semantic_readiness
     semantic_profile_id = (
         semantic_readiness.get("profile_id")
@@ -709,8 +725,18 @@ async def handle_search_code(
                 "indexing_in_progress": True,
                 "note": "Initial index is still building — results may be incomplete",
             }
+        elif coverage is not None:
+            # Like indexing-in-progress, degraded coverage switches the bare
+            # list to the envelope so the caller sees what is missing (#117).
+            search_response = {"results": results_data, "query": query}
         else:
             search_response = results_data
+        if coverage is not None and isinstance(search_response, dict):
+            search_response["coverage"] = coverage
+            note = _coverage_note(coverage)
+            search_response["note"] = (
+                f"{search_response['note']}; {note}" if search_response.get("note") else note
+            )
         return [types.TextContent(type="text", text=_ensure_response(search_response))]
     else:
         response_data: dict = {
@@ -744,6 +770,9 @@ async def handle_search_code(
             )
         if _indexing_active:
             response_data["indexing_in_progress"] = True
+        if coverage is not None:
+            response_data["coverage"] = coverage
+            response_data["note"] = _coverage_note(coverage)
         return [types.TextContent(type="text", text=_ensure_response(response_data))]
 
 
@@ -874,6 +903,7 @@ async def handle_get_status(
             }
         )
 
+    repositories = _build_repositories(repo_resolver, dispatcher)
     status_data = {
         "status": health.get("status", "operational"),
         "version": server_version,
@@ -905,8 +935,14 @@ async def handle_get_status(
             "client": client_name,
             "session_available": current_session is not None,
         },
-        "repositories": _build_repositories(repo_resolver, dispatcher),
-        "grammars": _grammar_status(),
+        "repositories": repositories,
+        "grammars": _grammar_status(
+            [
+                str(row.get("repo_id"))
+                for row in repositories
+                if isinstance(row, dict) and row.get("coverage_status") == "degraded"
+            ]
+        ),
     }
     availability_rows = PluginFactory.get_plugin_availability()
     counts: dict[str, int] = {}
@@ -917,23 +953,25 @@ async def handle_get_status(
     return [types.TextContent(type="text", text=_ensure_response(status_data))]
 
 
-def _grammar_status() -> dict:
+def _grammar_status(repositories_degraded: Optional[list] = None) -> dict:
     """Tree-sitter grammar availability (#116 review S3).
 
     ``state`` is ``grammar_unavailable`` when a registry grammar is missing
-    from the local cache and libs dir, or the libs dir is unsafe; files in
-    the listed languages then fail indexing instead of publishing chunkless.
+    from the local cache and libs dir, or ``libs_dir_unsafe`` when every
+    grammar loads but the libs dir fails its checks. ``repositories_degraded``
+    lists repositories whose published generation left languages out (#117).
     """
     try:
         from mcp_server.utils import grammar_cache
 
-        return grammar_cache.grammar_status()
+        return grammar_cache.grammar_status(repositories_degraded=repositories_degraded)
     except Exception as exc:  # noqa: BLE001 - status must not fail
         return {
             "state": "grammar_unavailable",
             "ready": False,
             "missing_grammars": [],
             "languages": [],
+            "repositories_degraded": sorted(repositories_degraded or []),
             "error": f"{type(exc).__name__}: {exc}",
             "remediation": "Run `mcp-index grammars check` for details.",
         }

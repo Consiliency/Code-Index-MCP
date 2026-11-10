@@ -220,6 +220,52 @@ CHUNK_SCHEME_MARKER_KEY = "chunk_identity_scheme"
 CHUNK_IDENTITY_ALGORITHM_KEY = "chunk_identity_algorithm"
 CHUNK_SCHEME_REBUILD_KEY = "chunk_scheme_rebuild_target"
 
+#: ``index_config`` key of the grammar-degradation marker: the languages a
+#: staged build left out because their tree-sitter grammars were unavailable
+#: (Consiliency/Code-Index-MCP#117). Value: ``{"version": 1, "languages":
+#: {language: {"grammars": [...], "deferred_files": n}}}``. Absent on a
+#: complete generation. Binaries older than #117 ignore it.
+GRAMMAR_DEGRADATION_KEY = "grammar_degradation"
+GRAMMAR_DEGRADATION_VERSION = 1
+
+
+def read_grammar_degradation(conn: sqlite3.Connection) -> Optional[Dict[str, Any]]:
+    """Return the grammar-degradation marker of an index, or None when complete.
+
+    A marker this binary cannot parse (corrupt, or written by a newer
+    version) is returned as degraded with ``unreadable: True`` and no
+    languages, so it is never mistaken for complete coverage.
+    """
+    raw = _scheme_read_config_value(conn, GRAMMAR_DEGRADATION_KEY)
+    if raw is None:
+        return None
+    try:
+        value = json.loads(raw)
+    except (TypeError, ValueError):
+        value = None
+    languages = value.get("languages") if isinstance(value, dict) else None
+    if (
+        not isinstance(value, dict)
+        or value.get("version") != GRAMMAR_DEGRADATION_VERSION
+        or not isinstance(languages, dict)
+        or not all(
+            isinstance(name, str) and isinstance(entry, dict) for name, entry in languages.items()
+        )
+    ):
+        return {"version": None, "languages": {}, "unreadable": True}
+    normalized: Dict[str, Dict[str, Any]] = {}
+    for name, entry in sorted(languages.items()):
+        grammars = entry.get("grammars")
+        deferred = entry.get("deferred_files")
+        normalized[name] = {
+            "grammars": (
+                sorted(str(item) for item in grammars) if isinstance(grammars, list) else []
+            ),
+            "deferred_files": deferred if isinstance(deferred, int) and deferred >= 0 else 0,
+        }
+    return {"version": GRAMMAR_DEGRADATION_VERSION, "languages": normalized}
+
+
 #: ``code_chunks.chunk_type`` value used for synthetic history/document rows that
 #: are NOT produced by the tree-sitter chunker and must survive a rebuild.
 PRESERVED_CHUNK_TYPE = "document"
@@ -1970,6 +2016,54 @@ class SQLiteStore:
 
     def _delete_config(self, conn: sqlite3.Connection, key: str) -> None:
         conn.execute("DELETE FROM index_config WHERE config_key = ?", (key,))
+
+    def get_grammar_degradation(self) -> Optional[Dict[str, Any]]:
+        """Return this generation's grammar-degradation marker (None: complete)."""
+        with self._get_connection() as conn:
+            return read_grammar_degradation(conn)
+
+    def set_grammar_degradation(
+        self, conn: sqlite3.Connection, value: Optional[Dict[str, Any]]
+    ) -> None:
+        """Write (or, with None, clear) the grammar-degradation marker (#117)."""
+        if not value or not value.get("languages"):
+            self._delete_config(conn, GRAMMAR_DEGRADATION_KEY)
+            return
+        self._set_config(
+            conn,
+            GRAMMAR_DEGRADATION_KEY,
+            json.dumps(
+                {"version": GRAMMAR_DEGRADATION_VERSION, "languages": value["languages"]},
+                sort_keys=True,
+            ),
+            "Languages left out because their tree-sitter grammars were unavailable",
+        )
+
+    def stored_paths_for_languages(self, languages) -> List[str]:
+        """Return relative paths of stored files in any of ``languages``.
+
+        A file matches by its stored ``language`` or by the registry language
+        of its extension, so chunkless rows a generation copied forward match
+        too (Consiliency/Code-Index-MCP#117).
+        """
+        from ..plugins.language_registry import get_language_by_extension
+
+        wanted = {language for language in languages if language}
+        if not wanted:
+            return []
+        with self._get_connection() as conn:
+            rows = conn.execute("SELECT relative_path, language FROM files").fetchall()
+        return sorted(
+            {
+                str(relative)
+                for relative, language in rows
+                if relative
+                and (
+                    language in wanted
+                    or get_language_by_extension(Path(str(relative)).suffix.lower()) in wanted
+                )
+            }
+        )
 
     def get_chunk_scheme_marker(self) -> Optional[str]:
         """Return the persisted chunk-identity-scheme marker, or None if unmarked."""

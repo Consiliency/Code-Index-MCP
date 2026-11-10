@@ -32,7 +32,8 @@ import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Iterable, List, Optional, Sequence
+from types import MappingProxyType
+from typing import Callable, Iterable, List, Mapping, Optional, Sequence, Tuple
 from urllib.parse import urlsplit
 
 logger = logging.getLogger(__name__)
@@ -559,48 +560,134 @@ def _offline_grammar_set(refresh: bool = False) -> frozenset:
     return _offline_grammars
 
 
-def unavailable_grammar(language: Optional[str]) -> Optional[str]:
-    """Return the pack grammar ``language`` needs when it cannot load offline.
+def grammars_for_language(language: Optional[str]) -> Tuple[str, ...]:
+    """Return every pack grammar a registry language's plugin needs to load.
 
-    ``None`` means the language needs no grammar (plaintext, unknown codes) or
-    its grammar is in the local cache or the shared libs dir. A miss re-reads
-    the cache once, so a prefetch that ran after startup is picked up.
+    Empty for languages that need none (``plaintext``, document-plugin
+    languages such as ``markdown``) and for unknown codes. ``typescript``
+    needs ``typescript``, ``tsx`` and ``javascript``: its plugin loads all
+    three (Consiliency/Code-Index-MCP#117).
     """
     if not language:
-        return None
+        return ()
     from mcp_server.plugins.language_registry import (
         LANGUAGE_CONFIGS,
+        PLUGIN_EXTRA_GRAMMARS_BY_LANGUAGE,
         PLUGIN_GRAMMARLESS_LANGUAGES,
         get_grammar_name,
     )
 
     if language not in LANGUAGE_CONFIGS or language in PLUGIN_GRAMMARLESS_LANGUAGES:
-        return None
+        return ()
     grammar = get_grammar_name(language)
     if not grammar:
-        return None
+        return ()
+    names = [grammar]
+    for extra in PLUGIN_EXTRA_GRAMMARS_BY_LANGUAGE.get(language, ()):
+        if extra not in names:
+            names.append(extra)
+    return tuple(names)
+
+
+def _missing_from(language: Optional[str], available: frozenset) -> List[str]:
+    return [
+        grammar
+        for grammar in grammars_for_language(language)
+        if grammar not in available and _symbol(grammar) not in available
+    ]
+
+
+def unavailable_grammar(language: Optional[str]) -> Optional[str]:
+    """Return a pack grammar ``language`` needs that cannot load offline.
+
+    ``None`` means the language needs no grammar (plaintext, unknown codes) or
+    every grammar it needs (:func:`grammars_for_language`) is in the local
+    cache or the shared libs dir. A miss re-reads the cache once, so a
+    prefetch that ran after startup is picked up.
+    """
+    missing: List[str] = []
     for refresh in (False, True):
-        available = _offline_grammar_set(refresh=refresh)
-        if grammar in available or _symbol(grammar) in available:
+        missing = _missing_from(language, _offline_grammar_set(refresh=refresh))
+        if not missing:
             return None
-    return grammar
+    return missing[0]
 
 
-def grammar_status() -> dict:
+#: Coverage state of a published generation that left out languages whose
+#: grammars were unavailable (Consiliency/Code-Index-MCP#117).
+GRAMMAR_DEGRADED = "degraded"
+#: Coverage state of a generation that indexed every admitted file.
+GRAMMAR_COMPLETE = "complete"
+
+
+@dataclass(frozen=True)
+class GrammarAvailability:
+    """Which registry languages cannot load their grammars, decided once.
+
+    A staged build takes one snapshot when it starts and defers the listed
+    languages for the whole build, so a grammar that arrives mid-build never
+    leaves half a language in the generation (Consiliency/Code-Index-MCP#117).
+    ``unavailable`` maps each such language to its missing grammars.
+    """
+
+    unavailable: Mapping[str, Tuple[str, ...]] = field(default_factory=lambda: MappingProxyType({}))
+
+    @property
+    def complete(self) -> bool:
+        return not self.unavailable
+
+    def defers(self, language: Optional[str]) -> bool:
+        return bool(language) and language in self.unavailable
+
+    def missing(self, language: Optional[str]) -> Tuple[str, ...]:
+        return tuple(self.unavailable.get(language or "", ()))
+
+
+def snapshot_availability(refresh: bool = True) -> GrammarAvailability:
+    """Return the registry languages whose grammars cannot load offline now.
+
+    Reads the cache and libs dir once (re-reading first when ``refresh``).
+    Only loadability counts: an unsafe libs dir whose grammars all load is
+    complete coverage, reported separately as ``libs_dir_unsafe``.
+    """
+    from mcp_server.plugins.language_registry import LANGUAGE_CONFIGS
+
+    available = _offline_grammar_set(refresh=refresh)
+    unavailable = {}
+    for language in sorted(LANGUAGE_CONFIGS):
+        missing = _missing_from(language, available)
+        if missing:
+            unavailable[language] = tuple(missing)
+    return GrammarAvailability(MappingProxyType(unavailable))
+
+
+def unavailable_languages(languages: Iterable[str], *, refresh: bool = False) -> dict:
+    """Return ``{language: missing grammars}`` for those that cannot load.
+
+    Unlike :func:`unavailable_grammar` this does not re-read the cache on a
+    miss unless ``refresh``, so status surfaces can call it on every request.
+    """
+    available = _offline_grammar_set(refresh=refresh)
+    result = {}
+    for language in languages:
+        missing = _missing_from(language, available)
+        if missing:
+            result[language] = tuple(missing)
+    return result
+
+
+def grammar_status(repositories_degraded: Optional[Sequence[str]] = None) -> dict:
     """Summarize grammar availability for ``get_status`` (offline, no loading).
 
     ``ready`` is false only when files in some language fail indexing: a
     missing grammar that only a document plugin's language names (markdown)
     affects nothing. An unsafe libs dir with every grammar available is its
     own state, ``libs_dir_unsafe``: indexing is unaffected, but the operator
-    must fix the directory.
+    must fix the directory. ``repositories_degraded`` lists the registered
+    repositories whose published generation left languages out
+    (Consiliency/Code-Index-MCP#117).
     """
-    from mcp_server.plugins.language_registry import (
-        EXTRA_PLUGIN_GRAMMAR_LANGUAGES,
-        LANGUAGE_CONFIGS,
-        PLUGIN_GRAMMARLESS_LANGUAGES,
-        get_grammar_name,
-    )
+    from mcp_server.plugins.language_registry import LANGUAGE_CONFIGS
 
     try:
         missing = missing_grammars()
@@ -608,19 +695,12 @@ def grammar_status() -> dict:
     except Exception as exc:  # noqa: BLE001 - report, never raise from status
         missing = get_required_grammars()
         error = f"{type(exc).__name__}: {exc}"
-    missing_set = set(missing)
-    affected = {
+    missing_set = frozenset(missing)
+    languages = sorted(
         language
         for language in LANGUAGE_CONFIGS
-        if language not in PLUGIN_GRAMMARLESS_LANGUAGES
-        and get_grammar_name(language) in missing_set
-    }
-    affected.update(
-        language
-        for grammar, language in EXTRA_PLUGIN_GRAMMAR_LANGUAGES.items()
-        if grammar in missing_set
+        if any(grammar in missing_set for grammar in grammars_for_language(language))
     )
-    languages = sorted(affected)
     libs_problems = libs_dir_problems()
     ready = not languages and error is None
     libs = libs_dir()
@@ -637,6 +717,7 @@ def grammar_status() -> dict:
         "languages": languages,
         "libs_dir": str(libs) if libs else None,
         "libs_dir_problems": libs_problems,
+        "repositories_degraded": sorted(repositories_degraded or []),
         "remediation": None,
     }
     if error is not None:

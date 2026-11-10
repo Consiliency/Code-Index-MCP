@@ -970,3 +970,144 @@ def test_incompatible_scheme_still_skips_summarization(monkeypatch):
     blanket open of the gate)."""
     assert _run_summarization_gate(monkeypatch, "mismatch") is False
     assert _run_summarization_gate(monkeypatch, "rebuilding") is False
+
+
+_DEGRADED_COVERAGE = {
+    "state": "degraded",
+    "unavailable_languages": ["rust"],
+    "missing_grammars": ["rust"],
+    "deferred_files": 2,
+    "recoverable": False,
+    "remediation": "Run `mcp-index grammars prefetch`.",
+}
+
+
+def _ready_resolver(worktree: Path, coverage):
+    ctx = MagicMock()
+    ctx.registry_entry = SimpleNamespace(path=worktree)
+    resolver = FakeResolver(
+        RepositoryReadiness(
+            state=RepositoryReadinessState.READY,
+            repository_id="repo-1",
+            repository_name="repo",
+            requested_path=str(worktree),
+            coverage=coverage,
+        )
+    )
+    resolver.resolve = lambda _path: ctx
+    return resolver
+
+
+@pytest.mark.parametrize("hits", [True, False])
+def test_search_envelope_carries_coverage_when_degraded(tmp_path, monkeypatch, hits):
+    """#117: degraded coverage switches the bare result list to the envelope,
+    like indexing-in-progress does, and names the left-out languages."""
+    from mcp_server.cli.tool_handlers import handle_search_code
+
+    monkeypatch.setenv("MCP_ALLOWED_ROOTS", str(tmp_path))
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    dispatcher = MagicMock()
+    dispatcher.search.return_value = (
+        [{"file": "src/app.py", "line": 3, "snippet": "def app():"}] if hits else []
+    )
+    result = _run(
+        handle_search_code(
+            arguments={"query": "app", "repository": str(worktree)},
+            dispatcher=dispatcher,
+            repo_resolver=_ready_resolver(worktree, _DEGRADED_COVERAGE),
+        )
+    )
+    data = _parsed(result)
+    assert isinstance(data, dict)
+    assert data["coverage"] == _DEGRADED_COVERAGE
+    assert "rust" in data["note"]
+    assert len(data["results"]) == (1 if hits else 0)
+
+
+def test_search_keeps_bare_list_when_coverage_complete(tmp_path, monkeypatch):
+    from mcp_server.cli.tool_handlers import handle_search_code
+
+    monkeypatch.setenv("MCP_ALLOWED_ROOTS", str(tmp_path))
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    dispatcher = MagicMock()
+    dispatcher.search.return_value = [{"file": "src/app.py", "line": 3, "snippet": "x"}]
+    result = _run(
+        handle_search_code(
+            arguments={"query": "app", "repository": str(worktree)},
+            dispatcher=dispatcher,
+            repo_resolver=_ready_resolver(worktree, {"state": "complete"}),
+        )
+    )
+    assert isinstance(_parsed(result), list)
+
+
+def test_symbol_lookup_not_found_carries_coverage_when_degraded(tmp_path, monkeypatch):
+    from mcp_server.cli.tool_handlers import handle_symbol_lookup
+
+    monkeypatch.setenv("MCP_ALLOWED_ROOTS", str(tmp_path))
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    dispatcher = MagicMock()
+    dispatcher.lookup.return_value = None
+    result = _run(
+        handle_symbol_lookup(
+            arguments={"symbol": "parse_config", "repository": str(worktree)},
+            dispatcher=dispatcher,
+            repo_resolver=_ready_resolver(worktree, _DEGRADED_COVERAGE),
+        )
+    )
+    data = _parsed(result)
+    assert data["result"] == "not_found"
+    assert data["coverage"] == _DEGRADED_COVERAGE
+    assert data["readiness"]["state"] == "ready"
+    assert data["readiness"]["coverage"] == _DEGRADED_COVERAGE
+
+
+def test_get_status_health_row_coverage(tmp_path, monkeypatch):
+    """#117: the health row and the grammars block report a degraded repository."""
+    from mcp_server.cli.tool_handlers import handle_get_status
+    from mcp_server.dispatcher.simple_dispatcher import SimpleDispatcher
+    from mcp_server.health import repo_status
+    from mcp_server.utils import grammar_cache
+
+    monkeypatch.setattr(grammar_cache, "missing_grammars", lambda: ["rust"])
+    monkeypatch.setattr(grammar_cache, "libs_dir_problems", lambda: [])
+    degraded = RepositoryReadiness(
+        state=RepositoryReadinessState.READY,
+        repository_id="repo-1",
+        coverage=_DEGRADED_COVERAGE,
+    )
+    monkeypatch.setattr(
+        repo_status.ReadinessClassifier,
+        "classify_registered",
+        classmethod(lambda cls, *_a, **_k: degraded),
+    )
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    info = RepositoryInfo(
+        repository_id="repo-1",
+        name="repo",
+        path=repo_path,
+        index_path=repo_path / ".mcp-index" / "current.db",
+        language_stats={},
+        total_files=0,
+        total_symbols=0,
+        indexed_at=datetime.now(),
+        tracked_branch="main",
+        git_common_dir=str(repo_path / ".git"),
+    )
+    registry = MagicMock()
+    registry.get_all_repositories.return_value = {"repo-1": info}
+    resolver = MagicMock()
+    resolver._registry = registry
+
+    data = _parsed(
+        _run(handle_get_status(arguments={}, dispatcher=SimpleDispatcher(), repo_resolver=resolver))
+    )
+    row = data["repositories"][0]
+    assert row["readiness"] == "ready" and row["ready"] is True
+    assert row["coverage_status"] == "degraded"
+    assert row["coverage"] == _DEGRADED_COVERAGE
+    assert data["grammars"]["repositories_degraded"] == ["repo-1"]
