@@ -350,3 +350,46 @@ def test_disabled_registration_never_probes_or_indexes(
     poller._poll_one(info)
     manager.sync_repository_index.assert_not_called()
     manager.enqueue_full_rescan.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# #117: repair degraded grammar coverage when the tip is unchanged
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "recoverable,expected_calls",
+    [(frozenset({"rust"}), 1), (frozenset(), 0), (None, 0)],
+)
+def test_unchanged_tip_repairs_recoverable_grammar_coverage(tmp_path, recoverable, expected_calls):
+    """With the tip unchanged, the poller syncs only when languages the published
+    generation left out now have loadable grammars."""
+    from mcp_server.watcher.ref_poller import RefPoller
+
+    repo = _make_git_repo(tmp_path)
+    repo_info = _make_repo_info(repo, _head_sha(repo))
+    manager = MagicMock()
+    if recoverable is not None:
+        manager.recoverable_degraded_languages.return_value = recoverable
+    # recoverable None: a MagicMock return value is never mistaken for a set.
+    resolver = MagicMock()
+    resolver.classify.return_value = None
+    poller = RefPoller(MagicMock(), manager, MagicMock(), resolver)
+
+    poller._poll_one(repo_info)
+
+    assert manager.sync_repository_index.call_count == expected_calls
+    manager.enqueue_full_rescan.assert_not_called()
+
+
+def test_coverage_check_failure_never_triggers_a_sync(tmp_path):
+    from mcp_server.watcher.ref_poller import RefPoller
+
+    repo = _make_git_repo(tmp_path)
+    repo_info = _make_repo_info(repo, _head_sha(repo))
+    manager = MagicMock()
+    manager.recoverable_degraded_languages.side_effect = RuntimeError("boom")
+    resolver = MagicMock()
+    resolver.classify.return_value = None
+    RefPoller(MagicMock(), manager, MagicMock(), resolver)._poll_one(repo_info)
+    manager.sync_repository_index.assert_not_called()

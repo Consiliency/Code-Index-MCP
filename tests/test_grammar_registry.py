@@ -442,6 +442,104 @@ def test_unavailable_grammar_skips_document_plugin_languages(monkeypatch, fresh_
     assert grammar_cache.unavailable_grammar("rust") == "rust"
 
 
+def test_grammars_for_language_counts_every_grammar_a_plugin_loads():
+    """#117: the TypeScript plugin loads ``tsx`` and ``javascript`` too."""
+    assert grammar_cache.grammars_for_language("typescript") == (
+        "typescript",
+        "tsx",
+        "javascript",
+    )
+    assert grammar_cache.grammars_for_language("c_sharp") == ("csharp",)
+    assert grammar_cache.grammars_for_language("markdown") == ()
+    assert grammar_cache.grammars_for_language("plaintext") == ()
+    assert grammar_cache.grammars_for_language("not-a-language") == ()
+    assert grammar_cache.grammars_for_language(None) == ()
+
+
+def _all_but(*missing):
+    wanted = set(get_required_grammars()) - set(missing)
+    return lambda: sorted(wanted)
+
+
+@pytest.mark.parametrize("missing", ["tsx", "javascript"])
+def test_typescript_needs_tsx_and_javascript_grammars(monkeypatch, fresh_offline_set, missing):
+    """#117: a missing ``tsx`` grammar no longer lets ``.tsx`` files parse with
+    the TypeScript grammar, and a missing ``javascript`` grammar is reported
+    for ``.ts`` files instead of breaking the plugin with an unrelated error."""
+    monkeypatch.setattr(grammar_cache, "cached_grammars", _all_but(missing))
+    assert grammar_cache.unavailable_grammar("typescript") == missing
+    availability = grammar_cache.snapshot_availability()
+    assert availability.defers("typescript")
+    assert availability.missing("typescript") == (missing,)
+    assert not availability.defers("python")
+
+    monkeypatch.setattr(grammar_cache, "missing_grammars", lambda: [missing])
+    monkeypatch.setattr(grammar_cache, "libs_dir_problems", lambda: [])
+    expected = ["javascript", "typescript"] if missing == "javascript" else ["typescript"]
+    assert grammar_cache.grammar_status()["languages"] == expected
+
+
+def test_snapshot_availability_complete_on_a_prefetched_host(monkeypatch, fresh_offline_set):
+    monkeypatch.setattr(grammar_cache, "cached_grammars", _all_but())
+    availability = grammar_cache.snapshot_availability()
+    assert availability.complete and dict(availability.unavailable) == {}
+
+
+def test_unsafe_libs_dir_with_every_grammar_loading_is_complete_coverage(
+    monkeypatch, fresh_offline_set
+):
+    """#117: ``libs_dir_unsafe`` is an operator problem, not missing coverage."""
+    monkeypatch.setattr(grammar_cache, "cached_grammars", _all_but())
+    monkeypatch.setattr(grammar_cache, "missing_grammars", lambda: [])
+    monkeypatch.setattr(grammar_cache, "libs_dir_problems", lambda: ["/x: group-writable"])
+    assert grammar_cache.grammar_status()["state"] == "libs_dir_unsafe"
+    assert grammar_cache.snapshot_availability().complete
+
+
+def test_snapshot_availability_ignores_document_plugin_grammars(monkeypatch, fresh_offline_set):
+    monkeypatch.setattr(grammar_cache, "cached_grammars", _all_but("markdown", "rust"))
+    availability = grammar_cache.snapshot_availability()
+    assert dict(availability.unavailable) == {"rust": ("rust",)}
+
+
+class _BrokenTypeScriptPlugin:
+    """Fails the way the TypeScript plugin does when a grammar it loads is missing."""
+
+    lang = "typescript"
+    language = "typescript"
+
+    def supports(self, path):
+        return str(path).endswith(".ts")
+
+    def bind(self, ctx):
+        return None
+
+    def indexFile(self, path, content):
+        raise ValueError("Incompatible Language version")
+
+
+def test_missing_javascript_grammar_fails_ts_files_as_grammar_unavailable(
+    monkeypatch, tmp_path, fresh_offline_set
+):
+    from mcp_server.dispatcher import EnhancedDispatcher
+
+    monkeypatch.setattr(grammar_cache, "cached_grammars", _all_but("javascript"))
+    repo, store, ctx = _rust_repo(tmp_path)
+    (repo / "main.rs").unlink()
+    (repo / "app.ts").write_text("export const x = 1;\n", encoding="utf-8")
+    dispatcher = EnhancedDispatcher(
+        plugins=[_BrokenTypeScriptPlugin()],
+        use_plugin_factory=False,
+        enable_advanced_features=False,
+        semantic_search_enabled=False,
+    )
+    result = dispatcher.index_file(ctx, repo / "app.ts")
+    assert result.error.startswith("grammar_unavailable:"), result.error
+    assert result.language == "typescript"
+    assert "'javascript'" in result.error
+    assert _indexed_paths(store) == []
+
+
 def test_get_status_reports_grammar_state(monkeypatch):
     import asyncio
     import json
@@ -527,6 +625,94 @@ def test_index_directory_fails_closed_for_an_unavailable_grammar(monkeypatch, tm
     assert stats["failed_files"] == 1
     assert any("grammar_unavailable" in error for error in stats["errors"]), stats
     assert _indexed_paths(store) == []
+
+
+def _chunkless_plugin(language, *suffixes):
+    class _Plugin(_ChunklessRustPlugin):
+        lang = language
+
+        def supports(self, path):
+            return str(path).endswith(suffixes)
+
+        def indexFile(self, path, content):
+            return {"file": str(path), "symbols": [], "language": language}
+
+    _Plugin.language = language
+    return _Plugin()
+
+
+def _opt_in_dispatcher(*plugins):
+    from mcp_server.dispatcher import EnhancedDispatcher
+
+    return EnhancedDispatcher(
+        plugins=list(plugins),
+        use_plugin_factory=False,
+        enable_advanced_features=False,
+        semantic_search_enabled=False,
+    )
+
+
+def test_index_directory_defers_unavailable_language_when_opted_in(
+    monkeypatch, tmp_path, fresh_offline_set
+):
+    """#117: with an availability snapshot, files of a language whose grammar
+    is missing are skipped (deferred), not failed and not stored."""
+    monkeypatch.setattr(grammar_cache, "cached_grammars", _all_but("rust"))
+    repo, store, ctx = _rust_repo(tmp_path)
+    (repo / "README.md").write_text("# Title\n", encoding="utf-8")
+    dispatcher = _opt_in_dispatcher(_ChunklessRustPlugin(), _MarkdownDocumentPlugin())
+    stats = dispatcher.index_directory(
+        ctx, repo, grammar_availability=grammar_cache.snapshot_availability()
+    )
+    assert stats["failed_files"] == 0, stats
+    assert stats["indexed_files"] == 1
+    assert stats["deferred_files"] == 1
+    assert stats["degraded_languages"] == {"rust": {"grammars": ["rust"], "files": 1}}
+    assert [path.rsplit("/", 1)[-1] for path in _indexed_paths(store)] == ["README.md"]
+
+
+def test_index_directory_defers_a_grammar_lost_mid_build(monkeypatch, tmp_path):
+    """A grammar that disappears after the snapshot is deferred, not failed."""
+    repo, store, ctx = _rust_repo(tmp_path)
+    monkeypatch.setattr(grammar_cache, "unavailable_grammar", lambda language: "rust")
+    stats = _opt_in_dispatcher(_ChunklessRustPlugin()).index_directory(
+        ctx, repo, grammar_availability=grammar_cache.GrammarAvailability()
+    )
+    assert stats["failed_files"] == 0 and stats["deferred_files"] == 1, stats
+    assert set(stats["degraded_languages"]) == {"rust"}
+    assert _indexed_paths(store) == []
+
+
+@pytest.mark.parametrize("missing", ["tsx", "javascript"])
+def test_missing_typescript_plugin_grammar_defers_typescript(
+    monkeypatch, tmp_path, fresh_offline_set, missing
+):
+    """#117: ``.ts`` and ``.tsx`` both defer when ``tsx`` or ``javascript`` is
+    missing; ``.tsx`` is never parsed with the TypeScript grammar instead."""
+    monkeypatch.setattr(grammar_cache, "cached_grammars", _all_but(missing))
+    repo, store, ctx = _rust_repo(tmp_path)
+    (repo / "app.ts").write_text("export const a = 1;\n", encoding="utf-8")
+    (repo / "view.tsx").write_text("export const V = () => <div />;\n", encoding="utf-8")
+    (repo / "main.js").write_text("const b = 2;\n", encoding="utf-8")
+    dispatcher = _opt_in_dispatcher(
+        _ChunklessRustPlugin(),
+        _chunkless_plugin("typescript", ".ts", ".tsx"),
+        _chunkless_plugin("javascript", ".js"),
+    )
+    stats = dispatcher.index_directory(
+        ctx, repo, grammar_availability=grammar_cache.snapshot_availability()
+    )
+    assert stats["failed_files"] == 0, stats
+    degraded = stats["degraded_languages"]
+    assert degraded["typescript"] == {"grammars": [missing], "files": 2}
+    stored = {path.rsplit("/", 1)[-1] for path in _indexed_paths(store)}
+    assert not {"app.ts", "view.tsx"} & stored
+    if missing == "javascript":
+        assert degraded["javascript"] == {"grammars": ["javascript"], "files": 1}
+        assert stored == {"main.rs"}
+    else:
+        assert set(degraded) == {"typescript"}
+        assert stored == {"main.rs", "main.js"}
 
 
 class _MarkdownDocumentPlugin:

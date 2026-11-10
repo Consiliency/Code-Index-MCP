@@ -912,3 +912,46 @@ def test_rows_a_rebuild_retains_are_not_delete_drift(tmp_path):
         assert drift_calls == []
     finally:
         store.close()
+
+
+# ---------------------------------------------------------------------------
+# #117 review: languages left out for unavailable grammars are not drift
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("marked", [True, False])
+def test_sweep_ignores_files_of_marker_deferred_languages(tmp_path, marked):
+    """Files of a language the published generation left out (grammar
+    unavailable) have no rows; they must not count as drift, which would force
+    a full rebuild on every new tree or restart. The sync/poller repair indexes
+    them once the grammar loads."""
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "lib.rs").write_text("pub fn add() {}\n")
+    store = _make_sqlite_store(tmp_path)
+    store.create_repository(str(root), "repo")
+    if marked:
+        with store._get_connection() as conn:
+            store.set_grammar_degradation(
+                conn,
+                {"version": 1, "languages": {"rust": {"grammars": ["rust"], "deferred_files": 1}}},
+            )
+    calls, drift = [], []
+    sweeper = WatcherSweeper(
+        on_missed_path=lambda repo, path: calls.append((repo, path)),
+        repo_roots_provider=lambda: {"repo": root},
+        store=store,
+    )
+    drift_sweeper = WatcherSweeper(
+        None, lambda: {"repo": root}, store, on_repository_drift=drift.append
+    )
+    try:
+        if marked:
+            assert sweeper.sweep_once() == [] and calls == []
+            assert drift_sweeper.sweep_once() == [] and drift == []
+        else:
+            # Control: without the marker a missing rust row is drift.
+            assert sweeper.sweep_once() == ["repo"]
+            assert calls == [("repo", "lib.rs")]
+    finally:
+        store.close()

@@ -430,6 +430,32 @@ def test_archive_rejects_future_sqlite_schema(tmp_path: Path):
         )
 
 
+def test_upload_refuses_degraded_generation(tmp_path: Path):
+    """#117: a generation that left languages out is never archived for upload."""
+    repo = tmp_path / "repo"
+    index_path = repo / ".mcp-index" / "current.db"
+    _sqlite_db(index_path)
+    with sqlite3.connect(index_path) as conn:
+        conn.execute(
+            "INSERT INTO index_config(config_key, config_value) VALUES (?, ?)",
+            (
+                "grammar_degradation",
+                json.dumps(
+                    {
+                        "version": 1,
+                        "languages": {"rust": {"grammars": ["rust"], "deferred_files": 4}},
+                    }
+                ),
+            ),
+        )
+    uploader = IndexArtifactUploader(repo="owner/repo")
+    with pytest.raises(ValueError, match="coverage is degraded.*rust"):
+        uploader.compress_indexes(
+            tmp_path / "archive.tar.gz", repo_path=repo, index_path=index_path
+        )
+    assert not (tmp_path / "archive.tar.gz").exists()
+
+
 def test_metadata_only_rejects_schema_override(tmp_path: Path):
     index_path = tmp_path / "current.db"
     _sqlite_db(index_path)

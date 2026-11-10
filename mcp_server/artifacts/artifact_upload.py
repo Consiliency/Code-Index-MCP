@@ -119,6 +119,7 @@ class IndexArtifactUploader:
             Path(index_location) if index_location is not None else repo_root / ".mcp-index"
         )
         db_path = Path(index_path) if index_path is not None else index_root / "current.db"
+        self._refuse_degraded_generation(db_path)
         exporter = SecureIndexExporter(
             repo_path=repo_root,
             index_location=index_root,
@@ -138,6 +139,27 @@ class IndexArtifactUploader:
         print(f"Archive created: {output_path} ({size} bytes)")
         print(f"Files included: {stats['files_included']}; excluded: {stats['files_excluded']}")
         return output_path, checksum, size
+
+    @staticmethod
+    def _refuse_degraded_generation(db_path: Path) -> None:
+        """Never publish a generation that left languages out (#117).
+
+        Another host would hydrate it as complete coverage, and binaries
+        older than #117 ignore the marker.
+        """
+        from mcp_server.storage.sqlite_store import read_grammar_degradation
+
+        if not db_path.is_file():
+            return
+        with closing(sqlite3.connect(db_path.resolve().as_uri() + "?mode=ro", uri=True)) as conn:
+            marker = read_grammar_degradation(conn)
+        if marker:
+            languages = ", ".join(sorted(marker.get("languages") or {})) or "unknown"
+            raise ValueError(
+                "Index coverage is degraded (left out because their tree-sitter grammars "
+                f"were unavailable: {languages}); run `mcp-index grammars prefetch` and "
+                "reindex before publishing an artifact"
+            )
 
     def _calculate_checksum(self, file_path: Path) -> str:
         sha256 = hashlib.sha256()

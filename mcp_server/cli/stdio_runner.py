@@ -1111,9 +1111,10 @@ class _StdioOutput:
 def _log_grammar_availability() -> None:
     """Warn loudly at startup when registry grammars cannot load offline.
 
-    Files in those languages fail indexing (``grammar_unavailable``) instead
-    of being indexed without chunks; ``get_status`` reports the same state
-    (#116 review S3).
+    Files in those languages are never indexed without chunks: staged
+    rebuilds leave the languages out and publish the rest with degraded
+    coverage (#117); other index paths fail them (``grammar_unavailable``).
+    ``get_status`` reports the same state (#116 review S3).
     """
     try:
         from mcp_server.utils import grammar_cache
@@ -1126,7 +1127,8 @@ def _log_grammar_availability() -> None:
         return
     logger.error(
         "Tree-sitter grammars unavailable offline for %d language(s) (%s)%s. "
-        "Indexing those files fails until fixed. %s",
+        "Staged rebuilds leave those languages out (coverage degraded); other "
+        "index paths fail their files until fixed. %s",
         len(status["languages"]),
         ", ".join(status["languages"]) or "none",
         (

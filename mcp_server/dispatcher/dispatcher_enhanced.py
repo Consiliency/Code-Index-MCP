@@ -13,7 +13,7 @@ import threading
 import time
 from contextlib import ExitStack, closing, contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from functools import wraps
 from pathlib import Path
@@ -127,10 +127,24 @@ class IndexResult:
     actual_hash: str | None
     error: str | None = None
     semantic: Optional[Dict[str, Any]] = None
+    #: Registry language of a ``grammar_unavailable`` failure (#117).
+    language: str | None = None
 
 
 #: Prefix of the mutation error the indexer reports for a file no plugin stores.
 NO_PLUGIN_ERROR_PREFIX = "No plugin for "
+
+#: Prefix of the mutation error for a file whose grammar cannot load offline.
+GRAMMAR_UNAVAILABLE_ERROR_PREFIX = "grammar_unavailable:"
+
+
+def is_grammar_unavailable_result(mutation: IndexResult) -> bool:
+    """Return True when the file failed only because its grammar is unavailable."""
+    return (
+        mutation.status == IndexResultStatus.ERROR
+        and bool(mutation.error)
+        and str(mutation.error).startswith(GRAMMAR_UNAVAILABLE_ERROR_PREFIX)
+    )
 
 
 _NOT_ADMITTED_ERROR = re.compile(r"^No plugin for .* \((?P<reason>[a-z_]+)\)$", re.DOTALL)
@@ -2600,6 +2614,7 @@ class EnhancedDispatcher:
                         observed_hash=None,
                         actual_hash=None,
                         error=grammar_error,
+                        language=plugin_language,
                     )
             try:
                 self._persist_index_shard(ctx, path, content, plugin_language, shard)
@@ -2674,6 +2689,9 @@ class EnhancedDispatcher:
             )
 
         except RuntimeError as e:
+            grammar_result = self._grammar_unavailable_result(path, e)
+            if grammar_result is not None:
+                return grammar_result
             # No plugin found for this file type
             logger.debug(f"No plugin for {path}: {type(e).__name__}")
             return IndexResult(
@@ -2684,6 +2702,9 @@ class EnhancedDispatcher:
                 error=str(e),
             )
         except Exception as e:
+            grammar_result = self._grammar_unavailable_result(path, e)
+            if grammar_result is not None:
+                return grammar_result
             logger.error(f"Error indexing {path}: {type(e).__name__}")
             return IndexResult(
                 status=IndexResultStatus.ERROR,
@@ -2692,6 +2713,37 @@ class EnhancedDispatcher:
                 actual_hash=None,
                 error=str(e),
             )
+
+    def _grammar_unavailable_result(self, path: Path, exc: BaseException) -> Optional[IndexResult]:
+        """Report a plugin failure caused by a missing grammar as ``grammar_unavailable``.
+
+        A plugin can fail before the post-parse check runs: the TypeScript
+        plugin loads the ``javascript`` and ``tsx`` grammars when it is
+        constructed, so a missing one raised an unrelated error for ``.ts``
+        files (Consiliency/Code-Index-MCP#117). Files the admission predicate
+        rejected keep their ``No plugin for`` error.
+        """
+        message = str(exc)
+        if _NOT_ADMITTED_ERROR.match(message):
+            return None
+        from mcp_server.utils import grammar_cache
+
+        if isinstance(exc, grammar_cache.GrammarUnavailableError):
+            language = exc.language
+            error = message
+        else:
+            language = get_language_by_extension(path.suffix.lower())
+            error = self._grammar_unavailable_error(language)
+            if error is None:
+                return None
+        return IndexResult(
+            status=IndexResultStatus.ERROR,
+            path=path,
+            observed_hash=None,
+            actual_hash=None,
+            error=error,
+            language=language,
+        )
 
     def _build_exact_bounded_json_shard(
         self, path: Path, content: str, workspace_root: Path
@@ -2931,6 +2983,7 @@ class EnhancedDispatcher:
                     observed_hash=expected_hash,
                     actual_hash=actual_hash,
                     error=grammar_error,
+                    language=language,
                 )
             try:
                 self._persist_index_shard(ctx, path, content, language, shard)
@@ -3755,8 +3808,21 @@ class EnhancedDispatcher:
         recursive: bool = True,
         progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
         cancel_check: Optional[Callable[[], bool]] = None,
+        grammar_availability: Any = None,
     ) -> Dict[str, Any]:
-        """Index all files in a directory, respecting ignore patterns."""
+        """Index all files in a directory, respecting ignore patterns.
+
+        ``grammar_availability`` (a ``grammar_cache.GrammarAvailability``) opts
+        in to per-language degradation (Consiliency/Code-Index-MCP#117): files
+        of a language it lists are skipped before any plugin runs, and a file
+        that still fails with ``grammar_unavailable`` is deferred instead of
+        failed. Both are reported in ``deferred_files`` and
+        ``degraded_languages``; the caller must drop every stored row of those
+        languages. ``None`` (the default) keeps the fail-closed behaviour. A
+        complete snapshot skips nothing up front but still defers a file whose
+        grammar is lost mid-build; ``deferred_files``/``degraded_languages``
+        then appear only once a file is deferred.
+        """
         directory = self._input_path(ctx, directory)
         logger.info(f"Indexing directory: {directory} (recursive={recursive})")
 
@@ -3788,6 +3854,19 @@ class EnhancedDispatcher:
             "low_level_blocker": None,
             "storage_diagnostics": None,
         }
+        if grammar_availability is not None and not grammar_availability.complete:
+            stats["deferred_files"] = 0
+            stats["degraded_languages"] = {}
+
+        def defer(language: Optional[str], grammars) -> None:
+            # Added on first use when the snapshot was complete, so a walk
+            # that defers nothing returns the same stats as before #117.
+            stats["deferred_files"] = stats.get("deferred_files", 0) + 1
+            entry = stats.setdefault("degraded_languages", {}).setdefault(
+                language or "unknown", {"grammars": [], "files": 0}
+            )
+            entry["files"] += 1
+            entry["grammars"] = sorted(set(entry["grammars"]) | set(grammars or ()))
 
         def emit_progress(stage: str, stage_family: str, blocker_source: str) -> None:
             if progress_callback is None:
@@ -3857,6 +3936,13 @@ class EnhancedDispatcher:
                 stats["ignored_files"] += 1
                 continue
 
+            if grammar_availability is not None:
+                file_language = get_language_by_extension(path.suffix.lower())
+                if grammar_availability.defers(file_language):
+                    # Decided once for the whole build: never half a language.
+                    defer(file_language, grammar_availability.missing(file_language))
+                    continue
+
             try:
                 mutation = self._index_file_with_lexical_timeout(
                     ctx,
@@ -3864,6 +3950,18 @@ class EnhancedDispatcher:
                     stats,
                     progress_callback=emit_progress,
                 )
+                if grammar_availability is not None and is_grammar_unavailable_result(mutation):
+                    # The grammar disappeared after the build started.
+                    from mcp_server.utils import grammar_cache
+
+                    language = mutation.language or get_language_by_extension(path.suffix.lower())
+                    defer(
+                        language,
+                        grammar_cache.unavailable_languages([language] if language else []).get(
+                            language, ()
+                        ),
+                    )
+                    continue
                 if mutation.status == IndexResultStatus.INDEXED:
                     stats["indexed_files"] += 1
                     semantically_indexed_paths.append(path.resolve())
@@ -3985,6 +4083,12 @@ class EnhancedDispatcher:
         logger.info(
             f"Directory indexing complete: {stats['indexed_files']} indexed, "
             f"{stats['ignored_files']} ignored, {stats['failed_files']} failed"
+            + (
+                f", {stats['deferred_files']} deferred (grammar unavailable: "
+                f"{', '.join(sorted(stats['degraded_languages']))})"
+                if stats.get("deferred_files")
+                else ""
+            )
         )
 
         return stats
@@ -4425,6 +4529,8 @@ class EnhancedDispatcher:
             expected_prompt_fingerprint=semantic_contract.get("prompt_fingerprint"),
         )
 
+        move_record: Dict[str, Any] = {}
+
         def _sqlite_primary() -> Tuple[str, str]:
             nonlocal content_hash
             if content_hash is None:
@@ -4444,6 +4550,8 @@ class EnhancedDispatcher:
                 new_relative,
                 repository_id=repository_id,
                 content_hash=content_hash,
+                # Only staged moves can be deferred later (#117).
+                **({"move_record": move_record} if ctx.staging else {}),
             )
             if not moved:
                 raise FileNotFoundError(old_relative)
@@ -4480,6 +4588,19 @@ class EnhancedDispatcher:
                     self._file_cache.pop(str(old_path), None)
                     self._file_cache.pop(str(new_path), None)
                 indexed = self.index_file(ctx, new_path, do_semantic=False)
+                if is_grammar_unavailable_result(indexed):
+                    # Keep the cause and language so a staged build can defer
+                    # the language instead of failing (#117). The moved row is
+                    # chunkless; the caller drops it with the rest of the
+                    # language. Any other caller still sees an error. The move
+                    # never happened as far as the generation is concerned, so
+                    # its exact file_moves record goes too.
+                    if move_record.get("id") is not None:
+                        store.delete_file_move(move_record["id"])
+                    with self._file_cache_lock:
+                        self._file_cache.pop(str(old_path), None)
+                        self._file_cache.pop(str(new_path), None)
+                    return replace(indexed, path=new_path)
                 if indexed.status != IndexResultStatus.INDEXED:
                     raise RuntimeError("Renamed committed content was not reindexed")
             semantic_stats = None

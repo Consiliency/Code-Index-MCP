@@ -7096,3 +7096,788 @@ def test_incremental_update_aggregates_semantic_mutation_stats(tmp_path):
     assert result.semantic["semantic_indexed"] == 1
     assert result.semantic["vectors_deleted"] == 2
     assert result.semantic["summaries_preserved"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Per-language degradation when a grammar is unavailable (#117)
+# ---------------------------------------------------------------------------
+
+_DEGRADED_FILES = {
+    "hello.py": "def hello():\n    return 1\n",
+    "other.py": "def other():\n    return 2\n",
+    "lib.rs": "pub fn add(a: i32, b: i32) -> i32 {\n    a + b\n}\n",
+    "README.md": "# Title\n\nSome text.\n",
+    # Enough files that a three-file commit stays incremental.
+    **{f"pkg/mod{i}.py": f"def mod{i}():\n    return {i}\n" for i in range(4)},
+}
+
+
+def _git_commit_all(repo: Path, message: str) -> None:
+    for args in (["add", "-A"], ["commit", "-q", "-m", message]):
+        subprocess.run(
+            ["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid", *args],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        )
+
+
+@pytest.fixture
+def grammar_availability(monkeypatch):
+    """Fake which grammars load offline; never touches the pack or the network."""
+    from mcp_server.plugins.language_registry import get_required_grammars
+    from mcp_server.utils import grammar_cache
+
+    state = {"missing": set()}
+    monkeypatch.setattr(
+        grammar_cache,
+        "cached_grammars",
+        lambda: sorted(set(get_required_grammars()) - state["missing"]),
+    )
+    monkeypatch.setattr(grammar_cache, "_offline_grammars", None)
+
+    def set_missing(*names):
+        state["missing"] = set(names)
+        grammar_cache._offline_grammar_set(refresh=True)
+        ReadinessClassifier.clear_index_inspection_cache()
+
+    return set_missing
+
+
+def _degraded_runtime(tmp_path, monkeypatch, files=None):
+    from mcp_server.dispatcher.dispatcher_enhanced import EnhancedDispatcher
+
+    monkeypatch.delenv("MCP_PLUGIN_SANDBOX_DISABLE", raising=False)
+    monkeypatch.setenv("MCP_INDEX_STORAGE_PATH", str(tmp_path / "indexes"))
+    monkeypatch.setenv("MCP_ALLOWED_ROOTS", str(tmp_path))
+    monkeypatch.setenv("MCP_ENABLE_MULTI_REPO", "false")
+    monkeypatch.chdir(tmp_path)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True)
+    for name, content in (files or _DEGRADED_FILES).items():
+        (repo / name).parent.mkdir(parents=True, exist_ok=True)
+        (repo / name).write_text(content)
+    (repo / ".git" / "info" / "exclude").write_text("/.mcp-index/\n")
+    _git_commit_all(repo, "init")
+    registry = RepositoryRegistry(tmp_path / "registry.json")
+    repo_id = registry.register_repository(str(repo))
+    registry.get(repo_id).index_path.parent.mkdir(parents=True, exist_ok=True)
+    dispatcher = EnhancedDispatcher(
+        plugins=[],
+        enable_advanced_features=False,
+        use_plugin_factory=False,
+        semantic_search_enabled=False,
+        memory_aware=False,
+        multi_repo_enabled=False,
+    )
+    return repo, registry, repo_id, dispatcher, GitAwareIndexManager(registry, dispatcher)
+
+
+@pytest.fixture
+def degraded_runtime(tmp_path, monkeypatch, grammar_availability):
+    runtime = _degraded_runtime(tmp_path, monkeypatch)
+    try:
+        yield runtime
+    finally:
+        runtime[3].shutdown()
+        if runtime[4].store_registry is not None:
+            runtime[4].store_registry.shutdown()
+
+
+def _published_info(registry, repo_id):
+    return RepositoryRegistry(registry.registry_path).get(repo_id)
+
+
+def _published_rows(registry, repo_id) -> dict:
+    info = _published_info(registry, repo_id)
+    with sqlite3.connect(info.index_path) as conn:
+        files = {row[0] for row in conn.execute("SELECT relative_path FROM files")}
+        symbols = {
+            row[0]
+            for row in conn.execute(
+                "SELECT f.relative_path FROM symbols s JOIN files f ON f.id = s.file_id"
+            )
+        }
+        chunks = {}
+        for path, chunk_id in conn.execute(
+            "SELECT f.relative_path, c.chunk_id FROM code_chunks c JOIN files f ON f.id = c.file_id"
+        ):
+            chunks.setdefault(path, set()).add(chunk_id)
+        fts = {
+            row[0]
+            for row in conn.execute(
+                "SELECT f.relative_path FROM fts_code t JOIN files f ON f.id = t.file_id"
+            )
+        }
+        marker = conn.execute(
+            "SELECT config_value FROM index_config WHERE config_key = 'grammar_degradation'"
+        ).fetchone()
+    return {
+        "files": files,
+        "symbols": symbols,
+        "chunks": chunks,
+        "fts": fts,
+        "marker": json.loads(marker[0]) if marker else None,
+    }
+
+
+_RUST_MARKER = {"version": 1, "languages": {"rust": {"grammars": ["rust"], "deferred_files": 1}}}
+
+
+def test_degraded_full_rebuild_publishes_other_languages(degraded_runtime, grammar_availability):
+    repo, registry, repo_id, _dispatcher, manager = degraded_runtime
+    grammar_availability("rust")
+
+    result = manager.sync_repository_index(repo_id, force_full=True)
+
+    assert result.action == "full_index", result.error
+    assert result.degraded_languages == _RUST_MARKER["languages"]
+    assert result.readiness["coverage"]["state"] == "degraded"
+    rows = _published_rows(registry, repo_id)
+    assert {"hello.py", "other.py", "README.md"} <= rows["files"]
+    assert "lib.rs" not in rows["files"] | rows["symbols"] | rows["fts"]
+    assert "lib.rs" not in rows["chunks"]
+    assert rows["marker"] == _RUST_MARKER
+    readiness = ReadinessClassifier.classify_registered(_published_info(registry, repo_id))
+    assert readiness.ready and readiness.state == RepositoryReadinessState.READY
+    assert readiness.coverage["state"] == "degraded"
+    assert readiness.coverage["unavailable_languages"] == ["rust"]
+    assert readiness.coverage["deferred_files"] == 1
+
+
+@pytest.mark.parametrize("second_build", ["full", "incremental"])
+def test_degraded_rebuild_purges_previous_rows_of_degraded_language(
+    degraded_runtime, grammar_availability, second_build
+):
+    """A grammar that goes missing drops every row of its language, including
+    rows the previous generation held, on full and incremental builds alike."""
+    repo, registry, repo_id, _dispatcher, manager = degraded_runtime
+    first = manager.sync_repository_index(repo_id, force_full=True)
+    assert first.action == "full_index", first.error
+    rows = _published_rows(registry, repo_id)
+    assert "lib.rs" in rows["files"] and "lib.rs" in rows["chunks"]
+    assert "lib.rs" in rows["fts"] and rows["marker"] is None
+
+    grammar_availability("rust")
+    if second_build == "full":
+        result = manager.sync_repository_index(repo_id, force_full=True)
+        assert result.action == "full_index", result.error
+    else:
+        (repo / "other.py").write_text("def other():\n    return 3\n")
+        _git_commit_all(repo, "touch python only")
+        result = manager.sync_repository_index(repo_id)
+        assert result.action == "incremental_update", result.error
+
+    rows = _published_rows(registry, repo_id)
+    assert "lib.rs" not in rows["files"] | rows["symbols"] | rows["fts"]
+    assert "lib.rs" not in rows["chunks"]
+    assert {"hello.py", "other.py"} <= rows["files"]
+    assert rows["marker"] == _RUST_MARKER
+
+
+def test_incremental_preserves_marker_and_unaffected_chunk_ids(
+    degraded_runtime, grammar_availability
+):
+    repo, registry, repo_id, _dispatcher, manager = degraded_runtime
+    grammar_availability("rust")
+    assert manager.sync_repository_index(repo_id, force_full=True).action == "full_index"
+    before = _published_rows(registry, repo_id)
+
+    (repo / "other.py").write_text("def other():\n    return 3\n")
+    (repo / "lib.rs").write_text("pub fn sub(a: i32, b: i32) -> i32 {\n    a - b\n}\n")
+    (repo / "more.rs").write_text("pub fn one() -> i32 {\n    1\n}\n")
+    _git_commit_all(repo, "change python and rust")
+    result = manager.sync_repository_index(repo_id)
+
+    assert result.action == "incremental_update", result.error
+    after = _published_rows(registry, repo_id)
+    assert after["chunks"]["hello.py"] == before["chunks"]["hello.py"]
+    assert not {"lib.rs", "more.rs"} & after["files"]
+    # Counted from the committed inputs, exactly as a full walk would.
+    assert after["marker"] == {
+        "version": 1,
+        "languages": {"rust": {"grammars": ["rust"], "deferred_files": 2}},
+    }
+
+
+def test_all_files_deferred_refuses_with_grammar_unavailable(
+    tmp_path, monkeypatch, grammar_availability
+):
+    repo, registry, repo_id, dispatcher, manager = _degraded_runtime(
+        tmp_path, monkeypatch, files={"lib.rs": _DEGRADED_FILES["lib.rs"]}
+    )
+    try:
+        grammar_availability("rust")
+        result = manager.sync_repository_index(repo_id, force_full=True)
+        assert result.action == "failed"
+        assert result.code == "grammar_unavailable"
+        assert "grammars prefetch" in result.error
+        info = _published_info(registry, repo_id)
+        assert ReadinessClassifier.classify_registered(info).state in {
+            RepositoryReadinessState.MISSING_INDEX,
+            RepositoryReadinessState.MISSING_PROVENANCE,
+        }
+    finally:
+        dispatcher.shutdown()
+        if manager.store_registry is not None:
+            manager.store_registry.shutdown()
+
+
+def test_prefetched_host_has_no_marker(degraded_runtime, grammar_availability):
+    """A host with every grammar loadable behaves exactly as before #117."""
+    repo, registry, repo_id, _dispatcher, manager = degraded_runtime
+    grammar_availability()
+    result = manager.sync_repository_index(repo_id, force_full=True)
+    assert result.action == "full_index", result.error
+    assert result.degraded_languages is None
+    assert result.readiness["coverage"] == {"state": "complete"}
+    rows = _published_rows(registry, repo_id)
+    assert rows["marker"] is None
+    assert {"hello.py", "other.py", "lib.rs"} <= rows["files"]
+    readiness = ReadinessClassifier.classify_registered(_published_info(registry, repo_id))
+    assert readiness.coverage == {"state": "complete"}
+
+
+_MORE_RS = "pub fn one() -> i32 {\n    1\n}\n"
+_RUST_LOST_MARKER = {
+    "version": 1,
+    "languages": {"rust": {"grammars": ["rust"], "deferred_files": 2}},
+}
+
+
+def _lose_grammar_after_first_indexed(
+    monkeypatch, dispatcher, grammar_availability, suffix, grammar
+):
+    """Make ``grammar`` unavailable right after the first ``suffix`` file indexes.
+
+    The build's availability snapshot was complete; the loss happens partway
+    through the walk (e.g. a language-pack upgrade clearing the cache), so one
+    file of the language is already in the stage when the next one fails.
+    """
+    real_index_file = dispatcher.index_file
+    seen = {"indexed": [], "lost": False}
+
+    def index_file(ctx, path, *args, **kwargs):
+        mutation = real_index_file(ctx, path, *args, **kwargs)
+        if (
+            not seen["lost"]
+            and Path(path).suffix == suffix
+            and mutation.status == IndexResultStatus.INDEXED
+        ):
+            seen["indexed"].append(Path(path).name)
+            seen["lost"] = True
+            grammar_availability(grammar)
+        return mutation
+
+    monkeypatch.setattr(dispatcher, "index_file", index_file)
+    return seen
+
+
+def _assert_rust_left_out(registry, repo_id, rows):
+    """The lost language is deferred and recorded; nothing of it is authoritative."""
+    for name in ("lib.rs", "more.rs"):
+        assert name not in rows["files"] | rows["symbols"] | rows["fts"], name
+        assert name not in rows["chunks"], name
+    assert rows["marker"] == _RUST_LOST_MARKER
+    readiness = ReadinessClassifier.classify_registered(_published_info(registry, repo_id))
+    assert readiness.state == RepositoryReadinessState.READY
+    assert readiness.coverage["state"] == "degraded"
+    assert readiness.coverage["unavailable_languages"] == ["rust"]
+    assert readiness.coverage["deferred_files"] == 2
+
+
+def test_grammar_lost_mid_full_rebuild_defers_language(
+    degraded_runtime, grammar_availability, monkeypatch
+):
+    """Every grammar loads when the staged full rebuild starts, then rust's
+    goes missing partway through: rust is deferred and recorded exactly as if
+    it had been missing at the start, the other languages publish, and the
+    repair path re-indexes rust once the grammar is back (#117)."""
+    repo, registry, repo_id, dispatcher, manager = degraded_runtime
+    (repo / "more.rs").write_text(_MORE_RS)
+    _git_commit_all(repo, "second rust file")
+    grammar_availability()
+    seen = _lose_grammar_after_first_indexed(
+        monkeypatch, dispatcher, grammar_availability, ".rs", "rust"
+    )
+
+    result = manager.sync_repository_index(repo_id, force_full=True)
+
+    assert seen["lost"], "the grammar must be lost partway through the walk"
+    assert result.action == "full_index", result.error
+    assert result.code is None
+    assert result.degraded_languages == _RUST_LOST_MARKER["languages"]
+    assert result.readiness["coverage"]["state"] == "degraded"
+    rows = _published_rows(registry, repo_id)
+    assert {"hello.py", "other.py", "README.md"} <= rows["files"]
+    assert rows["chunks"].get("hello.py") and "hello.py" in rows["fts"]
+    # The rust file indexed before the loss is purged with the rest of rust.
+    _assert_rust_left_out(registry, repo_id, rows)
+
+    grammar_availability()
+    assert manager.recoverable_degraded_languages(_published_info(registry, repo_id)) == {"rust"}
+    repaired = manager.sync_repository_index(repo_id)
+    assert repaired.action == "incremental_update", repaired.error
+    rows = _published_rows(registry, repo_id)
+    assert {"lib.rs", "more.rs"} <= rows["files"] and rows["marker"] is None
+
+
+def test_grammar_lost_mid_incremental_build_defers_language(
+    degraded_runtime, grammar_availability, monkeypatch
+):
+    """The same loss during an incremental build: rust (changed and unchanged
+    files alike) is left out and recorded, the python change publishes, and
+    the unchanged files keep their chunk ids (#117)."""
+    repo, registry, repo_id, dispatcher, manager = degraded_runtime
+    grammar_availability()
+    first = manager.sync_repository_index(repo_id, force_full=True)
+    assert first.action == "full_index", first.error
+    before = _published_rows(registry, repo_id)
+    assert "lib.rs" in before["chunks"] and before["marker"] is None
+
+    (repo / "other.py").write_text("def other():\n    return 3\n")
+    (repo / "lib.rs").write_text("pub fn sub(a: i32, b: i32) -> i32 {\n    a - b\n}\n")
+    (repo / "more.rs").write_text(_MORE_RS)
+    _git_commit_all(repo, "change python and rust")
+    seen = _lose_grammar_after_first_indexed(
+        monkeypatch, dispatcher, grammar_availability, ".rs", "rust"
+    )
+
+    result = manager.sync_repository_index(repo_id)
+
+    assert seen["lost"], "the grammar must be lost partway through the build"
+    assert result.action == "incremental_update", result.error
+    assert result.code is None
+    assert result.degraded_languages == _RUST_LOST_MARKER["languages"]
+    rows = _published_rows(registry, repo_id)
+    assert {"hello.py", "other.py"} <= rows["files"]
+    assert rows["chunks"]["hello.py"] == before["chunks"]["hello.py"]
+    with sqlite3.connect(_published_info(registry, repo_id).index_path) as conn:
+        content = conn.execute(
+            "SELECT t.content FROM fts_code t JOIN files f ON f.id = t.file_id "
+            "WHERE f.relative_path = 'other.py'"
+        ).fetchall()
+    assert any("return 3" in row[0] for row in content)
+    _assert_rust_left_out(registry, repo_id, rows)
+
+
+def _commit_rust_rename(repo: Path) -> None:
+    (repo / "other.py").write_text("def other():\n    return 3\n")
+    subprocess.run(["git", "mv", "lib.rs", "renamed.rs"], cwd=repo, check=True)
+    _git_commit_all(repo, "rename rust, change python")
+
+
+def _published_moves(registry, repo_id) -> list:
+    with sqlite3.connect(_published_info(registry, repo_id).index_path) as conn:
+        return conn.execute(
+            "SELECT old_relative_path, new_relative_path FROM file_moves ORDER BY id"
+        ).fetchall()
+
+
+def _spy_moves(monkeypatch, dispatcher, before_move=None):
+    real_move_file = dispatcher.move_file
+    moves = []
+
+    def move_file(ctx, old_path, new_path, *args, **kwargs):
+        if before_move is not None:
+            before_move()
+        mutation = real_move_file(ctx, old_path, new_path, *args, **kwargs)
+        moves.append((Path(old_path).name, Path(new_path).name, mutation))
+        return mutation
+
+    monkeypatch.setattr(dispatcher, "move_file", move_file)
+    return moves
+
+
+def test_grammar_lost_before_staged_rename_defers_language(
+    degraded_runtime, grammar_availability, monkeypatch
+):
+    """Rust's grammar disappears just before the staged ``move_file`` of a
+    committed ``lib.rs -> renamed.rs`` rename: rust is deferred and recorded,
+    neither path keeps a row, the python change publishes, and repair indexes
+    the renamed file once the grammar is back (#117 review)."""
+    repo, registry, repo_id, dispatcher, manager = degraded_runtime
+    grammar_availability()
+    first = manager.sync_repository_index(repo_id, force_full=True)
+    assert first.action == "full_index", first.error
+    before = _published_rows(registry, repo_id)
+    assert "lib.rs" in before["chunks"]
+
+    _commit_rust_rename(repo)
+    moves = _spy_moves(monkeypatch, dispatcher, before_move=lambda: grammar_availability("rust"))
+    result = manager.sync_repository_index(repo_id)
+
+    assert [(old, new) for old, new, _ in moves] == [("lib.rs", "renamed.rs")]
+    assert result.action == "incremental_update", result.error
+    assert result.code is None
+    marker = {"version": 1, "languages": {"rust": {"grammars": ["rust"], "deferred_files": 1}}}
+    assert result.degraded_languages == marker["languages"]
+    rows = _published_rows(registry, repo_id)
+    assert rows["marker"] == marker
+    for name in ("lib.rs", "renamed.rs"):
+        assert name not in rows["files"] | rows["symbols"] | rows["fts"], name
+        assert name not in rows["chunks"], name
+    # The deferred move is not history of the published generation either.
+    assert ("lib.rs", "renamed.rs") not in _published_moves(registry, repo_id)
+    assert rows["chunks"]["hello.py"] == before["chunks"]["hello.py"]
+    with sqlite3.connect(_published_info(registry, repo_id).index_path) as conn:
+        content = conn.execute(
+            "SELECT t.content FROM fts_code t JOIN files f ON f.id = t.file_id "
+            "WHERE f.relative_path = 'other.py'"
+        ).fetchall()
+    assert any("return 3" in row[0] for row in content)
+    readiness = ReadinessClassifier.classify_registered(_published_info(registry, repo_id))
+    assert readiness.state == RepositoryReadinessState.READY
+    assert readiness.coverage["unavailable_languages"] == ["rust"]
+
+    grammar_availability()
+    repaired = manager.sync_repository_index(repo_id)
+    assert repaired.action == "incremental_update", repaired.error
+    rows = _published_rows(registry, repo_id)
+    assert rows["marker"] is None
+    assert "renamed.rs" in rows["files"] and rows["chunks"].get("renamed.rs")
+    assert "lib.rs" not in rows["files"]
+
+
+def test_staged_rename_with_grammars_available_behaves_as_before(
+    degraded_runtime, grammar_availability, monkeypatch
+):
+    """Regression: with every grammar loadable throughout, a committed rename
+    is still a staged move that reindexes the new path, exactly as before."""
+    repo, registry, repo_id, dispatcher, manager = degraded_runtime
+    grammar_availability()
+    first = manager.sync_repository_index(repo_id, force_full=True)
+    assert first.action == "full_index", first.error
+    before = _published_rows(registry, repo_id)
+
+    _commit_rust_rename(repo)
+    moves = _spy_moves(monkeypatch, dispatcher)
+    result = manager.sync_repository_index(repo_id)
+
+    assert [(old, new) for old, new, _ in moves] == [("lib.rs", "renamed.rs")]
+    assert moves[0][2].status == IndexResultStatus.MOVED
+    assert result.action == "incremental_update", result.error
+    assert result.code is None and result.degraded_languages is None
+    assert result.readiness["coverage"] == {"state": "complete"}
+    rows = _published_rows(registry, repo_id)
+    assert rows["marker"] is None
+    assert "lib.rs" not in rows["files"]
+    assert "renamed.rs" in rows["files"] and "renamed.rs" in rows["fts"]
+    assert rows["chunks"].get("renamed.rs") and "renamed.rs" in rows["symbols"]
+    assert _published_moves(registry, repo_id).count(("lib.rs", "renamed.rs")) == 1
+    assert rows["chunks"]["hello.py"] == before["chunks"]["hello.py"]
+
+
+@pytest.mark.parametrize("build", ["full", "incremental"])
+def test_prefetched_host_unchanged_mid_build_behaves_as_before(
+    degraded_runtime, grammar_availability, monkeypatch, build
+):
+    """Regression (#117): the staged walk is now always opted in to deferral,
+    but on a fully prefetched host where nothing changes mid-build it indexes,
+    reports and publishes exactly as before: no file is deferred, the walk's
+    stats carry no deferral keys, no marker is written, coverage is complete
+    and unchanged files keep their chunk ids."""
+    repo, registry, repo_id, dispatcher, manager = degraded_runtime
+    grammar_availability()
+    stats_seen = []
+    scoped_seen = []
+    real_index_directory = dispatcher.index_directory
+    real_index_file = dispatcher.index_file
+
+    def index_directory(*args, **kwargs):
+        stats_seen.append(
+            (kwargs.get("grammar_availability"), real_index_directory(*args, **kwargs))
+        )
+        return stats_seen[-1][1]
+
+    def index_file(ctx, path, *args, **kwargs):
+        scoped = getattr(manager, "_scoped_grammar_availability", None)
+        scoped_seen.append(scoped(None) if scoped else None)
+        return real_index_file(ctx, path, *args, **kwargs)
+
+    monkeypatch.setattr(dispatcher, "index_directory", index_directory)
+    monkeypatch.setattr(dispatcher, "index_file", index_file)
+
+    first = manager.sync_repository_index(repo_id, force_full=True)
+    assert first.action == "full_index", first.error
+    before = _published_rows(registry, repo_id)
+    if build == "incremental":
+        scoped_seen.clear()
+        (repo / "other.py").write_text("def other():\n    return 3\n")
+        (repo / "lib.rs").write_text("pub fn sub(a: i32, b: i32) -> i32 {\n    a - b\n}\n")
+        _git_commit_all(repo, "change python and rust")
+        result = manager.sync_repository_index(repo_id)
+        assert result.action == "incremental_update", result.error
+        assert result.files_processed == 2
+    else:
+        result = first
+
+    # Opted in with a complete snapshot ...
+    if build == "full":
+        assert len(stats_seen) == 1
+        availability, stats = stats_seen[0]
+        assert availability is not None and availability.complete
+        # ... yet the walk's stats have exactly their pre-#117 shape.
+        assert "deferred_files" not in stats and "degraded_languages" not in stats
+        assert stats["failed_files"] == 0
+    else:
+        assert scoped_seen and all(a is not None and a.complete for a in scoped_seen)
+    # ... and nothing is deferred, marked or left out.
+    assert result.code is None and result.degraded_languages is None
+    assert result.readiness["coverage"] == {"state": "complete"}
+    rows = _published_rows(registry, repo_id)
+    assert rows["marker"] is None
+    assert set(_DEGRADED_FILES) <= rows["files"]
+    for name in ("hello.py", "other.py", "lib.rs"):
+        assert rows["chunks"].get(name) and name in rows["fts"], name
+    assert rows["chunks"]["hello.py"] == before["chunks"]["hello.py"]
+    readiness = ReadinessClassifier.classify_registered(_published_info(registry, repo_id))
+    assert readiness.coverage == {"state": "complete"}
+    # The scope ends with the build.
+    assert getattr(manager, "_scoped_grammar_availability", lambda _: None)(None) is None
+
+
+def test_create_commit_artifact_refuses_degraded_generation(degraded_runtime, grammar_availability):
+    repo, registry, repo_id, _dispatcher, manager = degraded_runtime
+    grammar_availability("rust")
+    assert manager.sync_repository_index(repo_id, force_full=True).action == "full_index"
+    manager.registry = RepositoryRegistry(registry.registry_path)
+    manager.artifact_manager = MagicMock()
+    assert manager.create_commit_artifact(repo_id) is None
+    manager.artifact_manager.create_commit_artifact.assert_not_called()
+
+
+def test_repair_after_grammar_arrival_indexes_only_deferred_files(
+    degraded_runtime, grammar_availability, monkeypatch
+):
+    """Once the grammar loads, the next sync indexes only the left-out language
+    through an empty-change-set incremental build: every other file keeps its
+    rows and chunk ids byte for byte, and the marker is cleared."""
+    repo, registry, repo_id, _dispatcher, manager = degraded_runtime
+    grammar_availability("rust")
+    assert manager.sync_repository_index(repo_id, force_full=True).action == "full_index"
+    before = _published_rows(registry, repo_id)
+    assert before["marker"] == _RUST_MARKER
+
+    # Still missing: no repair, no rebuild loop.
+    assert manager.recoverable_degraded_languages(_published_info(registry, repo_id)) == set()
+    assert manager.sync_repository_index(repo_id).action == "up_to_date"
+
+    grammar_availability()
+    assert manager.recoverable_degraded_languages(_published_info(registry, repo_id)) == {"rust"}
+    monkeypatch.setattr(
+        manager,
+        "_should_full_reindex",
+        MagicMock(side_effect=AssertionError("repair must not consider a full rebuild")),
+    )
+    result = manager.sync_repository_index(repo_id)
+
+    assert result.action == "incremental_update", result.error
+    assert result.files_processed == 1
+    assert result.degraded_languages is None
+    assert result.readiness["coverage"] == {"state": "complete"}
+    after = _published_rows(registry, repo_id)
+    assert after["marker"] is None
+    assert "lib.rs" in after["files"] and after["chunks"].get("lib.rs")
+    assert "lib.rs" in after["fts"]
+    for path, chunk_ids in before["chunks"].items():
+        assert after["chunks"][path] == chunk_ids, path
+    info = _published_info(registry, repo_id)
+    assert ReadinessClassifier.classify_registered(info).coverage == {"state": "complete"}
+    assert manager.recoverable_degraded_languages(info) == set()
+    assert manager.sync_repository_index(repo_id).action == "up_to_date"
+
+
+def test_no_automatic_repair_while_a_failed_sync_is_pending(degraded_runtime, grammar_availability):
+    repo, registry, repo_id, _dispatcher, manager = degraded_runtime
+    grammar_availability("rust")
+    assert manager.sync_repository_index(repo_id, force_full=True).action == "full_index"
+    grammar_availability()
+    info = _published_info(registry, repo_id)
+    info.staleness_reason = "partial_index_failure"
+    assert manager.recoverable_degraded_languages(info) == set()
+
+
+# ---------------------------------------------------------------------------
+# #117 review fixes
+# ---------------------------------------------------------------------------
+
+
+def _artifact_from_live(registry, repo_id, destination: Path) -> Path:
+    """Copy the published generation as an extracted artifact directory."""
+    destination.mkdir()
+    info = _published_info(registry, repo_id)
+    with (
+        sqlite3.connect(info.index_path) as source,
+        sqlite3.connect(destination / "current.db") as target,
+    ):
+        source.backup(target)
+    return destination
+
+
+def _write_marker(database: Path, languages: dict) -> None:
+    with sqlite3.connect(database) as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO index_config (config_key, config_value) VALUES (?, ?)",
+            ("grammar_degradation", json.dumps({"version": 1, "languages": languages})),
+        )
+
+
+def test_restore_refuses_artifact_with_degradation_marker(
+    degraded_runtime, grammar_availability, tmp_path
+):
+    repo, registry, repo_id, _dispatcher, manager = degraded_runtime
+    assert manager.sync_repository_index(repo_id, force_full=True).action == "full_index"
+    before = _published_info(registry, repo_id)
+    extracted = _artifact_from_live(registry, repo_id, tmp_path / "artifact")
+    _write_marker(extracted / "current.db", {"rust": {"grammars": ["rust"], "deferred_files": 1}})
+
+    with pytest.raises(ValueError, match="degraded grammar coverage"):
+        manager.restore_verified_artifact(
+            repo_id, extracted, expected_commit=_get_head_commit(repo)
+        )
+    after = _published_info(registry, repo_id)
+    # Refused before any generation mutation: the live index is untouched.
+    assert after.index_generation == before.index_generation
+    assert not after.staleness_reason
+
+
+def test_restore_refuses_artifact_missing_admitted_committed_files(
+    degraded_runtime, grammar_availability, tmp_path
+):
+    """An older uploader strips the unknown marker but archives the partial
+    rows; restore must not publish them as complete coverage."""
+    repo, registry, repo_id, _dispatcher, manager = degraded_runtime
+    assert manager.sync_repository_index(repo_id, force_full=True).action == "full_index"
+    extracted = _artifact_from_live(registry, repo_id, tmp_path / "artifact")
+    partial = SQLiteStore(str(extracted / "current.db"))
+    try:
+        repository_id = partial.get_repository(str(repo))["id"]
+        assert partial.remove_file("lib.rs", repository_id=repository_id)
+    finally:
+        partial.close()
+
+    result = manager.restore_verified_artifact(
+        repo_id, extracted, expected_commit=_get_head_commit(repo)
+    )
+
+    assert result.action == "failed"
+    assert result.code == "artifact_incomplete"
+    assert "build the index locally" in result.error
+
+
+def test_complete_restore_publishes_and_clears_a_stale_live_marker(
+    degraded_runtime, grammar_availability, tmp_path
+):
+    repo, registry, repo_id, _dispatcher, manager = degraded_runtime
+    assert manager.sync_repository_index(repo_id, force_full=True).action == "full_index"
+    extracted = _artifact_from_live(registry, repo_id, tmp_path / "artifact")
+    grammar_availability("rust")
+    assert manager.sync_repository_index(repo_id, force_full=True).action == "full_index"
+    assert _published_rows(registry, repo_id)["marker"] == _RUST_MARKER
+    grammar_availability()
+
+    result = manager.restore_verified_artifact(
+        repo_id, extracted, expected_commit=_get_head_commit(repo)
+    )
+
+    assert result.action == "full_index", result.error
+    rows = _published_rows(registry, repo_id)
+    assert rows["marker"] is None
+    assert "lib.rs" in rows["files"] and rows["chunks"].get("lib.rs")
+
+
+def test_all_deferred_refuses_even_with_retained_document_rows(
+    tmp_path, monkeypatch, grammar_availability
+):
+    """Retained history/document rows survive prepare_generation; they must not
+    let a generation whose every source file is deferred publish."""
+    repo, registry, repo_id, dispatcher, manager = _degraded_runtime(
+        tmp_path, monkeypatch, files={"lib.rs": _DEGRADED_FILES["lib.rs"]}
+    )
+    try:
+        assert manager.sync_repository_index(repo_id, force_full=True).action == "full_index"
+        live = _published_info(registry, repo_id).index_path
+        with sqlite3.connect(live) as conn:
+            repository_id = conn.execute("SELECT id FROM repositories").fetchone()[0]
+            file_id = conn.execute(
+                "INSERT INTO files (repository_id, path, relative_path, language) "
+                "VALUES (?, ?, ?, ?)",
+                (repository_id, str(repo / "history/issue-1.md"), "history/issue-1.md", "markdown"),
+            ).lastrowid
+            conn.execute(
+                "INSERT INTO code_chunks (file_id, content, content_start, content_end, "
+                "line_start, line_end, chunk_id, node_id, treesitter_file_id, chunk_type) "
+                "VALUES (?, 'issue body', 0, 10, 1, 1, 'history:issue-1', 'n1', 't1', 'document')",
+                (file_id,),
+            )
+        ReadinessClassifier.clear_index_inspection_cache()
+        grammar_availability("rust")
+
+        result = manager.sync_repository_index(repo_id, force_full=True)
+
+        assert result.action == "failed", result
+        assert result.code == "grammar_unavailable"
+    finally:
+        dispatcher.shutdown()
+        if manager.store_registry is not None:
+            manager.store_registry.shutdown()
+
+
+def test_missing_javascript_grammar_defers_typescript_with_sandbox_disabled(
+    tmp_path, monkeypatch, grammar_availability
+):
+    """In-process plugins: admission resolves ``typescript`` from the factory's
+    availability state without building the plugin, so ``.ts`` is deferred and
+    recorded, and the repair loads the plugin once the grammar arrives."""
+    from mcp_server.dispatcher.dispatcher_enhanced import EnhancedDispatcher
+    from mcp_server.plugins.typescript_plugin import plugin as typescript_plugin
+
+    real_language = typescript_plugin._get_ts_language
+
+    def missing_javascript(name):
+        if name == "javascript":
+            raise RuntimeError("Language 'javascript' not found")
+        return real_language(name)
+
+    monkeypatch.setattr(typescript_plugin, "_get_ts_language", missing_javascript)
+    files = {
+        "hello.py": _DEGRADED_FILES["hello.py"],
+        "app.ts": "export function add(a: number, b: number) { return a + b; }\n",
+    }
+    repo, registry, repo_id, unused, _ = _degraded_runtime(tmp_path, monkeypatch, files=files)
+    unused.shutdown()
+    monkeypatch.setenv("MCP_PLUGIN_SANDBOX_DISABLE", "1")  # in-process plugins
+    dispatcher = EnhancedDispatcher(
+        enable_advanced_features=False,
+        use_plugin_factory=True,
+        lazy_load=True,
+        semantic_search_enabled=False,
+        memory_aware=False,
+        multi_repo_enabled=False,
+    )
+    manager = GitAwareIndexManager(registry, dispatcher)
+    try:
+        grammar_availability("javascript")
+        # Something builds the plugin while the grammar is missing (a watcher
+        # event, say); that failed build must not block the later repair.
+        assert dispatcher._ensure_plugin_loaded("typescript") is None
+        result = manager.sync_repository_index(repo_id, force_full=True)
+        assert result.action == "full_index", result.error
+        rows = _published_rows(registry, repo_id)
+        assert "app.ts" not in rows["files"] and "hello.py" in rows["files"]
+        assert rows["marker"]["languages"] == {
+            "typescript": {"grammars": ["javascript"], "deferred_files": 1}
+        }
+
+        monkeypatch.setattr(typescript_plugin, "_get_ts_language", real_language)
+        grammar_availability()
+        repaired = manager.sync_repository_index(repo_id)
+        assert repaired.action == "incremental_update", repaired.error
+        rows = _published_rows(registry, repo_id)
+        assert "app.ts" in rows["files"] and rows["marker"] is None
+    finally:
+        dispatcher.shutdown()
+        if manager.store_registry is not None:
+            manager.store_registry.shutdown()

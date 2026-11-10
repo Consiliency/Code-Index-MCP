@@ -33,6 +33,9 @@ EXPECTED_KEYS = {
     "query_status",
     "query_remediation",
     "features",
+    # Additive language coverage of the published generation (#117).
+    "coverage",
+    "coverage_status",
 }
 
 

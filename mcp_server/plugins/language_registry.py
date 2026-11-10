@@ -323,6 +323,13 @@ EXTRA_PLUGIN_GRAMMARS = ("tsx",)
 #: The registry language whose files need each extra plugin grammar.
 EXTRA_PLUGIN_GRAMMAR_LANGUAGES = {"tsx": "typescript"}
 
+#: Grammars a registry language's plugin loads besides its own
+#: (Consiliency/Code-Index-MCP#117). The TypeScript plugin loads ``javascript``
+#: when it is constructed and parses ``.tsx`` with ``tsx``, so ``.ts`` and
+#: ``.tsx`` files need all three; a missing one must not be papered over by
+#: parsing ``.tsx`` with the TypeScript grammar.
+PLUGIN_EXTRA_GRAMMARS_BY_LANGUAGE = {"typescript": ("tsx", "javascript")}
+
 
 def get_grammar_name(language: str) -> str | None:
     """Return the tree-sitter-language-pack grammar name for a registry language.

@@ -100,6 +100,9 @@ class ClientSearchResult:
     history_labels: tuple[str, ...] = field(default_factory=tuple)
     history_repos: tuple[str, ...] = field(default_factory=tuple)
     include_source_metadata: bool = False
+    #: Readiness ``coverage`` when the published generation left languages
+    #: out (Consiliency/Code-Index-MCP#117); None while coverage is complete.
+    coverage: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)

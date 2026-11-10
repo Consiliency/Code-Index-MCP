@@ -215,21 +215,67 @@ tiers above are unchanged by the upgrade.
   the versioned cache directory and a lock file, and with the manifest URL
   cleared it can download. This matches the sandbox's cooperative model; the
   guard does not contain malicious plugins.
-- **Missing grammars fail closed.** Indexing a file whose plugin needs a
-  grammar that is not loadable offline (not in the cache or libs directory)
-  fails with
-  `grammar_unavailable` instead of storing the file without chunks, so a
-  reindex reports those files as failed and does not publish the generation;
-  the previous generation, or `missing_index`, stays in place. One failed file
-  blocks the whole repository's generation, in every language, as any failed
-  file does; prefetching is therefore mandatory on every host. Document-plugin
+- **Missing grammars degrade per language.** A file whose plugin needs a
+  grammar that is not loadable offline (not in the cache or libs directory) is
+  never stored without chunks. "Language" is the registry language of the
+  file's extension, and `typescript` needs the `typescript`, `tsx` and
+  `javascript` grammars, because its plugin loads all three. Document-plugin
   languages (`markdown`, `plaintext`) never load a grammar and are not
-  affected. `get_status` reports a `grammars` block with `state` (`ready`,
-  `grammar_unavailable`, or `libs_dir_unsafe` when every grammar loads but the
-  shared libs directory fails its ownership or permission checks),
-  the missing grammars, the affected language codes, libs-directory problems
-  and the remediation, and the server logs an error at startup in the same
-  case. Repository readiness of an already published index is unchanged.
+  affected (Consiliency/Code-Index-MCP#117).
+  - *Staged full and incremental builds* (sync, the ref poller, `reindex` of a
+    whole repository) decide availability once when the build starts. A
+    grammar that becomes unavailable partway through a build (for example a
+    language-pack upgrade clearing the cache) is handled the same way as one
+    missing at the start, also when every grammar loaded when the build
+    began. They leave every language with a missing grammar out of the
+    generation whole:
+    its files are not indexed, and any of its rows the previous generation
+    held (files, symbols, chunks, FTS rows, vectors) are removed, so a stale
+    or chunkless row never appears as authoritative and a full walk and an
+    incremental update store the same rows. The other languages publish
+    normally. If every admitted file is left out, the build refuses to publish
+    with code `grammar_unavailable` and the previous generation, or
+    `missing_index`, stays in place. Retained history or document rows do not
+    count as indexed source for this check.
+  - *Readiness stays `ready`.* Repository readiness gains an additive
+    `coverage` object: `{"state": "complete"}`, or `{"state": "degraded",
+    "unavailable_languages": [...], "missing_grammars": [...],
+    "deferred_files": n, "recoverable": bool, "remediation": "..."}`
+    (`coverage` is `null` when no index could be inspected). The
+    `get_status` repository rows carry `coverage` and `coverage_status`, and
+    the `grammars` block lists `repositories_degraded`. While coverage is
+    degraded, `search_code` returns its envelope (`results`, `coverage`,
+    `note`) instead of the bare result list, and a `symbol_lookup` not-found
+    response carries `coverage`. The left-out languages have no rows, so they
+    never appear in results.
+  - *Repair.* Once the missing grammars load (for example after
+    `mcp-index grammars prefetch` or `--export-libs`, no restart needed), the
+    next sync, or the ref poller's next tick with an unchanged branch tip,
+    indexes only the left-out languages' files through an incremental build
+    with an empty change set. Rows, chunk ids and vectors of the other
+    languages are untouched, and the chunk identity scheme does not change. An
+    explicit whole-repository `reindex` also restores full coverage. Automatic
+    repair starts only from a `ready` repository, so a repair that fails is not
+    retried on every poll.
+  - *Artifacts.* A degraded generation is never uploaded or turned into a
+    commit artifact. Restore refuses an artifact that carries the marker, and
+    one that lacks any committed file this host would index (an uploader older
+    than this change drops the marker but archives the partial rows), so the
+    caller builds locally instead.
+  - *Watcher sweep.* Files of a left-out language are not drift, so they never
+    force a full rebuild; the repair above indexes them.
+  - *Other index paths stay fail-closed.* Path-scoped (subdirectory or
+    single-file) `reindex` through the MCP tool or the gateway, the watcher
+    and the stdio background index fail such files with
+    `grammar_unavailable`, as before.
+  - *Prefetched hosts.* With every grammar loadable there is no marker,
+    coverage is `complete`, and behaviour is unchanged. An unsafe libs
+    directory whose grammars all load is complete coverage too; `get_status`
+    reports it as `libs_dir_unsafe`.
+  - `get_status` reports a `grammars` block with `state` (`ready`,
+    `grammar_unavailable`, or `libs_dir_unsafe`), the missing grammars, the
+    affected language codes, libs-directory problems and the remediation, and
+    the server logs an error at startup when grammars are missing.
 - **Grammar names.** The public language code `c_sharp` is unchanged; the pack
   grammar is `csharp`.
 - **Platform floor.** The language-pack Linux wheels need glibc 2.34 or newer.

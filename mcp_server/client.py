@@ -321,7 +321,16 @@ def execute_search_service(
         history_labels=options.history_labels,
         history_repos=options.history_repos,
         include_source_metadata=options.include_source_metadata,
+        coverage=_degraded_coverage(readiness),
     )
+
+
+def _degraded_coverage(readiness: Any) -> dict[str, Any] | None:
+    """Readiness ``coverage`` when degraded, else None (#117)."""
+    coverage = getattr(readiness, "coverage", None)
+    if isinstance(coverage, dict) and coverage.get("state") == "degraded":
+        return coverage
+    return None
 
 
 def search_result_for_gateway(result: ClientSearchResult) -> list[dict[str, Any]]:

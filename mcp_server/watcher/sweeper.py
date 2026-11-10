@@ -9,12 +9,12 @@ import tempfile
 import threading
 import time
 from pathlib import Path
-from typing import Callable, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 from ..core.ignore_patterns import build_walker_filter
 from ..indexing.admission import index_admission_reason
 from ..metrics.prometheus_exporter import mcp_watcher_sweep_errors_total
-from ..plugins.language_registry import get_all_extensions
+from ..plugins.language_registry import get_all_extensions, get_language_by_extension
 from ..storage.sqlite_store import SQLiteStore
 
 logger = logging.getLogger(__name__)
@@ -153,6 +153,7 @@ class WatcherSweeper:
             known_by_path = {f["relative_path"]: f for f in known_files if f.get("relative_path")}
 
             gitignore_filter = build_walker_filter(repo_root)
+            deferred_languages = self._deferred_languages(store)
             repo_has_drift = False
             tracked_blobs = None
             tree_digest = ""
@@ -214,6 +215,15 @@ class WatcherSweeper:
                     relative = fs_path.relative_to(repo_root).as_posix()
                     blob = tracked_blobs.get(relative) if tracked_blobs is not None else None
                     if tracked_blobs is not None and blob is None:
+                        continue
+                    if (
+                        deferred_languages
+                        and get_language_by_extension(fs_path.suffix.lower()) in deferred_languages
+                    ):
+                        # The published generation left this language out
+                        # because its grammar was unavailable: not drift. The
+                        # sync/ref-poller repair indexes it once the grammar
+                        # loads, without a full rebuild (#117 review).
                         continue
                     if self._admission_reason(
                         repo_id,
@@ -313,6 +323,19 @@ class WatcherSweeper:
                 drifted.append(repo_id)
 
         return drifted
+
+    @staticmethod
+    def _deferred_languages(store: Any) -> frozenset:
+        """Languages the published generation left out for missing grammars (#117)."""
+        reader = getattr(store, "get_grammar_degradation", None)
+        if not callable(reader):
+            return frozenset()
+        try:
+            marker = reader()
+        except Exception:  # noqa: BLE001 - an unreadable marker excludes nothing
+            return frozenset()
+        languages = marker.get("languages") if isinstance(marker, dict) else None
+        return frozenset(languages) if isinstance(languages, dict) else frozenset()
 
     def _record_reconcile_failure(self, repo_id: str, signature: str) -> None:
         previous = self._failed_drift.get(repo_id)

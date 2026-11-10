@@ -9,6 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 [Unreleased]: # placeholder for post-rc5 work
 
+### Changed
+
+- **Per-language degradation when a tree-sitter grammar is unavailable**
+  (Consiliency/Code-Index-MCP#117). Staged full and incremental builds leave a
+  language whose grammar cannot load offline out of the generation whole and
+  publish the other languages, instead of failing the whole repository.
+  Readiness stays `ready` and gains an additive `coverage` object; while it is
+  `degraded`, `search_code` returns its envelope with `coverage`, and
+  `symbol_lookup` not-found responses carry it. A degraded generation is never
+  uploaded as an artifact. Once the grammars load, the next sync or ref-poller
+  tick indexes only the left-out languages' files, leaving every other
+  language's chunk ids unchanged. Hosts with every grammar prefetched are
+  unaffected.
+- A missing `tsx` grammar no longer lets `.tsx` files parse with the
+  TypeScript grammar, and a missing `javascript` grammar is reported as
+  `grammar_unavailable` for `.ts` files instead of an unrelated plugin error.
+- **Rollback note:** the left-out languages are recorded in the generation's
+  `grammar_degradation` index-config marker. Binaries older than this change
+  ignore the marker and serve a degraded generation as complete until its next
+  rebuild.
+
 ## [1.6.0] - 2026-11-09
 
 Prepared minor release: the port to the `mcp` 2.x SDK (Code-Index-MCP#124,

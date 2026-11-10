@@ -174,4 +174,8 @@ def build_health_row(
             else 'Use native search or follow the readiness remediation; query tools stay fail-closed with safe_fallback: "native_search".'
         ),
         "features": base_features,
+        # Language coverage of the published generation (#117): additive, the
+        # readiness state above stays ``ready`` while coverage is degraded.
+        "coverage": readiness.coverage,
+        "coverage_status": (readiness.coverage or {}).get("state"),
     }
