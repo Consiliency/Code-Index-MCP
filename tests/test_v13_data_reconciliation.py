@@ -7,6 +7,8 @@ from pathlib import Path
 import pytest
 
 from mcp_server.core.repo_resolver import RepoResolver
+from mcp_server.storage import git_index_manager
+from mcp_server.storage.git_index_manager import RebuildShutdownRequested
 from mcp_server.storage.store_registry import StoreRegistry
 from mcp_server.watcher_multi_repo import MultiRepositoryWatcher
 from tests.test_v13_data_storage import runtime
@@ -76,18 +78,19 @@ def test_committed_snapshot_filters_before_reading_excluded_blobs(runtime, tmp_p
         ).stdout.strip()
         for name in ("blocked/fixture.py", "nested/hidden.py", "synthetic.env")
     }
-    original_run = subprocess.run
+    original_popen = subprocess.Popen
     read_blobs = set()
 
     def observe(command, **kwargs):
         if command[:3] == ["git", "cat-file", "blob"]:
             read_blobs.add(command[3])
-        return original_run(command, **kwargs)
+        return original_popen(command, **kwargs)
 
-    monkeypatch.setattr(subprocess, "run", observe)
+    monkeypatch.setattr(subprocess, "Popen", observe)
     destination = tmp_path / "snapshot"
     destination.mkdir()
     hashes = manager._snapshot_committed_inputs(repo, head, destination)
+    assert read_blobs, "blob reads must go through the observed git runner"
     assert not excluded.intersection(read_blobs)
     assert "nested/keep.py" in hashes
     assert not (destination / "link.py").exists()
@@ -110,6 +113,99 @@ def test_snapshot_keeps_existing_bounded_json_exception(runtime, tmp_path, monke
     hashes = manager._snapshot_committed_inputs(repo, head, destination)
     assert ".devcontainer/devcontainer.json" in hashes
     assert "ordinary.json" not in hashes
+
+
+def test_committed_snapshot_honors_shutdown_between_blobs(runtime, tmp_path):
+    """#112: a shutdown request stops the input copy before the next blob."""
+    repo, _registry, _repo_id, _store, manager = runtime
+    for index in range(4):
+        (repo / f"module_{index}.py").write_text(f"value_{index} = {index}\n")
+    subprocess.run(["git", "add", "."], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "Synthetic inputs"], cwd=repo, check=True)
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True
+    ).stdout.strip()
+    original_checkpoint = manager._rebuild_checkpoint
+    stages = []
+
+    def checkpoint(stage):
+        stages.append(stage)
+        # The listing checkpoint, then one per blob: stop before the second blob.
+        if stages.count("snapshot_inputs") == 3:
+            manager.request_shutdown()
+        original_checkpoint(stage)
+
+    manager._rebuild_checkpoint = checkpoint
+    destination = tmp_path / "snapshot"
+    destination.mkdir()
+
+    with pytest.raises(RebuildShutdownRequested, match="snapshot_inputs"):
+        manager._snapshot_committed_inputs(repo, head, destination)
+
+    copied = [path for path in destination.rglob("*") if path.is_file()]
+    assert len(copied) == 1
+
+
+class _HungGit:
+    """Popen stand-in whose output never arrives."""
+
+    instances = []
+
+    def __init__(self, command, **kwargs):
+        self.command = command
+        self.killed = False
+        self.returncode = None
+        self.waits = []
+        _HungGit.instances.append(self)
+
+    def communicate(self, timeout=None):
+        if self.killed:
+            self.returncode = -9
+            return b"", b""
+        self.waits.append(timeout)
+        raise subprocess.TimeoutExpired(self.command, timeout)
+
+    def kill(self):
+        self.killed = True
+
+
+@pytest.mark.parametrize(("configured", "expected"), [(None, 300), ("42", 42), ("1", 10)])
+def test_git_timeout_comes_from_environment_and_kills_git(
+    runtime, monkeypatch, configured, expected
+):
+    _repo, _registry, _repo_id, _store, manager = runtime
+    if configured is None:
+        monkeypatch.delenv("MCP_INDEX_GIT_TIMEOUT_SECONDS", raising=False)
+    else:
+        monkeypatch.setenv("MCP_INDEX_GIT_TIMEOUT_SECONDS", configured)
+    clock = iter(float(tick) for tick in range(0, 10_000, 5))
+    monkeypatch.setattr(git_index_manager, "_monotonic", lambda: next(clock))
+    _HungGit.instances.clear()
+    monkeypatch.setattr(subprocess, "Popen", _HungGit)
+
+    with pytest.raises(subprocess.TimeoutExpired) as timed_out:
+        manager._run_git(["ls-tree", "-r", "HEAD"], Path("."))
+
+    assert timed_out.value.timeout == expected
+    hung = _HungGit.instances[-1]
+    assert hung.killed
+    assert set(hung.waits) == {git_index_manager._GIT_POLL_SECONDS}
+    # One poll per 5 s fake tick until the deadline passes.
+    assert len(hung.waits) == expected // 5 + (expected % 5 > 0)
+
+
+def test_git_runner_kills_git_on_shutdown(runtime, monkeypatch):
+    _repo, _registry, _repo_id, _store, manager = runtime
+    monkeypatch.setattr(git_index_manager, "_monotonic", lambda: 0.0)
+    _HungGit.instances.clear()
+    monkeypatch.setattr(subprocess, "Popen", _HungGit)
+    manager.request_shutdown()
+
+    with pytest.raises(RebuildShutdownRequested, match="during git cat-file"):
+        manager._run_git(["cat-file", "blob", "0" * 40], Path("."))
+
+    assert _HungGit.instances[-1].killed
+    assert len(_HungGit.instances[-1].waits) == 1
 
 
 @pytest.mark.parametrize("operation", ["modify", "rename", "delete"])

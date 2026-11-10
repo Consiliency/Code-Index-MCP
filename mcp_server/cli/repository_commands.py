@@ -17,6 +17,10 @@ project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 from mcp_server.artifacts.commit_artifacts import CommitArtifactManager  # noqa: E402
+from mcp_server.config.env_vars import (  # noqa: E402
+    get_index_git_timeout_seconds,
+    get_index_snapshot_stall_seconds,
+)
 from mcp_server.config.settings import reload_settings  # noqa: E402
 from mcp_server.core.repo_resolver import RepoResolver  # noqa: E402
 from mcp_server.dispatcher.dispatcher_enhanced import EnhancedDispatcher  # noqa: E402
@@ -217,7 +221,14 @@ def _force_full_trace_is_stale(trace: dict[str, Any]) -> bool:
     age_seconds = (datetime.now(timezone.utc) - observed_at).total_seconds()
     if age_seconds < 0:
         return False
-    return age_seconds > (timeout_seconds * 2)
+    # A healthy run refreshes the trace at least once per lexical file or
+    # snapshot heartbeat; the snapshot phases only fail after their stall
+    # window, and before the first input blob is copied one git command
+    # (ls-tree) may run for the git timeout (#112).
+    threshold = max(timeout_seconds * 2, get_index_snapshot_stall_seconds())
+    if trace.get("stage") in {"force_full_started", "snapshot_inputs"}:
+        threshold = max(threshold, get_index_git_timeout_seconds())
+    return age_seconds > threshold
 
 
 def _print_fast_report_boundary(prefix: str, repo_path: Path) -> None:

@@ -30,6 +30,44 @@ def get_index_generation_retention() -> int:
     return max(1, value)
 
 
+#: Seconds a SQLite generation snapshot may copy no new pages before it fails.
+DEFAULT_INDEX_SNAPSHOT_STALL_SECONDS = 120.0
+MIN_INDEX_SNAPSHOT_STALL_SECONDS = 5.0
+
+#: Seconds one git subprocess of a staged rebuild may run before it fails.
+DEFAULT_INDEX_GIT_TIMEOUT_SECONDS = 300.0
+MIN_INDEX_GIT_TIMEOUT_SECONDS = 10.0
+
+
+def _float_env(name: str, default: float, floor: float) -> float:
+    raw = os.getenv(name)
+    try:
+        value = float(raw) if raw is not None else default
+    except ValueError:
+        value = default
+    if value != value:  # NaN
+        value = default
+    return max(floor, value)
+
+
+def get_index_snapshot_stall_seconds() -> float:
+    """Return the no-progress window for a generation snapshot (at least 5 s)."""
+    return _float_env(
+        "MCP_INDEX_SNAPSHOT_STALL_SECONDS",
+        DEFAULT_INDEX_SNAPSHOT_STALL_SECONDS,
+        MIN_INDEX_SNAPSHOT_STALL_SECONDS,
+    )
+
+
+def get_index_git_timeout_seconds() -> float:
+    """Return the per-command git timeout for a staged rebuild (at least 10 s)."""
+    return _float_env(
+        "MCP_INDEX_GIT_TIMEOUT_SECONDS",
+        DEFAULT_INDEX_GIT_TIMEOUT_SECONDS,
+        MIN_INDEX_GIT_TIMEOUT_SECONDS,
+    )
+
+
 def get_disk_readonly_threshold_mb() -> int:
     return int(os.getenv("MCP_DISK_READONLY_THRESHOLD_MB", "100"))
 

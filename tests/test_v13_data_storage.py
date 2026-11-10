@@ -19,7 +19,9 @@ from mcp_server.storage.git_index_manager import GitAwareIndexManager
 from mcp_server.storage.repository_registry import RepositoryRegistry
 from mcp_server.storage.sqlite_store import (
     LEGACY_CHUNK_ID_SCHEME,
+    SnapshotStalledError,
     SQLiteStore,
+    _SnapshotStallGuard,
     current_chunk_id_scheme,
 )
 from tests.test_git_index_manager import _get_head_commit, _make_git_repo
@@ -1524,3 +1526,105 @@ def test_retained_vector_copy_uses_real_generation_clients_without_active_mutati
         manager.dispatcher._semantic_registry = None
         if stage is not None:
             stage.close()
+
+
+def _multi_page_database(path: Path) -> int:
+    with closing(sqlite3.connect(path)) as connection:
+        connection.execute("CREATE TABLE fixture(payload TEXT)")
+        connection.executemany(
+            "INSERT INTO fixture VALUES (?)", [("synthetic" * 400,) for _ in range(40)]
+        )
+        connection.commit()
+        return connection.execute("PRAGMA page_count").fetchone()[0]
+
+
+class _FakeClock:
+    def __init__(self, step: float) -> None:
+        self.now = 0.0
+        self.step = step
+
+    def __call__(self) -> float:
+        value = self.now
+        self.now += self.step
+        return value
+
+
+def test_snapshot_has_no_total_deadline_while_pages_advance(tmp_path, monkeypatch):
+    """#112: a slow copy that keeps advancing is not cut off by elapsed time."""
+    source = tmp_path / "source.db"
+    pages = _multi_page_database(source)
+    assert pages > 5
+    monkeypatch.setattr(SQLiteStore, "SNAPSHOT_BACKUP_PAGES", 1)
+    clock = _FakeClock(step=600.0)  # ten minutes pass on every clock read
+    seen = []
+
+    destination = tmp_path / "copy.db"
+    SQLiteStore.snapshot_database(
+        source,
+        destination,
+        stall_seconds=120,
+        on_progress=lambda done, total: seen.append((done, total)),
+        clock=clock,
+    )
+
+    assert clock.now > 600.0 * pages
+    assert seen[-1] == (pages, pages)
+    with closing(sqlite3.connect(destination)) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM fixture").fetchone()[0] == 40
+
+
+def test_snapshot_stall_guard_fails_only_after_the_no_progress_window():
+    clock = _FakeClock(step=0.0)
+    guard = _SnapshotStallGuard(120, clock=clock)
+    guard(0, 30, 40)  # 10 pages copied at t=0
+    clock.now = 119.0
+    guard(0, 30, 40)  # same count, still inside the window
+    clock.now = 119.5
+    guard(0, 29, 40)  # advanced: the window restarts
+    clock.now = 200.0
+    guard(0, 40, 40)  # a restarted backup below the high-water mark is not progress
+    clock.now = 239.5
+    with pytest.raises(SnapshotStalledError) as stalled:
+        guard(0, 40, 40)
+
+    assert isinstance(stalled.value, TimeoutError)
+    assert str(stalled.value) == (
+        "SQLite generation snapshot made no progress for 120 s at 0/40 pages"
+    )
+    assert (stalled.value.pages_done, stalled.value.pages_total) == (0, 40)
+
+
+def test_snapshot_stall_window_defaults_from_environment(monkeypatch):
+    from mcp_server.config.env_vars import get_index_snapshot_stall_seconds
+
+    monkeypatch.delenv("MCP_INDEX_SNAPSHOT_STALL_SECONDS", raising=False)
+    assert get_index_snapshot_stall_seconds() == 120
+    monkeypatch.setenv("MCP_INDEX_SNAPSHOT_STALL_SECONDS", "1")
+    assert get_index_snapshot_stall_seconds() == 5
+    monkeypatch.setenv("MCP_INDEX_SNAPSHOT_STALL_SECONDS", "not-a-number")
+    assert get_index_snapshot_stall_seconds() == 120
+    monkeypatch.setenv("MCP_INDEX_SNAPSHOT_STALL_SECONDS", "45")
+    assert get_index_snapshot_stall_seconds() == 45
+
+
+def test_snapshot_checkpoint_aborts_within_one_step_and_leaves_destination_unused(
+    tmp_path, monkeypatch
+):
+    source = tmp_path / "source.db"
+    _multi_page_database(source)
+    original = source.read_bytes()
+    monkeypatch.setattr(SQLiteStore, "SNAPSHOT_BACKUP_PAGES", 1)
+    calls = []
+
+    def checkpoint():
+        calls.append(1)
+        raise RuntimeError("synthetic shutdown")
+
+    destination = tmp_path / "copy.db"
+    with pytest.raises(RuntimeError, match="synthetic shutdown"):
+        SQLiteStore.snapshot_database(source, destination, checkpoint=checkpoint)
+
+    assert len(calls) == 1
+    assert source.read_bytes() == original
+    with closing(sqlite3.connect(destination)) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM sqlite_master").fetchone()[0] == 0
