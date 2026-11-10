@@ -179,7 +179,9 @@ class MemoryAwarePluginManager:
         self._ensure_capacity_for_spawn()
 
         try:
-            plugin = self._factory.get_plugin(language)
+            # Plugin-level semantic search is deprecated: the dispatcher's
+            # generation-scoped indexer is the only semantic path (#121).
+            plugin = self._factory.get_plugin(language, enable_semantic=False)
             if not plugin:
                 return None
 

@@ -29,7 +29,7 @@ class PlainTextPlugin(BaseDocumentPlugin):
         self,
         language_config: Dict[str, Any],
         sqlite_store: Optional[SQLiteStore] = None,
-        enable_semantic: bool = True,
+        enable_semantic: bool = False,
         chunk_size: int = BaseDocumentPlugin.DEFAULT_CHUNK_SIZE,
         chunk_overlap: int = BaseDocumentPlugin.DEFAULT_CHUNK_OVERLAP,
     ):

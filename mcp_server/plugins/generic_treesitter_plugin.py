@@ -80,7 +80,7 @@ class GenericTreeSitterPlugin(PluginWithSemanticSearch):
         self,
         language_config: Dict[str, Any],
         sqlite_store: Optional[SQLiteStore] = None,
-        enable_semantic: bool = True,
+        enable_semantic: bool = False,
     ) -> None:
         """Initialize generic plugin with language configuration.
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import warnings
 from abc import abstractmethod
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional
@@ -26,6 +27,28 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+_PLUGIN_SEMANTIC_DEPRECATION = (
+    "Plugin-level semantic search is deprecated: it reads legacy per-plugin "
+    "collections (code-embeddings-<lang>, typescript-<id>). Use the dispatcher's "
+    "generation-scoped semantic search instead."
+)
+
+
+def plugin_level_semantic_opted_in(enable_semantic: bool, *, stacklevel: int = 2) -> bool:
+    """Whether the deprecated plugin-level semantic path is explicitly enabled.
+
+    It needs both an explicit ``enable_semantic=True`` and
+    ``SEMANTIC_SEARCH_ENABLED=true``; when it is, a ``DeprecationWarning`` is
+    emitted (#121). ``stacklevel`` counts from the caller of this function.
+    """
+    opted_in = bool(enable_semantic) and (
+        os.getenv("SEMANTIC_SEARCH_ENABLED", "false").lower() == "true"
+    )
+    if opted_in:
+        warnings.warn(_PLUGIN_SEMANTIC_DEPRECATION, DeprecationWarning, stacklevel=stacklevel + 1)
+    return opted_in
+
+
 class SemanticSearchResult(TypedDict):
     """Extended search result with semantic relevance score."""
 
@@ -37,21 +60,30 @@ class SemanticSearchResult(TypedDict):
 
 
 class PluginWithSemanticSearch(IPlugin):
-    """Enhanced plugin base class with semantic search capabilities."""
+    """Enhanced plugin base class with optional plugin-level semantic search.
+
+    .. deprecated::
+        Plugin-level semantic search is deprecated and the dispatcher no longer
+        enables it. It builds a per-language ``SemanticIndexer`` with the legacy
+        default profile and reads legacy ``code-embeddings-<lang>`` collections,
+        which no current index generation writes. Semantic search is served by
+        the dispatcher's generation-scoped indexer (``SemanticIndexerRegistry``,
+        ``ci__`` collections). ``enable_semantic`` defaults to False; an explicit
+        ``enable_semantic=True`` with ``SEMANTIC_SEARCH_ENABLED=true`` is the only
+        way to opt in, and emits a ``DeprecationWarning``.
+    """
 
     def __init__(
         self,
         sqlite_store: Optional["SQLiteStore"] = None,
-        enable_semantic: bool = True,
+        enable_semantic: bool = False,
         qdrant_host: Optional[str] = None,
         qdrant_port: Optional[int] = None,
     ):
         """Initialize plugin with optional semantic search support."""
         self._ctx: Optional["RepoContext"] = None
         self._semantic_indexer: Optional[SemanticIndexer] = None
-        self._enable_semantic = (
-            enable_semantic and os.getenv("SEMANTIC_SEARCH_ENABLED", "false").lower() == "true"
-        )
+        self._enable_semantic = plugin_level_semantic_opted_in(enable_semantic, stacklevel=2)
 
         if self._enable_semantic:
             try:
@@ -137,6 +169,9 @@ class PluginWithSemanticSearch(IPlugin):
 
     def semantic_search(self, query: str, limit: int = 20) -> List[SemanticSearchResult]:
         """Perform semantic search using vector embeddings.
+
+        Deprecated: plugin-level semantic search reads legacy per-language
+        collections; see the class docstring.
 
         Args:
             query: Search query

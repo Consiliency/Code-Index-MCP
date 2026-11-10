@@ -592,7 +592,7 @@ class Plugin(SpecializedPluginBase):
 
     lang = "swift"
 
-    def __init__(self, sqlite_store: Optional[SQLiteStore] = None, enable_semantic: bool = True):
+    def __init__(self, sqlite_store: Optional[SQLiteStore] = None, enable_semantic: bool = False):
         """Initialize Swift plugin."""
         super().__init__(SWIFT_CONFIG, sqlite_store, enable_semantic)
 

@@ -122,3 +122,23 @@ def resolve_qdrant_server_api_key() -> Optional[str]:
             "disposable, unauthenticated test server."
         )
     return api_key
+
+
+#: Bounded summary passes per repo-scope semantic rebuild (each pass summarizes one file).
+DEFAULT_SEMANTIC_SUMMARY_PASS_BUDGET = 8
+
+
+def get_semantic_summary_pass_budget() -> Optional[int]:
+    """Return the repo-scope summary pass budget, or None when unbounded.
+
+    Reads SEMANTIC_SUMMARY_PASS_BUDGET. ``0`` means unbounded; unset, blank,
+    non-integer or negative values fall back to the default.
+    """
+    raw = (os.getenv("SEMANTIC_SUMMARY_PASS_BUDGET") or "").strip()
+    try:
+        value = int(raw) if raw else DEFAULT_SEMANTIC_SUMMARY_PASS_BUDGET
+    except ValueError:
+        value = DEFAULT_SEMANTIC_SUMMARY_PASS_BUDGET
+    if value < 0:
+        value = DEFAULT_SEMANTIC_SUMMARY_PASS_BUDGET
+    return value or None

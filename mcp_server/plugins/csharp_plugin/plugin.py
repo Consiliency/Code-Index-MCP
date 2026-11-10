@@ -31,7 +31,7 @@ class Plugin(PluginWithSemanticSearch):
     lang = "csharp"
 
     def __init__(
-        self, sqlite_store: Optional[SQLiteStore] = None, enable_semantic: bool = True
+        self, sqlite_store: Optional[SQLiteStore] = None, enable_semantic: bool = False
     ) -> None:
         """Initialize the C# plugin with all analysis components."""
 

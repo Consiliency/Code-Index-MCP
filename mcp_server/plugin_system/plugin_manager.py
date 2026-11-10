@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional
 import yaml
 
 from ..interfaces.shared_interfaces import Error, Result
-from ..plugin_base import IPlugin
+from ..plugin_base import IPlugin, construct_plugin
 from ..storage.sqlite_store import SQLiteStore
 from .interfaces import ILifecycleManager, IPluginManager
 from .models import (
@@ -382,16 +382,12 @@ class PluginManager(IPluginManager, ILifecycleManager):
             if not plugin_class:
                 raise PluginInitError(f"Plugin class not found for {plugin_name}")
 
-            # Create instance with sqlite_store if available
-            if self.sqlite_store:
-                # Try to pass sqlite_store to constructor
-                try:
-                    plugin_instance = plugin_class(sqlite_store=self.sqlite_store)
-                except TypeError:
-                    # Fallback to no-args constructor
-                    plugin_instance = plugin_class()
-            else:
-                plugin_instance = plugin_class()
+            # Construct once with only the arguments the plugin's __init__ takes.
+            # Plugin-level semantic search is deprecated and always off here; the
+            # dispatcher's generation-scoped indexer is the semantic path (#121).
+            plugin_instance = construct_plugin(
+                plugin_class, sqlite_store=self.sqlite_store, enable_semantic=False
+            )
 
             # Store instance
             instance_info.instance = plugin_instance
