@@ -2,15 +2,15 @@
 
 This guide provides comprehensive information on configuring the Code-Index-MCP for different environments and use cases.
 
-> **Stable-surface release status**: This guide targets the `1.6.0` prepared candidate.
-> MCP STDIO is primary; FastAPI is secondary admin only. Docker examples require
-> the matching registry publication; until `1.6.0` is published, use the signed
-> `v1.5.1` image, which passed delivered acceptance. Published `1.5.1` has
-> partial delivered acceptance and caps `mcp<2`. `1.3.0`, `1.3.1`, `1.4.0`,
-> `1.4.1` and `1.5.0` are yanked on PyPI: their `mcp` requirement admits 2.x,
-> which cannot start their STDIO server. `1.6.0`, source installs and wheels
-> built from `main` require `mcp>=2.2,<2.4` and install in the same environment
-> as PMCP 3.x; remove any `mcp<2` pin installed alongside them.
+> **Stable-surface release status**: This guide targets published `1.6.0` (2026-11-10 UTC).
+> MCP STDIO is primary; FastAPI is secondary admin only. The signed `v1.6.0`
+> image and the PyPI wheel passed delivered acceptance (overall acceptance is
+> partial: PMCP rehearsal and browser were not run). `1.6.0` requires
+> `mcp>=2.2,<2.4` and installs in the same environment as PMCP 3.x;
+> remove any `mcp<2` pin installed alongside it. Published `1.5.1` caps
+> `mcp<2`. `1.2.0`,
+> `1.3.0`, `1.3.1`, `1.4.0`, `1.4.1` and `1.5.0` are yanked on PyPI: their `mcp`
+> requirement admits 2.x, which cannot start their STDIO server.
 > See [release preparation and acceptance](operations/v13-release.md).
 > That container image name is a container identity surface, not the canonical
 > Python distribution name.

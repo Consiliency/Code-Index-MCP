@@ -31,9 +31,8 @@ def test_public_install_docs_use_source_or_local_wheel_proof():
     getting_started = _read("docs/GETTING_STARTED.md")
     for text in (readme, getting_started):
         assert f"dist/index_it_mcp-{EXPECTED_VERSION}-py3-none-any.whl" in text
-        assert "prepared candidate" in text
-        assert f"Published `{PUBLISHED_VERSION}`" in text
-        # The published release stays installable until the candidate ships.
+        assert "prepared candidate" not in text
+        assert f"published `{PUBLISHED_VERSION}`" in text
         assert f"pip install index-it-mcp=={PUBLISHED_VERSION}" in text
         for version in YANKED_VERSIONS:
             assert f"`{version}`" in text, version

@@ -1,7 +1,8 @@
-"""Release metadata assertions for the prepared v1.6.0 contract.
+"""Release metadata assertions for the published v1.6.0 contract.
 
-Published v1.5.1 (delivered acceptance partial) is PUBLISHED_VERSION. v1.3.0
-through v1.5.0, including YANKED_VERSIONS, are yanked for an unbounded mcp.
+Published v1.6.0 (delivered acceptance partial) is PUBLISHED_VERSION. v1.2.0
+through v1.5.0, including YANKED_VERSIONS, are yanked for an unbounded mcp;
+v1.5.1 (caps mcp<2) stays installable.
 
 Historical GARC soak target: v1.2.0-rc6.
 """
@@ -25,10 +26,10 @@ except ImportError:  # Python <3.11
 REPO = Path(__file__).parent.parent
 EXPECTED_VERSION = "1.6.0"
 EXPECTED_TAG = "v1.6.0"
-#: Latest published release (corrective; caps mcp<2; delivered acceptance partial).
-PUBLISHED_VERSION = "1.5.1"
+#: Latest published release (mcp 2.x SDK; delivered acceptance partial).
+PUBLISHED_VERSION = "1.6.0"
 #: Yanked releases the docs name; their mcp requirement has no upper bound.
-YANKED_VERSIONS = ("1.5.0", "1.4.1")
+YANKED_VERSIONS = ("1.5.0", "1.4.1", "1.2.0")
 DOCKER_INSTALLERS = (
     "scripts/install-mcp-docker.sh",
     "scripts/install-mcp-docker.ps1",
@@ -491,7 +492,7 @@ def test_installers_and_download_helper_match_stable_identity_contract():
 
     readme = _read_text("README.md")
     quick_start = readme.split("## 🚀 Quick Start", 1)[1].split("## Using Against Many Repos", 1)[0]
-    assert "after protected-main publication" in quick_start
+    assert "after protected-main publication" not in quick_start
     assert "published, signed image reference" in quick_start
     assert f"signed `v{PUBLISHED_VERSION}`" in quick_start
     assert "image-reference.txt" in quick_start
@@ -511,11 +512,11 @@ def test_installers_and_download_helper_match_stable_identity_contract():
         assert expected in download_helper
 
 
-def test_active_docs_separate_candidate_from_published_and_yanked_releases():
+def test_active_docs_record_published_release_and_yanked_releases():
     for path in ("README.md", "docs/GETTING_STARTED.md", "docs/MCP_CONFIGURATION.md"):
         text = _read_text(path)
-        assert f"`{EXPECTED_VERSION}` prepared candidate" in text, path
-        assert f"Published `{PUBLISHED_VERSION}`" in text, path
+        assert "prepared candidate" not in text, path
+        assert f"published `{PUBLISHED_VERSION}`" in text, path
         assert "partial" in text, path
         assert "yanked" in text, path
         for version in YANKED_VERSIONS:
