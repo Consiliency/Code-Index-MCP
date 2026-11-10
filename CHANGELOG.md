@@ -7,59 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-**Fixed** (Consiliency/Code-Index-MCP#114)
-- The watcher sweep counted files the indexer never stores (disabled-by-default
-  languages such as YAML, shell and JSON, and unsupported extensions) as
-  "created" drift. On this repository that was 112 files, so every sweep
-  (default 60 minutes) forced a full rebuild that could not clear the drift,
-  left readiness at `missing_provenance` during each rebuild, and published a
-  new generation each time. The sweep, the full index walk and single-file
-  indexing now share one admission predicate
-  (`mcp_server/indexing/admission.py`, `EnhancedDispatcher.index_admission_reason`):
-  the same extension, plugin-enablement and exclusion rules. Right after a full
-  rebuild the sweep reports no drift. Rows a rebuild deliberately retains
-  (imported documents and history) are no longer reported as deleted.
-- Drift that survives a *successful* reconciliation is not reconciled again
-  until the tracked tree or the drift itself changes; the sweep logs it once.
-  A reconciliation that failed, was refused or raised is retried on the next
-  sweep, then with exponential backoff capped at 16 sweeps.
-- Bounded generation retention. Each publication and each failed rebuild is
-  recorded in `generations/generation-history.json`, and only recorded
-  generations can be pruned: after a publication, recorded generations beyond
-  the live one plus the `MCP_INDEX_GENERATION_RETENTION` (default 2, minimum 1)
-  most recently live previous generations, and recorded failed generations
-  beyond the newest one. Never removed: generations without a record
-  (everything from before the upgrade, or after a lost history file), any
-  generation a registry entry references, generations pinned with a
-  `generations/<id>.keep` file, and any generation a reader may still hold (its
-  SQLite sidecars exist, or a process has it open). The semantic directory and
-  sidecars are removed before the database, and the history file is fsynced.
-  Quarantine copies and server-side Qdrant collections are not touched.
-- Sandboxed plugin workers kept per-file in-memory state keyed by each
-  rebuild's staging path, which grew by about 11 MB per rebuild of a 29-file
-  fixture. A staged build now releases the repository's plugin workers while
-  queries are still fenced; they restart on next use.
+[Unreleased]: # placeholder for post-rc5 work
 
-**Fixed** (Consiliency/Code-Index-MCP#111)
-- Incremental sync failed with `Staged rebuild failed (RuntimeError)` when a
-  commit touched a file in a language with no enabled plugin, such as a
-  workflow `.yml`. Incremental sync now asks the shared admission predicate,
-  as the full walk does: files it rejects are ignored, an indexed file that is
-  no longer admitted is deleted, and a rename to a non-indexable path (for
-  example `notes.md` to `notes.txt`) deletes the old row. The result matches a
-  full rebuild. A file the predicate admits whose plugin fails to resolve (for
-  example a sandbox worker that does not start) is a failure in both the
-  incremental and the full path, so the previous generation is kept.
-- A failed staged rebuild's stored `last_sync_error` and the `repository sync`
-  output now include the message of the rebuild's own refusal and a bounded
-  summary of the per-file errors (at most five, checkout and staging paths
-  removed). Text from other exceptions is still reported by type only.
-- The shared secret redaction used for these errors and rerank diagnostics now
-  also covers GitHub tokens (`ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_`,
-  `github_pat_`), AWS access key ids, Slack tokens, PEM private keys, URL
-  credentials and `*secret*`/`*token*`/`*password*` key-value pairs.
+## [1.6.0] - 2026-11-09
 
-**Changed** (Consiliency/Code-Index-MCP#124)
+Prepared minor release: the port to the `mcp` 2.x SDK (Code-Index-MCP#124,
+with #128, #131 and #127 in #132 and its re-check fixes in #135), so
+`index-it-mcp` co-installs with PMCP 3.x; the watcher sweep, incremental sync
+and generation-retention fixes (Code-Index-MCP#114 and #111 in #129, follow-ups
+in #130). This section does not imply publication; protected-main dispatch and
+independent delivered-artifact acceptance are separate gates.
+
+### Changed
+
+**Port to the `mcp` 2.x SDK** (Consiliency/Code-Index-MCP#124)
+
 - The STDIO server runs on the `mcp` 2.x SDK. The requirement is now
   `mcp>=2.2,<2.4` (locked at 2.3.0), so `index-it-mcp` installs in the same
   environment as PMCP 3.x (`mcp>=2.2,<3`) and `phase-loop-runtime==0.7.30`
@@ -125,12 +87,70 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   no longer attempts MCP sampling for every chunk. It logs once and uses the
   next summarization path.
 
-**Fixed** (Consiliency/Code-Index-MCP#128)
+### Fixed
+
+**Watcher sweep and generation retention** (Consiliency/Code-Index-MCP#114)
+
+- The watcher sweep counted files the indexer never stores (disabled-by-default
+  languages such as YAML, shell and JSON, and unsupported extensions) as
+  "created" drift. On this repository that was 112 files, so every sweep
+  (default 60 minutes) forced a full rebuild that could not clear the drift,
+  left readiness at `missing_provenance` during each rebuild, and published a
+  new generation each time. The sweep, the full index walk and single-file
+  indexing now share one admission predicate
+  (`mcp_server/indexing/admission.py`, `EnhancedDispatcher.index_admission_reason`):
+  the same extension, plugin-enablement and exclusion rules. Right after a full
+  rebuild the sweep reports no drift. Rows a rebuild deliberately retains
+  (imported documents and history) are no longer reported as deleted.
+- Drift that survives a *successful* reconciliation is not reconciled again
+  until the tracked tree or the drift itself changes; the sweep logs it once.
+  A reconciliation that failed, was refused or raised is retried on the next
+  sweep, then with exponential backoff capped at 16 sweeps.
+- Bounded generation retention. Each publication and each failed rebuild is
+  recorded in `generations/generation-history.json`, and only recorded
+  generations can be pruned: after a publication, recorded generations beyond
+  the live one plus the `MCP_INDEX_GENERATION_RETENTION` (default 2, minimum 1)
+  most recently live previous generations, and recorded failed generations
+  beyond the newest one. Never removed: generations without a record
+  (everything from before the upgrade, or after a lost history file), any
+  generation a registry entry references, generations pinned with a
+  `generations/<id>.keep` file, and any generation a reader may still hold (its
+  SQLite sidecars exist, or a process has it open). The semantic directory and
+  sidecars are removed before the database, and the history file is fsynced.
+  Quarantine copies and server-side Qdrant collections are not touched.
+- Sandboxed plugin workers kept per-file in-memory state keyed by each
+  rebuild's staging path, which grew by about 11 MB per rebuild of a 29-file
+  fixture. A staged build now releases the repository's plugin workers while
+  queries are still fenced; they restart on next use.
+
+**Incremental sync of non-indexable files** (Consiliency/Code-Index-MCP#111)
+
+- Incremental sync failed with `Staged rebuild failed (RuntimeError)` when a
+  commit touched a file in a language with no enabled plugin, such as a
+  workflow `.yml`. Incremental sync now asks the shared admission predicate,
+  as the full walk does: files it rejects are ignored, an indexed file that is
+  no longer admitted is deleted, and a rename to a non-indexable path (for
+  example `notes.md` to `notes.txt`) deletes the old row. The result matches a
+  full rebuild. A file the predicate admits whose plugin fails to resolve (for
+  example a sandbox worker that does not start) is a failure in both the
+  incremental and the full path, so the previous generation is kept.
+- A failed staged rebuild's stored `last_sync_error` and the `repository sync`
+  output now include the message of the rebuild's own refusal and a bounded
+  summary of the per-file errors (at most five, checkout and staging paths
+  removed). Text from other exceptions is still reported by type only.
+- The shared secret redaction used for these errors and rerank diagnostics now
+  also covers GitHub tokens (`ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_`,
+  `github_pat_`), AWS access key ids, Slack tokens, PEM private keys, URL
+  credentials and `*secret*`/`*token*`/`*password*` key-value pairs.
+
+**`serverInfo.version`** (Consiliency/Code-Index-MCP#128)
+
 - The STDIO `initialize` reply's `serverInfo.version` is the `index-it-mcp`
   version (`mcp_server.__version__`), not the `mcp` library version. The same
   version is stamped on 2026-07-28 results.
 
-**Fixed** (Consiliency/Code-Index-MCP#131)
+**Grammar prefetch retries** (Consiliency/Code-Index-MCP#131)
+
 - `mcp-index grammars prefetch` retries transient download failures from the
   language pack's GitHub release assets: HTTP 5xx and 429, connection resets
   and timeouts. It makes at most 5 attempts, with equal-jitter exponential
@@ -141,7 +161,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   query or fragment) and the status. CI, Release Automation and the production
   Dockerfile all prefetch through this command.
 
-**Fixed** (Consiliency/Code-Index-MCP#127)
+**PMCP pilot grammar cache** (Consiliency/Code-Index-MCP#127)
+
 - `scripts/v13_pmcp_pilot.py` now gives its fixtures and network-denied sandbox
   workers a prefetched grammar cache. `prepare` prefetches into an explicit
   cache, then binds it in the manifest: `--grammar-cache`, else the caller's
@@ -152,23 +173,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   downloads, so offline mode's `reindex` no longer fails with
   `grammar_unavailable`.
 
-**Upgrade notes**
-- **Drop any `mcp<2` pin installed alongside `index-it-mcp`.** This release
-  requires `mcp>=2.2,<2.4`; a `"mcp<2"` constraint (the workaround for `1.4.1`
-  and `1.5.0`) makes the install unresolvable. Code that imports the `mcp`
-  SDK in the same environment must use the 2.x API.
-- Task-augmented `reindex` and `write_summaries` remain available to clients
-  that negotiate 2025-11-25 or earlier. The official Python SDK 2.x has no
-  Tasks client; its `ClientSession` validates every `tools/call` result as a
+### Upgrade notes
+- **`mcp` 2.x is required.** This release requires `mcp>=2.2,<2.4` (locked at
+  2.3.0). Drop any `mcp<2` pin installed alongside `index-it-mcp` (the
+  workaround for `1.4.1` and `1.5.0`, and what `1.5.1` itself requires): it
+  makes the install unresolvable. Code that imports the `mcp` SDK in the same
+  environment must use the 2.x API.
+- **Co-install with PMCP 3.x.** `index-it-mcp` now installs in the same
+  environment as PMCP 3.x (`mcp>=2.2,<3`) and `phase-loop-runtime==0.7.30`
+  with a clean `uv pip check`. `1.5.1` could not share an environment with
+  PMCP 3.x.
+- **Claude Code negotiates protocol 2026-07-28.** Claude Code 2.1.x probes
+  `server/discover` and negotiates 2026-07-28, which has no Tasks: task metadata
+  on `tools/call` is ignored, the call runs synchronously and `tasks/*` answer
+  `-32601`. The tools, their schemas and their results do not change.
+  Task-augmented `reindex` and `write_summaries` remain available to clients
+  that negotiate 2025-11-25 or earlier (the official Python SDK `ClientSession`,
+  the 1.x SDK client and the PMCP 3.x gateway). The official Python SDK 2.x has
+  no Tasks client; its `ClientSession` validates every `tools/call` result as a
   `CallToolResult`, so task clients must speak the 2025-11-25 wire directly.
-- PMCP pilot manifests prepared before this change lack `grammar_cache`. Run
-  `prepare` again.
+- **The `mcp` cap moves one minor at a time.** The cap below 2.4 is deliberate:
+  the Tasks runtime depends on the SDK's provisional `Server.middleware`. Each
+  new `mcp` minor will be re-tested before the cap is widened to it.
+- **Generation retention is automatic.** After each publication only the live
+  generation, the `MCP_INDEX_GENERATION_RETENTION` (default 2) most recent
+  previous ones and the newest failed one are kept. Generations that exist
+  before the upgrade are never pruned automatically; remove them by hand once
+  they are no longer needed. Only generations published or failed after the
+  upgrade count towards retention.
 - After deploying, hosts that worked around Consiliency/Code-Index-MCP#114 with
   a long `MCP_WATCHER_SWEEP_MINUTES` (for example 1440) can return to the
   default.
-- Generations that exist before the upgrade are never pruned automatically;
-  remove them by hand once they are no longer needed. Only generations
-  published or failed after the upgrade count towards retention.
+- PMCP pilot manifests prepared before this change lack `grammar_cache`. Run
+  `prepare` again.
+
+### Known follow-ups
+- Consiliency/Code-Index-MCP#133: move the PMCP pilot from pmcp 2.7.3 to 3.x and
+  re-run offline and rehearsal acceptance.
+- Consiliency/Code-Index-MCP#134: delete the unported legacy scripts
+  (`patch_mcp_server.py`, `scripts/cli` servers).
+- Consiliency/Code-Index-MCP#121: plan a first semantic build and retire legacy
+  Qdrant collections.
+- Consiliency/Code-Index-MCP#117: per-language degradation when a tree-sitter
+  grammar is unavailable.
 
 ## [1.5.1] - 2026-11-08
 

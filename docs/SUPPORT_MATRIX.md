@@ -1,13 +1,13 @@
 # Code-Index-MCP Support Matrix
 
-This matrix is the canonical support statement for published `1.5.1`
-(2026-11-09 UTC), a corrective release of `1.5.0` that caps `mcp<2`. MCP STDIO
-is the primary LLM surface and FastAPI is secondary admin.
-Published `1.5.0` and `1.4.1` (2026-10-13) set no upper bound on `mcp`, so
-installing either one, even as `index-it-mcp==1.5.0`, resolves `mcp` 2.x unless
-the install also constrains `mcp` below 2, and STDIO then fails at import.
-`1.4.1` also lacks the parser-stack upgrade and the BAML 0.23 summarization
-runtime described below; `1.4.0` is historical distribution evidence.
+This matrix is the canonical support statement for the `1.6.0` prepared
+candidate, which runs on the `mcp` 2.x SDK (`mcp>=2.2,<2.4`). MCP STDIO is the
+primary LLM surface and FastAPI is secondary admin.
+Published `1.5.1` (2026-11-09 UTC) is the current release; its delivered
+acceptance is partial (wheel and image passed; PMCP offline, rehearsal and
+browser not run), and it caps `mcp<2`. `1.3.0` through `1.5.0`, including
+`1.4.1` (2026-10-13), are yanked on PyPI: their `mcp` requirement has no upper
+bound, so an install resolves `mcp` 2.x and STDIO fails at import.
 See [release preparation and acceptance](operations/v13-release.md) for the
 separate PREP and SHIP gates. Support tiers below are unchanged.
 
@@ -40,8 +40,8 @@ The client/transport compatibility reducer for the current MCP surface is
   Streamable HTTP transport.
 - Remote Streamable HTTP MCP remains deferred until a later roadmap phase adds
   a distinct endpoint, transport tests, and transport-specific auth.
-- MCP SDK: source installs and wheels built from `main` run on the `mcp` 2.x
-  SDK and require `mcp>=2.2,<2.4` (Consiliency/Code-Index-MCP#124). They install
+- MCP SDK: `1.6.0`, source installs and wheels built from `main` run on the
+  `mcp` 2.x SDK and require `mcp>=2.2,<2.4` (Consiliency/Code-Index-MCP#124). They install
   in the same environment as PMCP 3.x (`mcp>=2.2,<3`) and
   `phase-loop-runtime==0.7.30` with a clean `uv pip check`, so PMCP 3.x no
   longer needs a separate environment. Only mcp 2.2 and 2.3 are verified. The
@@ -157,7 +157,7 @@ topology, or install-surface support expansion.
 | Python client (`mcp_server.client`, `IndexItClient`) | beta | Supported local programmatic API | `mcp_server/client.py`, `mcp_server/client_types.py`, PYCLIENT tests/docs | Local-only API for `search_code`, `symbol_lookup`, `reindex`, and `get_status`; it shares readiness-aware search behavior with MCP `search_code` and returns typed `index_unavailable` results instead of dispatching stale indexes |
 | FastAPI admin and diagnostics surface | beta | Secondary/admin surface | `README.md`, `docs/GETTING_STARTED.md`, `docs/MCP_CONFIGURATION.md` | Do not treat FastAPI as the primary LLM interface |
 | Native source install via `uv sync --locked` | beta | Canonical local development and operator path | `pyproject.toml`, `uv.lock`, install docs | This is the preferred local install path while the release remains pre-GA |
-| Python distribution name on PyPI (`index-it-mcp`) | beta | Canonical distribution name; `1.5.1` is the latest release published on PyPI | package naming note, install docs, `docs/status/public-package-identity.md`, delivered acceptance in `docs/operations/v13-release.md` | Install with `pip install index-it-mcp==1.5.1`: it caps `mcp<2`, and its delivered acceptance installed the PyPI wheel with no lock constraints. Do not install published `1.5.0` or `1.4.1` without constraining `mcp` below 2: their `mcp` requirement has no upper bound and `mcp` 2.x cannot start STDIO. Source install and locally built wheels remain supported development paths |
+| Python distribution name on PyPI (`index-it-mcp`) | beta | Canonical distribution name; `1.5.1` is the latest release published on PyPI; `1.6.0` is prepared | package naming note, install docs, `docs/status/public-package-identity.md`, delivered acceptance in `docs/operations/v13-release.md` | Install `pip install index-it-mcp==1.5.1` until `1.6.0` is published: it caps `mcp<2`, and its delivered acceptance installed the PyPI wheel with no lock constraints. `1.3.0` through `1.5.0` are yanked (unbounded `mcp`). `1.6.0` requires `mcp>=2.2,<2.4`. Source install and locally built wheels remain supported development paths |
 | Docker image `ghcr.io/consiliency/code-index-mcp:v1.4.0` | beta | Published container path; `:v1.4.0` and `:latest` are live on GHCR | Docker guide, release evidence, image naming tests | Container docs must keep the same topology and readiness limits as native docs |
 | Semantic search (`uv sync --locked --extra semantic` plus provider config) | experimental | Optional extra and provider-dependent | extras docs, config env vars, support-fact notes; INFERGATE rollout gate (`docs/status/INFERENCE_ROLLOUT.md`) | Requires semantic readiness `ready` for the active profile; ready `semantic: true` responses expose semantic source/profile/collection metadata, while `summaries_missing`, `vectors_missing`, `profile_mismatch`, or `semantic_stale` return explicit semantic refusal or failure instead of lexical fallback. Retrieval-rollout gate verdict is `dark_opt_in` (gate not yet passed — dense/hybrid arms `not_run` for lack of live provider evidence), so this remains experimental, not default-enabled. A live provider run's numbers count only after the queried collection's resident `collection-provenance.v1` binding verifies against the frozen corpus (matching `indexed_commit`/`corpus_sha256`, recorded profile/provider revision, matching `point_set_id`); an unverified collection is out of contract |
 | Reranking (`uv sync --locked --extra rerank` plus provider/model config) | experimental | Optional extra and provider-dependent | extras docs and support-fact notes; INFERGATE rollout gate (`docs/status/INFERENCE_ROLLOUT.md`) | Treat as opt-in ranking improvement, not baseline query behavior. Learned reranking stays OPT-IN / not default-enabled: the predeclared rollout gate has NOT passed (`hybrid_rerank` verdict `dark_opt_in` — insufficient provider evidence; holdout not used for tuning). A default flip requires a live run whose queried collection's resident `collection-provenance.v1` binding verifies against the frozen corpus before `hybrid_rerank` metrics are counted |
@@ -313,7 +313,8 @@ The 1.4.1 candidate was accepted, published and delivered-accepted as recorded i
 `docs/status/V13_EXECUTION.md`. 1.5.0 is published with partial delivered
 acceptance; its corrective release 1.5.1 is published and its delivered wheel
 and image acceptance passed, as recorded in `docs/operations/v13-release.md`.
-Historical PILOT acceptance is not proof for 1.5.0 or 1.5.1. This does not establish fleet readiness, general retrieval quality, immutable
+1.3.0 through 1.5.0 are yanked. Historical PILOT acceptance is not proof for
+1.5.0, 1.5.1 or the 1.6.0 candidate. This does not establish fleet readiness, general retrieval quality, immutable
 provider-build identity, or support on untested platforms. PREP code review and
 SHIP publication remain required for each candidate; the published 1.4.0 package
 predates v13. Existing support tiers and opt-in retrieval gates are unchanged.

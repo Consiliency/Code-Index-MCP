@@ -2,16 +2,15 @@
 
 This guide provides comprehensive information on configuring the Code-Index-MCP for different environments and use cases.
 
-> **Stable-surface release status**: This guide targets published `1.5.1` (2026-11-09 UTC).
-> MCP STDIO is primary; FastAPI is secondary admin only. The signed `v1.5.1`
-> image and the PyPI wheel passed delivered acceptance; `1.5.1` caps `mcp<2`.
-> Published `1.5.0` and `1.4.1` wheels cannot start STDIO unless the install
-> also constrains `mcp` below 2 (their `mcp` requirement admits 2.x, even for
-> `index-it-mcp==1.5.0`). `1.4.1` also lacks the parser-stack and
-> baml-bridge 0.23.0 upgrades, and `1.4.0` lacks the v13 repairs.
-> Source installs and wheels built from `main` require `mcp>=2.2,<2.4` and
-> install in the same environment as PMCP 3.x; remove any `mcp<2` pin
-> installed alongside them.
+> **Stable-surface release status**: This guide targets the `1.6.0` prepared candidate.
+> MCP STDIO is primary; FastAPI is secondary admin only. Docker examples require
+> the matching registry publication; until `1.6.0` is published, use the signed
+> `v1.5.1` image, which passed delivered acceptance. Published `1.5.1` has
+> partial delivered acceptance and caps `mcp<2`. `1.3.0`, `1.3.1`, `1.4.0`,
+> `1.4.1` and `1.5.0` are yanked on PyPI: their `mcp` requirement admits 2.x,
+> which cannot start their STDIO server. `1.6.0`, source installs and wheels
+> built from `main` require `mcp>=2.2,<2.4` and install in the same environment
+> as PMCP 3.x; remove any `mcp<2` pin installed alongside them.
 > See [release preparation and acceptance](operations/v13-release.md).
 > That container image name is a container identity surface, not the canonical
 > Python distribution name.
@@ -26,7 +25,7 @@ For release containers, replace every `<published-digest>` placeholder below
 with the digest from the accepted GitHub release's `image-reference.txt` asset,
 or use the Docker installer's generated configuration. Set `MCP_DOCKER_IMAGE`
 to that full digest reference when using a client that expands environment
-variables. There is no version-tag or `latest`-tag fallback for `1.5.1`.
+variables. There is no version-tag or `latest`-tag fallback for `1.6.0`.
 >
 > **Public alpha repository model**: one server can serve many unrelated
 > repositories, with one registered worktree per git common directory. Only the

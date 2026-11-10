@@ -2,11 +2,20 @@
 
 ## Release Status
 
+`1.6.0` is the prepared candidate. It ports the STDIO server to the `mcp` 2.x
+SDK (`mcp>=2.2,<2.4`, Code-Index-MCP#124, with #128, #131 and #127 in #132 and
+#135), so it installs in the same environment as PMCP 3.x, and carries the
+watcher sweep, incremental sync and generation-retention fixes
+(Code-Index-MCP#114 and #111 in #129, follow-ups in #130). This document and the
+version bump do not claim that `1.6.0` has been published or deployed. The owner
+decides which review seats and live checks of the Publication Gate apply to
+`1.6.0`; the PMCP pilot still runs pmcp 2.7.3 (Code-Index-MCP#133).
+
 `1.5.1` is published. It is the corrective release for `1.5.0` and caps `mcp`
-below 2. It is recorded as published, with delivered acceptance passed for the
-wheel and image, PMCP offline, rehearsal and browser not run, and not deployed;
-see "1.5.1 Delivered Acceptance" below. Install it with
-`pip install index-it-mcp==1.5.1`.
+below 2. It is recorded as published with partial delivered acceptance (wheel
+and image passed; PMCP offline, rehearsal and browser not run) and not
+deployed; see "1.5.1 Delivered Acceptance" below. Install it with
+`pip install index-it-mcp==1.5.1` until `1.6.0` is published and accepted.
 
 `1.5.0` is published. It carries the treesitter-chunker 6 / tree-sitter 0.26
 parser-stack upgrade (Code-Index-MCP#115, merged in #116) and the baml-bridge
@@ -19,9 +28,11 @@ resolves `mcp` 2.x and `index-it-mcp stdio` fails at import
 PMCP pilot installed under the lock (`mcp` 1.27.0), so neither saw it. `1.5.1`
 caps `mcp>=1.27,<2`, and `release_smoke.py --unconstrained` (part of
 `make release-smoke`) now installs the wheel with no lock constraints on Python
-3.12 and starts STDIO. Porting to `mcp` 2.x is Code-Index-MCP#124. Yanking
-`1.5.0` and `1.4.1` is a separate owner action after `1.5.1` is published and
-accepted.
+3.12 and starts STDIO. Porting to `mcp` 2.x is Code-Index-MCP#124, prepared in
+`1.6.0`. After `1.5.1` was published, `1.3.0` through `1.5.0` (including
+`1.4.1`) were yanked on PyPI for the unbounded `mcp` requirement. `1.2.0` and
+its release candidates declare the same unbounded requirement and are not
+yanked.
 
 The previous fully accepted release, `v1.4.1` (Code-Index-MCP#97), was published
 October 13, 2026 and delivered-accepted as recorded in
@@ -36,12 +47,12 @@ The canonical source plan is `specs/phase-plans-v13.md`; execution progress is
 
 Distribution: `index-it-mcp`; commands: `mcp-index` and `index-it-mcp`.
 Container: the signed `ghcr.io/consiliency/code-index-mcp@sha256:...` reference
-published in the `v1.5.1` GitHub release's `image-reference.txt` asset. Installers
-pin that exact reference; version/latest GHCR tags are left untouched. PyPI:
-`pip install index-it-mcp==1.5.1`; `uv sync --locked` and the locally built
-`index_it_mcp-1.5.1-py3-none-any.whl` remain development paths. Do not install
-published `1.5.0` or `1.4.1` from PyPI without constraining `mcp` below 2 (see
-below).
+published in the `v1.6.0` GitHub release's `image-reference.txt` asset. Installers
+pin that exact reference; version/latest GHCR tags are left untouched. Until
+then, use `uv sync --locked`, the locally built
+`index_it_mcp-1.6.0-py3-none-any.whl`, or published `1.5.1` (the signed `v1.5.1`
+image or `pip install index-it-mcp==1.5.1`). `1.3.0` through `1.5.0` are yanked
+(see below). `1.6.0` requires `mcp>=2.2,<2.4`: drop any `mcp<2` pin.
 The installer's `latest` selector means the latest GitHub release, not a mutable
 GHCR tag. It refuses a missing or malformed reference without falling back.
 
@@ -128,7 +139,7 @@ an approval substitute. Any candidate edit after review requires renewed review.
    available. Fetch protected main, confirm merge/source content and version
    inputs, and record independent publication authorization outside that tree.
 4. Check PyPI, GHCR, GitHub release and tag state for collisions or partial effects.
-   Dispatch `Release Automation` once with `mode=publish`, `version=v1.5.1`,
+   Dispatch `Release Automation` once with `mode=publish`, `version=v1.6.0`,
    `auto_merge=false`, `expected_commit=<recorded-main-sha>`,
    `expected_tree=<accepted-tree-sha>`, and `--ref main` only after the SHIP gate.
 5. Record workflow/run, tag/source, wheel/sdist/image digests and attestations.
