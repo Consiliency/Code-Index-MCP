@@ -718,6 +718,35 @@ class TestCentralConstructorAndSandbox:
             construct_plugin(_NeedsConfig, sqlite_store=None, enable_semantic=False)
         assert called == []
 
+    def test_construct_plugin_inspects_custom_new_when_init_is_inherited(self):
+        received = []
+
+        class _NewOnly:
+            def __new__(cls, sqlite_store=None, enable_semantic=True):
+                received.append((sqlite_store, enable_semantic))
+                return super().__new__(cls)
+
+        construct_plugin(_NewOnly, sqlite_store="s", enable_semantic=False)
+
+        assert received == [("s", False)]
+
+    def test_construct_plugin_inspects_factory_callable_signature(self):
+        received = []
+
+        def factory(sqlite_store=None, enable_semantic=True):
+            received.append((sqlite_store, enable_semantic))
+            return object()
+
+        def kwargs_factory(**kwargs):
+            received.append(dict(kwargs))
+            return object()
+
+        construct_plugin(factory, sqlite_store="s", enable_semantic=False)
+        construct_plugin(kwargs_factory, sqlite_store="s", enable_semantic=True)
+
+        # Bare **kwargs never implies plugin-level semantic support.
+        assert received == [("s", False), {"sqlite_store": "s"}]
+
     def test_sandbox_instantiate_positional_only_semantic_off(self):
         from mcp_server.sandbox import worker_main
 

@@ -1,7 +1,7 @@
 import inspect
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Iterable, Mapping
+from typing import TYPE_CHECKING, Any, Iterable
 
 from typing_extensions import NotRequired, TypedDict
 
@@ -129,21 +129,46 @@ _NAMED_PARAMETER_KINDS = (
 )
 
 
-def _plugin_init_parameters(plugin_cls: type) -> Mapping[str, inspect.Parameter]:
-    """Parameters of the class's own ``__init__`` (not a metaclass or ``__new__``)."""
-    init = getattr(plugin_cls, "__init__", None)
-    if init is None or init is object.__init__:
-        return {}
+def _construction_parameters(target: Any) -> list[inspect.Parameter]:
+    """Parameters ``target(...)`` binds, without the leading ``self``/``cls``.
+
+    For a class this is its own ``__init__`` (not a metaclass ``__call__``), or
+    a custom ``__new__`` when ``__init__`` is ``object.__init__``. For any
+    other callable (a factory function or entry point) it is the callable's
+    own signature.
+    """
+    if isinstance(target, type):
+        init = getattr(target, "__init__", None)
+        if init is not None and init is not object.__init__:
+            method = init
+        elif getattr(target, "__new__", object.__new__) is not object.__new__:
+            method = target.__new__
+        else:
+            return []
+        try:
+            parameters = list(inspect.signature(method).parameters.values())
+        except (TypeError, ValueError):
+            return []
+        if parameters and parameters[0].kind in (
+            inspect.Parameter.POSITIONAL_ONLY,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        ):
+            parameters = parameters[1:]  # self / cls
+        return parameters
     try:
-        return inspect.signature(init).parameters
+        return list(inspect.signature(target).parameters.values())
     except (TypeError, ValueError):
-        return {}
+        return []
 
 
-def construct_plugin(plugin_cls: type, *, sqlite_store: Any = None, enable_semantic: bool = False):
-    """Construct a plugin class once, passing only arguments its ``__init__`` takes.
+def construct_plugin(plugin_cls: Any, *, sqlite_store: Any = None, enable_semantic: bool = False):
+    """Construct a plugin once, passing only arguments its constructor takes.
 
-    ``enable_semantic`` is passed only to an ``__init__`` that names it explicitly;
+    ``plugin_cls`` may be a class (its ``__init__``, or a custom ``__new__`` when
+    ``__init__`` is inherited from ``object``, is inspected) or a factory callable
+    such as a discovered entry point (its own signature is inspected).
+
+    ``enable_semantic`` is passed only to a constructor that names it explicitly;
     ``**kwargs`` alone does not prove the option is accepted. Positional-only
     parameters are passed positionally, in order. Plugin-level semantic
     search is deprecated and off unless a caller opts in (#121). The constructor
@@ -151,12 +176,7 @@ def construct_plugin(plugin_cls: type, *, sqlite_store: Any = None, enable_seman
     triggering a retry with different arguments.
     """
     values = {"sqlite_store": sqlite_store, "enable_semantic": bool(enable_semantic)}
-    parameters = list(_plugin_init_parameters(plugin_cls).values())
-    if parameters and parameters[0].kind in (
-        inspect.Parameter.POSITIONAL_ONLY,
-        inspect.Parameter.POSITIONAL_OR_KEYWORD,
-    ):
-        parameters = parameters[1:]  # self
+    parameters = _construction_parameters(plugin_cls)
 
     # Positional-only parameters can only be passed positionally, in order. Fill
     # known names with their values and unknown ones with their defaults, then
@@ -173,7 +193,7 @@ def construct_plugin(plugin_cls: type, *, sqlite_store: Any = None, enable_seman
             positional.append(parameter.default)
         else:
             raise TypeError(
-                f"{plugin_cls.__name__}.__init__ requires positional-only argument "
+                f"{getattr(plugin_cls, '__qualname__', plugin_cls)!r} requires positional-only argument "
                 f"{parameter.name!r}, which construct_plugin cannot supply"
             )
     positional = positional[:supplied]
