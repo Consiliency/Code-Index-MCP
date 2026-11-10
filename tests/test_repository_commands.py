@@ -6644,3 +6644,35 @@ def test_status_reports_exact_semjedi_p4_phase_plan_markdown_boundary(monkeypatc
     )
     assert f"Last progress path: {later_doc}" in result.output
     assert f"In-flight path: {in_flight_doc}" in result.output
+
+
+def test_force_full_trace_staleness_covers_snapshot_heartbeat_spacing(monkeypatch):
+    """#112: a healthy slow snapshot is not reported as a stale running trace."""
+    from datetime import timedelta, timezone
+
+    from mcp_server.cli.repository_commands import _force_full_trace_is_stale
+
+    def trace(stage, age_seconds):
+        observed = datetime.now(timezone.utc) - timedelta(seconds=age_seconds)
+        return {
+            "status": "running",
+            "stage": stage,
+            "trace_timestamp": observed.replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        }
+
+    monkeypatch.setenv("MCP_INDEX_LEXICAL_TIMEOUT_SECONDS", "20")
+    monkeypatch.delenv("MCP_INDEX_SNAPSHOT_STALL_SECONDS", raising=False)
+    monkeypatch.delenv("MCP_INDEX_GIT_TIMEOUT_SECONDS", raising=False)
+
+    # Previously stale after 2 x lexical timeout (40 s).
+    assert _force_full_trace_is_stale(trace("snapshot_generation", 60)) is False
+    assert _force_full_trace_is_stale(trace("snapshot_generation", 200)) is True
+    # Before the first blob heartbeat, one git command may run for the git timeout.
+    assert _force_full_trace_is_stale(trace("snapshot_inputs", 200)) is False
+    assert _force_full_trace_is_stale(trace("force_full_started", 200)) is False
+    assert _force_full_trace_is_stale(trace("snapshot_inputs", 400)) is True
+    # Non-snapshot stages keep the lexical threshold, whatever the stall window.
+    monkeypatch.setenv("MCP_INDEX_SNAPSHOT_STALL_SECONDS", "300")
+    assert _force_full_trace_is_stale(trace("lexical_walking", 60)) is True
+    assert _force_full_trace_is_stale(trace("lexical_walking", 30)) is False
+    assert _force_full_trace_is_stale(trace("snapshot_generation", 200)) is False

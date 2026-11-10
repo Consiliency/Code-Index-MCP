@@ -20,6 +20,7 @@ from importlib.resources import files
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
+from ..config.env_vars import get_index_snapshot_stall_seconds
 from ..core.errors import TransientArtifactError
 from ..core.path_resolver import PathResolver
 from ..indexing.friction import extract_friction_markers
@@ -33,6 +34,60 @@ from ..indexing.source_metadata import (
 from .connection_pool import ConnectionPool
 
 logger = logging.getLogger(__name__)
+
+
+class SnapshotStalledError(TimeoutError):
+    """A SQLite generation snapshot copied no new pages for the stall window.
+
+    The message is fixed text built only from numbers, so it is safe to store
+    in the registry and print (Consiliency/Code-Index-MCP#112).
+    """
+
+    def __init__(self, stall_seconds: float, pages_done: int, pages_total: int) -> None:
+        self.stall_seconds = stall_seconds
+        self.pages_done = pages_done
+        self.pages_total = pages_total
+        super().__init__(
+            f"SQLite generation snapshot made no progress for {stall_seconds:g} s "
+            f"at {pages_done}/{pages_total} pages"
+        )
+
+
+class _SnapshotStallGuard:
+    """``sqlite3`` backup progress callback that fails only on a stall.
+
+    Progress means the copied page count passed its previous high-water mark,
+    so a backup that keeps restarting without getting further still stalls.
+    """
+
+    def __init__(
+        self,
+        stall_seconds: float,
+        *,
+        checkpoint: Optional[Callable[[], None]] = None,
+        on_progress: Optional[Callable[[int, int], None]] = None,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self.stall_seconds = stall_seconds
+        self._checkpoint = checkpoint
+        self._on_progress = on_progress
+        self._clock = clock
+        self._best = -1
+        self._since = clock()
+
+    def __call__(self, status: int, remaining: int, total: int) -> None:
+        if self._checkpoint is not None:
+            self._checkpoint()
+        now = self._clock()
+        done = max(0, total - remaining)
+        if done > self._best:
+            self._best = done
+            self._since = now
+        elif now - self._since >= self.stall_seconds:
+            raise SnapshotStalledError(self.stall_seconds, done, total)
+        if self._on_progress is not None:
+            self._on_progress(done, total)
+
 
 _LEXICAL_EXCLUDED_FILENAMES = {
     "full_indexing_log.txt",
@@ -407,18 +462,39 @@ class SQLiteStore:
             return None
         return dict(self._readonly_diagnostics)
 
-    @staticmethod
-    def snapshot_database(source: Path, destination: Path) -> None:
-        """Copy a committed SQLite snapshot without modifying the active database."""
-        deadline = time.monotonic() + 30
+    #: Pages copied per backup step (about 1 MB at the default 4 KiB page size).
+    SNAPSHOT_BACKUP_PAGES = 256
 
-        def progress(status: int, remaining: int, total: int) -> None:
-            if time.monotonic() >= deadline:
-                raise TimeoutError("SQLite generation snapshot deadline exceeded")
+    @staticmethod
+    def snapshot_database(
+        source: Path,
+        destination: Path,
+        *,
+        stall_seconds: Optional[float] = None,
+        checkpoint: Optional[Callable[[], None]] = None,
+        on_progress: Optional[Callable[[int, int], None]] = None,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        """Copy a committed SQLite snapshot without modifying the active database.
+
+        There is no total deadline: a large index on a busy volume may take as
+        long as it needs. The copy fails with :class:`SnapshotStalledError` only
+        when the number of copied pages has not passed its previous high-water
+        mark for ``stall_seconds`` (default ``MCP_INDEX_SNAPSHOT_STALL_SECONDS``).
+        ``checkpoint`` runs after every backup step, so raising from it (for
+        example on service shutdown) aborts within one step; ``on_progress``
+        receives ``(pages_done, pages_total)`` after every step.
+        """
+        progress = _SnapshotStallGuard(
+            get_index_snapshot_stall_seconds() if stall_seconds is None else stall_seconds,
+            checkpoint=checkpoint,
+            on_progress=on_progress,
+            clock=clock,
+        )
 
         with closing(sqlite3.connect(source.resolve().as_uri() + "?mode=ro", uri=True)) as reader:
             with closing(sqlite3.connect(destination)) as writer:
-                reader.backup(writer, pages=256, progress=progress)
+                reader.backup(writer, pages=SQLiteStore.SNAPSHOT_BACKUP_PAGES, progress=progress)
 
     def prepare_generation(
         self,

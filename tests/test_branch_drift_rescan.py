@@ -287,12 +287,14 @@ def test_watcher_drift_callback_does_not_enqueue_full_rescan():
 # ---------------------------------------------------------------------------
 
 
-def test_bypass_branch_guard_is_inert_on_wrong_branch(caplog):
+def test_bypass_branch_guard_is_inert_on_wrong_branch(caplog, tmp_path):
     """The compatibility bypass parameter must not bypass wrong-branch readiness."""
     repo_id = "test-repo"
-    registry, _ = _make_registry_with_drift(
+    registry, repo_info = _make_registry_with_drift(
         repo_id=repo_id, current_branch="feature/noise", tracked_branch="main"
     )
+    # A force-full sync writes its trace under index_location; keep it out of the checkout.
+    repo_info.index_location = str(tmp_path / "index")
     # Mock out _full_index so it returns without actually indexing
     manager = GitAwareIndexManager(registry=registry, dispatcher=MagicMock())
     manager.on_branch_drift = MagicMock()

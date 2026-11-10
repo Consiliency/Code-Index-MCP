@@ -19,7 +19,9 @@ from mcp_server.storage.git_index_manager import GitAwareIndexManager
 from mcp_server.storage.repository_registry import RepositoryRegistry
 from mcp_server.storage.sqlite_store import (
     LEGACY_CHUNK_ID_SCHEME,
+    SnapshotStalledError,
     SQLiteStore,
+    _SnapshotStallGuard,
     current_chunk_id_scheme,
 )
 from tests.test_git_index_manager import _get_head_commit, _make_git_repo
@@ -1524,3 +1526,170 @@ def test_retained_vector_copy_uses_real_generation_clients_without_active_mutati
         manager.dispatcher._semantic_registry = None
         if stage is not None:
             stage.close()
+
+
+def _multi_page_database(path: Path) -> int:
+    with closing(sqlite3.connect(path)) as connection:
+        connection.execute("CREATE TABLE fixture(payload TEXT)")
+        connection.executemany(
+            "INSERT INTO fixture VALUES (?)", [("synthetic" * 400,) for _ in range(40)]
+        )
+        connection.commit()
+        return connection.execute("PRAGMA page_count").fetchone()[0]
+
+
+class _FakeClock:
+    def __init__(self, step: float) -> None:
+        self.now = 0.0
+        self.step = step
+
+    def __call__(self) -> float:
+        value = self.now
+        self.now += self.step
+        return value
+
+
+def test_snapshot_has_no_total_deadline_while_pages_advance(tmp_path, monkeypatch):
+    """#112: a slow copy that keeps advancing is not cut off by elapsed time."""
+    source = tmp_path / "source.db"
+    pages = _multi_page_database(source)
+    assert pages > 5
+    monkeypatch.setattr(SQLiteStore, "SNAPSHOT_BACKUP_PAGES", 1)
+    clock = _FakeClock(step=600.0)  # ten minutes pass on every clock read
+    seen = []
+
+    destination = tmp_path / "copy.db"
+    SQLiteStore.snapshot_database(
+        source,
+        destination,
+        stall_seconds=120,
+        on_progress=lambda done, total: seen.append((done, total)),
+        clock=clock,
+    )
+
+    assert clock.now > 600.0 * pages
+    assert seen[-1] == (pages, pages)
+    with closing(sqlite3.connect(destination)) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM fixture").fetchone()[0] == 40
+
+
+def test_snapshot_stall_guard_fails_only_after_the_no_progress_window():
+    clock = _FakeClock(step=0.0)
+    guard = _SnapshotStallGuard(120, clock=clock)
+    guard(0, 30, 40)  # 10 pages copied at t=0
+    clock.now = 119.0
+    guard(0, 30, 40)  # same count, still inside the window
+    clock.now = 119.5
+    guard(0, 29, 40)  # advanced: the window restarts
+    clock.now = 200.0
+    guard(0, 40, 40)  # a restarted backup below the high-water mark is not progress
+    clock.now = 239.5
+    with pytest.raises(SnapshotStalledError) as stalled:
+        guard(0, 40, 40)
+
+    assert isinstance(stalled.value, TimeoutError)
+    assert str(stalled.value) == (
+        "SQLite generation snapshot made no progress for 120 s at 0/40 pages"
+    )
+    assert (stalled.value.pages_done, stalled.value.pages_total) == (0, 40)
+
+
+@pytest.mark.parametrize(
+    ("name", "getter", "default", "floor"),
+    [
+        ("MCP_INDEX_SNAPSHOT_STALL_SECONDS", "get_index_snapshot_stall_seconds", 120, 5),
+        ("MCP_INDEX_GIT_TIMEOUT_SECONDS", "get_index_git_timeout_seconds", 300, 10),
+    ],
+)
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        (None, "default"),
+        ("1", "floor"),
+        ("-5", "floor"),
+        ("not-a-number", "default"),
+        ("", "default"),
+        ("inf", "default"),
+        ("-inf", "default"),
+        ("1e309", "default"),
+        ("nan", "default"),
+        ("45.5", 45.5),
+        ("600", 600),
+    ],
+)
+def test_rebuild_guard_env_values_are_finite_and_floored(
+    monkeypatch, name, getter, default, floor, raw, expected
+):
+    """#140 review: a non-finite value must not disable stall detection or the git timeout."""
+    from mcp_server.config import env_vars
+
+    if raw is None:
+        monkeypatch.delenv(name, raising=False)
+    else:
+        monkeypatch.setenv(name, raw)
+    value = getattr(env_vars, getter)()
+    assert value == {"default": default, "floor": floor}.get(expected, expected)
+
+
+def test_snapshot_checkpoint_aborts_within_one_step_and_leaves_destination_unused(
+    tmp_path, monkeypatch
+):
+    source = tmp_path / "source.db"
+    _multi_page_database(source)
+    original = source.read_bytes()
+    monkeypatch.setattr(SQLiteStore, "SNAPSHOT_BACKUP_PAGES", 1)
+    calls = []
+
+    def checkpoint():
+        calls.append(1)
+        raise RuntimeError("synthetic shutdown")
+
+    destination = tmp_path / "copy.db"
+    with pytest.raises(RuntimeError, match="synthetic shutdown"):
+        SQLiteStore.snapshot_database(source, destination, checkpoint=checkpoint)
+
+    assert len(calls) == 1
+    assert source.read_bytes() == original
+    with closing(sqlite3.connect(destination)) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM sqlite_master").fetchone()[0] == 0
+
+
+def test_shutdown_during_artifact_schema_upgrade_snapshot(runtime, monkeypatch):
+    """#140 review: the legacy-artifact upgrade copy honors shutdown too."""
+    repo, registry, repo_id, _store, manager = runtime
+    assert manager.rebuild_repository_index(repo_id).action == "full_index"
+    before = registry.get(repo_id)
+    extracted = repo.parent / "downloaded"
+    extracted.mkdir()
+    SQLiteStore.snapshot_database(before.index_path, extracted / "current.db")
+    with closing(sqlite3.connect(extracted / "current.db")) as connection:
+        connection.execute(
+            "DELETE FROM schema_version WHERE version = ?", (SQLiteStore.SCHEMA_VERSION,)
+        )
+        connection.commit()
+        assert connection.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] < (
+            SQLiteStore.SCHEMA_VERSION
+        )
+    original_checkpoint = manager._rebuild_checkpoint
+    stages = []
+
+    def checkpoint(stage):
+        stages.append(stage)
+        if stage == "artifact_upgrade":
+            manager.request_shutdown()
+        original_checkpoint(stage)
+
+    monkeypatch.setattr(manager, "_rebuild_checkpoint", checkpoint)
+
+    result = manager.restore_verified_artifact(
+        repo_id, extracted, expected_commit=before.current_commit
+    )
+
+    assert stages.count("artifact_upgrade") == 1
+    assert result.action == "failed"
+    assert "RebuildShutdownRequested: service shutdown requested before artifact_upgrade" in (
+        result.error
+    )
+    after = registry.get(repo_id)
+    assert after.index_path == before.index_path
+    assert after.index_generation == before.index_generation

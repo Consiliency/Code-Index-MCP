@@ -308,6 +308,24 @@ This document provides a comprehensive reference of all environment variables su
   export MCP_INDEX_GENERATION_RETENTION=3  # Keep live plus three previous generations
   ```
 
+### `MCP_INDEX_SNAPSHOT_STALL_SECONDS`
+- **Description**: How long a staged rebuild's SQLite snapshot (the copy of the active index into a new generation, also used by artifact export and restore) may go without copying any new pages before it fails with `SnapshotStalledError` ("SQLite generation snapshot made no progress for N s at X/Y pages"). There is no total time limit: a large index on a busy volume takes as long as it needs while pages keep advancing. A service shutdown still aborts the copy within one backup step (about 1 MB). While a force-full rebuild snapshots, `repository status` reports a running trace as stale only after this window (Consiliency/Code-Index-MCP#112).
+- **Type**: Number (seconds)
+- **Default**: `120` (values below `5` are treated as `5`; invalid values use the default)
+- **Example**:
+  ```bash
+  export MCP_INDEX_SNAPSHOT_STALL_SECONDS=300  # Tolerate five-minute I/O stalls
+  ```
+
+### `MCP_INDEX_GIT_TIMEOUT_SECONDS`
+- **Description**: Time limit for each git command a staged rebuild runs: listing the committed tree, reading each committed blob, and the before-publish provenance check (`rev-parse`, `diff --quiet`). Exceeding it fails the rebuild with a described error (`Committed input snapshot exceeded MCP_INDEX_GIT_TIMEOUT_SECONDS` or `Git source check exceeded MCP_INDEX_GIT_TIMEOUT_SECONDS`); a timeout is never reported as "Repository changed". A service shutdown kills a running git command within about 0.25 s (Consiliency/Code-Index-MCP#112).
+- **Type**: Number (seconds)
+- **Default**: `300` (values below `10` are treated as `10`; invalid values use the default)
+- **Example**:
+  ```bash
+  export MCP_INDEX_GIT_TIMEOUT_SECONDS=600
+  ```
+
 ## Cloud Sync Configuration (Optional)
 
 ### `MCP_CLOUD_SYNC_ENABLED`

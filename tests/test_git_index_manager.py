@@ -559,6 +559,357 @@ def test_staged_rebuild_interrupted_publication_remains_non_ready(tmp_path, fail
     registry.update_indexed_commit.assert_not_called()
 
 
+def _arm_git_timeout_after(manager, stage):
+    """Make every git command time out once ``stage``'s checkpoint has passed."""
+    original_checkpoint = manager._rebuild_checkpoint
+    original_run_git = manager._run_git
+    armed = []
+
+    def checkpoint(name):
+        original_checkpoint(name)
+        if name == stage:
+            armed.append(name)
+
+    def run_git(args, cwd, **kwargs):
+        if armed:
+            raise subprocess.TimeoutExpired(["git", *args], 300)
+        return original_run_git(args, cwd, **kwargs)
+
+    manager._rebuild_checkpoint = checkpoint
+    manager._run_git = run_git
+
+
+def test_provenance_git_timeout_is_described_not_reported_as_repository_change(tmp_path):
+    """#112: a slow ``git diff --quiet`` must not discard a finished rebuild as changed."""
+    repo = _make_git_repo(tmp_path)
+    commit = _get_head_commit(repo)
+    repo_info = _make_repo_info(repo, commit)
+    repo_info.last_indexed_commit = None
+    _seed_index(repo_info.index_path, repo, "old.py")
+    original = repo_info.index_path
+    manager, registry = _make_rebuild_manager(repo_info, commit)
+    _arm_git_timeout_after(manager, "before_provenance")
+
+    result = manager.rebuild_repository_index(repo_info.repository_id)
+
+    assert result.action == "failed"
+    assert result.error.startswith(
+        "Staged rebuild failed (StagedRebuildError: "
+        "Git source check exceeded MCP_INDEX_GIT_TIMEOUT_SECONDS)"
+    )
+    assert "Repository changed" not in result.error
+    registry.publish_generation.assert_not_called()
+    assert repo_info.index_path == original
+
+
+def test_admission_git_timeout_fails_without_stale_commit_refusal(tmp_path):
+    repo = _make_git_repo(tmp_path)
+    commit = _get_head_commit(repo)
+    repo_info = _make_repo_info(repo, commit)
+    repo_info.last_indexed_commit = None
+    _seed_index(repo_info.index_path, repo, "old.py")
+    manager, registry = _make_rebuild_manager(repo_info, commit)
+    manager._run_git = MagicMock(side_effect=subprocess.TimeoutExpired(["git"], 300))
+
+    result = manager.rebuild_repository_index(repo_info.repository_id)
+
+    assert result.action == "failed"
+    assert result.code != RepositoryReadinessState.STALE_COMMIT.value
+    assert "Git source check exceeded MCP_INDEX_GIT_TIMEOUT_SECONDS" in result.error
+    registry.begin_generation_mutation.assert_not_called()
+
+
+def test_committed_input_git_timeout_is_described(tmp_path):
+    repo = _make_git_repo(tmp_path)
+    commit = _get_head_commit(repo)
+    repo_info = _make_repo_info(repo, commit)
+    repo_info.last_indexed_commit = None
+    _seed_index(repo_info.index_path, repo, "old.py")
+    manager, registry = _make_rebuild_manager(repo_info, commit)
+    _arm_git_timeout_after(manager, "snapshot_inputs")
+
+    result = manager.rebuild_repository_index(repo_info.repository_id)
+
+    assert result.action == "failed"
+    assert result.error.startswith(
+        "Staged rebuild failed (StagedRebuildError: "
+        "Committed input snapshot exceeded MCP_INDEX_GIT_TIMEOUT_SECONDS)"
+    )
+    assert repo_info.staleness_reason == "partial_index_failure"
+    registry.publish_generation.assert_not_called()
+
+
+def test_shutdown_during_generation_snapshot_leaves_active_generation(tmp_path):
+    repo = _make_git_repo(tmp_path)
+    commit = _get_head_commit(repo)
+    repo_info = _make_repo_info(repo, commit)
+    repo_info.last_indexed_commit = None
+    _seed_index(repo_info.index_path, repo, "old.py")
+    active = repo_info.index_path
+    original = active.read_bytes()
+    manager, registry = _make_rebuild_manager(repo_info, commit)
+    original_checkpoint = manager._rebuild_checkpoint
+
+    def checkpoint(stage):
+        if stage == "snapshot_generation":
+            manager.request_shutdown()
+        original_checkpoint(stage)
+
+    manager._rebuild_checkpoint = checkpoint
+
+    result = manager.rebuild_repository_index(repo_info.repository_id)
+
+    assert result.action == "failed"
+    assert result.error.startswith(
+        "Staged rebuild failed (RebuildShutdownRequested: "
+        "service shutdown requested before snapshot_generation)"
+    )
+    assert repo_info.index_path == active
+    assert active.read_bytes() == original
+    registry.publish_generation.assert_not_called()
+    assert not list(active.parent.glob(".current.db.staging-*"))
+
+
+def test_snapshot_stall_is_described_and_failed_trace_starts_fresh(tmp_path, monkeypatch):
+    """#112: the stall text reaches the operator; a failed run inherits no old fields."""
+    from mcp_server.storage.sqlite_store import SnapshotStalledError
+
+    repo = _make_git_repo(tmp_path)
+    commit = _get_head_commit(repo)
+    repo_info = _make_repo_info(repo, commit)
+    repo_info.last_indexed_commit = "older-indexed-commit"
+    _seed_index(repo_info.index_path, repo, "old.py")
+    manager, registry = _make_rebuild_manager(repo_info, commit)
+    # The trace a previous successful force-full run left behind.
+    manager._write_force_full_exit_trace(
+        repo_info,
+        {
+            "status": "completed",
+            "stage": "force_full_completed",
+            "lexical_stage": "completed",
+            "lexical_files_completed": 12,
+            "semantic_stage": "indexed",
+            "summary_passes": 3,
+        },
+    )
+
+    def stall(source, destination, **kwargs):
+        destination.touch()
+        raise SnapshotStalledError(120, 10, 40)
+
+    monkeypatch.setattr(SQLiteStore, "snapshot_database", staticmethod(stall))
+
+    result = manager.sync_repository_index(repo_info.repository_id, force_full=True)
+
+    assert result.action == "failed"
+    assert result.error == (
+        "Staged rebuild failed (SnapshotStalledError: "
+        "SQLite generation snapshot made no progress for 120 s at 10/40 pages)"
+    )
+    registry.publish_generation.assert_not_called()
+    trace = json.loads(
+        (Path(repo_info.index_location) / "force_full_exit_trace.json").read_text("utf-8")
+    )
+    assert trace["stage"] == "force_full_failed"
+    assert trace["current_commit"] == commit
+    for inherited in (
+        "lexical_stage",
+        "lexical_files_completed",
+        "semantic_stage",
+        "summary_passes",
+    ):
+        assert inherited not in trace
+    assert trace["snapshot_blobs_done"] >= 1
+
+
+def _seed_previous_successful_trace(manager, repo_info):
+    manager._write_force_full_exit_trace(
+        repo_info,
+        {
+            "status": "completed",
+            "stage": "force_full_completed",
+            "stage_family": "final_closeout",
+            "lexical_stage": "completed",
+            "lexical_files_completed": 12,
+            "semantic_stage": "indexed",
+            "summary_passes": 3,
+        },
+    )
+
+
+def _read_trace(repo_info):
+    return json.loads(
+        (Path(repo_info.index_location) / "force_full_exit_trace.json").read_text("utf-8")
+    )
+
+
+_PREVIOUS_RUN_FIELDS = ("lexical_files_completed", "semantic_stage", "summary_passes")
+
+
+def test_force_full_early_git_timeout_writes_fresh_terminal_trace(tmp_path):
+    """#140 review: an attempt that fails before admission must not show the last run."""
+    repo = _make_git_repo(tmp_path)
+    commit = _get_head_commit(repo)
+    repo_info = _make_repo_info(repo, commit)
+    repo_info.last_indexed_commit = None
+    _seed_index(repo_info.index_path, repo, "old.py")
+    manager, registry = _make_rebuild_manager(repo_info, commit)
+    _seed_previous_successful_trace(manager, repo_info)
+    manager._run_git = MagicMock(side_effect=subprocess.TimeoutExpired(["git"], 300))
+
+    result = manager.sync_repository_index(repo_info.repository_id, force_full=True)
+
+    assert result.action == "failed"
+    registry.begin_generation_mutation.assert_not_called()
+    trace = _read_trace(repo_info)
+    assert trace["status"] == "completed"
+    assert trace["stage"] == "force_full_failed"
+    assert trace["result_action"] == "failed"
+    assert trace["blocker_source"] == "admission"
+    assert trace["registration_id"] == repo_info.registration_id
+    assert trace["current_commit"] == commit
+    assert trace.get("lexical_stage") is None
+    for inherited in _PREVIOUS_RUN_FIELDS:
+        assert inherited not in trace
+
+
+def test_force_full_refusal_before_admission_writes_terminal_trace(tmp_path):
+    repo = _make_git_repo(tmp_path)
+    commit = _get_head_commit(repo)
+    repo_info = _make_repo_info(repo, commit)
+    repo_info.last_indexed_commit = None
+    _seed_index(repo_info.index_path, repo, "old.py")
+    (repo / "hello.py").write_text("tracked_edit = 1\n")  # dirty worktree
+    manager, registry = _make_rebuild_manager(repo_info, commit)
+    _seed_previous_successful_trace(manager, repo_info)
+
+    result = manager.sync_repository_index(repo_info.repository_id, force_full=True)
+
+    assert result.action == "refused"
+    assert result.code == RepositoryReadinessState.STALE_COMMIT.value
+    trace = _read_trace(repo_info)
+    assert trace["status"] == "completed"
+    assert trace["stage"] == "force_full_refused"
+    assert trace["result_code"] == RepositoryReadinessState.STALE_COMMIT.value
+    for inherited in _PREVIOUS_RUN_FIELDS:
+        assert inherited not in trace
+
+
+def test_force_full_exception_before_admission_interrupts_fresh_trace(tmp_path):
+    repo = _make_git_repo(tmp_path)
+    commit = _get_head_commit(repo)
+    repo_info = _make_repo_info(repo, commit)
+    _seed_index(repo_info.index_path, repo, "old.py")
+    manager, registry = _make_rebuild_manager(repo_info, commit)
+    _seed_previous_successful_trace(manager, repo_info)
+    registry.update_git_state.side_effect = RuntimeError("synthetic registry failure")
+
+    with pytest.raises(RuntimeError, match="synthetic registry failure"):
+        manager.sync_repository_index(repo_info.repository_id, force_full=True)
+
+    trace = _read_trace(repo_info)
+    assert trace["status"] == "interrupted"
+    assert trace["stage"] == "force_full_started"
+    # The interrupted closeout copies these keys from the fresh trace (as None).
+    for inherited in ("lexical_stage", *_PREVIOUS_RUN_FIELDS):
+        assert trace.get(inherited) is None
+
+
+@pytest.mark.parametrize("fence", ["registration", "auto_sync"])
+def test_stale_force_full_job_leaves_the_current_registration_trace(tmp_path, fence):
+    """#140 re-review: a queued job of an old registration must not touch the new trace."""
+    repo = _make_git_repo(tmp_path)
+    commit = _get_head_commit(repo)
+    repo_info = _make_repo_info(repo, commit)
+    repo_info.registration_id = "replacement-registration"
+    _seed_index(repo_info.index_path, repo, "old.py")
+    manager, registry = _make_rebuild_manager(repo_info, commit)
+    _seed_previous_successful_trace(manager, repo_info)
+    trace_path = Path(repo_info.index_location) / "force_full_exit_trace.json"
+    before = trace_path.read_bytes()
+    if fence == "registration":
+        kwargs = {"expected_registration_id": "stale-registration"}
+    else:
+        repo_info.auto_sync = False
+        kwargs = {"expected_registration_id": "replacement-registration"}
+
+    result = manager.sync_repository_index(
+        repo_info.repository_id, force_full=True, require_auto_sync=True, **kwargs
+    )
+
+    assert result.action == "refused"
+    assert trace_path.read_bytes() == before
+    registry.begin_generation_mutation.assert_not_called()
+
+
+def test_force_full_closeout_skips_a_trace_another_registration_started(tmp_path):
+    repo = _make_git_repo(tmp_path)
+    commit = _get_head_commit(repo)
+    repo_info = _make_repo_info(repo, commit)
+    repo_info.registration_id = "this-registration"
+    repo_info.last_indexed_commit = None
+    _seed_index(repo_info.index_path, repo, "old.py")
+    manager, registry = _make_rebuild_manager(repo_info, commit)
+    manager._run_git = MagicMock(side_effect=subprocess.TimeoutExpired(["git"], 300))
+    git_state = registry.update_git_state.return_value
+
+    def another_registration_starts(_repo_id):
+        manager._start_force_full_exit_trace(
+            repo_info, {"status": "running", "registration_id": "other-registration"}
+        )
+        return git_state
+
+    registry.update_git_state.side_effect = another_registration_starts
+
+    result = manager.sync_repository_index(repo_info.repository_id, force_full=True)
+
+    assert result.action == "failed"
+    trace = _read_trace(repo_info)
+    assert trace["registration_id"] == "other-registration"
+    assert trace["status"] == "running"
+
+
+def test_force_full_snapshot_heartbeats_reach_the_trace(tmp_path):
+    repo = _make_git_repo(tmp_path)
+    commit = _get_head_commit(repo)
+    repo_info = _make_repo_info(repo, commit)
+    repo_info.last_indexed_commit = "older-indexed-commit"
+    _seed_index(repo_info.index_path, repo, "old.py")
+    manager, _registry = _make_rebuild_manager(repo_info, commit)
+
+    result = manager.sync_repository_index(repo_info.repository_id, force_full=True)
+
+    assert result.action == "full_index", result.error
+    trace = json.loads(
+        (Path(repo_info.index_location) / "force_full_exit_trace.json").read_text("utf-8")
+    )
+    assert trace["snapshot_blobs_done"] == trace["snapshot_blobs_total"] == 1
+    assert trace["snapshot_pages_done"] == trace["snapshot_pages_total"] > 0
+    assert trace["last_progress_at"]
+
+
+def test_snapshot_heartbeat_is_throttled(tmp_path, monkeypatch):
+    from mcp_server.storage import git_index_manager
+
+    now = [0.0]
+    monkeypatch.setattr(git_index_manager, "_monotonic", lambda: now[0])
+    manager = _make_manager(MagicMock())
+    writes = []
+    manager._write_force_full_exit_trace = lambda _info, update: writes.append(update)
+    heartbeat = manager._make_snapshot_heartbeat(
+        object(), stage="snapshot_generation", unit="pages"
+    )
+
+    for tick, done in ((0.0, 1), (1.0, 2), (4.9, 3), (5.0, 4), (9.0, 5), (10.0, 6), (11.0, 10)):
+        now[0] = tick
+        heartbeat(done, 10)
+
+    # Throttled to one write per 5 s, except that completion is always recorded.
+    assert [write["snapshot_pages_done"] for write in writes] == [1, 4, 6, 10]
+    assert {write["stage"] for write in writes} == {"snapshot_generation"}
+    assert all(write["status"] == "running" for write in writes)
+
+
 def test_staged_rebuild_refuses_wrong_branch_without_mutation(tmp_path):
     repo = _make_git_repo(tmp_path)
     commit = _get_head_commit(repo)

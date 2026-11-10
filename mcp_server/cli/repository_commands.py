@@ -17,6 +17,10 @@ project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 from mcp_server.artifacts.commit_artifacts import CommitArtifactManager  # noqa: E402
+from mcp_server.config.env_vars import (  # noqa: E402
+    get_index_git_timeout_seconds,
+    get_index_snapshot_stall_seconds,
+)
 from mcp_server.config.settings import reload_settings  # noqa: E402
 from mcp_server.core.repo_resolver import RepoResolver  # noqa: E402
 from mcp_server.dispatcher.dispatcher_enhanced import EnhancedDispatcher  # noqa: E402
@@ -217,7 +221,18 @@ def _force_full_trace_is_stale(trace: dict[str, Any]) -> bool:
     age_seconds = (datetime.now(timezone.utc) - observed_at).total_seconds()
     if age_seconds < 0:
         return False
-    return age_seconds > (timeout_seconds * 2)
+    # A healthy run refreshes the trace at least once per lexical file. The
+    # snapshot phases are different (#112): the generation copy only fails
+    # after its stall window, and while committed inputs are copied (or
+    # listed, before the first blob) one git command may run for the git
+    # timeout. Other stages keep the lexical threshold.
+    threshold = timeout_seconds * 2
+    stage = trace.get("stage")
+    if stage in {"snapshot_generation", "snapshot_inputs", "force_full_started"}:
+        threshold = max(threshold, get_index_snapshot_stall_seconds())
+    if stage in {"snapshot_inputs", "force_full_started"}:
+        threshold = max(threshold, get_index_git_timeout_seconds())
+    return age_seconds > threshold
 
 
 def _print_fast_report_boundary(prefix: str, repo_path: Path) -> None:
