@@ -7462,6 +7462,103 @@ def test_grammar_lost_mid_incremental_build_defers_language(
     _assert_rust_left_out(registry, repo_id, rows)
 
 
+def _commit_rust_rename(repo: Path) -> None:
+    (repo / "other.py").write_text("def other():\n    return 3\n")
+    subprocess.run(["git", "mv", "lib.rs", "renamed.rs"], cwd=repo, check=True)
+    _git_commit_all(repo, "rename rust, change python")
+
+
+def _spy_moves(monkeypatch, dispatcher, before_move=None):
+    real_move_file = dispatcher.move_file
+    moves = []
+
+    def move_file(ctx, old_path, new_path, *args, **kwargs):
+        if before_move is not None:
+            before_move()
+        mutation = real_move_file(ctx, old_path, new_path, *args, **kwargs)
+        moves.append((Path(old_path).name, Path(new_path).name, mutation))
+        return mutation
+
+    monkeypatch.setattr(dispatcher, "move_file", move_file)
+    return moves
+
+
+def test_grammar_lost_before_staged_rename_defers_language(
+    degraded_runtime, grammar_availability, monkeypatch
+):
+    """Rust's grammar disappears just before the staged ``move_file`` of a
+    committed ``lib.rs -> renamed.rs`` rename: rust is deferred and recorded,
+    neither path keeps a row, the python change publishes, and repair indexes
+    the renamed file once the grammar is back (#117 review)."""
+    repo, registry, repo_id, dispatcher, manager = degraded_runtime
+    grammar_availability()
+    first = manager.sync_repository_index(repo_id, force_full=True)
+    assert first.action == "full_index", first.error
+    before = _published_rows(registry, repo_id)
+    assert "lib.rs" in before["chunks"]
+
+    _commit_rust_rename(repo)
+    moves = _spy_moves(monkeypatch, dispatcher, before_move=lambda: grammar_availability("rust"))
+    result = manager.sync_repository_index(repo_id)
+
+    assert [(old, new) for old, new, _ in moves] == [("lib.rs", "renamed.rs")]
+    assert result.action == "incremental_update", result.error
+    assert result.code is None
+    marker = {"version": 1, "languages": {"rust": {"grammars": ["rust"], "deferred_files": 1}}}
+    assert result.degraded_languages == marker["languages"]
+    rows = _published_rows(registry, repo_id)
+    assert rows["marker"] == marker
+    for name in ("lib.rs", "renamed.rs"):
+        assert name not in rows["files"] | rows["symbols"] | rows["fts"], name
+        assert name not in rows["chunks"], name
+    assert rows["chunks"]["hello.py"] == before["chunks"]["hello.py"]
+    with sqlite3.connect(_published_info(registry, repo_id).index_path) as conn:
+        content = conn.execute(
+            "SELECT t.content FROM fts_code t JOIN files f ON f.id = t.file_id "
+            "WHERE f.relative_path = 'other.py'"
+        ).fetchall()
+    assert any("return 3" in row[0] for row in content)
+    readiness = ReadinessClassifier.classify_registered(_published_info(registry, repo_id))
+    assert readiness.state == RepositoryReadinessState.READY
+    assert readiness.coverage["unavailable_languages"] == ["rust"]
+
+    grammar_availability()
+    repaired = manager.sync_repository_index(repo_id)
+    assert repaired.action == "incremental_update", repaired.error
+    rows = _published_rows(registry, repo_id)
+    assert rows["marker"] is None
+    assert "renamed.rs" in rows["files"] and rows["chunks"].get("renamed.rs")
+    assert "lib.rs" not in rows["files"]
+
+
+def test_staged_rename_with_grammars_available_behaves_as_before(
+    degraded_runtime, grammar_availability, monkeypatch
+):
+    """Regression: with every grammar loadable throughout, a committed rename
+    is still a staged move that reindexes the new path, exactly as before."""
+    repo, registry, repo_id, dispatcher, manager = degraded_runtime
+    grammar_availability()
+    first = manager.sync_repository_index(repo_id, force_full=True)
+    assert first.action == "full_index", first.error
+    before = _published_rows(registry, repo_id)
+
+    _commit_rust_rename(repo)
+    moves = _spy_moves(monkeypatch, dispatcher)
+    result = manager.sync_repository_index(repo_id)
+
+    assert [(old, new) for old, new, _ in moves] == [("lib.rs", "renamed.rs")]
+    assert moves[0][2].status == IndexResultStatus.MOVED
+    assert result.action == "incremental_update", result.error
+    assert result.code is None and result.degraded_languages is None
+    assert result.readiness["coverage"] == {"state": "complete"}
+    rows = _published_rows(registry, repo_id)
+    assert rows["marker"] is None
+    assert "lib.rs" not in rows["files"]
+    assert "renamed.rs" in rows["files"] and "renamed.rs" in rows["fts"]
+    assert rows["chunks"].get("renamed.rs") and "renamed.rs" in rows["symbols"]
+    assert rows["chunks"]["hello.py"] == before["chunks"]["hello.py"]
+
+
 @pytest.mark.parametrize("build", ["full", "incremental"])
 def test_prefetched_host_unchanged_mid_build_behaves_as_before(
     degraded_runtime, grammar_availability, monkeypatch, build

@@ -13,7 +13,7 @@ import threading
 import time
 from contextlib import ExitStack, closing, contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from functools import wraps
 from pathlib import Path
@@ -4584,6 +4584,15 @@ class EnhancedDispatcher:
                     self._file_cache.pop(str(old_path), None)
                     self._file_cache.pop(str(new_path), None)
                 indexed = self.index_file(ctx, new_path, do_semantic=False)
+                if is_grammar_unavailable_result(indexed):
+                    # Keep the cause and language so a staged build can defer
+                    # the language instead of failing (#117). The moved row is
+                    # chunkless; the caller drops it with the rest of the
+                    # language. Any other caller still sees an error.
+                    with self._file_cache_lock:
+                        self._file_cache.pop(str(old_path), None)
+                        self._file_cache.pop(str(new_path), None)
+                    return replace(indexed, path=new_path)
                 if indexed.status != IndexResultStatus.INDEXED:
                     raise RuntimeError("Renamed committed content was not reindexed")
             semantic_stats = None

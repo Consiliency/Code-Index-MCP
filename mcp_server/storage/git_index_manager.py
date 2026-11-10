@@ -2560,6 +2560,23 @@ class GitAwareIndexManager:
                             self.dispatcher.move_file(ctx, old_full, new_full),
                             path=new_full,
                         )
+                        if grammar_availability is not None and is_grammar_unavailable_result(
+                            mutation
+                        ):
+                            # The grammar disappeared after the build started:
+                            # the staged move left a chunkless row at the new
+                            # path, dropped with its whole language before
+                            # publish, as for an added file (#117).
+                            language = mutation.language or get_language_by_extension(
+                                new_full.suffix.lower()
+                            )
+                            result.defer(
+                                language,
+                                grammar_cache.unavailable_languages(
+                                    [language] if language else []
+                                ).get(language, ()),
+                            )
+                            continue
                         self._record_required_mutation_result(
                             result,
                             mutation,
