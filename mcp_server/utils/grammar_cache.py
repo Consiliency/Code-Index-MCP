@@ -732,8 +732,10 @@ def grammar_status(repositories_degraded: Optional[Sequence[str]] = None) -> dic
         status["remediation"] = (
             "Run `mcp-index grammars prefetch` as the service user (or export "
             "libraries with --export-libs and set TREE_SITTER_LANGUAGE_PACK_LIBS_DIR "
-            "to a directory only root or the service user can write), then reindex. "
-            "Files in these languages fail indexing until then."
+            "to a directory only root or the service user can write). Until then, "
+            "staged rebuilds publish the other languages and leave these out "
+            "(repository coverage `degraded`); the next sync after the grammars "
+            "arrive indexes them. Other index paths fail these files."
         )
     return status
 

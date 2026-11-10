@@ -627,6 +627,94 @@ def test_index_directory_fails_closed_for_an_unavailable_grammar(monkeypatch, tm
     assert _indexed_paths(store) == []
 
 
+def _chunkless_plugin(language, *suffixes):
+    class _Plugin(_ChunklessRustPlugin):
+        lang = language
+
+        def supports(self, path):
+            return str(path).endswith(suffixes)
+
+        def indexFile(self, path, content):
+            return {"file": str(path), "symbols": [], "language": language}
+
+    _Plugin.language = language
+    return _Plugin()
+
+
+def _opt_in_dispatcher(*plugins):
+    from mcp_server.dispatcher import EnhancedDispatcher
+
+    return EnhancedDispatcher(
+        plugins=list(plugins),
+        use_plugin_factory=False,
+        enable_advanced_features=False,
+        semantic_search_enabled=False,
+    )
+
+
+def test_index_directory_defers_unavailable_language_when_opted_in(
+    monkeypatch, tmp_path, fresh_offline_set
+):
+    """#117: with an availability snapshot, files of a language whose grammar
+    is missing are skipped (deferred), not failed and not stored."""
+    monkeypatch.setattr(grammar_cache, "cached_grammars", _all_but("rust"))
+    repo, store, ctx = _rust_repo(tmp_path)
+    (repo / "README.md").write_text("# Title\n", encoding="utf-8")
+    dispatcher = _opt_in_dispatcher(_ChunklessRustPlugin(), _MarkdownDocumentPlugin())
+    stats = dispatcher.index_directory(
+        ctx, repo, grammar_availability=grammar_cache.snapshot_availability()
+    )
+    assert stats["failed_files"] == 0, stats
+    assert stats["indexed_files"] == 1
+    assert stats["deferred_files"] == 1
+    assert stats["degraded_languages"] == {"rust": {"grammars": ["rust"], "files": 1}}
+    assert [path.rsplit("/", 1)[-1] for path in _indexed_paths(store)] == ["README.md"]
+
+
+def test_index_directory_defers_a_grammar_lost_mid_build(monkeypatch, tmp_path):
+    """A grammar that disappears after the snapshot is deferred, not failed."""
+    repo, store, ctx = _rust_repo(tmp_path)
+    monkeypatch.setattr(grammar_cache, "unavailable_grammar", lambda language: "rust")
+    stats = _opt_in_dispatcher(_ChunklessRustPlugin()).index_directory(
+        ctx, repo, grammar_availability=grammar_cache.GrammarAvailability()
+    )
+    assert stats["failed_files"] == 0 and stats["deferred_files"] == 1, stats
+    assert set(stats["degraded_languages"]) == {"rust"}
+    assert _indexed_paths(store) == []
+
+
+@pytest.mark.parametrize("missing", ["tsx", "javascript"])
+def test_missing_typescript_plugin_grammar_defers_typescript(
+    monkeypatch, tmp_path, fresh_offline_set, missing
+):
+    """#117: ``.ts`` and ``.tsx`` both defer when ``tsx`` or ``javascript`` is
+    missing; ``.tsx`` is never parsed with the TypeScript grammar instead."""
+    monkeypatch.setattr(grammar_cache, "cached_grammars", _all_but(missing))
+    repo, store, ctx = _rust_repo(tmp_path)
+    (repo / "app.ts").write_text("export const a = 1;\n", encoding="utf-8")
+    (repo / "view.tsx").write_text("export const V = () => <div />;\n", encoding="utf-8")
+    (repo / "main.js").write_text("const b = 2;\n", encoding="utf-8")
+    dispatcher = _opt_in_dispatcher(
+        _ChunklessRustPlugin(),
+        _chunkless_plugin("typescript", ".ts", ".tsx"),
+        _chunkless_plugin("javascript", ".js"),
+    )
+    stats = dispatcher.index_directory(
+        ctx, repo, grammar_availability=grammar_cache.snapshot_availability()
+    )
+    assert stats["failed_files"] == 0, stats
+    degraded = stats["degraded_languages"]
+    assert degraded["typescript"] == {"grammars": [missing], "files": 2}
+    stored = {path.rsplit("/", 1)[-1] for path in _indexed_paths(store)}
+    assert not {"app.ts", "view.tsx"} & stored
+    if missing == "javascript":
+        assert degraded["javascript"] == {"grammars": ["javascript"], "files": 1}
+        assert stored == {"main.rs"}
+    else:
+        assert set(degraded) == {"typescript"}
+        assert stored == {"main.rs", "main.js"}
+
+
 class _MarkdownDocumentPlugin:
     """Stands in for ``MarkdownPlugin``: a document plugin, no grammar."""
 

@@ -40,6 +40,7 @@ from ..dispatcher.dispatcher_enhanced import (
     IndexResult,
     IndexResultStatus,
     _redact_secrets,
+    is_grammar_unavailable_result,
     is_unsupported_file_result,
 )
 from ..health.repo_status import build_health_row
@@ -47,11 +48,14 @@ from ..health.repository_readiness import (
     ReadinessClassifier,
     RepositoryReadiness,
     RepositoryReadinessState,
+    coverage_from_marker,
 )
 from ..indexing.change_detector import ChangeDetector
 from ..indexing.lock_registry import lock_registry
+from ..plugins.language_registry import get_language_by_extension
+from ..utils import grammar_cache
 from .repository_registry import RepositoryRegistry
-from .sqlite_store import SnapshotStalledError, SQLiteStore
+from .sqlite_store import SnapshotStalledError, SQLiteStore, read_grammar_degradation
 from .store_registry import StoreRegistry
 
 
@@ -127,6 +131,9 @@ class IndexSyncResult:
     code: Optional[str] = None
     readiness: Optional[Dict[str, Any]] = None
     semantic: Optional[Dict[str, Any]] = None
+    #: Languages the published generation left out because their grammars
+    #: were unavailable, as stored in the marker (#117); None when complete.
+    degraded_languages: Optional[Dict[str, Any]] = None
 
 
 @dataclass
@@ -145,10 +152,25 @@ class UpdateResult:
     semantic: Optional[Dict[str, Any]] = None
     low_level: Optional[Dict[str, Any]] = None
     duration_seconds: float = 0.0
+    #: Admitted files left out because their language's grammar was
+    #: unavailable (#117). They do not make the result unclean: the whole
+    #: language is dropped from the generation and recorded in its marker.
+    deferred: int = 0
+    degraded_languages: Optional[Dict[str, Dict[str, Any]]] = None
 
     def __post_init__(self) -> None:
         if self.errors is None:
             self.errors = []
+        if self.degraded_languages is None:
+            self.degraded_languages = {}
+
+    def defer(self, language: Optional[str], grammars: Any = (), files: int = 1) -> None:
+        self.deferred += files
+        entry = self.degraded_languages.setdefault(
+            language or "unknown", {"grammars": [], "files": 0}
+        )
+        entry["files"] += files
+        entry["grammars"] = sorted(set(entry["grammars"]) | set(grammars or ()))
 
     @property
     def files_processed(self) -> int:
@@ -413,6 +435,14 @@ class RebuildShutdownRequested(RuntimeError):
 
 class StagedRebuildError(RuntimeError):
     """A staged rebuild refused to publish; its message is fixed, safe text."""
+
+    code: Optional[str] = None
+
+
+class GrammarUnavailableRebuildError(StagedRebuildError):
+    """Every admitted file was deferred for an unavailable grammar (#117)."""
+
+    code = grammar_cache.GRAMMAR_UNAVAILABLE
 
 
 #: Exceptions whose messages are authored here and safe to store and print.
@@ -1179,10 +1209,39 @@ class GitAwareIndexManager:
                 if not callable(getattr(self.dispatcher, "_semantic_lease", None)):
                     raise StagedRebuildError("Staged semantic integration unavailable")
                 self._copy_retained_vectors(repo_id, stage_ctx)
+            # Per-language degradation is opt-in for staged full and incremental
+            # builds only; gateway and subdirectory stage operations stay fail-
+            # closed. Availability is decided once, here (#117).
+            grammar_availability = self._grammar_availability() if stage_operation is None else None
+            # The shared admission predicate decides which committed paths
+            # are stored, exactly as the full walk does: a path it rejects
+            # (no plugin for the language, disabled language) is ignored,
+            # and an indexed path that is no longer admitted is deleted
+            # (Consiliency/Code-Index-MCP#111).
+            is_excluded = build_walker_filter(source_root)
+
+            def stored(path: str) -> bool:
+                return path in hashes and (
+                    self._stage_admission_reason(repo_id, source_root, path, is_excluded) is None
+                )
+
+            def deferred(path: str) -> bool:
+                return grammar_availability is not None and grammar_availability.defers(
+                    get_language_by_extension(Path(path).suffix.lower())
+                )
+
             if stage_operation is not None:
                 result = stage_operation(stage_ctx)
             elif changes is None:
                 full_call_started = True
+                full_kwargs: Dict[str, Any] = {}
+                # A fully prefetched host walks exactly as before #117.
+                if (
+                    grammar_availability is not None
+                    and not grammar_availability.complete
+                    and self._accepts_keyword(self._full_index, "grammar_availability")
+                ):
+                    full_kwargs["grammar_availability"] = grammar_availability
                 if force_full:
                     callback = self._make_force_full_progress_callback(
                         repo_info=repo_info,
@@ -1190,14 +1249,18 @@ class GitAwareIndexManager:
                         indexed_commit_before=indexed_before,
                     )
                     try:
-                        value = self._full_index(repo_id, stage_ctx, progress_callback=callback)
+                        value = self._full_index(
+                            repo_id, stage_ctx, progress_callback=callback, **full_kwargs
+                        )
                     except TypeError as exc:
                         if "progress_callback" not in str(exc):
                             raise
-                        value = self._full_index(repo_id, stage_ctx)
+                        value = self._full_index(repo_id, stage_ctx, **full_kwargs)
                     result = self._normalize_update_result(value)
                 else:
-                    result = self._normalize_update_result(self._full_index(repo_id, stage_ctx))
+                    result = self._normalize_update_result(
+                        self._full_index(repo_id, stage_ctx, **full_kwargs)
+                    )
                 full_call_completed = True
             else:
                 # Project Git changes onto the admitted snapshot and previously indexed rows.
@@ -1205,24 +1268,16 @@ class GitAwareIndexManager:
                     indexed = {
                         row[0] for row in connection.execute("SELECT relative_path FROM files")
                     }
-                # The shared admission predicate decides which committed paths
-                # are stored, exactly as the full walk does: a path it rejects
-                # (no plugin for the language, disabled language) is ignored,
-                # and an indexed path that is no longer admitted is deleted
-                # (Consiliency/Code-Index-MCP#111).
-                is_excluded = build_walker_filter(source_root)
-
-                def stored(path: str) -> bool:
-                    return path in hashes and (
-                        self._stage_admission_reason(repo_id, source_root, path, is_excluded)
-                        is None
-                    )
-
                 admitted = ChangeSet(added=[], modified=[], deleted=[], renamed=[])
                 not_admitted = 0
                 admitted.deleted = [path for path in changes.deleted if path in indexed]
                 for path in changes.added + changes.modified:
-                    if stored(path):
+                    if stored(path) and deferred(path):
+                        # Its language is left out whole; any row of it is
+                        # dropped before publish, as a full walk would (#117).
+                        if path in indexed:
+                            admitted.deleted.append(path)
+                    elif stored(path):
                         (admitted.modified if path in indexed else admitted.added).append(path)
                     elif path in indexed:
                         admitted.deleted.append(path)
@@ -1230,7 +1285,10 @@ class GitAwareIndexManager:
                         not_admitted += 1
                 for old_path, new_path in changes.renamed:
                     new_stored = stored(new_path)
-                    if old_path in indexed and new_stored:
+                    if new_stored and deferred(new_path):
+                        if old_path in indexed:
+                            admitted.deleted.append(old_path)
+                    elif old_path in indexed and new_stored:
                         admitted.renamed.append((old_path, new_path))
                     elif old_path in indexed:
                         # Renamed to a path no plugin stores: drop the old row.
@@ -1240,7 +1298,18 @@ class GitAwareIndexManager:
                         admitted.added.append(new_path)
                     elif new_path in hashes:
                         not_admitted += 1
-                result = self._incremental_index_update(repo_id, stage_ctx, admitted)
+                incremental_kwargs: Dict[str, Any] = {}
+                if (
+                    grammar_availability is not None
+                    and not grammar_availability.complete
+                    and self._accepts_keyword(
+                        self._incremental_index_update, "grammar_availability"
+                    )
+                ):
+                    incremental_kwargs["grammar_availability"] = grammar_availability
+                result = self._incremental_index_update(
+                    repo_id, stage_ctx, admitted, **incremental_kwargs
+                )
                 result.ignored += not_admitted
             if not result.clean:
                 if self._shutdown.is_set():
@@ -1254,6 +1323,11 @@ class GitAwareIndexManager:
                     "Staged full index did not complete cleanly"
                     if changes is None
                     else "Staged index update did not complete cleanly"
+                )
+            degradation = None
+            if grammar_availability is not None:
+                degradation = self._apply_grammar_degradation(
+                    stage_ctx, stage_store, hashes, stored, grammar_availability, result
                 )
             if getattr(self.dispatcher, "_semantic_enabled", False) is True:
                 self._finalize_staged_vectors(repo_id, stage_ctx)
@@ -1271,6 +1345,11 @@ class GitAwareIndexManager:
                     connection, "index_generation", generation, "Durable generation"
                 )
             if not self._index_path_has_durable_rows(generation_path):
+                if degradation:
+                    raise GrammarUnavailableRebuildError(
+                        "Every admitted file needs a tree-sitter grammar that is "
+                        "unavailable; run `mcp-index grammars prefetch`, then reindex"
+                    )
                 raise StagedRebuildError("Staged index has no durable rows")
 
             self._rebuild_checkpoint("before_replacement")
@@ -1333,6 +1412,7 @@ class GitAwareIndexManager:
                     logger.warning(
                         "Published generation trace unavailable (%s)", type(exc).__name__
                     )
+            published_marker = self._read_generation_degradation(generation_path)
             return IndexSyncResult(
                 action="full_index" if changes is None else "incremental_update",
                 commit=current_commit,
@@ -1342,9 +1422,13 @@ class GitAwareIndexManager:
                     "index_path": str(generation_path),
                     "previous_state": readiness.state.value,
                     "quarantine_path": str(quarantine_path) if quarantine_path else None,
+                    "coverage": coverage_from_marker(published_marker),
                 },
                 semantic=result.semantic,
                 duration_seconds=(datetime.now() - start_time).total_seconds(),
+                degraded_languages=(
+                    published_marker.get("languages") if published_marker else None
+                ),
             )
         except Exception as exc:
             error = _format_rebuild_error(
@@ -1390,6 +1474,7 @@ class GitAwareIndexManager:
                 files_processed=result.files_processed,
                 semantic=result.semantic,
                 duration_seconds=(datetime.now() - start_time).total_seconds(),
+                code=exc.code if isinstance(exc, StagedRebuildError) else None,
             )
         finally:
             if force_full:
@@ -1409,6 +1494,91 @@ class GitAwareIndexManager:
                     stage_store.close()
             if stage_dir is not None:
                 shutil.rmtree(stage_dir, ignore_errors=True)
+
+    def _grammar_availability(self) -> Optional[grammar_cache.GrammarAvailability]:
+        """Snapshot which languages cannot load their grammars, once per build.
+
+        Returns None, which keeps the fail-closed behaviour, when the check
+        itself fails (Consiliency/Code-Index-MCP#117).
+        """
+        try:
+            return grammar_cache.snapshot_availability(refresh=True)
+        except Exception as exc:  # noqa: BLE001 - no opt-in without a snapshot
+            logger.warning("Grammar availability check failed (%s)", type(exc).__name__)
+            return None
+
+    def _apply_grammar_degradation(
+        self,
+        ctx: RepoContext,
+        store: SQLiteStore,
+        hashes: Dict[str, str],
+        stored: Any,
+        availability: grammar_cache.GrammarAvailability,
+        result: UpdateResult,
+    ) -> Optional[Dict[str, Any]]:
+        """Leave degraded languages out of the stage whole and record them.
+
+        Every stored row of a language whose grammar is unavailable (copied
+        forward from the previous generation, or chunkless after
+        ``prepare_generation``) is removed through ``dispatcher.remove_file``,
+        so FTS rows and vectors go too. The marker lists each language with
+        at least one admitted committed file, counted from the committed
+        inputs exactly as a full walk would, so full and incremental builds
+        record the same coverage (#111, #117). Returns the marker, or None
+        when coverage is complete (the marker is then cleared).
+        """
+        candidates = set(availability.unavailable) | set(result.degraded_languages)
+        if not candidates and store.get_grammar_degradation() is None:
+            return None  # complete coverage, nothing to clear
+        counts: Dict[str, int] = {}
+        if candidates:
+            for path in hashes:
+                language = get_language_by_extension(Path(path).suffix.lower())
+                if language in candidates and stored(path):
+                    counts[language] = counts.get(language, 0) + 1
+            for language, entry in result.degraded_languages.items():
+                if not counts.get(language) and entry.get("files"):
+                    counts[language] = int(entry["files"])
+            for relative in store.stored_paths_for_languages(candidates):
+                if self.dispatcher is None:
+                    raise StagedRebuildError("No dispatcher available to drop degraded rows")
+                full_path = ctx.workspace_root / relative
+                mutation = self._coerce_index_result(
+                    self.dispatcher.remove_file(ctx, full_path), path=full_path
+                )
+                self._merge_semantic_result(result, mutation.semantic)
+                if mutation.status not in {IndexResultStatus.DELETED, IndexResultStatus.NOT_FOUND}:
+                    raise StagedRebuildError(
+                        "Could not drop the stored rows of a language whose grammar is unavailable"
+                    )
+        languages: Dict[str, Dict[str, Any]] = {}
+        for language, count in sorted(counts.items()):
+            if count <= 0:
+                continue
+            grammars = set(availability.missing(language))
+            grammars.update(result.degraded_languages.get(language, {}).get("grammars", ()))
+            languages[language] = {"grammars": sorted(grammars), "deferred_files": count}
+        marker = {"version": 1, "languages": languages} if languages else None
+        with store._get_connection() as connection:
+            store.set_grammar_degradation(connection, marker)
+        if marker:
+            logger.warning(
+                "Publishing with degraded coverage: %s left out (tree-sitter grammars "
+                "unavailable: %s); run `mcp-index grammars prefetch` to index them",
+                ", ".join(
+                    f"{name} ({entry['deferred_files']} files)" for name, entry in languages.items()
+                ),
+                ", ".join(sorted({g for entry in languages.values() for g in entry["grammars"]})),
+            )
+        return marker
+
+    @staticmethod
+    def _read_generation_degradation(path: Path) -> Optional[Dict[str, Any]]:
+        try:
+            with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)) as conn:
+                return read_grammar_degradation(conn)
+        except (sqlite3.Error, OSError):
+            return None
 
     def _prune_superseded_generations(
         self,
@@ -2152,13 +2322,20 @@ class GitAwareIndexManager:
         return changes
 
     def _incremental_index_update(
-        self, repo_id: str, ctx: RepoContext, changes: ChangeSet
+        self,
+        repo_id: str,
+        ctx: RepoContext,
+        changes: ChangeSet,
+        grammar_availability: Optional[grammar_cache.GrammarAvailability] = None,
     ) -> UpdateResult:
         """Update index incrementally based on file changes.
 
         Args:
             repo_id: Repository ID
             changes: Set of file changes
+            grammar_availability: Opts in to per-language degradation (#117):
+                a file that fails with ``grammar_unavailable`` is deferred
+                instead of failed; the caller drops its whole language.
 
         Returns:
             UpdateResult
@@ -2245,6 +2422,20 @@ class GitAwareIndexManager:
                             self.dispatcher.index_file(ctx, full_path),
                             path=full_path,
                         )
+                        if grammar_availability is not None and is_grammar_unavailable_result(
+                            mutation
+                        ):
+                            # The grammar disappeared after the build started.
+                            language = mutation.language or get_language_by_extension(
+                                full_path.suffix.lower()
+                            )
+                            result.defer(
+                                language,
+                                grammar_cache.unavailable_languages(
+                                    [language] if language else []
+                                ).get(language, ()),
+                            )
+                            continue
                         if is_unsupported_file_result(mutation):
                             # No plugin stores this file; the full walk ignores
                             # it, so incremental sync must too (#111).
@@ -2457,8 +2648,12 @@ class GitAwareIndexManager:
         repo_id: str,
         ctx: RepoContext,
         progress_callback: Optional[Any] = None,
+        grammar_availability: Optional[grammar_cache.GrammarAvailability] = None,
     ) -> UpdateResult:
         """Perform full repository indexing.
+
+        ``grammar_availability`` opts the walk in to per-language degradation
+        (#117) when the dispatcher supports it.
 
         Args:
             repo_id: Repository ID
@@ -2491,6 +2686,10 @@ class GitAwareIndexManager:
         cancel_kwargs: Dict[str, Any] = {}
         if self._accepts_keyword(self.dispatcher.index_directory, "cancel_check"):
             cancel_kwargs["cancel_check"] = self._shutdown.is_set
+        if grammar_availability is not None and self._accepts_keyword(
+            self.dispatcher.index_directory, "grammar_availability"
+        ):
+            cancel_kwargs["grammar_availability"] = grammar_availability
         try:
             if progress_callback is None:
                 stats = self.dispatcher.index_directory(
@@ -2522,6 +2721,12 @@ class GitAwareIndexManager:
         errors = stats.get("errors", []) if isinstance(stats, dict) else []
         result.indexed = total_indexed
         result.failed = failed_files
+        if isinstance(stats, dict) and isinstance(stats.get("degraded_languages"), dict):
+            for language, entry in stats["degraded_languages"].items():
+                if isinstance(entry, dict):
+                    result.defer(
+                        language, entry.get("grammars") or (), int(entry.get("files") or 0)
+                    )
         if isinstance(stats, dict):
             result.semantic = {
                 "summaries_written": stats.get("summaries_written", 0),
@@ -2618,6 +2823,10 @@ class GitAwareIndexManager:
         if not commit:
             return None
 
+        if repo_info.index_path and self._read_generation_degradation(Path(repo_info.index_path)):
+            # A generation that left languages out is never shared (#117).
+            logger.warning("Not creating a commit artifact: index coverage is degraded")
+            return None
         index_path = Path(repo_info.index_location)
         return self.artifact_manager.create_commit_artifact(repo_id, commit, index_path)
 

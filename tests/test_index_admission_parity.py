@@ -210,6 +210,54 @@ def test_incremental_sync_ignores_disabled_language_files_like_a_full_rebuild(
     assert {path for path, _hash in incremental_files}.isdisjoint(NEVER_STORED)
 
 
+def _degradation_marker(registry: RepositoryRegistry, repo_id: str):
+    info = RepositoryRegistry(registry.registry_path).get(repo_id)
+    with closing(sqlite3.connect(info.index_path)) as conn:
+        row = conn.execute(
+            "SELECT config_value FROM index_config WHERE config_key = 'grammar_degradation'"
+        ).fetchone()
+    return json.loads(row[0]) if row else None
+
+
+def test_full_walk_and_incremental_agree_under_grammar_degradation(parity_runtime, monkeypatch):
+    """#117 keeps the #111 parity rule: with a grammar missing, an incremental
+    update stores exactly the rows and coverage marker a full walk stores."""
+    from mcp_server.plugins.language_registry import get_required_grammars
+    from mcp_server.utils import grammar_cache
+
+    monkeypatch.setattr(
+        grammar_cache,
+        "cached_grammars",
+        lambda: sorted(set(get_required_grammars()) - {"rust"}),
+    )
+    monkeypatch.setattr(grammar_cache, "_offline_grammars", None)
+    repo, registry, repo_id, _dispatcher, manager = parity_runtime
+    assert manager.sync_repository_index(repo_id, force_full=True).action == "full_index"
+    assert _degradation_marker(registry, repo_id) is None  # no rust files yet
+
+    (repo / "lib.rs").write_text("pub fn add(a: i32, b: i32) -> i32 { a + b }\n")
+    (repo / "hello.py").write_text("def hello():\n    return 2\n")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-m", "add rust")
+    incremental = manager.sync_repository_index(repo_id)
+    assert incremental.action == "incremental_update", incremental.error
+    incremental_rows = _index_snapshot(registry, repo_id)
+    incremental_marker = _degradation_marker(registry, repo_id)
+
+    full = manager.sync_repository_index(repo_id, force_full=True)
+    assert full.action == "full_index", full.error
+    assert _index_snapshot(registry, repo_id) == incremental_rows
+    assert (
+        _degradation_marker(registry, repo_id)
+        == incremental_marker
+        == {
+            "version": 1,
+            "languages": {"rust": {"grammars": ["rust"], "deferred_files": 1}},
+        }
+    )
+    assert "lib.rs" not in {path for path, _hash in incremental_rows[0]}
+
+
 def test_incremental_update_counts_unsupported_files_as_ignored(tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()

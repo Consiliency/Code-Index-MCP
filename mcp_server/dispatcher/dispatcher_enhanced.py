@@ -3808,8 +3808,18 @@ class EnhancedDispatcher:
         recursive: bool = True,
         progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
         cancel_check: Optional[Callable[[], bool]] = None,
+        grammar_availability: Any = None,
     ) -> Dict[str, Any]:
-        """Index all files in a directory, respecting ignore patterns."""
+        """Index all files in a directory, respecting ignore patterns.
+
+        ``grammar_availability`` (a ``grammar_cache.GrammarAvailability``) opts
+        in to per-language degradation (Consiliency/Code-Index-MCP#117): files
+        of a language it lists are skipped before any plugin runs, and a file
+        that still fails with ``grammar_unavailable`` is deferred instead of
+        failed. Both are reported in ``deferred_files`` and
+        ``degraded_languages``; the caller must drop every stored row of those
+        languages. ``None`` (the default) keeps the fail-closed behaviour.
+        """
         directory = self._input_path(ctx, directory)
         logger.info(f"Indexing directory: {directory} (recursive={recursive})")
 
@@ -3841,6 +3851,17 @@ class EnhancedDispatcher:
             "low_level_blocker": None,
             "storage_diagnostics": None,
         }
+        if grammar_availability is not None:
+            stats["deferred_files"] = 0
+            stats["degraded_languages"] = {}
+
+        def defer(language: Optional[str], grammars) -> None:
+            stats["deferred_files"] += 1
+            entry = stats["degraded_languages"].setdefault(
+                language or "unknown", {"grammars": [], "files": 0}
+            )
+            entry["files"] += 1
+            entry["grammars"] = sorted(set(entry["grammars"]) | set(grammars or ()))
 
         def emit_progress(stage: str, stage_family: str, blocker_source: str) -> None:
             if progress_callback is None:
@@ -3910,6 +3931,13 @@ class EnhancedDispatcher:
                 stats["ignored_files"] += 1
                 continue
 
+            if grammar_availability is not None:
+                file_language = get_language_by_extension(path.suffix.lower())
+                if grammar_availability.defers(file_language):
+                    # Decided once for the whole build: never half a language.
+                    defer(file_language, grammar_availability.missing(file_language))
+                    continue
+
             try:
                 mutation = self._index_file_with_lexical_timeout(
                     ctx,
@@ -3917,6 +3945,18 @@ class EnhancedDispatcher:
                     stats,
                     progress_callback=emit_progress,
                 )
+                if grammar_availability is not None and is_grammar_unavailable_result(mutation):
+                    # The grammar disappeared after the build started.
+                    from mcp_server.utils import grammar_cache
+
+                    language = mutation.language or get_language_by_extension(path.suffix.lower())
+                    defer(
+                        language,
+                        grammar_cache.unavailable_languages([language] if language else []).get(
+                            language, ()
+                        ),
+                    )
+                    continue
                 if mutation.status == IndexResultStatus.INDEXED:
                     stats["indexed_files"] += 1
                     semantically_indexed_paths.append(path.resolve())
@@ -4038,6 +4078,12 @@ class EnhancedDispatcher:
         logger.info(
             f"Directory indexing complete: {stats['indexed_files']} indexed, "
             f"{stats['ignored_files']} ignored, {stats['failed_files']} failed"
+            + (
+                f", {stats['deferred_files']} deferred (grammar unavailable: "
+                f"{', '.join(sorted(stats['degraded_languages']))})"
+                if stats.get("deferred_files")
+                else ""
+            )
         )
 
         return stats
