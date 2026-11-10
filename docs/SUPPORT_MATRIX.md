@@ -223,8 +223,12 @@ tiers above are unchanged by the upgrade.
   languages (`markdown`, `plaintext`) never load a grammar and are not
   affected (Consiliency/Code-Index-MCP#117).
   - *Staged full and incremental builds* (sync, the ref poller, `reindex` of a
-    whole repository) decide availability once when the build starts. They
-    leave every language with a missing grammar out of the generation whole:
+    whole repository) decide availability once when the build starts. A
+    grammar that becomes unavailable partway through a build (for example a
+    language-pack upgrade clearing the cache) is handled the same way as one
+    missing at the start, also when every grammar loaded when the build
+    began. They leave every language with a missing grammar out of the
+    generation whole:
     its files are not indexed, and any of its rows the previous generation
     held (files, symbols, chunks, FTS rows, vectors) are removed, so a stale
     or chunkless row never appears as authoritative and a full walk and an

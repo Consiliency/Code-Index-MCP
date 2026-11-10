@@ -3818,7 +3818,10 @@ class EnhancedDispatcher:
         that still fails with ``grammar_unavailable`` is deferred instead of
         failed. Both are reported in ``deferred_files`` and
         ``degraded_languages``; the caller must drop every stored row of those
-        languages. ``None`` (the default) keeps the fail-closed behaviour.
+        languages. ``None`` (the default) keeps the fail-closed behaviour. A
+        complete snapshot skips nothing up front but still defers a file whose
+        grammar is lost mid-build; ``deferred_files``/``degraded_languages``
+        then appear only once a file is deferred.
         """
         directory = self._input_path(ctx, directory)
         logger.info(f"Indexing directory: {directory} (recursive={recursive})")
@@ -3851,13 +3854,15 @@ class EnhancedDispatcher:
             "low_level_blocker": None,
             "storage_diagnostics": None,
         }
-        if grammar_availability is not None:
+        if grammar_availability is not None and not grammar_availability.complete:
             stats["deferred_files"] = 0
             stats["degraded_languages"] = {}
 
         def defer(language: Optional[str], grammars) -> None:
-            stats["deferred_files"] += 1
-            entry = stats["degraded_languages"].setdefault(
+            # Added on first use when the snapshot was complete, so a walk
+            # that defers nothing returns the same stats as before #117.
+            stats["deferred_files"] = stats.get("deferred_files", 0) + 1
+            entry = stats.setdefault("degraded_languages", {}).setdefault(
                 language or "unknown", {"grammars": [], "files": 0}
             )
             entry["files"] += 1

@@ -19,7 +19,7 @@ import tempfile
 import threading
 import time
 import uuid
-from contextlib import closing
+from contextlib import closing, contextmanager
 from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
@@ -509,6 +509,39 @@ class GitAwareIndexManager:
         if event is None:
             event = self.__dict__.setdefault("_shutdown_event", threading.Event())
         return event
+
+    @property
+    def _staged_grammar(self) -> threading.local:
+        local = self.__dict__.get("_staged_grammar_local")
+        if local is None:
+            local = self.__dict__.setdefault("_staged_grammar_local", threading.local())
+        return local
+
+    @contextmanager
+    def _staged_grammar_scope(self, availability: Optional[grammar_cache.GrammarAvailability]):
+        """Opt this thread's staged walk in to per-language degradation (#117).
+
+        The snapshot reaches ``_full_index`` / ``_incremental_index_update``
+        through this scope, not their call signature, so it applies even when
+        it is complete: a grammar that becomes unavailable mid-build then
+        defers its language instead of failing the whole build, exactly as
+        if it had been missing at the start. Overrides and test doubles of
+        those methods keep their signatures.
+        """
+        local = self._staged_grammar
+        previous = getattr(local, "availability", None)
+        local.availability = availability
+        try:
+            yield
+        finally:
+            local.availability = previous
+
+    def _scoped_grammar_availability(
+        self, explicit: Optional[grammar_cache.GrammarAvailability]
+    ) -> Optional[grammar_cache.GrammarAvailability]:
+        if explicit is not None:
+            return explicit
+        return getattr(self._staged_grammar, "availability", None)
 
     def request_shutdown(self) -> None:
         """Ask in-flight staged rebuilds to stop before they publish.
@@ -1305,33 +1338,27 @@ class GitAwareIndexManager:
                         stage_store.set_grammar_degradation(connection, None)
             elif changes is None:
                 full_call_started = True
-                full_kwargs: Dict[str, Any] = {}
-                # A fully prefetched host walks exactly as before #117.
-                if (
-                    grammar_availability is not None
-                    and not grammar_availability.complete
-                    and self._accepts_keyword(self._full_index, "grammar_availability")
-                ):
-                    full_kwargs["grammar_availability"] = grammar_availability
+                # The snapshot reaches the walk through the scope, also when it
+                # is complete, so a grammar lost mid-build defers its language
+                # (#117). With nothing lost the walk indexes exactly as before.
                 if force_full:
                     callback = self._make_force_full_progress_callback(
                         repo_info=repo_info,
                         current_commit=current_commit,
                         indexed_commit_before=indexed_before,
                     )
-                    try:
-                        value = self._full_index(
-                            repo_id, stage_ctx, progress_callback=callback, **full_kwargs
-                        )
-                    except TypeError as exc:
-                        if "progress_callback" not in str(exc):
-                            raise
-                        value = self._full_index(repo_id, stage_ctx, **full_kwargs)
+                    with self._staged_grammar_scope(grammar_availability):
+                        try:
+                            value = self._full_index(repo_id, stage_ctx, progress_callback=callback)
+                        except TypeError as exc:
+                            if "progress_callback" not in str(exc):
+                                raise
+                            value = self._full_index(repo_id, stage_ctx)
                     result = self._normalize_update_result(value)
                 else:
-                    result = self._normalize_update_result(
-                        self._full_index(repo_id, stage_ctx, **full_kwargs)
-                    )
+                    with self._staged_grammar_scope(grammar_availability):
+                        value = self._full_index(repo_id, stage_ctx)
+                    result = self._normalize_update_result(value)
                 full_call_completed = True
             else:
                 # Project Git changes onto the admitted snapshot and previously indexed rows.
@@ -1382,18 +1409,8 @@ class GitAwareIndexManager:
                             and stored(path)
                         ):
                             (admitted.modified if path in indexed else admitted.added).append(path)
-                incremental_kwargs: Dict[str, Any] = {}
-                if (
-                    grammar_availability is not None
-                    and not grammar_availability.complete
-                    and self._accepts_keyword(
-                        self._incremental_index_update, "grammar_availability"
-                    )
-                ):
-                    incremental_kwargs["grammar_availability"] = grammar_availability
-                result = self._incremental_index_update(
-                    repo_id, stage_ctx, admitted, **incremental_kwargs
-                )
+                with self._staged_grammar_scope(grammar_availability):
+                    result = self._incremental_index_update(repo_id, stage_ctx, admitted)
                 result.ignored += not_admitted
             if not result.clean:
                 if self._shutdown.is_set():
@@ -2489,12 +2506,14 @@ class GitAwareIndexManager:
             grammar_availability: Opts in to per-language degradation (#117):
                 a file that fails with ``grammar_unavailable`` is deferred
                 instead of failed; the caller drops its whole language.
+                None falls back to the staged build's scoped snapshot.
 
         Returns:
             UpdateResult
         """
         start_time = datetime.now()
         result = UpdateResult()
+        grammar_availability = self._scoped_grammar_availability(grammar_availability)
 
         repo_info = self.registry.get_repository(repo_id)
         if not repo_info:
@@ -2805,8 +2824,9 @@ class GitAwareIndexManager:
     ) -> UpdateResult:
         """Perform full repository indexing.
 
-        ``grammar_availability`` opts the walk in to per-language degradation
-        (#117) when the dispatcher supports it.
+        ``grammar_availability`` (or, when None, the staged build's scoped
+        snapshot) opts the walk in to per-language degradation (#117) when the
+        dispatcher supports it.
 
         Args:
             repo_id: Repository ID
@@ -2816,6 +2836,7 @@ class GitAwareIndexManager:
         """
         start_time = datetime.now()
         result = UpdateResult()
+        grammar_availability = self._scoped_grammar_availability(grammar_availability)
         repo_info = self.registry.get_repository(repo_id)
         if not repo_info:
             result.failed += 1
