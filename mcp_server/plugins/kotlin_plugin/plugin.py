@@ -32,7 +32,7 @@ class KotlinPlugin(SpecializedPluginBase):
     - Gradle build integration
     """
 
-    def __init__(self, sqlite_store: Optional[SQLiteStore] = None, enable_semantic: bool = True):
+    def __init__(self, sqlite_store: Optional[SQLiteStore] = None, enable_semantic: bool = False):
         # Create Kotlin language config
         language_config = {
             "code": "kotlin",

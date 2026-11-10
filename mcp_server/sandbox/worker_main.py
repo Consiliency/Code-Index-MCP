@@ -28,7 +28,7 @@ import sys
 import traceback
 from typing import Any, List, Optional
 
-from mcp_server.plugin_base import IPlugin, Reference
+from mcp_server.plugin_base import IPlugin, Reference, construct_plugin
 from mcp_server.sandbox import caps_apply
 from mcp_server.sandbox.capabilities import CapabilitySet, SandboxViolation
 from mcp_server.sandbox.protocol import Envelope, ProtocolError, decode, encode
@@ -146,18 +146,13 @@ def _find_plugin_class(module) -> type:
 
 
 def _instantiate(plugin_cls: type) -> IPlugin:
-    """Construct the plugin with permissive defaults.
+    """Construct the plugin once with ``sqlite_store=None`` and semantic search off.
 
-    Plugins in this repo accept ``sqlite_store=None, enable_semantic=False``.
-    If the ctor rejects those kwargs, fall back to no-arg.
+    Arguments are chosen from the ``__init__`` signature up front. A ``TypeError``
+    raised inside the constructor propagates; it is never retried with fewer
+    arguments, which could fall back to a semantic-enabled default (#121).
     """
-    try:
-        return plugin_cls(sqlite_store=None, enable_semantic=False)
-    except TypeError:
-        try:
-            return plugin_cls(sqlite_store=None)
-        except TypeError:
-            return plugin_cls()
+    return construct_plugin(plugin_cls, sqlite_store=None, enable_semantic=False)
 
 
 def _write_envelope(env: Envelope) -> None:

@@ -114,7 +114,8 @@ class PluginLoader:
         if "sqlite_store" in params:
             kwargs["sqlite_store"] = sqlite_store
         if "enable_semantic" in params:
-            kwargs["enable_semantic"] = config.enable_semantic
+            # Plugin-level semantic search is deprecated; never enabled here (#121).
+            kwargs["enable_semantic"] = False
         if "config" in params:
             kwargs["config"] = config.to_dict()
 

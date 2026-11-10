@@ -32,7 +32,7 @@ class Plugin(PluginWithSemanticSearch):
     lang = "go"
 
     def __init__(
-        self, sqlite_store: Optional[SQLiteStore] = None, enable_semantic: bool = True
+        self, sqlite_store: Optional[SQLiteStore] = None, enable_semantic: bool = False
     ) -> None:
         """Initialize Go plugin with enhanced features."""
         # Initialize base class

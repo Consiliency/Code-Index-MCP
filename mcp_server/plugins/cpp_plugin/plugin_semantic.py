@@ -27,7 +27,7 @@ class CppPluginSemantic(PluginWithSemanticSearch):
     lang = "cpp"
 
     def __init__(
-        self, sqlite_store: Optional[SQLiteStore] = None, enable_semantic: bool = True
+        self, sqlite_store: Optional[SQLiteStore] = None, enable_semantic: bool = False
     ) -> None:
         # Initialize enhanced base class
         super().__init__(sqlite_store=sqlite_store, enable_semantic=enable_semantic)

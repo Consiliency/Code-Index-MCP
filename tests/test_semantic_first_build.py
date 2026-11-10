@@ -1,6 +1,7 @@
 """Code blockers for a first semantic build (Consiliency/Code-Index-MCP#121).
 
-C1: the dispatcher never enables plugin-level semantic search, so no language plugin
+C1: plugin-level semantic search is off by default everywhere and never enabled by
+the dispatcher, plugin managers, loaders or the sandbox worker, so no language plugin
 builds its own legacy ``SemanticIndexer``.
 C3: ``SEMANTIC_SUMMARY_PASS_BUDGET`` bounds (or unbounds) the repo-scope summary passes.
 
@@ -9,6 +10,7 @@ No network, no Qdrant: the summarizer, preflight and semantic indexer are test d
 
 from __future__ import annotations
 
+import inspect
 import warnings
 from pathlib import Path
 from types import SimpleNamespace
@@ -23,7 +25,7 @@ from mcp_server.config.env_vars import (
 from mcp_server.core.repo_context import RepoContext
 from mcp_server.dispatcher.dispatcher_enhanced import EnhancedDispatcher as Dispatcher
 from mcp_server.indexing.summarization import ComprehensiveChunkWriter, SummaryGenerationResult
-from mcp_server.plugin_base import SearchOpts, SearchResult
+from mcp_server.plugin_base import IPlugin, SearchOpts, SearchResult, construct_plugin
 from mcp_server.plugin_base_enhanced import PluginWithSemanticSearch
 from mcp_server.plugins import plugin_factory
 from mcp_server.plugins.memory_aware_manager import MemoryAwarePluginManager
@@ -49,7 +51,10 @@ class _LegacyIndexerRecorder:
 
 
 class _ProbePlugin(PluginWithSemanticSearch):
-    """Minimal plugin on the deprecated plugin-level semantic base."""
+    """Minimal plugin on the deprecated base, keeping the old ``True`` default.
+
+    The worst case for callers: only an explicit ``enable_semantic=False`` keeps it off.
+    """
 
     lang = PROBE_LANG
 
@@ -382,3 +387,294 @@ class TestSummaryPassBudgetRebuild:
         assert result["summary_remaining_chunks"] == FIXTURE_FILES - 3
         assert "3 bounded summary passes" in result["semantic_error"]
         assert loopback_semantic.indexer.batches == []
+
+    def test_bounded_budget_caps_zero_progress_passes(
+        self, tmp_path, monkeypatch, loopback_semantic
+    ):
+        """A summarizer making no progress must not exceed a bounded budget."""
+        monkeypatch.setenv("SEMANTIC_SUMMARY_PASS_BUDGET", "1")
+        limits: List[int] = []
+
+        async def no_progress_process_scope(self, **kwargs):
+            limits.append(kwargs["limit"])
+            return SummaryGenerationResult(chunks_attempted=1, summaries_written=0)
+
+        monkeypatch.setattr(ComprehensiveChunkWriter, "process_scope", no_progress_process_scope)
+        ctx, store, paths = _build_fixture_repo(tmp_path)
+        try:
+            result = Dispatcher([]).rebuild_semantic_for_paths(ctx, paths)
+        finally:
+            store.close()
+
+        assert result["summary_passes"] == 1
+        assert limits == [64]
+        assert result["semantic_stage"] == "blocked_missing_summaries"
+        assert result["summary_continuation_required"] is True
+        assert result["summary_remaining_chunks"] == FIXTURE_FILES
+        assert "1 bounded summary passes" in result["semantic_error"]
+        assert loopback_semantic.indexer.batches == []
+
+    def test_unbounded_budget_ends_zero_progress_at_the_size_one_guard(
+        self, tmp_path, monkeypatch, loopback_semantic
+    ):
+        monkeypatch.setenv("SEMANTIC_SUMMARY_PASS_BUDGET", "0")
+        limits: List[int] = []
+
+        async def no_progress_process_scope(self, **kwargs):
+            limits.append(kwargs["limit"])
+            return SummaryGenerationResult(chunks_attempted=1, summaries_written=0)
+
+        monkeypatch.setattr(ComprehensiveChunkWriter, "process_scope", no_progress_process_scope)
+        ctx, store, paths = _build_fixture_repo(tmp_path)
+        try:
+            result = Dispatcher([]).rebuild_semantic_for_paths(ctx, paths)
+        finally:
+            store.close()
+
+        assert limits == [64, 32, 16, 8, 4, 2, 1]
+        assert result["semantic_stage"] == "blocked_missing_summaries"
+        assert result["summary_remaining_chunks"] == FIXTURE_FILES
+        assert loopback_semantic.indexer.batches == []
+
+
+# ---------------------------------------------------------------------------
+# Defense in depth: defaults, stdio plugin manager, cache key, sandbox, constructor
+# ---------------------------------------------------------------------------
+
+
+def _default_of(func, name: str = "enable_semantic"):
+    return inspect.signature(func).parameters[name].default
+
+
+class TestPluginSemanticDefaultsOff:
+    def test_factory_methods_default_semantic_off(self):
+        for method in (
+            PluginFactory.create_plugin,
+            PluginFactory.create_plugin_async,
+            PluginFactory.get_plugin,
+            PluginFactory.create_plugin_for_file,
+            PluginFactory.create_all_plugins,
+        ):
+            assert _default_of(method) is False, method.__name__
+        plaintext = plugin_factory.SPECIFIC_PLUGINS.get("plaintext")
+        if plaintext is not None and not isinstance(plaintext, type):
+            assert _default_of(plaintext) is False
+
+    def test_plugin_constructors_default_semantic_off(self):
+        from mcp_server.document_processing.base_document_plugin import BaseDocumentPlugin
+        from mcp_server.plugin_system.discovery import PluginDiscovery
+        from mcp_server.plugins.generic_treesitter_plugin import GenericTreeSitterPlugin
+        from mcp_server.plugins.specialized_plugin_base import SpecializedPluginBase
+
+        classes = [
+            PluginWithSemanticSearch,
+            GenericTreeSitterPlugin,
+            SpecializedPluginBase,
+            BaseDocumentPlugin,
+        ]
+        classes += [
+            cls for cls in plugin_factory.SPECIFIC_PLUGINS.values() if isinstance(cls, type)
+        ]
+        checked = 0
+        for cls in classes:
+            params = inspect.signature(cls.__init__).parameters
+            if "enable_semantic" in params:
+                assert params["enable_semantic"].default is False, cls
+                checked += 1
+        assert checked >= 6
+        assert _default_of(PluginDiscovery.load_plugin) is False
+
+    def test_factory_default_builds_no_legacy_indexer(self, legacy_semantic_env):
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", DeprecationWarning)
+            plugin = PluginFactory.create_plugin(PROBE_LANG)
+
+        _assert_no_plugin_semantic(plugin)
+        assert legacy_semantic_env.created == []
+
+    def test_base_default_builds_no_legacy_indexer(self, legacy_semantic_env):
+        class _DefaultBase(_ProbePlugin):
+            def __init__(self, sqlite_store=None):
+                PluginWithSemanticSearch.__init__(self, sqlite_store=sqlite_store)
+
+        _assert_no_plugin_semantic(_DefaultBase())
+        assert legacy_semantic_env.created == []
+
+    def test_typescript_default_builds_no_legacy_indexer(self, legacy_semantic_env, monkeypatch):
+        pytest.importorskip("mcp_server.plugins.typescript_plugin.plugin")
+        monkeypatch.setenv("VOYAGE_API_KEY", "fixture-not-a-key")
+        try:
+            plugin = PluginFactory.create_plugin("typescript")
+        except Exception as exc:  # pragma: no cover - grammar unavailable offline
+            pytest.skip(f"TypeScript grammar unavailable: {type(exc).__name__}")
+
+        assert plugin._semantic_indexer is None
+        assert legacy_semantic_env.created == []
+
+    @pytest.mark.asyncio
+    async def test_async_cache_key_includes_semantic_flag(self, legacy_semantic_env):
+        ctx = SimpleNamespace(repo_id="semantic-cache-key-repo")
+        keys = [(PROBE_LANG, ctx.repo_id, True), (PROBE_LANG, ctx.repo_id, False)]
+        try:
+            with pytest.warns(DeprecationWarning):
+                enabled = await PluginFactory.create_plugin_async(
+                    PROBE_LANG, ctx, enable_semantic=True
+                )
+            disabled = await PluginFactory.create_plugin_async(
+                PROBE_LANG, ctx, enable_semantic=False
+            )
+            default = await PluginFactory.create_plugin_async(PROBE_LANG, ctx)
+        finally:
+            for key in keys:
+                PluginFactory._async_cache.pop(key, None)
+
+        assert enabled is not disabled
+        assert enabled._enable_semantic is True
+        _assert_no_plugin_semantic(disabled)
+        assert default is disabled
+
+
+class TestStdioPluginManagerPath:
+    def test_initialize_plugin_passes_semantic_off(self, legacy_semantic_env, tmp_path):
+        from mcp_server.plugin_system.models import (
+            PluginConfig,
+            PluginInfo,
+            PluginInstance,
+            PluginSystemConfig,
+            PluginType,
+        )
+        from mcp_server.plugin_system.plugin_manager import PluginManager
+
+        store = SQLiteStore(str(tmp_path / "index.db"))
+        manager = PluginManager(
+            config=PluginSystemConfig(auto_discover=False, auto_load=False),
+            sqlite_store=store,
+        )
+        manager._registry.get_plugin = lambda _name: _ProbePlugin
+        manager._instances["probe"] = PluginInstance(
+            info=PluginInfo(
+                name="probe",
+                version="0",
+                description="probe",
+                author="tests",
+                plugin_type=PluginType.LANGUAGE,
+                language=PROBE_LANG,
+                file_extensions=[".probe"],
+                path=tmp_path,
+                module_name="probe",
+            ),
+            config=PluginConfig(),
+            instance=None,
+        )
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("error", DeprecationWarning)
+                plugin = manager.initialize_plugin("probe", {})
+        finally:
+            store.close()
+
+        _assert_no_plugin_semantic(plugin)
+        assert legacy_semantic_env.created == []
+
+    def test_discovery_load_plugin_passes_semantic_off(self, legacy_semantic_env):
+        from mcp_server.plugin_system.discovery import PluginDiscovery
+
+        discovery = PluginDiscovery.__new__(PluginDiscovery)
+        discovery._plugin_cache = {}
+        discovery.discovered_plugins = {PROBE_LANG: {"name": "probe", "class": _ProbePlugin}}
+
+        plugin = discovery.load_plugin(PROBE_LANG)
+
+        _assert_no_plugin_semantic(plugin)
+        assert legacy_semantic_env.created == []
+
+
+class _RecordingMeta(type):
+    """Metaclass exposing ``(**kwargs)`` while ``__init__`` takes no enable_semantic."""
+
+    def __call__(cls, **kwargs):
+        return super().__call__(**kwargs)
+
+
+class _KwargsFacadePlugin(IPlugin, metaclass=type("_M", (_RecordingMeta, type(IPlugin)), {})):
+    lang = "kwargs_facade"
+
+    def __init__(self, sqlite_store=None):
+        self.sqlite_store = sqlite_store
+
+    def supports(self, path):
+        return False
+
+    def indexFile(self, path, content):
+        return {"file": str(path), "symbols": [], "language": self.lang}
+
+    def getDefinition(self, symbol):
+        return None
+
+    def findReferences(self, symbol):
+        return []
+
+    def search(self, query, opts=None):
+        return []
+
+
+class TestCentralConstructorAndSandbox:
+    def test_kwargs_facade_without_enable_semantic_is_constructed(self, monkeypatch):
+        monkeypatch.setenv("MCP_PLUGIN_SANDBOX_DISABLE", "1")
+        monkeypatch.setitem(plugin_factory.SPECIFIC_PLUGINS, "kwargs_facade", _KwargsFacadePlugin)
+
+        plugin = PluginFactory.create_plugin("kwargs_facade", "store-sentinel")
+
+        assert isinstance(plugin, _KwargsFacadePlugin)
+        assert plugin.sqlite_store == "store-sentinel"
+
+    def test_construct_plugin_ignores_semantic_for_classes_without_it(self):
+        plugin = construct_plugin(_KwargsFacadePlugin, sqlite_store=None, enable_semantic=True)
+        assert isinstance(plugin, _KwargsFacadePlugin)
+
+    def test_sandbox_instantiate_passes_semantic_off_once(self):
+        from mcp_server.sandbox import worker_main
+
+        received = []
+
+        class _LegacyDefault:
+            def __init__(self, sqlite_store=None, enable_semantic=True):
+                received.append((sqlite_store, enable_semantic))
+
+        worker_main._instantiate(_LegacyDefault)
+
+        assert received == [(None, False)]
+
+    def test_sandbox_instantiate_does_not_retry_internal_type_error(self):
+        from mcp_server.sandbox import worker_main
+
+        received = []
+
+        class _FailsInside:
+            def __init__(self, sqlite_store=None, enable_semantic=True):
+                received.append(enable_semantic)
+                raise TypeError("raised inside the constructor")
+
+        with pytest.raises(TypeError, match="inside the constructor"):
+            worker_main._instantiate(_FailsInside)
+
+        # One call, with semantic off; never retried into the True default.
+        assert received == [False]
+
+    def test_sandbox_instantiate_without_semantic_parameter(self):
+        from mcp_server.sandbox import worker_main
+
+        received = []
+
+        class _StoreOnly:
+            def __init__(self, sqlite_store=None):
+                received.append(sqlite_store)
+
+        class _NoArgs:
+            def __init__(self):
+                received.append("no-args")
+
+        worker_main._instantiate(_StoreOnly)
+        worker_main._instantiate(_NoArgs)
+
+        assert received == [None, "no-args"]

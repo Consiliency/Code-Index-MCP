@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional, Type
 import yaml
 
 from ..interfaces.plugin_interfaces import IPlugin
+from ..plugin_base import construct_plugin
 from ..storage.sqlite_store import SQLiteStore
 
 logger = logging.getLogger(__name__)
@@ -201,7 +202,7 @@ class PluginDiscovery:
         self,
         language: str,
         sqlite_store: SQLiteStore = None,
-        enable_semantic: bool = True,
+        enable_semantic: bool = False,
     ) -> Optional[IPlugin]:
         """
         Load a plugin for the specified language.
@@ -209,7 +210,7 @@ class PluginDiscovery:
         Args:
             language: Language identifier
             sqlite_store: SQLite storage instance
-            enable_semantic: Enable semantic search features
+            enable_semantic: Deprecated plugin-level semantic search; off by default (#121)
 
         Returns:
             Plugin instance or None if not found
@@ -237,11 +238,10 @@ class PluginDiscovery:
             else:
                 plugin_class = plugin_info["class"]
 
-            # Create plugin instance
-            if "semantic" in inspect.signature(plugin_class.__init__).parameters:
-                plugin = plugin_class(sqlite_store, enable_semantic=enable_semantic)
-            else:
-                plugin = plugin_class(sqlite_store)
+            # Create plugin instance, passing only arguments its __init__ names
+            plugin = construct_plugin(
+                plugin_class, sqlite_store=sqlite_store, enable_semantic=enable_semantic
+            )
 
             # Cache the instance
             self._plugin_cache[cache_key] = plugin

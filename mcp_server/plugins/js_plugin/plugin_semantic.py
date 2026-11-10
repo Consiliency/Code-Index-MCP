@@ -31,7 +31,7 @@ class JsPluginSemantic(PluginWithSemanticSearch):
     lang = "js"
 
     def __init__(
-        self, sqlite_store: Optional["SQLiteStore"] = None, enable_semantic: bool = True
+        self, sqlite_store: Optional["SQLiteStore"] = None, enable_semantic: bool = False
     ) -> None:
         # Initialize enhanced base class
         super().__init__(enable_semantic=enable_semantic)

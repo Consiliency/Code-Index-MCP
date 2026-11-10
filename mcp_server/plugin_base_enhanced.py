@@ -46,14 +46,15 @@ class PluginWithSemanticSearch(IPlugin):
         default profile and reads legacy ``code-embeddings-<lang>`` collections,
         which no current index generation writes. Semantic search is served by
         the dispatcher's generation-scoped indexer (``SemanticIndexerRegistry``,
-        ``ci__`` collections). Passing ``enable_semantic=True`` with
-        ``SEMANTIC_SEARCH_ENABLED=true`` emits a ``DeprecationWarning``.
+        ``ci__`` collections). ``enable_semantic`` defaults to False; an explicit
+        ``enable_semantic=True`` with ``SEMANTIC_SEARCH_ENABLED=true`` is the only
+        way to opt in, and emits a ``DeprecationWarning``.
     """
 
     def __init__(
         self,
         sqlite_store: Optional["SQLiteStore"] = None,
-        enable_semantic: bool = True,
+        enable_semantic: bool = False,
         qdrant_host: Optional[str] = None,
         qdrant_port: Optional[int] = None,
     ):

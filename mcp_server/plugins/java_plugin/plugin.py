@@ -212,7 +212,7 @@ class Plugin(SpecializedPluginBase):
     """Java language plugin with full support for Java ecosystem."""
 
     def __init__(
-        self, sqlite_store: Optional[SQLiteStore] = None, enable_semantic: bool = True
+        self, sqlite_store: Optional[SQLiteStore] = None, enable_semantic: bool = False
     ) -> None:
         # Java language configuration
         language_config = {

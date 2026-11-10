@@ -1,6 +1,7 @@
+import inspect
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import TYPE_CHECKING, Iterable
+from typing import TYPE_CHECKING, Any, Iterable, Mapping
 
 from typing_extensions import NotRequired, TypedDict
 
@@ -120,3 +121,40 @@ class IPlugin(ABC):
 
     @abstractmethod
     def search(self, query: str, opts: SearchOpts | None = None) -> Iterable[SearchResult]: ...
+
+
+_NAMED_PARAMETER_KINDS = (
+    inspect.Parameter.POSITIONAL_OR_KEYWORD,
+    inspect.Parameter.KEYWORD_ONLY,
+)
+
+
+def _plugin_init_parameters(plugin_cls: type) -> Mapping[str, inspect.Parameter]:
+    """Parameters of the class's own ``__init__`` (not a metaclass or ``__new__``)."""
+    init = getattr(plugin_cls, "__init__", None)
+    if init is None or init is object.__init__:
+        return {}
+    try:
+        return inspect.signature(init).parameters
+    except (TypeError, ValueError):
+        return {}
+
+
+def construct_plugin(plugin_cls: type, *, sqlite_store: Any = None, enable_semantic: bool = False):
+    """Construct a plugin class once, passing only arguments its ``__init__`` takes.
+
+    ``enable_semantic`` is passed only to an ``__init__`` that names it explicitly;
+    ``**kwargs`` alone does not prove the option is accepted. Plugin-level semantic
+    search is deprecated and off unless a caller opts in (#121). The constructor
+    runs exactly once, so a ``TypeError`` raised inside it propagates instead of
+    triggering a retry with different arguments.
+    """
+    parameters = _plugin_init_parameters(plugin_cls)
+    named = {name for name, p in parameters.items() if p.kind in _NAMED_PARAMETER_KINDS}
+    var_keyword = any(p.kind is inspect.Parameter.VAR_KEYWORD for p in parameters.values())
+    kwargs: dict = {}
+    if "sqlite_store" in named or var_keyword:
+        kwargs["sqlite_store"] = sqlite_store
+    if "enable_semantic" in named:
+        kwargs["enable_semantic"] = bool(enable_semantic)
+    return plugin_cls(**kwargs)

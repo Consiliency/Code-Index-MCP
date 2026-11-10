@@ -3232,24 +3232,32 @@ class EnhancedDispatcher:
                             "semantic_closeout",
                         )
                         return stats
-                if max_summary_passes is not None and stats["summary_passes"] >= max_summary_passes:
-                    stats["summary_missing_chunks"] = remaining_missing
-                    stats["summary_continuation_required"] = True
-                    stats["semantic_stage"] = "blocked_missing_summaries"
-                    stats["semantic_blocked"] = len(normalized_paths)
-                    stats["semantic_error"] = (
-                        "Missing authoritative summaries blocked strict semantic indexing "
-                        f"after {stats['summary_passes']} bounded summary passes; "
-                        f"{remaining_missing} chunks still require summaries"
-                    )
-                    if summary_missing_ids:
-                        stats["summary_missing_chunk_ids"] = sorted(set(summary_missing_ids))
-                    emit_progress(
-                        "blocked_missing_summaries",
-                        "semantic_closeout",
-                        "semantic_closeout",
-                    )
-                    return stats
+            # A bounded budget caps every completed pass while summaries remain,
+            # including zero-progress passes that would otherwise retry with a
+            # smaller summary_limit. Unbounded runs (None) still end through the
+            # size-one no-progress guard below.
+            if (
+                remaining_missing > 0
+                and max_summary_passes is not None
+                and stats["summary_passes"] >= max_summary_passes
+            ):
+                stats["summary_missing_chunks"] = remaining_missing
+                stats["summary_continuation_required"] = True
+                stats["semantic_stage"] = "blocked_missing_summaries"
+                stats["semantic_blocked"] = len(normalized_paths)
+                stats["semantic_error"] = (
+                    "Missing authoritative summaries blocked strict semantic indexing "
+                    f"after {stats['summary_passes']} bounded summary passes; "
+                    f"{remaining_missing} chunks still require summaries"
+                )
+                if summary_missing_ids:
+                    stats["summary_missing_chunk_ids"] = sorted(set(summary_missing_ids))
+                emit_progress(
+                    "blocked_missing_summaries",
+                    "semantic_closeout",
+                    "semantic_closeout",
+                )
+                return stats
             if summary_result.summaries_written == 0:
                 if remaining_missing >= missing_before_pass and summary_limit > min_summary_limit:
                     summary_limit = max(min_summary_limit, summary_limit // 2)

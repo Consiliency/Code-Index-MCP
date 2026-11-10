@@ -13,13 +13,13 @@ tree-sitter based plugins for languages without specific implementations.
 
 import asyncio
 import importlib.util
-import inspect
 import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Dict, Literal, Optional, Tuple, Type, Union
 
+from ..plugin_base import construct_plugin
 from ..storage.sqlite_store import SQLiteStore
 from .generic_treesitter_plugin import GenericTreeSitterPlugin
 from .language_registry import LANGUAGE_CONFIGS, get_language_by_extension
@@ -29,18 +29,6 @@ if TYPE_CHECKING:
     from ..sandbox.capabilities import CapabilitySet
 
 logger = logging.getLogger(__name__)
-
-
-def _accepts_enable_semantic(plugin_class: type) -> bool:
-    """Whether a plugin class constructor takes an ``enable_semantic`` argument."""
-    try:
-        parameters = inspect.signature(plugin_class).parameters.values()
-    except (TypeError, ValueError):
-        return False
-    return any(
-        parameter.name == "enable_semantic" or parameter.kind is parameter.VAR_KEYWORD
-        for parameter in parameters
-    )
 
 
 # Import specific plugins if they exist
@@ -233,7 +221,7 @@ try:
     from .simple_text_plugin import SimpleTextPlugin
 
     # Create a wrapper that provides the correct initialization
-    def create_plaintext_plugin(sqlite_store=None, enable_semantic=True):
+    def create_plaintext_plugin(sqlite_store=None, enable_semantic=False):
         return SimpleTextPlugin(sqlite_store)
 
     SPECIFIC_PLUGINS["plaintext"] = create_plaintext_plugin
@@ -336,7 +324,7 @@ class PluginFactory:
         language: str,
         ctx: "RepoContext",
         sqlite_store: Optional[SQLiteStore] = None,
-        enable_semantic: bool = True,
+        enable_semantic: bool = False,
     ):
         """Async plugin construction using the PluginLoader's ThreadPoolExecutor.
 
@@ -346,7 +334,9 @@ class PluginFactory:
         single in-flight future.
         """
         language_norm = language.lower().replace("-", "_")
-        cache_key = (language_norm, ctx.repo_id)
+        # The flag is part of the key: a cached semantic-enabled instance must
+        # never satisfy a later request with semantic disabled.
+        cache_key = (language_norm, ctx.repo_id, bool(enable_semantic))
 
         loop = asyncio.get_event_loop()
 
@@ -379,7 +369,7 @@ class PluginFactory:
         cls,
         language: str,
         sqlite_store: Optional[SQLiteStore] = None,
-        enable_semantic: bool = True,
+        enable_semantic: bool = False,
         *,
         ctx: Optional["RepoContext"] = None,
         capabilities: Optional["CapabilitySet"] = None,
@@ -389,7 +379,7 @@ class PluginFactory:
         Args:
             language: Language code (e.g., 'python', 'go', 'rust')
             sqlite_store: Optional SQLite storage
-            enable_semantic: Whether to enable semantic search
+            enable_semantic: Deprecated plugin-level semantic search; off by default (#121)
             ctx: P3 IF-0-P3-5 — optional RepoContext. When provided, the factory
                 calls ``plugin.bind(ctx)`` post-construction so the plugin can
                 attach per-repo state. SL-1/SL-3/SL-5 preserve this hook through
@@ -467,15 +457,14 @@ class PluginFactory:
                 plugin = plugin_class_or_factory(
                     sqlite_store=sqlite_store, enable_semantic=enable_semantic
                 )
-            elif _accepts_enable_semantic(plugin_class_or_factory):
-                # It's a class; pass enable_semantic through so a caller's False
-                # is honoured instead of the class default (#121).
-                plugin = plugin_class_or_factory(
-                    sqlite_store=sqlite_store, enable_semantic=enable_semantic
-                )
             else:
-                # It's a class without plugin-level semantic search
-                plugin = plugin_class_or_factory(sqlite_store=sqlite_store)
+                # It's a class: construct once with only the arguments its
+                # __init__ names, so enable_semantic is honoured (#121).
+                plugin = construct_plugin(
+                    plugin_class_or_factory,
+                    sqlite_store=sqlite_store,
+                    enable_semantic=enable_semantic,
+                )
         # Check if language is supported by generic plugin
         elif language in LANGUAGE_CONFIGS:
             availability = cls.get_plugin_availability(language, sandbox_enabled=False)
@@ -514,14 +503,14 @@ class PluginFactory:
         cls,
         language: str,
         sqlite_store: Optional[SQLiteStore] = None,
-        enable_semantic: bool = True,
+        enable_semantic: bool = False,
     ):
         """Alias for create_plugin for backward compatibility.
 
         Args:
             language: Language code (e.g., 'python', 'go', 'rust')
             sqlite_store: Optional SQLite storage
-            enable_semantic: Whether to enable semantic search
+            enable_semantic: Deprecated plugin-level semantic search; off by default (#121)
 
         Returns:
             Plugin instance
@@ -533,14 +522,14 @@ class PluginFactory:
         cls,
         file_path: str | Path,
         sqlite_store: Optional[SQLiteStore] = None,
-        enable_semantic: bool = True,
+        enable_semantic: bool = False,
     ):
         """Create appropriate plugin based on file extension.
 
         Args:
             file_path: Path to the file
             sqlite_store: Optional SQLite storage
-            enable_semantic: Whether to enable semantic search
+            enable_semantic: Deprecated plugin-level semantic search; off by default (#121)
 
         Returns:
             Plugin instance or None if no suitable plugin found
@@ -582,7 +571,7 @@ class PluginFactory:
 
     @classmethod
     def create_all_plugins(
-        cls, sqlite_store: Optional[SQLiteStore] = None, enable_semantic: bool = True
+        cls, sqlite_store: Optional[SQLiteStore] = None, enable_semantic: bool = False
     ) -> Dict[str, object]:
         """Create plugins for all supported languages.
 

@@ -34,7 +34,7 @@ class Plugin(IPlugin):
     lang = "typescript"
 
     def __init__(
-        self, sqlite_store: Optional[SQLiteStore] = None, enable_semantic: bool = True
+        self, sqlite_store: Optional[SQLiteStore] = None, enable_semantic: bool = False
     ) -> None:
         """Initialize the TypeScript plugin.
 

@@ -69,7 +69,7 @@ _EXACT_FENCED_CODE_HEADING_GUARD_REASONS = {
 class MarkdownPlugin(BaseDocumentPlugin):
     """Plugin for indexing and searching Markdown documents."""
 
-    def __init__(self, sqlite_store=None, enable_semantic=True):
+    def __init__(self, sqlite_store=None, enable_semantic=False):
         """Initialize the Markdown plugin."""
         # Language configuration for Markdown
         language_config = {

@@ -28,7 +28,7 @@ class SpecializedPluginBase(GenericTreeSitterPlugin):
         self,
         language_config: Dict[str, Any],
         sqlite_store: Optional[SQLiteStore] = None,
-        enable_semantic: bool = True,
+        enable_semantic: bool = False,
     ) -> None:
         super().__init__(language_config, sqlite_store, enable_semantic)
         self._specialized_features = {}
@@ -100,7 +100,7 @@ class RustPlugin(SpecializedPluginBase):
     """
 
     def __init__(
-        self, sqlite_store: Optional[SQLiteStore] = None, enable_semantic: bool = True
+        self, sqlite_store: Optional[SQLiteStore] = None, enable_semantic: bool = False
     ) -> None:
         """Initialize Rust plugin with specialized features."""
         config = {
