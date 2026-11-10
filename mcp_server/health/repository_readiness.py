@@ -277,6 +277,17 @@ def _read_coverage_marker(index_path: Path) -> Any:
     return marker
 
 
+def published_grammar_degradation(index_path: Optional[Path]) -> Optional[dict]:
+    """Return a published index's grammar-degradation marker (cached).
+
+    None when coverage is complete or the index cannot be read.
+    """
+    if index_path is None or not Path(index_path).exists():
+        return None
+    marker = _read_coverage_marker(Path(index_path))
+    return None if marker is _UNREAD else marker
+
+
 def coverage_from_marker(marker: Optional[dict]) -> dict[str, Any]:
     """Build the readiness ``coverage`` object from a degradation marker.
 

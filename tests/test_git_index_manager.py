@@ -7347,3 +7347,54 @@ def test_create_commit_artifact_refuses_degraded_generation(degraded_runtime, gr
     manager.artifact_manager = MagicMock()
     assert manager.create_commit_artifact(repo_id) is None
     manager.artifact_manager.create_commit_artifact.assert_not_called()
+
+
+def test_repair_after_grammar_arrival_indexes_only_deferred_files(
+    degraded_runtime, grammar_availability, monkeypatch
+):
+    """Once the grammar loads, the next sync indexes only the left-out language
+    through an empty-change-set incremental build: every other file keeps its
+    rows and chunk ids byte for byte, and the marker is cleared."""
+    repo, registry, repo_id, _dispatcher, manager = degraded_runtime
+    grammar_availability("rust")
+    assert manager.sync_repository_index(repo_id, force_full=True).action == "full_index"
+    before = _published_rows(registry, repo_id)
+    assert before["marker"] == _RUST_MARKER
+
+    # Still missing: no repair, no rebuild loop.
+    assert manager.recoverable_degraded_languages(_published_info(registry, repo_id)) == set()
+    assert manager.sync_repository_index(repo_id).action == "up_to_date"
+
+    grammar_availability()
+    assert manager.recoverable_degraded_languages(_published_info(registry, repo_id)) == {"rust"}
+    monkeypatch.setattr(
+        manager,
+        "_should_full_reindex",
+        MagicMock(side_effect=AssertionError("repair must not consider a full rebuild")),
+    )
+    result = manager.sync_repository_index(repo_id)
+
+    assert result.action == "incremental_update", result.error
+    assert result.files_processed == 1
+    assert result.degraded_languages is None
+    assert result.readiness["coverage"] == {"state": "complete"}
+    after = _published_rows(registry, repo_id)
+    assert after["marker"] is None
+    assert "lib.rs" in after["files"] and after["chunks"].get("lib.rs")
+    assert "lib.rs" in after["fts"]
+    for path, chunk_ids in before["chunks"].items():
+        assert after["chunks"][path] == chunk_ids, path
+    info = _published_info(registry, repo_id)
+    assert ReadinessClassifier.classify_registered(info).coverage == {"state": "complete"}
+    assert manager.recoverable_degraded_languages(info) == set()
+    assert manager.sync_repository_index(repo_id).action == "up_to_date"
+
+
+def test_no_automatic_repair_while_a_failed_sync_is_pending(degraded_runtime, grammar_availability):
+    repo, registry, repo_id, _dispatcher, manager = degraded_runtime
+    grammar_availability("rust")
+    assert manager.sync_repository_index(repo_id, force_full=True).action == "full_index"
+    grammar_availability()
+    info = _published_info(registry, repo_id)
+    info.staleness_reason = "partial_index_failure"
+    assert manager.recoverable_degraded_languages(info) == set()

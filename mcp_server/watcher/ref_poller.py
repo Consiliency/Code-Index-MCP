@@ -118,6 +118,11 @@ class RefPoller:
 
         last = getattr(repo_info, "last_indexed_commit", None)
         if tip_sha == last:
+            if self._coverage_recoverable(repo_info):
+                # Grammars for languages the published generation left out
+                # now load; sync indexes only their files (#117).
+                logger.info("ref_poller: repairing degraded grammar coverage of %s", repo_id)
+                self._git_index_manager.sync_repository_index(repo_id)
             return  # nothing changed
 
         # --- Force-push detection ---
@@ -135,6 +140,17 @@ class RefPoller:
 
         # Normal fast-forward advance
         self._git_index_manager.sync_repository_index(repo_id)
+
+    def _coverage_recoverable(self, repo_info: Any) -> bool:
+        check = getattr(self._git_index_manager, "recoverable_degraded_languages", None)
+        if not callable(check):
+            return False
+        try:
+            languages = check(repo_info)
+        except Exception as exc:
+            logger.warning("ref_poller: coverage check failed (%s)", type(exc).__name__)
+            return False
+        return isinstance(languages, (set, frozenset)) and bool(languages)
 
     def _is_ancestor(self, repo_path: Path, old_sha: str, new_sha: str) -> bool:
         """Return True if old_sha is an ancestor of new_sha (normal advance)."""

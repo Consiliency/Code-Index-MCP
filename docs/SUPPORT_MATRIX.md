@@ -243,6 +243,15 @@ tiers above are unchanged by the upgrade.
     `note`) instead of the bare result list, and a `symbol_lookup` not-found
     response carries `coverage`. The left-out languages have no rows, so they
     never appear in results.
+  - *Repair.* Once the missing grammars load (for example after
+    `mcp-index grammars prefetch` or `--export-libs`, no restart needed), the
+    next sync, or the ref poller's next tick with an unchanged branch tip,
+    indexes only the left-out languages' files through an incremental build
+    with an empty change set. Rows, chunk ids and vectors of the other
+    languages are untouched, and the chunk identity scheme does not change. An
+    explicit whole-repository `reindex` also restores full coverage. Automatic
+    repair starts only from a `ready` repository, so a repair that fails is not
+    retried on every poll.
   - *Artifacts.* A degraded generation is never uploaded or turned into a
     commit artifact.
   - *Other index paths stay fail-closed.* Path-scoped (subdirectory or

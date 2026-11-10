@@ -18,7 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Readiness stays `ready` and gains an additive `coverage` object; while it is
   `degraded`, `search_code` returns its envelope with `coverage`, and
   `symbol_lookup` not-found responses carry it. A degraded generation is never
-  uploaded as an artifact. Hosts with every grammar prefetched are unaffected.
+  uploaded as an artifact. Once the grammars load, the next sync or ref-poller
+  tick indexes only the left-out languages' files, leaving every other
+  language's chunk ids unchanged. Hosts with every grammar prefetched are
+  unaffected.
 - A missing `tsx` grammar no longer lets `.tsx` files parse with the
   TypeScript grammar, and a missing `javascript` grammar is reported as
   `grammar_unavailable` for `.ts` files instead of an unrelated plugin error.

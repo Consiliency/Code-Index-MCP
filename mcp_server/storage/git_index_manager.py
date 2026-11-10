@@ -49,6 +49,7 @@ from ..health.repository_readiness import (
     RepositoryReadiness,
     RepositoryReadinessState,
     coverage_from_marker,
+    published_grammar_degradation,
 )
 from ..indexing.change_detector import ChangeDetector
 from ..indexing.lock_registry import lock_registry
@@ -795,6 +796,20 @@ class GitAwareIndexManager:
             and index_exists_before_mutation
             and self._git_source_unchanged(repo_path, current_commit, current_branch)
         ):
+            recoverable = self.recoverable_degraded_languages(repo_info)
+            if recoverable:
+                # Grammars for left-out languages arrived: index only their
+                # files through an empty-change-set incremental build, so no
+                # other language's rows or chunk ids change (#117).
+                logger.info(
+                    "Repairing degraded coverage of %s: %s", repo_id, ", ".join(sorted(recoverable))
+                )
+                return self._rebuild_repository_index_locked(
+                    repo_id,
+                    changes=ChangeSet(added=[], modified=[], deleted=[], renamed=[]),
+                    expected_registration_id=repo_info.registration_id,
+                    require_auto_sync=require_auto_sync,
+                )
             return IndexSyncResult(
                 action="up_to_date",
                 commit=current_commit,
@@ -816,6 +831,9 @@ class GitAwareIndexManager:
             and index_exists_before_mutation
             and repo_info.staleness_reason
             not in {"index_publication_pending", "partial_index_failure"}
+            and not (published_grammar_degradation(Path(repo_info.index_path)) or {}).get(
+                "unreadable"
+            )
         ):
             try:
                 candidate = self._get_changed_files(repo_path, last_indexed_commit, current_commit)
@@ -1298,6 +1316,19 @@ class GitAwareIndexManager:
                         admitted.added.append(new_path)
                     elif new_path in hashes:
                         not_admitted += 1
+                # Languages the previous generation left out whose grammars
+                # load now: index every committed file of them (#117 repair).
+                repaired = self._repairable_languages(stage_store, grammar_availability)
+                if repaired:
+                    queued = set(admitted.added) | set(admitted.modified)
+                    queued.update(new_path for _old, new_path in admitted.renamed)
+                    for path in sorted(hashes):
+                        if (
+                            path not in queued
+                            and get_language_by_extension(Path(path).suffix.lower()) in repaired
+                            and stored(path)
+                        ):
+                            (admitted.modified if path in indexed else admitted.added).append(path)
                 incremental_kwargs: Dict[str, Any] = {}
                 if (
                     grammar_availability is not None
@@ -1327,7 +1358,13 @@ class GitAwareIndexManager:
             degradation = None
             if grammar_availability is not None:
                 degradation = self._apply_grammar_degradation(
-                    stage_ctx, stage_store, hashes, stored, grammar_availability, result
+                    stage_ctx,
+                    stage_store,
+                    hashes,
+                    stored,
+                    grammar_availability,
+                    result,
+                    incremental=changes is not None,
                 )
             if getattr(self.dispatcher, "_semantic_enabled", False) is True:
                 self._finalize_staged_vectors(repo_id, stage_ctx)
@@ -1515,6 +1552,8 @@ class GitAwareIndexManager:
         stored: Any,
         availability: grammar_cache.GrammarAvailability,
         result: UpdateResult,
+        *,
+        incremental: bool = False,
     ) -> Optional[Dict[str, Any]]:
         """Leave degraded languages out of the stage whole and record them.
 
@@ -1528,7 +1567,8 @@ class GitAwareIndexManager:
         when coverage is complete (the marker is then cleared).
         """
         candidates = set(availability.unavailable) | set(result.degraded_languages)
-        if not candidates and store.get_grammar_degradation() is None:
+        existing = store.get_grammar_degradation()
+        if not candidates and existing is None:
             return None  # complete coverage, nothing to clear
         counts: Dict[str, int] = {}
         if candidates:
@@ -1559,6 +1599,10 @@ class GitAwareIndexManager:
             grammars.update(result.degraded_languages.get(language, {}).get("grammars", ()))
             languages[language] = {"grammars": sorted(grammars), "deferred_files": count}
         marker = {"version": 1, "languages": languages} if languages else None
+        if incremental and existing and existing.get("unreadable"):
+            # Which languages an unreadable marker left out is unknown, so
+            # only a full rebuild may replace it.
+            return existing
         with store._get_connection() as connection:
             store.set_grammar_degradation(connection, marker)
         if marker:
@@ -1571,6 +1615,42 @@ class GitAwareIndexManager:
                 ", ".join(sorted({g for entry in languages.values() for g in entry["grammars"]})),
             )
         return marker
+
+    @staticmethod
+    def _repairable_languages(
+        store: SQLiteStore, availability: Optional[grammar_cache.GrammarAvailability]
+    ) -> frozenset:
+        """Languages the stage's marker left out whose grammars now load."""
+        if availability is None:
+            return frozenset()
+        marker = store.get_grammar_degradation()
+        if not marker or marker.get("unreadable"):
+            return frozenset()
+        return frozenset(
+            language for language in marker["languages"] if not availability.defers(language)
+        )
+
+    def recoverable_degraded_languages(self, repo_info: Any) -> frozenset:
+        """Left-out languages of the published generation whose grammars load now.
+
+        Cheap when coverage is complete (a cached marker read); re-reads the
+        grammar cache only for a degraded generation, so a prefetch after
+        startup is picked up. Empty while a failed sync is pending, so a
+        repair that failed is not retried on every poll (#117).
+        """
+        if repo_info is None or getattr(repo_info, "staleness_reason", None):
+            return frozenset()
+        index_path = getattr(repo_info, "index_path", None)
+        marker = published_grammar_degradation(Path(index_path)) if index_path else None
+        if not marker or marker.get("unreadable") or not marker.get("languages"):
+            return frozenset()
+        languages = list(marker["languages"])
+        try:
+            missing = grammar_cache.unavailable_languages(languages, refresh=True)
+        except Exception as exc:  # noqa: BLE001 - never repair on a failed check
+            logger.warning("Grammar availability check failed (%s)", type(exc).__name__)
+            return frozenset()
+        return frozenset(language for language in languages if language not in missing)
 
     @staticmethod
     def _read_generation_degradation(path: Path) -> Optional[Dict[str, Any]]:
