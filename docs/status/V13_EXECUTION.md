@@ -3,6 +3,20 @@
 Updated 2026-10-12. Branch: `codex/v13-audit-remediation`.
 Worktree: `/mnt/workspace/worktrees/viperjuice/Code-Index-MCP-v13-audit-remediation-closure`.
 
+## November 10 v1.6.0 Publication
+
+v1.6.0 was published once from `959e052` (tree `eb8110b`) by Release
+Automation run 42726533325: PyPI wheel and sdist (`Requires-Dist: mcp<2.4,>=2.2`),
+GitHub release, and signed image
+`ghcr.io/consiliency/code-index-mcp@sha256:db5547ea…`. It is recorded as
+published=true; acceptance is partial; deployed=false. See "1.6.0 Delivered
+Acceptance" in `docs/operations/v13-release.md`. Registry digests, cosign
+verification, delivered release smoke (locked, unconstrained and container),
+co-installs with PMCP 3.0.3 and phase-loop-runtime 0.7.30, and PMCP prepare and
+offline (13/13 goals) passed on dev0. PMCP rehearsal and browser were not run.
+Only `1.5.1` and `1.6.0` remain unyanked on PyPI. dev0 runs build `c24d3cd`
+(1.5.1 code plus #129), not 1.6.0. No issue closure is claimed.
+
 ## November 9 v1.5.1 Corrective Publication
 
 v1.5.1 was published once from `13470d0` (tree `ff36908`) by Release
@@ -90,7 +104,7 @@ review before admission. PREP is not accepted.
 | DATA | Accepted | `docs/validation/v13/DATA.json`; IF-0-DATA-1 |
 | PILOT | Historical source accepted; repairs require revalidation | `docs/validation/v13/PILOT.json`; original IF-0-PILOT-1 unchanged |
 | PREP | Accepted | Exact `799d9e8`: October 12 live pilot, one signing dispatch and four-seat reconciliation passed; merged as `3453137` |
-| SHIP | v1.4.1 published and accepted; v1.5.0 published, acceptance partial; v1.5.1 published, wheel and image accepted | v1.4.1 run 38337612139: delivered acceptance passed. v1.5.0 run 42539192667: published, not accepted (unbounded `mcp` pin; PMCP offline grammar-cache gap). v1.5.1 run 42550570039: wheel (locked and unconstrained) and image acceptance passed; PMCP prepare passed; offline, rehearsal and browser not run. None is deployed; no issue closure claimed |
+| SHIP | v1.4.1 published and accepted; v1.5.0 published, acceptance partial; v1.5.1 published, wheel and image accepted; v1.6.0 published, acceptance partial | v1.4.1 run 38337612139: delivered acceptance passed. v1.5.0 run 42539192667: published, not accepted (unbounded `mcp` pin; PMCP offline grammar-cache gap). v1.5.1 run 42550570039: wheel (locked and unconstrained) and image acceptance passed; PMCP prepare passed; offline, rehearsal and browser not run. v1.6.0 run 42726533325: wheel, image, co-installs and PMCP prepare/offline passed; rehearsal and browser not run. None is deployed; no issue closure claimed |
 
 The four-seat reconciled roadmap remains unchanged at SHA-256
 `178b8328d8e7dc76ddc0804d7b72d3ccddb55e23577a3d52cb7cbd70d5fd5308`.

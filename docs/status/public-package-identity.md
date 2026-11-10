@@ -1,12 +1,24 @@
 # Public Package Identity
 
-Check date: 2026-07-06 UTC; 1.5.0 publication recheck 2026-11-08; 1.5.1 recheck 2026-11-09; 1.6.0 preparation check 2026-11-09
+Check date: 2026-07-06 UTC; 1.5.0 publication recheck 2026-11-08; 1.5.1 recheck 2026-11-09; 1.6.0 preparation check 2026-11-09; 1.6.0 publication recheck 2026-11-10
 
 ## Scope
 
 This note freezes the repo-owned public identity contract for PUBNAME.
 It is metadata-only evidence for the prepared `1.3.0` surface. It does not
 claim a new package or container publication.
+
+## 1.6.0 Publication Recheck (2026-11-10)
+
+`https://pypi.org/pypi/index-it-mcp/json` now reports `1.6.0` as the latest
+version, published from Release Automation run 42726533325 at tag `v1.6.0`
+(`959e052`). The wheel and sdist digests match the GitHub release assets, and
+the metadata declares `mcp<2.4,>=2.2`. Only `1.5.1` and `1.6.0` are unyanked.
+`1.2.0` and its release candidates (`1.2.0rc5`–`rc8`) and `1.3.0` through
+`1.5.0` are yanked for the unbounded `mcp` requirement, and `2.14.6`–`2.14.9`
+and `2.15.0a1` are yanked as an abandoned line. Public install docs recommend
+`pip install index-it-mcp==1.6.0` and tell users to drop any `mcp<2` pin. See
+"1.6.0 Delivered Acceptance" in `docs/operations/v13-release.md`.
 
 ## 1.6.0 Preparation Check (2026-11-09)
 
