@@ -12,6 +12,7 @@ import math
 import os
 import re
 import shutil
+import signal
 import sqlite3
 import subprocess
 import tempfile
@@ -421,6 +422,8 @@ _DESCRIBED_REBUILD_ERRORS = (StagedRebuildError, RebuildShutdownRequested, Snaps
 
 #: How often a running git subprocess is checked for shutdown and its deadline.
 _GIT_POLL_SECONDS = 0.25
+#: How long to wait for a killed git process group to release its pipes.
+_GIT_REAP_SECONDS = 5.0
 #: Minimum spacing of snapshot heartbeats written into the force-full trace.
 _SNAPSHOT_TRACE_HEARTBEAT_SECONDS = 5.0
 #: Minimum spacing of snapshot progress log lines.
@@ -498,6 +501,105 @@ class GitAwareIndexManager:
             )
 
     def _sync_repository_index_locked(
+        self,
+        repo_id: str,
+        force_full: bool = False,
+        bypass_branch_guard: bool = False,
+        *,
+        expected_registration_id: Optional[str] = None,
+        require_auto_sync: bool = False,
+    ) -> IndexSyncResult:
+        """Sync under the repository lock; a force-full run owns a fresh trace.
+
+        The force-full trace is reset here, before any check that can refuse
+        or fail the run, and every outcome that never reached the staged
+        rebuild's own closeout is written as a terminal trace, so status never
+        shows a previous run's fields for a new attempt (#112).
+        """
+        kwargs = {
+            "force_full": force_full,
+            "bypass_branch_guard": bypass_branch_guard,
+            "expected_registration_id": expected_registration_id,
+            "require_auto_sync": require_auto_sync,
+        }
+        trace_repo = self.registry.get_repository(repo_id) if force_full else None
+        if trace_repo is None:
+            return self._sync_repository_index_unwrapped(repo_id, **kwargs)
+        indexed_before = trace_repo.last_indexed_commit
+        try:
+            self._start_force_full_exit_trace(
+                trace_repo,
+                self._force_full_started_trace(trace_repo.current_commit, indexed_before),
+            )
+        except OSError as exc:
+            logger.warning("Force-full trace unavailable (%s)", type(exc).__name__)
+        try:
+            result = self._sync_repository_index_unwrapped(repo_id, **kwargs)
+        except BaseException:
+            self._close_force_full_trace_safely(
+                self._finalize_running_force_full_trace_as_interrupted,
+                repo_info=trace_repo,
+                current_commit=trace_repo.current_commit,
+                indexed_commit_before=indexed_before,
+            )
+            raise
+        self._close_force_full_trace_safely(
+            self._terminalize_unadmitted_force_full_trace, trace_repo, result
+        )
+        return result
+
+    @staticmethod
+    def _force_full_started_trace(
+        current_commit: Optional[str], indexed_commit_before: Optional[str]
+    ) -> Dict[str, Any]:
+        return {
+            "status": "running",
+            "stage": "force_full_started",
+            "stage_family": "lexical",
+            "current_commit": current_commit,
+            "indexed_commit_before": indexed_commit_before,
+            "last_progress_path": None,
+            "in_flight_path": None,
+            "summary_call_timed_out": False,
+            "summary_call_file_path": None,
+            "summary_call_chunk_ids": [],
+            "summary_call_timeout_seconds": None,
+            "blocker_source": "lexical_mutation",
+            "process_id": os.getpid(),
+        }
+
+    @staticmethod
+    def _close_force_full_trace_safely(close: Any, *args: Any, **kwargs: Any) -> None:
+        try:
+            close(*args, **kwargs)
+        except Exception as exc:
+            logger.warning("Force-full trace closeout unavailable (%s)", type(exc).__name__)
+
+    def _terminalize_unadmitted_force_full_trace(
+        self, repo_info: Any, result: IndexSyncResult
+    ) -> None:
+        """Close a trace the staged rebuild never closed (refused or failed early)."""
+        if result.action in {"full_index", "incremental_update"}:
+            return
+        trace = self._read_force_full_exit_trace(repo_info) or {}
+        if trace.get("status") != "running":
+            return
+        self._write_force_full_exit_trace(
+            repo_info,
+            {
+                "status": "completed",
+                "stage": "force_full_failed" if result.action == "failed" else "force_full_refused",
+                "stage_family": "final_closeout",
+                "current_commit": result.commit or trace.get("current_commit"),
+                "blocker_source": "admission",
+                "result_action": result.action,
+                "result_code": result.code,
+                "runtime_restore_performed": False,
+                "runtime_restore_declined_reason": "old_generation_retained",
+            },
+        )
+
+    def _sync_repository_index_unwrapped(
         self,
         repo_id: str,
         force_full: bool = False,
@@ -698,7 +800,13 @@ class GitAwareIndexManager:
                     prefix=".artifact-upgrade-", dir=Path(ctx.sqlite_store.db_path).parent
                 ) as temporary:
                     upgraded = Path(temporary) / "current.db"
-                    SQLiteStore.snapshot_database(database, upgraded)
+                    # No total ceiling (#112), so shutdown must be able to stop it.
+                    SQLiteStore.snapshot_database(
+                        database,
+                        upgraded,
+                        checkpoint=lambda: self._rebuild_checkpoint("artifact_upgrade"),
+                        clock=_monotonic,
+                    )
                     migrated = SQLiteStore(str(upgraded))
                     migrated.close()
                     mappings = ctx.sqlite_store.import_artifact_rows(upgraded, ctx.workspace_root)
@@ -948,23 +1056,10 @@ class GitAwareIndexManager:
             )
             mutation_admitted = True
             if force_full:
+                # Normally already fresh from the sync entry; resetting again
+                # keeps a direct force-full caller from inheriting old fields.
                 self._start_force_full_exit_trace(
-                    repo_info,
-                    {
-                        "status": "running",
-                        "stage": "force_full_started",
-                        "stage_family": "lexical",
-                        "current_commit": current_commit,
-                        "indexed_commit_before": indexed_before,
-                        "last_progress_path": None,
-                        "in_flight_path": None,
-                        "summary_call_timed_out": False,
-                        "summary_call_file_path": None,
-                        "summary_call_chunk_ids": [],
-                        "summary_call_timeout_seconds": None,
-                        "blocker_source": "lexical_mutation",
-                        "process_id": os.getpid(),
-                    },
+                    repo_info, self._force_full_started_trace(current_commit, indexed_before)
                 )
             generation_dir.mkdir(parents=True, exist_ok=True)
             stage_dir = Path(tempfile.mkdtemp(prefix=".current.db.staging-", dir=index_root))
@@ -1412,14 +1507,25 @@ class GitAwareIndexManager:
         :data:`_GIT_POLL_SECONDS`, so a shutdown request kills git and raises
         :class:`RebuildShutdownRequested` promptly; exceeding the timeout kills
         git and raises :class:`subprocess.TimeoutExpired`. Output is bytes.
+
+        Git runs in its own process group, and stopping it kills the whole
+        group, so helpers it spawned (transport, promisor fetch) die with it.
+        Reaping is bounded by :data:`_GIT_REAP_SECONDS`: a descendant that
+        left the group and still holds the pipes is abandoned, not waited for.
         """
         timeout = get_index_git_timeout_seconds()
         command = ["git", *args]
+        isolation: Dict[str, Any] = (
+            {"start_new_session": True}
+            if os.name != "nt"
+            else {"creationflags": getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)}
+        )
         process = subprocess.Popen(
             command,
             cwd=cwd,
             stdout=subprocess.PIPE if stdout is None else stdout,
             stderr=subprocess.PIPE,
+            **isolation,
         )
         deadline = _monotonic() + timeout
         try:
@@ -1435,12 +1541,46 @@ class GitAwareIndexManager:
                     if _monotonic() >= deadline:
                         raise subprocess.TimeoutExpired(command, timeout) from None
         except BaseException:
-            process.kill()
-            process.communicate()
+            self._stop_git(process, args[0])
             raise
         if check and process.returncode != 0:
             raise subprocess.CalledProcessError(process.returncode, command, output, errors)
         return subprocess.CompletedProcess(command, process.returncode, output, errors)
+
+    @staticmethod
+    def _stop_git(process: "subprocess.Popen[bytes]", name: str) -> None:
+        """Kill git's process group and reap it without waiting unboundedly."""
+        try:
+            if os.name != "nt":
+                os.killpg(process.pid, signal.SIGKILL)
+            else:
+                process.kill()
+        except (ProcessLookupError, PermissionError):
+            pass
+        except OSError:
+            process.kill()
+        try:
+            process.communicate(timeout=_GIT_REAP_SECONDS)
+            return
+        except subprocess.TimeoutExpired:
+            pass
+        # A descendant outside the group still holds the pipes: close our ends
+        # so nothing blocks on them, reap the direct child, and move on.
+        for pipe in (process.stdout, process.stderr):
+            if pipe is not None:
+                try:
+                    pipe.close()
+                except OSError:
+                    pass
+        try:
+            process.wait(timeout=_GIT_REAP_SECONDS)
+        except subprocess.TimeoutExpired:
+            pass
+        logger.warning(
+            "Stopped git %s did not release its output within %gs; abandoned it",
+            name,
+            _GIT_REAP_SECONDS,
+        )
 
     def _git_source_unchanged(
         self,
@@ -1654,6 +1794,8 @@ class GitAwareIndexManager:
 
         hashes = {}
         copied = 0
+        # Refined to the exact admitted count once committed policies are loaded.
+        progress_total = len(entries)
 
         def copy_blob(entry):
             nonlocal copied
@@ -1678,8 +1820,7 @@ class GitAwareIndexManager:
                 hashes[relative.as_posix()] = normalized_hash("latin-1")
             copied += 1
             if on_progress is not None:
-                # The total counts admitted candidates; ignored ones are skipped.
-                on_progress(copied, len(entries))
+                on_progress(copied, progress_total)
 
         # Load committed policies from parents first, before reading ordinary blobs.
         policies = sorted(
@@ -1691,10 +1832,15 @@ class GitAwareIndexManager:
             ):
                 copy_blob(entry)
         excluded = build_walker_filter(destination)
-        for entry in entries:
-            relative = entry[0]
-            if relative.as_posix() in hashes or entry[2] or excluded(destination / relative):
-                continue
+        ordinary = [
+            entry
+            for entry in entries
+            if entry[0].as_posix() not in hashes
+            and not entry[2]
+            and not excluded(destination / entry[0])
+        ]
+        progress_total = copied + len(ordinary)
+        for entry in ordinary:
             copy_blob(entry)
         return hashes
 
@@ -1734,7 +1880,9 @@ class GitAwareIndexManager:
         def heartbeat(done: int, total: int) -> None:
             now = _monotonic()
             if trace_repo_info is not None and (
-                state["trace"] is None or now - state["trace"] >= _SNAPSHOT_TRACE_HEARTBEAT_SECONDS
+                state["trace"] is None
+                or done >= total  # always record completion
+                or now - state["trace"] >= _SNAPSHOT_TRACE_HEARTBEAT_SECONDS
             ):
                 state["trace"] = now
                 timestamp = self._trace_timestamp()

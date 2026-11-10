@@ -6671,5 +6671,8 @@ def test_force_full_trace_staleness_covers_snapshot_heartbeat_spacing(monkeypatc
     assert _force_full_trace_is_stale(trace("snapshot_inputs", 200)) is False
     assert _force_full_trace_is_stale(trace("force_full_started", 200)) is False
     assert _force_full_trace_is_stale(trace("snapshot_inputs", 400)) is True
+    # Non-snapshot stages keep the lexical threshold, whatever the stall window.
     monkeypatch.setenv("MCP_INDEX_SNAPSHOT_STALL_SECONDS", "300")
-    assert _force_full_trace_is_stale(trace("lexical_walking", 200)) is False
+    assert _force_full_trace_is_stale(trace("lexical_walking", 60)) is True
+    assert _force_full_trace_is_stale(trace("lexical_walking", 30)) is False
+    assert _force_full_trace_is_stale(trace("snapshot_generation", 200)) is False

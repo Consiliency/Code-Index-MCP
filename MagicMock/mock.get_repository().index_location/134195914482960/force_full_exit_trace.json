@@ -1,0 +1,20 @@
+{
+  "blocker_source": "admission",
+  "current_commit": "abc123",
+  "in_flight_path": null,
+  "indexed_commit_before": "abc123",
+  "last_progress_path": null,
+  "process_id": 2763377,
+  "result_action": "wrong_branch",
+  "result_code": "wrong_branch",
+  "runtime_restore_declined_reason": "old_generation_retained",
+  "runtime_restore_performed": false,
+  "stage": "force_full_refused",
+  "stage_family": "final_closeout",
+  "status": "completed",
+  "summary_call_chunk_ids": [],
+  "summary_call_file_path": null,
+  "summary_call_timed_out": false,
+  "summary_call_timeout_seconds": null,
+  "trace_timestamp": "2026-11-10T04:42:06Z"
+}

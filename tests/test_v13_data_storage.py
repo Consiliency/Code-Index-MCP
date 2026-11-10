@@ -1594,17 +1594,41 @@ def test_snapshot_stall_guard_fails_only_after_the_no_progress_window():
     assert (stalled.value.pages_done, stalled.value.pages_total) == (0, 40)
 
 
-def test_snapshot_stall_window_defaults_from_environment(monkeypatch):
-    from mcp_server.config.env_vars import get_index_snapshot_stall_seconds
+@pytest.mark.parametrize(
+    ("name", "getter", "default", "floor"),
+    [
+        ("MCP_INDEX_SNAPSHOT_STALL_SECONDS", "get_index_snapshot_stall_seconds", 120, 5),
+        ("MCP_INDEX_GIT_TIMEOUT_SECONDS", "get_index_git_timeout_seconds", 300, 10),
+    ],
+)
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        (None, "default"),
+        ("1", "floor"),
+        ("-5", "floor"),
+        ("not-a-number", "default"),
+        ("", "default"),
+        ("inf", "default"),
+        ("-inf", "default"),
+        ("1e309", "default"),
+        ("nan", "default"),
+        ("45.5", 45.5),
+        ("600", 600),
+    ],
+)
+def test_rebuild_guard_env_values_are_finite_and_floored(
+    monkeypatch, name, getter, default, floor, raw, expected
+):
+    """#140 review: a non-finite value must not disable stall detection or the git timeout."""
+    from mcp_server.config import env_vars
 
-    monkeypatch.delenv("MCP_INDEX_SNAPSHOT_STALL_SECONDS", raising=False)
-    assert get_index_snapshot_stall_seconds() == 120
-    monkeypatch.setenv("MCP_INDEX_SNAPSHOT_STALL_SECONDS", "1")
-    assert get_index_snapshot_stall_seconds() == 5
-    monkeypatch.setenv("MCP_INDEX_SNAPSHOT_STALL_SECONDS", "not-a-number")
-    assert get_index_snapshot_stall_seconds() == 120
-    monkeypatch.setenv("MCP_INDEX_SNAPSHOT_STALL_SECONDS", "45")
-    assert get_index_snapshot_stall_seconds() == 45
+    if raw is None:
+        monkeypatch.delenv(name, raising=False)
+    else:
+        monkeypatch.setenv(name, raw)
+    value = getattr(env_vars, getter)()
+    assert value == {"default": default, "floor": floor}.get(expected, expected)
 
 
 def test_snapshot_checkpoint_aborts_within_one_step_and_leaves_destination_unused(
@@ -1628,3 +1652,44 @@ def test_snapshot_checkpoint_aborts_within_one_step_and_leaves_destination_unuse
     assert source.read_bytes() == original
     with closing(sqlite3.connect(destination)) as connection:
         assert connection.execute("SELECT COUNT(*) FROM sqlite_master").fetchone()[0] == 0
+
+
+def test_shutdown_during_artifact_schema_upgrade_snapshot(runtime, monkeypatch):
+    """#140 review: the legacy-artifact upgrade copy honors shutdown too."""
+    repo, registry, repo_id, _store, manager = runtime
+    assert manager.rebuild_repository_index(repo_id).action == "full_index"
+    before = registry.get(repo_id)
+    extracted = repo.parent / "downloaded"
+    extracted.mkdir()
+    SQLiteStore.snapshot_database(before.index_path, extracted / "current.db")
+    with closing(sqlite3.connect(extracted / "current.db")) as connection:
+        connection.execute(
+            "DELETE FROM schema_version WHERE version = ?", (SQLiteStore.SCHEMA_VERSION,)
+        )
+        connection.commit()
+        assert connection.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] < (
+            SQLiteStore.SCHEMA_VERSION
+        )
+    original_checkpoint = manager._rebuild_checkpoint
+    stages = []
+
+    def checkpoint(stage):
+        stages.append(stage)
+        if stage == "artifact_upgrade":
+            manager.request_shutdown()
+        original_checkpoint(stage)
+
+    monkeypatch.setattr(manager, "_rebuild_checkpoint", checkpoint)
+
+    result = manager.restore_verified_artifact(
+        repo_id, extracted, expected_commit=before.current_commit
+    )
+
+    assert stages.count("artifact_upgrade") == 1
+    assert result.action == "failed"
+    assert "RebuildShutdownRequested: service shutdown requested before artifact_upgrade" in (
+        result.error
+    )
+    after = registry.get(repo_id)
+    assert after.index_path == before.index_path
+    assert after.index_generation == before.index_generation

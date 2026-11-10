@@ -1,5 +1,6 @@
 """Lazy env-var getters — each reads os.getenv on every call; no module-scope caching."""
 
+import math
 import os
 from typing import Optional
 
@@ -45,7 +46,7 @@ def _float_env(name: str, default: float, floor: float) -> float:
         value = float(raw) if raw is not None else default
     except ValueError:
         value = default
-    if value != value:  # NaN
+    if not math.isfinite(value):  # inf/NaN would disable the guard entirely
         value = default
     return max(floor, value)
 

@@ -221,12 +221,16 @@ def _force_full_trace_is_stale(trace: dict[str, Any]) -> bool:
     age_seconds = (datetime.now(timezone.utc) - observed_at).total_seconds()
     if age_seconds < 0:
         return False
-    # A healthy run refreshes the trace at least once per lexical file or
-    # snapshot heartbeat; the snapshot phases only fail after their stall
-    # window, and before the first input blob is copied one git command
-    # (ls-tree) may run for the git timeout (#112).
-    threshold = max(timeout_seconds * 2, get_index_snapshot_stall_seconds())
-    if trace.get("stage") in {"force_full_started", "snapshot_inputs"}:
+    # A healthy run refreshes the trace at least once per lexical file. The
+    # snapshot phases are different (#112): the generation copy only fails
+    # after its stall window, and while committed inputs are copied (or
+    # listed, before the first blob) one git command may run for the git
+    # timeout. Other stages keep the lexical threshold.
+    threshold = timeout_seconds * 2
+    stage = trace.get("stage")
+    if stage in {"snapshot_generation", "snapshot_inputs", "force_full_started"}:
+        threshold = max(threshold, get_index_snapshot_stall_seconds())
+    if stage in {"snapshot_inputs", "force_full_started"}:
         threshold = max(threshold, get_index_git_timeout_seconds())
     return age_seconds > threshold
 

@@ -1,7 +1,12 @@
 """Production committed-source and watcher reconciliation controls."""
 
 import hashlib
+import logging
+import os
+import shutil
+import signal
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -150,13 +155,17 @@ class _HungGit:
     """Popen stand-in whose output never arrives."""
 
     instances = []
+    by_pid = {}
 
     def __init__(self, command, **kwargs):
         self.command = command
+        self.kwargs = kwargs
         self.killed = False
         self.returncode = None
         self.waits = []
+        self.pid = 1_000_000 + len(_HungGit.instances)
         _HungGit.instances.append(self)
+        _HungGit.by_pid[self.pid] = self
 
     def communicate(self, timeout=None):
         if self.killed:
@@ -167,6 +176,14 @@ class _HungGit:
 
     def kill(self):
         self.killed = True
+
+
+def _install_hung_git(monkeypatch):
+    _HungGit.instances.clear()
+    _HungGit.by_pid.clear()
+    monkeypatch.setattr(subprocess, "Popen", _HungGit)
+    # Stopping git kills its whole process group; route that to the fake.
+    monkeypatch.setattr(os, "killpg", lambda pid, sig: _HungGit.by_pid[pid].kill(), raising=False)
 
 
 @pytest.mark.parametrize(("configured", "expected"), [(None, 300), ("42", 42), ("1", 10)])
@@ -180,8 +197,7 @@ def test_git_timeout_comes_from_environment_and_kills_git(
         monkeypatch.setenv("MCP_INDEX_GIT_TIMEOUT_SECONDS", configured)
     clock = iter(float(tick) for tick in range(0, 10_000, 5))
     monkeypatch.setattr(git_index_manager, "_monotonic", lambda: next(clock))
-    _HungGit.instances.clear()
-    monkeypatch.setattr(subprocess, "Popen", _HungGit)
+    _install_hung_git(monkeypatch)
 
     with pytest.raises(subprocess.TimeoutExpired) as timed_out:
         manager._run_git(["ls-tree", "-r", "HEAD"], Path("."))
@@ -197,15 +213,100 @@ def test_git_timeout_comes_from_environment_and_kills_git(
 def test_git_runner_kills_git_on_shutdown(runtime, monkeypatch):
     _repo, _registry, _repo_id, _store, manager = runtime
     monkeypatch.setattr(git_index_manager, "_monotonic", lambda: 0.0)
-    _HungGit.instances.clear()
-    monkeypatch.setattr(subprocess, "Popen", _HungGit)
+    _install_hung_git(monkeypatch)
     manager.request_shutdown()
 
     with pytest.raises(RebuildShutdownRequested, match="during git cat-file"):
         manager._run_git(["cat-file", "blob", "0" * 40], Path("."))
 
-    assert _HungGit.instances[-1].killed
-    assert len(_HungGit.instances[-1].waits) == 1
+    hung = _HungGit.instances[-1]
+    assert hung.killed
+    assert len(hung.waits) == 1
+    if os.name != "nt":
+        assert hung.kwargs.get("start_new_session") is True
+
+
+def _run_shell_as_git(monkeypatch, script, *, ready_file=None):
+    """Make ``_run_git`` start ``sh -c script`` with the git Popen arguments."""
+    original_popen = subprocess.Popen
+
+    def popen(command, **kwargs):
+        process = original_popen(["sh", "-c", script], **kwargs)
+        if ready_file is not None:
+            deadline = time.monotonic() + 10
+            while not ready_file.exists() or not ready_file.read_text().strip():
+                assert time.monotonic() < deadline, "fixture process did not start"
+                time.sleep(0.01)
+        return process
+
+    monkeypatch.setattr(subprocess, "Popen", popen)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX process groups")
+def test_git_shutdown_kills_descendants_holding_the_pipes(runtime, tmp_path, monkeypatch):
+    """#140 review: a helper git spawned must not keep the reap blocked."""
+    _repo, _registry, _repo_id, _store, manager = runtime
+    ready = tmp_path / "helper.pid"
+    monkeypatch.setattr(git_index_manager, "_GIT_REAP_SECONDS", 20.0)
+    _run_shell_as_git(monkeypatch, f"sleep 30 & echo $! > '{ready}'; wait", ready_file=ready)
+    manager.request_shutdown()
+
+    started = time.monotonic()
+    with pytest.raises(RebuildShutdownRequested):
+        manager._run_git(["fetch"], tmp_path)
+
+    # The helper shared the pipes; killing the group released them at once.
+    assert time.monotonic() - started < 10
+
+
+@pytest.mark.skipif(os.name == "nt" or shutil.which("setsid") is None, reason="needs POSIX setsid")
+def test_git_reap_is_bounded_when_an_escaped_descendant_holds_the_pipes(
+    runtime, tmp_path, monkeypatch, caplog
+):
+    _repo, _registry, _repo_id, _store, manager = runtime
+    escaped = tmp_path / "escaped.pid"
+    monkeypatch.setattr(git_index_manager, "_GIT_REAP_SECONDS", 0.5)
+    _run_shell_as_git(
+        monkeypatch,
+        f"setsid sh -c 'echo $$ > \"{escaped}\"; exec sleep 30' & sleep 30",
+        ready_file=escaped,
+    )
+    manager.request_shutdown()
+    caplog.set_level(logging.WARNING, logger="mcp_server.storage.git_index_manager")
+    try:
+        started = time.monotonic()
+        with pytest.raises(RebuildShutdownRequested):
+            manager._run_git(["fetch"], tmp_path)
+        assert time.monotonic() - started < 10
+        assert "did not release its output" in caplog.text
+    finally:
+        try:
+            os.kill(int(escaped.read_text().strip()), signal.SIGKILL)
+        except (OSError, ValueError):
+            pass
+
+
+def test_committed_snapshot_progress_total_counts_only_admitted_blobs(runtime, tmp_path):
+    repo, _registry, _repo_id, _store, manager = runtime
+    (repo / ".gitignore").write_text("blocked/\n")
+    (repo / "blocked").mkdir()
+    (repo / "blocked" / "fixture.py").write_text("excluded_fixture = 1\n")
+    (repo / "kept.py").write_text("kept = 1\n")
+    subprocess.run(["git", "add", "-f", "."], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "Synthetic policy"], cwd=repo, check=True)
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True
+    ).stdout.strip()
+    destination = tmp_path / "snapshot"
+    destination.mkdir()
+    progress = []
+
+    hashes = manager._snapshot_committed_inputs(
+        repo, head, destination, on_progress=lambda done, total: progress.append((done, total))
+    )
+
+    assert "blocked/fixture.py" not in hashes
+    assert progress[-1] == (len(hashes), len(hashes))
 
 
 @pytest.mark.parametrize("operation", ["modify", "rename", "delete"])

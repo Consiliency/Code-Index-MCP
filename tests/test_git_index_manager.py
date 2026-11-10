@@ -722,6 +722,98 @@ def test_snapshot_stall_is_described_and_failed_trace_starts_fresh(tmp_path, mon
     assert trace["snapshot_blobs_done"] >= 1
 
 
+def _seed_previous_successful_trace(manager, repo_info):
+    manager._write_force_full_exit_trace(
+        repo_info,
+        {
+            "status": "completed",
+            "stage": "force_full_completed",
+            "stage_family": "final_closeout",
+            "lexical_stage": "completed",
+            "lexical_files_completed": 12,
+            "semantic_stage": "indexed",
+            "summary_passes": 3,
+        },
+    )
+
+
+def _read_trace(repo_info):
+    return json.loads(
+        (Path(repo_info.index_location) / "force_full_exit_trace.json").read_text("utf-8")
+    )
+
+
+_PREVIOUS_RUN_FIELDS = ("lexical_files_completed", "semantic_stage", "summary_passes")
+
+
+def test_force_full_early_git_timeout_writes_fresh_terminal_trace(tmp_path):
+    """#140 review: an attempt that fails before admission must not show the last run."""
+    repo = _make_git_repo(tmp_path)
+    commit = _get_head_commit(repo)
+    repo_info = _make_repo_info(repo, commit)
+    repo_info.last_indexed_commit = None
+    _seed_index(repo_info.index_path, repo, "old.py")
+    manager, registry = _make_rebuild_manager(repo_info, commit)
+    _seed_previous_successful_trace(manager, repo_info)
+    manager._run_git = MagicMock(side_effect=subprocess.TimeoutExpired(["git"], 300))
+
+    result = manager.sync_repository_index(repo_info.repository_id, force_full=True)
+
+    assert result.action == "failed"
+    registry.begin_generation_mutation.assert_not_called()
+    trace = _read_trace(repo_info)
+    assert trace["status"] == "completed"
+    assert trace["stage"] == "force_full_failed"
+    assert trace["result_action"] == "failed"
+    assert trace["blocker_source"] == "admission"
+    assert trace["current_commit"] == commit
+    assert trace.get("lexical_stage") is None
+    for inherited in _PREVIOUS_RUN_FIELDS:
+        assert inherited not in trace
+
+
+def test_force_full_refusal_before_admission_writes_terminal_trace(tmp_path):
+    repo = _make_git_repo(tmp_path)
+    commit = _get_head_commit(repo)
+    repo_info = _make_repo_info(repo, commit)
+    repo_info.last_indexed_commit = None
+    _seed_index(repo_info.index_path, repo, "old.py")
+    (repo / "hello.py").write_text("tracked_edit = 1\n")  # dirty worktree
+    manager, registry = _make_rebuild_manager(repo_info, commit)
+    _seed_previous_successful_trace(manager, repo_info)
+
+    result = manager.sync_repository_index(repo_info.repository_id, force_full=True)
+
+    assert result.action == "refused"
+    assert result.code == RepositoryReadinessState.STALE_COMMIT.value
+    trace = _read_trace(repo_info)
+    assert trace["status"] == "completed"
+    assert trace["stage"] == "force_full_refused"
+    assert trace["result_code"] == RepositoryReadinessState.STALE_COMMIT.value
+    for inherited in _PREVIOUS_RUN_FIELDS:
+        assert inherited not in trace
+
+
+def test_force_full_exception_before_admission_interrupts_fresh_trace(tmp_path):
+    repo = _make_git_repo(tmp_path)
+    commit = _get_head_commit(repo)
+    repo_info = _make_repo_info(repo, commit)
+    _seed_index(repo_info.index_path, repo, "old.py")
+    manager, registry = _make_rebuild_manager(repo_info, commit)
+    _seed_previous_successful_trace(manager, repo_info)
+    registry.update_git_state.side_effect = RuntimeError("synthetic registry failure")
+
+    with pytest.raises(RuntimeError, match="synthetic registry failure"):
+        manager.sync_repository_index(repo_info.repository_id, force_full=True)
+
+    trace = _read_trace(repo_info)
+    assert trace["status"] == "interrupted"
+    assert trace["stage"] == "force_full_started"
+    # The interrupted closeout copies these keys from the fresh trace (as None).
+    for inherited in ("lexical_stage", *_PREVIOUS_RUN_FIELDS):
+        assert trace.get(inherited) is None
+
+
 def test_force_full_snapshot_heartbeats_reach_the_trace(tmp_path):
     repo = _make_git_repo(tmp_path)
     commit = _get_head_commit(repo)
@@ -753,11 +845,12 @@ def test_snapshot_heartbeat_is_throttled(tmp_path, monkeypatch):
         object(), stage="snapshot_generation", unit="pages"
     )
 
-    for tick, done in ((0.0, 1), (1.0, 2), (4.9, 3), (5.0, 4), (9.0, 5), (10.0, 6)):
+    for tick, done in ((0.0, 1), (1.0, 2), (4.9, 3), (5.0, 4), (9.0, 5), (10.0, 6), (11.0, 10)):
         now[0] = tick
         heartbeat(done, 10)
 
-    assert [write["snapshot_pages_done"] for write in writes] == [1, 4, 6]
+    # Throttled to one write per 5 s, except that completion is always recorded.
+    assert [write["snapshot_pages_done"] for write in writes] == [1, 4, 6, 10]
     assert {write["stage"] for write in writes} == {"snapshot_generation"}
     assert all(write["status"] == "running" for write in writes)
 
