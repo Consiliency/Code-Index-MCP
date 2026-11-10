@@ -678,3 +678,97 @@ class TestCentralConstructorAndSandbox:
         worker_main._instantiate(_NoArgs)
 
         assert received == [None, "no-args"]
+
+    def test_construct_plugin_passes_positional_only_parameters(self):
+        received = []
+
+        class _PositionalOnly:
+            def __init__(self, sqlite_store=None, enable_semantic=True, /):
+                received.append((sqlite_store, enable_semantic))
+
+        construct_plugin(_PositionalOnly, sqlite_store="store-sentinel", enable_semantic=False)
+        construct_plugin(_PositionalOnly, sqlite_store="store-sentinel", enable_semantic=True)
+
+        assert received == [("store-sentinel", False), ("store-sentinel", True)]
+
+    def test_construct_plugin_fills_unknown_positional_only_defaults_in_order(self):
+        received = []
+
+        class _Mixed:
+            def __init__(self, sqlite_store=None, mode="default-mode", enable_semantic=True, /):
+                received.append((sqlite_store, mode, enable_semantic))
+
+        class _TrailingUnknown:
+            def __init__(self, sqlite_store=None, mode="default-mode", /, *, enable_semantic=True):
+                received.append((sqlite_store, mode, enable_semantic))
+
+        construct_plugin(_Mixed, sqlite_store="s", enable_semantic=False)
+        construct_plugin(_TrailingUnknown, sqlite_store="s", enable_semantic=False)
+
+        assert received == [("s", "default-mode", False), ("s", "default-mode", False)]
+
+    def test_construct_plugin_rejects_unknown_required_positional_only(self):
+        called = []
+
+        class _NeedsConfig:
+            def __init__(self, config, /, sqlite_store=None, enable_semantic=True):
+                called.append(config)
+
+        with pytest.raises(TypeError, match="positional-only argument 'config'"):
+            construct_plugin(_NeedsConfig, sqlite_store=None, enable_semantic=False)
+        assert called == []
+
+    def test_sandbox_instantiate_positional_only_semantic_off(self):
+        from mcp_server.sandbox import worker_main
+
+        received = []
+
+        class _PositionalOnly:
+            def __init__(self, sqlite_store="unset", enable_semantic=True, /):
+                received.append((sqlite_store, enable_semantic))
+
+        worker_main._instantiate(_PositionalOnly)
+
+        assert received == [(None, False)]
+
+
+class TestTypeScriptDeprecatedOptIn:
+    @pytest.fixture
+    def typescript_plugin_cls(self, legacy_semantic_env, monkeypatch):
+        module = pytest.importorskip("mcp_server.plugins.typescript_plugin.plugin")
+        monkeypatch.setenv("VOYAGE_API_KEY", "fixture-not-a-key")
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", DeprecationWarning)
+                module.Plugin(enable_semantic=False)
+        except Exception as exc:  # pragma: no cover - grammar unavailable offline
+            pytest.skip(f"TypeScript grammar unavailable: {type(exc).__name__}")
+        return module.Plugin
+
+    def test_explicit_opt_in_warns_and_builds_legacy_indexer(
+        self, typescript_plugin_cls, legacy_semantic_env
+    ):
+        with pytest.warns(DeprecationWarning, match="Plugin-level semantic search"):
+            plugin = typescript_plugin_cls(enable_semantic=True)
+
+        assert plugin._semantic_indexer is not None
+        assert legacy_semantic_env.created == [{"collection": f"typescript-{id(plugin)}"}]
+
+    def test_opt_in_without_semantic_search_enabled_is_off_and_silent(
+        self, typescript_plugin_cls, legacy_semantic_env, monkeypatch
+    ):
+        monkeypatch.setenv("SEMANTIC_SEARCH_ENABLED", "false")
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", DeprecationWarning)
+            plugin = typescript_plugin_cls(enable_semantic=True)
+
+        assert plugin._semantic_indexer is None
+        assert legacy_semantic_env.created == []
+
+    def test_default_is_off_and_silent(self, typescript_plugin_cls, legacy_semantic_env):
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", DeprecationWarning)
+            plugin = typescript_plugin_cls()
+
+        assert plugin._semantic_indexer is None
+        assert legacy_semantic_env.created == []

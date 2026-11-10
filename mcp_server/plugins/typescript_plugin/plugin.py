@@ -18,6 +18,7 @@ from ...plugin_base import (
     SearchResult,
     SymbolDef,
 )
+from ...plugin_base_enhanced import plugin_level_semantic_opted_in
 from ...storage.sqlite_store import SQLiteStore
 from ...utils.fuzzy_indexer import FuzzyIndexer
 from ...utils.semantic_indexer import SemanticIndexer
@@ -41,8 +42,9 @@ class Plugin(IPlugin):
         Args:
             sqlite_store: Optional SQLite store for persistence
             enable_semantic: Deprecated plugin-level semantic indexing into a
-                per-instance ``typescript-<id>`` collection. The dispatcher always
-                passes False; its generation-scoped indexer is the semantic path.
+                per-instance ``typescript-<id>`` collection. Off by default; like
+                ``PluginWithSemanticSearch`` it needs ``enable_semantic=True`` and
+                ``SEMANTIC_SEARCH_ENABLED=true``, and emits a ``DeprecationWarning``.
         """
         # Initialize parsers for both JavaScript and TypeScript
         self._js_parser = Parser()
@@ -68,11 +70,12 @@ class Plugin(IPlugin):
         # Initialize indexers and storage
         self._indexer = FuzzyIndexer(sqlite_store=sqlite_store)
 
-        # Deprecated plugin-level semantic indexer: only when enabled and a Voyage
-        # API key is available.
+        # Deprecated plugin-level semantic indexer: only on the explicit opt-in
+        # shared with PluginWithSemanticSearch, and only with a Voyage API key.
         self._semantic_indexer = None
+        semantic_opted_in = plugin_level_semantic_opted_in(enable_semantic, stacklevel=2)
         try:
-            if not enable_semantic:
+            if not semantic_opted_in:
                 logger.debug("Plugin-level semantic indexing disabled for TypeScript plugin")
             elif os.getenv("VOYAGE_API_KEY") or os.getenv("VOYAGE_API_KEY_PATH"):
                 self._semantic_indexer = SemanticIndexer(collection=f"typescript-{id(self)}")

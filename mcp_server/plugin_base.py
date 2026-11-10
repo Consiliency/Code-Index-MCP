@@ -144,17 +144,46 @@ def construct_plugin(plugin_cls: type, *, sqlite_store: Any = None, enable_seman
     """Construct a plugin class once, passing only arguments its ``__init__`` takes.
 
     ``enable_semantic`` is passed only to an ``__init__`` that names it explicitly;
-    ``**kwargs`` alone does not prove the option is accepted. Plugin-level semantic
+    ``**kwargs`` alone does not prove the option is accepted. Positional-only
+    parameters are passed positionally, in order. Plugin-level semantic
     search is deprecated and off unless a caller opts in (#121). The constructor
     runs exactly once, so a ``TypeError`` raised inside it propagates instead of
     triggering a retry with different arguments.
     """
-    parameters = _plugin_init_parameters(plugin_cls)
-    named = {name for name, p in parameters.items() if p.kind in _NAMED_PARAMETER_KINDS}
-    var_keyword = any(p.kind is inspect.Parameter.VAR_KEYWORD for p in parameters.values())
+    values = {"sqlite_store": sqlite_store, "enable_semantic": bool(enable_semantic)}
+    parameters = list(_plugin_init_parameters(plugin_cls).values())
+    if parameters and parameters[0].kind in (
+        inspect.Parameter.POSITIONAL_ONLY,
+        inspect.Parameter.POSITIONAL_OR_KEYWORD,
+    ):
+        parameters = parameters[1:]  # self
+
+    # Positional-only parameters can only be passed positionally, in order. Fill
+    # known names with their values and unknown ones with their defaults, then
+    # drop the trailing defaults; an unknown required one cannot be supplied.
+    positional: list = []
+    supplied = 0
+    for parameter in parameters:
+        if parameter.kind is not inspect.Parameter.POSITIONAL_ONLY:
+            break
+        if parameter.name in values:
+            positional.append(values[parameter.name])
+            supplied = len(positional)
+        elif parameter.default is not inspect.Parameter.empty:
+            positional.append(parameter.default)
+        else:
+            raise TypeError(
+                f"{plugin_cls.__name__}.__init__ requires positional-only argument "
+                f"{parameter.name!r}, which construct_plugin cannot supply"
+            )
+    positional = positional[:supplied]
+    passed = {p.name for p in parameters[:supplied]}
+
+    named = {p.name for p in parameters if p.kind in _NAMED_PARAMETER_KINDS}
+    var_keyword = any(p.kind is inspect.Parameter.VAR_KEYWORD for p in parameters)
     kwargs: dict = {}
-    if "sqlite_store" in named or var_keyword:
+    if "sqlite_store" not in passed and ("sqlite_store" in named or var_keyword):
         kwargs["sqlite_store"] = sqlite_store
-    if "enable_semantic" in named:
-        kwargs["enable_semantic"] = bool(enable_semantic)
-    return plugin_cls(**kwargs)
+    if "enable_semantic" not in passed and "enable_semantic" in named:
+        kwargs["enable_semantic"] = values["enable_semantic"]
+    return plugin_cls(*positional, **kwargs)

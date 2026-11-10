@@ -27,6 +27,28 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+_PLUGIN_SEMANTIC_DEPRECATION = (
+    "Plugin-level semantic search is deprecated: it reads legacy per-plugin "
+    "collections (code-embeddings-<lang>, typescript-<id>). Use the dispatcher's "
+    "generation-scoped semantic search instead."
+)
+
+
+def plugin_level_semantic_opted_in(enable_semantic: bool, *, stacklevel: int = 2) -> bool:
+    """Whether the deprecated plugin-level semantic path is explicitly enabled.
+
+    It needs both an explicit ``enable_semantic=True`` and
+    ``SEMANTIC_SEARCH_ENABLED=true``; when it is, a ``DeprecationWarning`` is
+    emitted (#121). ``stacklevel`` counts from the caller of this function.
+    """
+    opted_in = bool(enable_semantic) and (
+        os.getenv("SEMANTIC_SEARCH_ENABLED", "false").lower() == "true"
+    )
+    if opted_in:
+        warnings.warn(_PLUGIN_SEMANTIC_DEPRECATION, DeprecationWarning, stacklevel=stacklevel + 1)
+    return opted_in
+
+
 class SemanticSearchResult(TypedDict):
     """Extended search result with semantic relevance score."""
 
@@ -61,18 +83,9 @@ class PluginWithSemanticSearch(IPlugin):
         """Initialize plugin with optional semantic search support."""
         self._ctx: Optional["RepoContext"] = None
         self._semantic_indexer: Optional[SemanticIndexer] = None
-        self._enable_semantic = (
-            enable_semantic and os.getenv("SEMANTIC_SEARCH_ENABLED", "false").lower() == "true"
-        )
+        self._enable_semantic = plugin_level_semantic_opted_in(enable_semantic, stacklevel=2)
 
         if self._enable_semantic:
-            warnings.warn(
-                "Plugin-level semantic search is deprecated: it reads legacy "
-                "code-embeddings-<lang> collections. Use the dispatcher's "
-                "generation-scoped semantic search instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
             try:
                 # Initialize semantic indexer with Qdrant configuration
                 qdrant_host = qdrant_host or os.getenv("QDRANT_HOST", "localhost")
