@@ -446,6 +446,16 @@ class GrammarUnavailableRebuildError(StagedRebuildError):
     code = grammar_cache.GRAMMAR_UNAVAILABLE
 
 
+#: Code of a refused restore whose artifact does not cover the committed inputs.
+ARTIFACT_INCOMPLETE = "artifact_incomplete"
+
+
+class ArtifactIncompleteError(StagedRebuildError):
+    """A restored artifact lacks admitted committed files (#117 review)."""
+
+    code = ARTIFACT_INCOMPLETE
+
+
 #: Exceptions whose messages are authored here and safe to store and print.
 #: Other exception text (OS, SQLite, plugin errors) can carry private detail, so
 #: only their type is reported; per-file detail comes from ``UpdateResult.errors``.
@@ -872,6 +882,15 @@ class GitAwareIndexManager:
         database = extracted / "current.db"
         if not database.is_file():
             raise ValueError("Artifact has no portable current.db generation")
+        # A degraded generation must never be published from an artifact; this
+        # version refuses to upload one, so a marker means another writer
+        # (#117 review). Refused before any generation mutation is admitted.
+        with closing(sqlite3.connect(database.resolve().as_uri() + "?mode=ro", uri=True)) as source:
+            if read_grammar_degradation(source):
+                raise ValueError(
+                    "Artifact records degraded grammar coverage; build the index locally"
+                )
+        restored: Dict[str, Any] = {}
 
         def restore(ctx):
             if ctx.registry_entry.current_commit != expected_commit:
@@ -896,8 +915,10 @@ class GitAwareIndexManager:
                     )
                     migrated = SQLiteStore(str(upgraded))
                     migrated.close()
+                    restored["paths"] = self._artifact_file_paths(upgraded)
                     mappings = ctx.sqlite_store.import_artifact_rows(upgraded, ctx.workspace_root)
             else:
+                restored["paths"] = self._artifact_file_paths(database)
                 mappings = ctx.sqlite_store.import_artifact_rows(database, ctx.workspace_root)
             if mappings:
                 self._restore_artifact_vectors(ctx, extracted, mappings)
@@ -905,12 +926,37 @@ class GitAwareIndexManager:
                 count = connection.execute("SELECT COUNT(*) FROM files").fetchone()[0]
             return UpdateResult(indexed=count)
 
+        def verify(hashes: Dict[str, str], stored: Any) -> None:
+            # The stage keeps the live generation's file rows, so completeness
+            # is judged from the artifact's own file set: every committed file
+            # the full walk would store must be in it. Path sets only, no
+            # re-hashing (#117 review: an older uploader strips the marker).
+            paths = restored.get("paths") or frozenset()
+            missing = sum(1 for path in hashes if path not in paths and stored(path))
+            if missing:
+                raise ArtifactIncompleteError(
+                    f"Artifact lacks {missing} committed file(s) this host indexes; "
+                    "build the index locally"
+                )
+
         with lock_registry.acquire(repo_id, repo_path=repo.path):
             return self._rebuild_repository_index_locked(
                 repo_id,
                 stage_operation=restore,
                 replace_derived=True,
                 expected_owner=expected_owner,
+                verify_stage=verify,
+            )
+
+    @staticmethod
+    def _artifact_file_paths(database: Path) -> frozenset:
+        with closing(sqlite3.connect(database.resolve().as_uri() + "?mode=ro", uri=True)) as source:
+            return frozenset(
+                str(row[0])
+                for row in source.execute(
+                    "SELECT relative_path FROM files WHERE is_deleted = 0 OR is_deleted IS NULL"
+                )
+                if row[0]
             )
 
     def _restore_artifact_vectors(
@@ -1045,6 +1091,7 @@ class GitAwareIndexManager:
         expected_registration_id: Optional[str] = None,
         require_auto_sync: bool = False,
         expected_owner=None,
+        verify_stage=None,
     ) -> IndexSyncResult:
         start_time = datetime.now()
         repo_info = self.registry.get_repository(repo_id)
@@ -1250,6 +1297,12 @@ class GitAwareIndexManager:
 
             if stage_operation is not None:
                 result = stage_operation(stage_ctx)
+                if verify_stage is not None:
+                    verify_stage(hashes, stored)
+                    # A verified complete restore replaces every derived row,
+                    # so the live generation's marker must not carry over.
+                    with stage_store._get_connection() as connection:
+                        stage_store.set_grammar_degradation(connection, None)
             elif changes is None:
                 full_call_started = True
                 full_kwargs: Dict[str, Any] = {}
@@ -1365,6 +1418,16 @@ class GitAwareIndexManager:
                     grammar_availability,
                     result,
                     incremental=changes is not None,
+                )
+            if degradation and not self._has_indexable_source(
+                hashes, stored, set(degradation.get("languages") or ())
+            ):
+                # Decided from the admitted committed inputs, not from leftover
+                # rows: retained history/document rows must not let a generation
+                # with every source file deferred publish (#117 review).
+                raise GrammarUnavailableRebuildError(
+                    "Every admitted file needs a tree-sitter grammar that is "
+                    "unavailable; run `mcp-index grammars prefetch`, then reindex"
                 )
             if getattr(self.dispatcher, "_semantic_enabled", False) is True:
                 self._finalize_staged_vectors(repo_id, stage_ctx)
@@ -1615,6 +1678,16 @@ class GitAwareIndexManager:
                 ", ".join(sorted({g for entry in languages.values() for g in entry["grammars"]})),
             )
         return marker
+
+    @staticmethod
+    def _has_indexable_source(hashes: Dict[str, str], stored: Any, degraded: set) -> bool:
+        """Whether any committed file outside ``degraded`` would be stored."""
+        for path in hashes:
+            if get_language_by_extension(Path(path).suffix.lower()) in degraded:
+                continue
+            if stored(path):
+                return True
+        return False
 
     @staticmethod
     def _repairable_languages(

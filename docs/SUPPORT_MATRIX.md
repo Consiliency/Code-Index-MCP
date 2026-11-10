@@ -231,7 +231,8 @@ tiers above are unchanged by the upgrade.
     incremental update store the same rows. The other languages publish
     normally. If every admitted file is left out, the build refuses to publish
     with code `grammar_unavailable` and the previous generation, or
-    `missing_index`, stays in place.
+    `missing_index`, stays in place. Retained history or document rows do not
+    count as indexed source for this check.
   - *Readiness stays `ready`.* Repository readiness gains an additive
     `coverage` object: `{"state": "complete"}`, or `{"state": "degraded",
     "unavailable_languages": [...], "missing_grammars": [...],
@@ -253,7 +254,12 @@ tiers above are unchanged by the upgrade.
     repair starts only from a `ready` repository, so a repair that fails is not
     retried on every poll.
   - *Artifacts.* A degraded generation is never uploaded or turned into a
-    commit artifact.
+    commit artifact. Restore refuses an artifact that carries the marker, and
+    one that lacks any committed file this host would index (an uploader older
+    than this change drops the marker but archives the partial rows), so the
+    caller builds locally instead.
+  - *Watcher sweep.* Files of a left-out language are not drift, so they never
+    force a full rebuild; the repair above indexes them.
   - *Other index paths stay fail-closed.* Path-scoped (subdirectory or
     single-file) `reindex` through the MCP tool or the gateway, the watcher
     and the stdio background index fail such files with

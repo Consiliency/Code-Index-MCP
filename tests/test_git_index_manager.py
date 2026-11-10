@@ -7398,3 +7398,187 @@ def test_no_automatic_repair_while_a_failed_sync_is_pending(degraded_runtime, gr
     info = _published_info(registry, repo_id)
     info.staleness_reason = "partial_index_failure"
     assert manager.recoverable_degraded_languages(info) == set()
+
+
+# ---------------------------------------------------------------------------
+# #117 review fixes
+# ---------------------------------------------------------------------------
+
+
+def _artifact_from_live(registry, repo_id, destination: Path) -> Path:
+    """Copy the published generation as an extracted artifact directory."""
+    destination.mkdir()
+    info = _published_info(registry, repo_id)
+    with (
+        sqlite3.connect(info.index_path) as source,
+        sqlite3.connect(destination / "current.db") as target,
+    ):
+        source.backup(target)
+    return destination
+
+
+def _write_marker(database: Path, languages: dict) -> None:
+    with sqlite3.connect(database) as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO index_config (config_key, config_value) VALUES (?, ?)",
+            ("grammar_degradation", json.dumps({"version": 1, "languages": languages})),
+        )
+
+
+def test_restore_refuses_artifact_with_degradation_marker(
+    degraded_runtime, grammar_availability, tmp_path
+):
+    repo, registry, repo_id, _dispatcher, manager = degraded_runtime
+    assert manager.sync_repository_index(repo_id, force_full=True).action == "full_index"
+    before = _published_info(registry, repo_id)
+    extracted = _artifact_from_live(registry, repo_id, tmp_path / "artifact")
+    _write_marker(extracted / "current.db", {"rust": {"grammars": ["rust"], "deferred_files": 1}})
+
+    with pytest.raises(ValueError, match="degraded grammar coverage"):
+        manager.restore_verified_artifact(
+            repo_id, extracted, expected_commit=_get_head_commit(repo)
+        )
+    after = _published_info(registry, repo_id)
+    # Refused before any generation mutation: the live index is untouched.
+    assert after.index_generation == before.index_generation
+    assert not after.staleness_reason
+
+
+def test_restore_refuses_artifact_missing_admitted_committed_files(
+    degraded_runtime, grammar_availability, tmp_path
+):
+    """An older uploader strips the unknown marker but archives the partial
+    rows; restore must not publish them as complete coverage."""
+    repo, registry, repo_id, _dispatcher, manager = degraded_runtime
+    assert manager.sync_repository_index(repo_id, force_full=True).action == "full_index"
+    extracted = _artifact_from_live(registry, repo_id, tmp_path / "artifact")
+    partial = SQLiteStore(str(extracted / "current.db"))
+    try:
+        repository_id = partial.get_repository(str(repo))["id"]
+        assert partial.remove_file("lib.rs", repository_id=repository_id)
+    finally:
+        partial.close()
+
+    result = manager.restore_verified_artifact(
+        repo_id, extracted, expected_commit=_get_head_commit(repo)
+    )
+
+    assert result.action == "failed"
+    assert result.code == "artifact_incomplete"
+    assert "build the index locally" in result.error
+
+
+def test_complete_restore_publishes_and_clears_a_stale_live_marker(
+    degraded_runtime, grammar_availability, tmp_path
+):
+    repo, registry, repo_id, _dispatcher, manager = degraded_runtime
+    assert manager.sync_repository_index(repo_id, force_full=True).action == "full_index"
+    extracted = _artifact_from_live(registry, repo_id, tmp_path / "artifact")
+    grammar_availability("rust")
+    assert manager.sync_repository_index(repo_id, force_full=True).action == "full_index"
+    assert _published_rows(registry, repo_id)["marker"] == _RUST_MARKER
+    grammar_availability()
+
+    result = manager.restore_verified_artifact(
+        repo_id, extracted, expected_commit=_get_head_commit(repo)
+    )
+
+    assert result.action == "full_index", result.error
+    rows = _published_rows(registry, repo_id)
+    assert rows["marker"] is None
+    assert "lib.rs" in rows["files"] and rows["chunks"].get("lib.rs")
+
+
+def test_all_deferred_refuses_even_with_retained_document_rows(
+    tmp_path, monkeypatch, grammar_availability
+):
+    """Retained history/document rows survive prepare_generation; they must not
+    let a generation whose every source file is deferred publish."""
+    repo, registry, repo_id, dispatcher, manager = _degraded_runtime(
+        tmp_path, monkeypatch, files={"lib.rs": _DEGRADED_FILES["lib.rs"]}
+    )
+    try:
+        assert manager.sync_repository_index(repo_id, force_full=True).action == "full_index"
+        live = _published_info(registry, repo_id).index_path
+        with sqlite3.connect(live) as conn:
+            repository_id = conn.execute("SELECT id FROM repositories").fetchone()[0]
+            file_id = conn.execute(
+                "INSERT INTO files (repository_id, path, relative_path, language) "
+                "VALUES (?, ?, ?, ?)",
+                (repository_id, str(repo / "history/issue-1.md"), "history/issue-1.md", "markdown"),
+            ).lastrowid
+            conn.execute(
+                "INSERT INTO code_chunks (file_id, content, content_start, content_end, "
+                "line_start, line_end, chunk_id, node_id, treesitter_file_id, chunk_type) "
+                "VALUES (?, 'issue body', 0, 10, 1, 1, 'history:issue-1', 'n1', 't1', 'document')",
+                (file_id,),
+            )
+        ReadinessClassifier.clear_index_inspection_cache()
+        grammar_availability("rust")
+
+        result = manager.sync_repository_index(repo_id, force_full=True)
+
+        assert result.action == "failed", result
+        assert result.code == "grammar_unavailable"
+    finally:
+        dispatcher.shutdown()
+        if manager.store_registry is not None:
+            manager.store_registry.shutdown()
+
+
+def test_missing_javascript_grammar_defers_typescript_with_sandbox_disabled(
+    tmp_path, monkeypatch, grammar_availability
+):
+    """In-process plugins: admission resolves ``typescript`` from the factory's
+    availability state without building the plugin, so ``.ts`` is deferred and
+    recorded, and the repair loads the plugin once the grammar arrives."""
+    from mcp_server.dispatcher.dispatcher_enhanced import EnhancedDispatcher
+    from mcp_server.plugins.typescript_plugin import plugin as typescript_plugin
+
+    real_language = typescript_plugin._get_ts_language
+
+    def missing_javascript(name):
+        if name == "javascript":
+            raise RuntimeError("Language 'javascript' not found")
+        return real_language(name)
+
+    monkeypatch.setattr(typescript_plugin, "_get_ts_language", missing_javascript)
+    files = {
+        "hello.py": _DEGRADED_FILES["hello.py"],
+        "app.ts": "export function add(a: number, b: number) { return a + b; }\n",
+    }
+    repo, registry, repo_id, unused, _ = _degraded_runtime(tmp_path, monkeypatch, files=files)
+    unused.shutdown()
+    monkeypatch.setenv("MCP_PLUGIN_SANDBOX_DISABLE", "1")  # in-process plugins
+    dispatcher = EnhancedDispatcher(
+        enable_advanced_features=False,
+        use_plugin_factory=True,
+        lazy_load=True,
+        semantic_search_enabled=False,
+        memory_aware=False,
+        multi_repo_enabled=False,
+    )
+    manager = GitAwareIndexManager(registry, dispatcher)
+    try:
+        grammar_availability("javascript")
+        # Something builds the plugin while the grammar is missing (a watcher
+        # event, say); that failed build must not block the later repair.
+        assert dispatcher._ensure_plugin_loaded("typescript") is None
+        result = manager.sync_repository_index(repo_id, force_full=True)
+        assert result.action == "full_index", result.error
+        rows = _published_rows(registry, repo_id)
+        assert "app.ts" not in rows["files"] and "hello.py" in rows["files"]
+        assert rows["marker"]["languages"] == {
+            "typescript": {"grammars": ["javascript"], "deferred_files": 1}
+        }
+
+        monkeypatch.setattr(typescript_plugin, "_get_ts_language", real_language)
+        grammar_availability()
+        repaired = manager.sync_repository_index(repo_id)
+        assert repaired.action == "incremental_update", repaired.error
+        rows = _published_rows(registry, repo_id)
+        assert "app.ts" in rows["files"] and rows["marker"] is None
+    finally:
+        dispatcher.shutdown()
+        if manager.store_registry is not None:
+            manager.store_registry.shutdown()
