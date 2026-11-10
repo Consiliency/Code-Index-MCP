@@ -3997,9 +3997,19 @@ class SQLiteStore:
             return True
 
     def move_file(
-        self, old_path: str, new_path: str, repository_id: int, content_hash: str
+        self,
+        old_path: str,
+        new_path: str,
+        repository_id: int,
+        content_hash: str,
+        move_record: Optional[Dict[str, Any]] = None,
     ) -> bool:
-        """Record a file move operation."""
+        """Record a file move operation.
+
+        ``move_record``, when given, receives the inserted ``file_moves`` row
+        id under ``"id"``, so a staged build that later defers the renamed
+        file can drop exactly that record (:meth:`delete_file_move`, #117).
+        """
         with self._get_connection() as conn:
             # Update the file path
             cursor = conn.execute(
@@ -4013,15 +4023,23 @@ class SQLiteStore:
                 return False
 
             # Record the move
-            conn.execute(
+            cursor = conn.execute(
                 """INSERT INTO file_moves 
                    (repository_id, old_relative_path, new_relative_path, content_hash, move_type)
                    VALUES (?, ?, ?, ?, ?)""",
                 (repository_id, old_path, new_path, content_hash, "rename"),
             )
+            if move_record is not None:
+                move_record["id"] = cursor.lastrowid
 
             logger.info(f"Recorded file move: {old_path} -> {new_path}")
             return True
+
+    def delete_file_move(self, move_id: int) -> bool:
+        """Delete one ``file_moves`` record by id; True when it existed."""
+        with self._get_connection() as conn:
+            cursor = conn.execute("DELETE FROM file_moves WHERE id = ?", (move_id,))
+            return cursor.rowcount > 0
 
     def cleanup_deleted_files(self, days_old: int = 30):
         """Clean up files marked as deleted for more than specified days."""

@@ -4529,6 +4529,8 @@ class EnhancedDispatcher:
             expected_prompt_fingerprint=semantic_contract.get("prompt_fingerprint"),
         )
 
+        move_record: Dict[str, Any] = {}
+
         def _sqlite_primary() -> Tuple[str, str]:
             nonlocal content_hash
             if content_hash is None:
@@ -4548,6 +4550,8 @@ class EnhancedDispatcher:
                 new_relative,
                 repository_id=repository_id,
                 content_hash=content_hash,
+                # Only staged moves can be deferred later (#117).
+                **({"move_record": move_record} if ctx.staging else {}),
             )
             if not moved:
                 raise FileNotFoundError(old_relative)
@@ -4588,7 +4592,11 @@ class EnhancedDispatcher:
                     # Keep the cause and language so a staged build can defer
                     # the language instead of failing (#117). The moved row is
                     # chunkless; the caller drops it with the rest of the
-                    # language. Any other caller still sees an error.
+                    # language. Any other caller still sees an error. The move
+                    # never happened as far as the generation is concerned, so
+                    # its exact file_moves record goes too.
+                    if move_record.get("id") is not None:
+                        store.delete_file_move(move_record["id"])
                     with self._file_cache_lock:
                         self._file_cache.pop(str(old_path), None)
                         self._file_cache.pop(str(new_path), None)

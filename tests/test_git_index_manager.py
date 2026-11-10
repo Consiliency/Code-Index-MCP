@@ -7468,6 +7468,13 @@ def _commit_rust_rename(repo: Path) -> None:
     _git_commit_all(repo, "rename rust, change python")
 
 
+def _published_moves(registry, repo_id) -> list:
+    with sqlite3.connect(_published_info(registry, repo_id).index_path) as conn:
+        return conn.execute(
+            "SELECT old_relative_path, new_relative_path FROM file_moves ORDER BY id"
+        ).fetchall()
+
+
 def _spy_moves(monkeypatch, dispatcher, before_move=None):
     real_move_file = dispatcher.move_file
     moves = []
@@ -7511,6 +7518,8 @@ def test_grammar_lost_before_staged_rename_defers_language(
     for name in ("lib.rs", "renamed.rs"):
         assert name not in rows["files"] | rows["symbols"] | rows["fts"], name
         assert name not in rows["chunks"], name
+    # The deferred move is not history of the published generation either.
+    assert ("lib.rs", "renamed.rs") not in _published_moves(registry, repo_id)
     assert rows["chunks"]["hello.py"] == before["chunks"]["hello.py"]
     with sqlite3.connect(_published_info(registry, repo_id).index_path) as conn:
         content = conn.execute(
@@ -7556,6 +7565,7 @@ def test_staged_rename_with_grammars_available_behaves_as_before(
     assert "lib.rs" not in rows["files"]
     assert "renamed.rs" in rows["files"] and "renamed.rs" in rows["fts"]
     assert rows["chunks"].get("renamed.rs") and "renamed.rs" in rows["symbols"]
+    assert _published_moves(registry, repo_id).count(("lib.rs", "renamed.rs")) == 1
     assert rows["chunks"]["hello.py"] == before["chunks"]["hello.py"]
 
 
