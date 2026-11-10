@@ -8,6 +8,7 @@ import signal
 import subprocess
 import time
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -242,6 +243,52 @@ def _run_shell_as_git(monkeypatch, script, *, ready_file=None):
     monkeypatch.setattr(subprocess, "Popen", popen)
 
 
+class _ExitedGit:
+    pid = 4242
+
+    def __init__(self):
+        self.killed = False
+        self.stdout = None
+        self.stderr = None
+
+    def kill(self):
+        self.killed = True
+
+    def communicate(self, timeout=None):
+        return b"", b""
+
+
+@pytest.mark.parametrize("taskkill_error", [None, FileNotFoundError, subprocess.TimeoutExpired])
+def test_windows_stop_tries_taskkill_tree_then_kills_git(monkeypatch, taskkill_error):
+    """Windows is best effort: ``taskkill /T /F`` for the tree, then ``kill()``."""
+    from mcp_server.storage.git_index_manager import GitAwareIndexManager
+
+    monkeypatch.setattr(git_index_manager, "_WINDOWS", True)
+    monkeypatch.setattr(
+        os, "killpg", MagicMock(side_effect=AssertionError("no killpg")), raising=False
+    )
+    calls = []
+
+    def run(command, **kwargs):
+        calls.append((command, kwargs))
+        if taskkill_error is FileNotFoundError:
+            raise FileNotFoundError("taskkill")
+        if taskkill_error is subprocess.TimeoutExpired:
+            raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(subprocess, "run", run)
+    process = _ExitedGit()
+
+    GitAwareIndexManager._stop_git(process, "fetch")
+
+    assert [command for command, _kwargs in calls] == [["taskkill", "/T", "/F", "/PID", "4242"]]
+    kwargs = calls[0][1]
+    assert kwargs["timeout"] == git_index_manager._GIT_TASKKILL_SECONDS
+    assert kwargs["check"] is False
+    assert process.killed
+
+
 @pytest.mark.skipif(os.name == "nt", reason="POSIX process groups")
 def test_git_shutdown_kills_descendants_holding_the_pipes(runtime, tmp_path, monkeypatch):
     """#140 review: a helper git spawned must not keep the reap blocked."""
@@ -284,6 +331,45 @@ def test_git_reap_is_bounded_when_an_escaped_descendant_holds_the_pipes(
             os.kill(int(escaped.read_text().strip()), signal.SIGKILL)
         except (OSError, ValueError):
             pass
+
+
+def test_committed_snapshot_reports_no_inflated_total_when_stopped_early(runtime, tmp_path):
+    """#140 re-review: stopping after the policy blobs must not leave a candidate total."""
+    repo, _registry, _repo_id, _store, manager = runtime
+    (repo / ".gitignore").write_text("blocked/\n")
+    (repo / "blocked").mkdir()
+    for index in range(3):
+        (repo / "blocked" / f"fixture_{index}.py").write_text(f"excluded_{index} = 1\n")
+    (repo / "kept.py").write_text("kept = 1\n")
+    subprocess.run(["git", "add", "-f", "."], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "Synthetic policy"], cwd=repo, check=True)
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True
+    ).stdout.strip()
+    complete = tmp_path / "complete"
+    complete.mkdir()
+    admitted = len(manager._snapshot_committed_inputs(repo, head, complete))
+    original_checkpoint = manager._rebuild_checkpoint
+    checkpoints = []
+
+    def checkpoint(stage):
+        checkpoints.append(stage)
+        # Listing, then the root .gitignore blob, then the first ordinary blob.
+        if len(checkpoints) == 3:
+            manager.request_shutdown()
+        original_checkpoint(stage)
+
+    manager._rebuild_checkpoint = checkpoint
+    progress = []
+    destination = tmp_path / "stopped"
+    destination.mkdir()
+
+    with pytest.raises(RebuildShutdownRequested):
+        manager._snapshot_committed_inputs(
+            repo, head, destination, on_progress=lambda done, total: progress.append((done, total))
+        )
+
+    assert progress == [(1, admitted)]
 
 
 def test_committed_snapshot_progress_total_counts_only_admitted_blobs(runtime, tmp_path):

@@ -766,6 +766,7 @@ def test_force_full_early_git_timeout_writes_fresh_terminal_trace(tmp_path):
     assert trace["stage"] == "force_full_failed"
     assert trace["result_action"] == "failed"
     assert trace["blocker_source"] == "admission"
+    assert trace["registration_id"] == repo_info.registration_id
     assert trace["current_commit"] == commit
     assert trace.get("lexical_stage") is None
     for inherited in _PREVIOUS_RUN_FIELDS:
@@ -812,6 +813,60 @@ def test_force_full_exception_before_admission_interrupts_fresh_trace(tmp_path):
     # The interrupted closeout copies these keys from the fresh trace (as None).
     for inherited in ("lexical_stage", *_PREVIOUS_RUN_FIELDS):
         assert trace.get(inherited) is None
+
+
+@pytest.mark.parametrize("fence", ["registration", "auto_sync"])
+def test_stale_force_full_job_leaves_the_current_registration_trace(tmp_path, fence):
+    """#140 re-review: a queued job of an old registration must not touch the new trace."""
+    repo = _make_git_repo(tmp_path)
+    commit = _get_head_commit(repo)
+    repo_info = _make_repo_info(repo, commit)
+    repo_info.registration_id = "replacement-registration"
+    _seed_index(repo_info.index_path, repo, "old.py")
+    manager, registry = _make_rebuild_manager(repo_info, commit)
+    _seed_previous_successful_trace(manager, repo_info)
+    trace_path = Path(repo_info.index_location) / "force_full_exit_trace.json"
+    before = trace_path.read_bytes()
+    if fence == "registration":
+        kwargs = {"expected_registration_id": "stale-registration"}
+    else:
+        repo_info.auto_sync = False
+        kwargs = {"expected_registration_id": "replacement-registration"}
+
+    result = manager.sync_repository_index(
+        repo_info.repository_id, force_full=True, require_auto_sync=True, **kwargs
+    )
+
+    assert result.action == "refused"
+    assert trace_path.read_bytes() == before
+    registry.begin_generation_mutation.assert_not_called()
+
+
+def test_force_full_closeout_skips_a_trace_another_registration_started(tmp_path):
+    repo = _make_git_repo(tmp_path)
+    commit = _get_head_commit(repo)
+    repo_info = _make_repo_info(repo, commit)
+    repo_info.registration_id = "this-registration"
+    repo_info.last_indexed_commit = None
+    _seed_index(repo_info.index_path, repo, "old.py")
+    manager, registry = _make_rebuild_manager(repo_info, commit)
+    manager._run_git = MagicMock(side_effect=subprocess.TimeoutExpired(["git"], 300))
+    git_state = registry.update_git_state.return_value
+
+    def another_registration_starts(_repo_id):
+        manager._start_force_full_exit_trace(
+            repo_info, {"status": "running", "registration_id": "other-registration"}
+        )
+        return git_state
+
+    registry.update_git_state.side_effect = another_registration_starts
+
+    result = manager.sync_repository_index(repo_info.repository_id, force_full=True)
+
+    assert result.action == "failed"
+    trace = _read_trace(repo_info)
+    assert trace["registration_id"] == "other-registration"
+    assert trace["status"] == "running"
 
 
 def test_force_full_snapshot_heartbeats_reach_the_trace(tmp_path):

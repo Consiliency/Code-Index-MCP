@@ -424,6 +424,10 @@ _DESCRIBED_REBUILD_ERRORS = (StagedRebuildError, RebuildShutdownRequested, Snaps
 _GIT_POLL_SECONDS = 0.25
 #: How long to wait for a killed git process group to release its pipes.
 _GIT_REAP_SECONDS = 5.0
+#: How long the best-effort Windows ``taskkill /T`` may take.
+_GIT_TASKKILL_SECONDS = 5.0
+#: Platform switch for the git process-tree handling; tests replace it.
+_WINDOWS = os.name == "nt"
 #: Minimum spacing of snapshot heartbeats written into the force-full trace.
 _SNAPSHOT_TRACE_HEARTBEAT_SECONDS = 5.0
 #: Minimum spacing of snapshot progress log lines.
@@ -523,25 +527,41 @@ class GitAwareIndexManager:
             "require_auto_sync": require_auto_sync,
         }
         trace_repo = self.registry.get_repository(repo_id) if force_full else None
+        # A queued job from an old registration (or one whose automatic sync
+        # was turned off) is refused below without running; it must not reset
+        # or close the trace that belongs to the current registration.
+        if trace_repo is not None and (
+            (
+                expected_registration_id is not None
+                and trace_repo.registration_id != expected_registration_id
+            )
+            or (require_auto_sync and (not trace_repo.auto_sync or not trace_repo.active))
+        ):
+            trace_repo = None
         if trace_repo is None:
             return self._sync_repository_index_unwrapped(repo_id, **kwargs)
         indexed_before = trace_repo.last_indexed_commit
         try:
             self._start_force_full_exit_trace(
                 trace_repo,
-                self._force_full_started_trace(trace_repo.current_commit, indexed_before),
+                self._force_full_started_trace(
+                    trace_repo.current_commit,
+                    indexed_before,
+                    registration_id=self._trace_registration_id(trace_repo),
+                ),
             )
         except OSError as exc:
             logger.warning("Force-full trace unavailable (%s)", type(exc).__name__)
         try:
             result = self._sync_repository_index_unwrapped(repo_id, **kwargs)
         except BaseException:
-            self._close_force_full_trace_safely(
-                self._finalize_running_force_full_trace_as_interrupted,
-                repo_info=trace_repo,
-                current_commit=trace_repo.current_commit,
-                indexed_commit_before=indexed_before,
-            )
+            if self._force_full_trace_owned_by(trace_repo):
+                self._close_force_full_trace_safely(
+                    self._finalize_running_force_full_trace_as_interrupted,
+                    repo_info=trace_repo,
+                    current_commit=trace_repo.current_commit,
+                    indexed_commit_before=indexed_before,
+                )
             raise
         self._close_force_full_trace_safely(
             self._terminalize_unadmitted_force_full_trace, trace_repo, result
@@ -549,10 +569,27 @@ class GitAwareIndexManager:
         return result
 
     @staticmethod
+    def _trace_registration_id(repo_info: Any) -> Optional[str]:
+        registration_id = getattr(repo_info, "registration_id", None)
+        return registration_id if isinstance(registration_id, str) else None
+
+    def _force_full_trace_owned_by(self, repo_info: Any) -> bool:
+        """Whether the stored trace was started by this registration."""
+        try:
+            trace = self._read_force_full_exit_trace(repo_info) or {}
+        except OSError:
+            return False
+        return trace.get("registration_id") == self._trace_registration_id(repo_info)
+
+    @staticmethod
     def _force_full_started_trace(
-        current_commit: Optional[str], indexed_commit_before: Optional[str]
+        current_commit: Optional[str],
+        indexed_commit_before: Optional[str],
+        *,
+        registration_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         return {
+            "registration_id": registration_id,
             "status": "running",
             "stage": "force_full_started",
             "stage_family": "lexical",
@@ -584,6 +621,8 @@ class GitAwareIndexManager:
         trace = self._read_force_full_exit_trace(repo_info) or {}
         if trace.get("status") != "running":
             return
+        if trace.get("registration_id") != self._trace_registration_id(repo_info):
+            return  # another registration's trace: never close it
         self._write_force_full_exit_trace(
             repo_info,
             {
@@ -1059,7 +1098,12 @@ class GitAwareIndexManager:
                 # Normally already fresh from the sync entry; resetting again
                 # keeps a direct force-full caller from inheriting old fields.
                 self._start_force_full_exit_trace(
-                    repo_info, self._force_full_started_trace(current_commit, indexed_before)
+                    repo_info,
+                    self._force_full_started_trace(
+                        current_commit,
+                        indexed_before,
+                        registration_id=self._trace_registration_id(repo_info),
+                    ),
                 )
             generation_dir.mkdir(parents=True, exist_ok=True)
             stage_dir = Path(tempfile.mkdtemp(prefix=".current.db.staging-", dir=index_root))
@@ -1517,7 +1561,7 @@ class GitAwareIndexManager:
         command = ["git", *args]
         isolation: Dict[str, Any] = (
             {"start_new_session": True}
-            if os.name != "nt"
+            if not _WINDOWS
             else {"creationflags": getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)}
         )
         process = subprocess.Popen(
@@ -1549,16 +1593,37 @@ class GitAwareIndexManager:
 
     @staticmethod
     def _stop_git(process: "subprocess.Popen[bytes]", name: str) -> None:
-        """Kill git's process group and reap it without waiting unboundedly."""
-        try:
-            if os.name != "nt":
-                os.killpg(process.pid, signal.SIGKILL)
-            else:
+        """Kill git's process tree and reap it without waiting unboundedly.
+
+        POSIX kills git's whole process group. Windows is best effort only:
+        Windows is not a verified platform (docs/SUPPORT_MATRIX.md, "V13
+        Verification Boundary"), so instead of a Job Object it tries
+        ``taskkill /T /F`` for the tree and then kills git itself; a
+        descendant that survives is covered by the bounded reap below.
+        """
+        if _WINDOWS:
+            try:
+                subprocess.run(
+                    ["taskkill", "/T", "/F", "/PID", str(process.pid)],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=_GIT_TASKKILL_SECONDS,
+                    check=False,
+                )
+            except (OSError, subprocess.SubprocessError):
+                pass
+            try:
                 process.kill()
-        except (ProcessLookupError, PermissionError):
-            pass
-        except OSError:
-            process.kill()
+            except OSError:
+                pass
+        else:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
+            except OSError:
+                process.kill()
         try:
             process.communicate(timeout=_GIT_REAP_SECONDS)
             return
@@ -1794,8 +1859,9 @@ class GitAwareIndexManager:
 
         hashes = {}
         copied = 0
-        # Refined to the exact admitted count once committed policies are loaded.
-        progress_total = len(entries)
+        # Admission depends on the committed policies, so no total is reported
+        # until they are loaded and the admitted count is exact.
+        progress_total: Optional[int] = None
 
         def copy_blob(entry):
             nonlocal copied
@@ -1819,7 +1885,7 @@ class GitAwareIndexManager:
             except UnicodeDecodeError:
                 hashes[relative.as_posix()] = normalized_hash("latin-1")
             copied += 1
-            if on_progress is not None:
+            if on_progress is not None and progress_total is not None:
                 on_progress(copied, progress_total)
 
         # Load committed policies from parents first, before reading ordinary blobs.
@@ -1840,6 +1906,8 @@ class GitAwareIndexManager:
             and not excluded(destination / entry[0])
         ]
         progress_total = copied + len(ordinary)
+        if on_progress is not None:
+            on_progress(copied, progress_total)
         for entry in ordinary:
             copy_blob(entry)
         return hashes
