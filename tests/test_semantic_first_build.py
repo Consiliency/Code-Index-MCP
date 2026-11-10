@@ -1,0 +1,384 @@
+"""Code blockers for a first semantic build (Consiliency/Code-Index-MCP#121).
+
+C1: the dispatcher never enables plugin-level semantic search, so no language plugin
+builds its own legacy ``SemanticIndexer``.
+C3: ``SEMANTIC_SUMMARY_PASS_BUDGET`` bounds (or unbounds) the repo-scope summary passes.
+
+No network, no Qdrant: the summarizer, preflight and semantic indexer are test doubles.
+"""
+
+from __future__ import annotations
+
+import warnings
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Iterable, List
+
+import pytest
+
+from mcp_server.config.env_vars import (
+    DEFAULT_SEMANTIC_SUMMARY_PASS_BUDGET,
+    get_semantic_summary_pass_budget,
+)
+from mcp_server.core.repo_context import RepoContext
+from mcp_server.dispatcher.dispatcher_enhanced import EnhancedDispatcher as Dispatcher
+from mcp_server.indexing.summarization import ComprehensiveChunkWriter, SummaryGenerationResult
+from mcp_server.plugin_base import SearchOpts, SearchResult
+from mcp_server.plugin_base_enhanced import PluginWithSemanticSearch
+from mcp_server.plugins import plugin_factory
+from mcp_server.plugins.memory_aware_manager import MemoryAwarePluginManager
+from mcp_server.plugins.plugin_factory import PluginFactory
+from mcp_server.storage.sqlite_store import SQLiteStore
+
+PROBE_LANG = "probe_semantic_lang"
+
+
+@pytest.fixture(autouse=True)
+def _no_local_dotenv(monkeypatch):
+    """Settings reads would load repo .env files into os.environ for the whole process."""
+    monkeypatch.setattr("mcp_server.config.environment._DOTENV_LOADED", True)
+
+
+class _LegacyIndexerRecorder:
+    """Stands in for SemanticIndexer; records every construction."""
+
+    created: List[dict] = []
+
+    def __init__(self, *args, **kwargs):
+        _LegacyIndexerRecorder.created.append(dict(kwargs))
+
+
+class _ProbePlugin(PluginWithSemanticSearch):
+    """Minimal plugin on the deprecated plugin-level semantic base."""
+
+    lang = PROBE_LANG
+
+    def __init__(self, sqlite_store=None, enable_semantic: bool = True):
+        super().__init__(sqlite_store=sqlite_store, enable_semantic=enable_semantic)
+
+    def supports(self, path) -> bool:
+        return str(path).endswith(".probe")
+
+    def indexFile(self, path, content):
+        return {"file": str(path), "symbols": [], "language": PROBE_LANG}
+
+    def getDefinition(self, symbol):
+        return None
+
+    def findReferences(self, symbol):
+        return []
+
+    def _traditional_search(
+        self, query: str, opts: SearchOpts | None = None
+    ) -> Iterable[SearchResult]:
+        return []
+
+
+@pytest.fixture
+def legacy_semantic_env(monkeypatch):
+    """SEMANTIC_SEARCH_ENABLED=true, in-process plugins, recorded legacy indexers."""
+    monkeypatch.setenv("SEMANTIC_SEARCH_ENABLED", "true")
+    monkeypatch.setenv("MCP_PLUGIN_SANDBOX_DISABLE", "1")
+    monkeypatch.setenv("QDRANT_HOST", ":memory:")
+    monkeypatch.setitem(plugin_factory.SPECIFIC_PLUGINS, PROBE_LANG, _ProbePlugin)
+    monkeypatch.setattr("mcp_server.plugin_base_enhanced.SemanticIndexer", _LegacyIndexerRecorder)
+    monkeypatch.setattr(
+        "mcp_server.plugins.typescript_plugin.plugin.SemanticIndexer", _LegacyIndexerRecorder
+    )
+    monkeypatch.setattr(_LegacyIndexerRecorder, "created", [])
+    return _LegacyIndexerRecorder
+
+
+def _assert_no_plugin_semantic(plugin) -> None:
+    assert plugin._enable_semantic is False
+    assert plugin._semantic_indexer is None
+
+
+# ---------------------------------------------------------------------------
+# C1: plugin-level semantic search stays off
+# ---------------------------------------------------------------------------
+
+
+class TestPluginLevelSemanticDisabled:
+    def test_recorder_catches_the_legacy_path(self, legacy_semantic_env):
+        """Control: a plugin built with semantic on does create a legacy indexer."""
+        with pytest.warns(DeprecationWarning, match="Plugin-level semantic search"):
+            plugin = PluginFactory.create_plugin(PROBE_LANG, None, enable_semantic=True)
+
+        assert plugin._enable_semantic is True
+        assert legacy_semantic_env.created == [
+            {"collection": f"code-embeddings-{PROBE_LANG}", "qdrant_path": ":memory:"}
+        ]
+
+    def test_factory_passes_enable_semantic_false_to_plugin_classes(self, legacy_semantic_env):
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", DeprecationWarning)
+            plugin = PluginFactory.create_plugin(PROBE_LANG, None, enable_semantic=False)
+
+        _assert_no_plugin_semantic(plugin)
+        assert legacy_semantic_env.created == []
+
+    def test_lazy_loaded_plugin_has_semantic_disabled(self, legacy_semantic_env):
+        dispatcher = Dispatcher(semantic_search_enabled=True, lazy_load=True)
+
+        plugin = dispatcher._ensure_plugin_loaded(PROBE_LANG)
+
+        _assert_no_plugin_semantic(plugin)
+        assert legacy_semantic_env.created == []
+        # The dispatcher's own generation-scoped semantic path stays enabled.
+        assert dispatcher._semantic_enabled is True
+        capabilities = {cap.name for cap in dispatcher._detect_plugin_capabilities(plugin)}
+        assert "semantic_search" not in capabilities
+
+    def test_eager_load_passes_semantic_disabled(self, legacy_semantic_env, monkeypatch):
+        calls = []
+
+        def fake_create_all_plugins(sqlite_store=None, enable_semantic=True):
+            calls.append(enable_semantic)
+            return {
+                PROBE_LANG: PluginFactory.create_plugin(PROBE_LANG, sqlite_store, enable_semantic)
+            }
+
+        monkeypatch.setattr(PluginFactory, "create_all_plugins", fake_create_all_plugins)
+
+        dispatcher = Dispatcher(semantic_search_enabled=True, lazy_load=False)
+
+        assert calls == [False]
+        _assert_no_plugin_semantic(dispatcher._lang_cache[PROBE_LANG])
+        assert legacy_semantic_env.created == []
+
+    def test_repository_aware_load_passes_semantic_disabled(self, legacy_semantic_env):
+        dispatcher = Dispatcher(semantic_search_enabled=True, lazy_load=True)
+        dispatcher._repo_plugin_loader = SimpleNamespace(
+            get_required_plugins=lambda: [PROBE_LANG],
+            get_priority_languages=lambda: [PROBE_LANG],
+            log_loading_plan=lambda: None,
+            mark_loaded=lambda _lang: None,
+        )
+
+        dispatcher._load_all_plugins()
+
+        _assert_no_plugin_semantic(dispatcher._lang_cache[PROBE_LANG])
+        assert legacy_semantic_env.created == []
+
+    def test_memory_aware_manager_builds_plugins_with_semantic_disabled(self, legacy_semantic_env):
+        manager = MemoryAwarePluginManager(max_memory_mb=4096)
+        try:
+            plugin = manager.get_plugin(PROBE_LANG)
+        finally:
+            manager.shutdown()
+
+        _assert_no_plugin_semantic(plugin)
+        assert legacy_semantic_env.created == []
+
+    def test_typescript_plugin_honours_enable_semantic_false(
+        self, legacy_semantic_env, monkeypatch
+    ):
+        pytest.importorskip("mcp_server.plugins.typescript_plugin.plugin")
+        monkeypatch.setenv("VOYAGE_API_KEY", "fixture-not-a-key")
+        try:
+            plugin = PluginFactory.create_plugin("typescript", None, enable_semantic=False)
+        except Exception as exc:  # pragma: no cover - grammar unavailable offline
+            pytest.skip(f"TypeScript grammar unavailable: {type(exc).__name__}")
+
+        assert plugin._semantic_indexer is None
+        assert legacy_semantic_env.created == []
+
+
+# ---------------------------------------------------------------------------
+# C3: SEMANTIC_SUMMARY_PASS_BUDGET
+# ---------------------------------------------------------------------------
+
+
+class TestSemanticSummaryPassBudgetEnv:
+    def test_default_when_unset(self, monkeypatch):
+        monkeypatch.delenv("SEMANTIC_SUMMARY_PASS_BUDGET", raising=False)
+        assert get_semantic_summary_pass_budget() == DEFAULT_SEMANTIC_SUMMARY_PASS_BUDGET == 8
+
+    @pytest.mark.parametrize(
+        ("raw", "expected"),
+        [
+            ("0", None),
+            (" 0 ", None),
+            ("1", 1),
+            ("32", 32),
+            (" 12 ", 12),
+            ("", 8),
+            ("   ", 8),
+            ("-1", 8),
+            ("abc", 8),
+            ("2.5", 8),
+        ],
+    )
+    def test_parsing(self, monkeypatch, raw, expected):
+        monkeypatch.setenv("SEMANTIC_SUMMARY_PASS_BUDGET", raw)
+        assert get_semantic_summary_pass_budget() == expected
+
+
+FIXTURE_FILES = 12
+
+
+def _build_fixture_repo(tmp_path: Path) -> tuple[RepoContext, SQLiteStore, List[Path]]:
+    """A repo with more single-chunk files than the default pass budget."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    store = SQLiteStore(str(tmp_path / "index.db"))
+    repository_row = store.ensure_repository_row(repo, name="repo")
+    paths: List[Path] = []
+    for idx in range(FIXTURE_FILES):
+        source = (repo / f"module_{idx:02d}.py").resolve()
+        content = f"def func_{idx}():\n    return {idx}\n"
+        source.write_text(content, encoding="utf-8")
+        file_id = store.store_file(
+            repository_row,
+            path=source,
+            relative_path=source.name,
+            language="python",
+            size=len(content),
+            content_hash=f"hash-{idx}",
+        )
+        store.store_chunk(
+            file_id=file_id,
+            content=content,
+            content_start=0,
+            content_end=len(content),
+            line_start=1,
+            line_end=2,
+            chunk_id=f"chunk-{idx:02d}",
+            node_id=f"node-{idx:02d}",
+            treesitter_file_id=f"tree-{idx:02d}",
+            language="python",
+            node_type="function_definition",
+        )
+        paths.append(source)
+    ctx = RepoContext(
+        repo_id="semantic-first-build-repo",
+        sqlite_store=store,
+        workspace_root=repo,
+        tracked_branch="main",
+        registry_entry=SimpleNamespace(
+            tracked_branch="main",
+            path=repo,
+            name="repo",
+            repository_id="semantic-first-build-repo",
+        ),
+    )
+    return ctx, store, paths
+
+
+class _FakeSemanticIndexer:
+    """Loopback embedder: records the strict batch write instead of calling Qdrant."""
+
+    def __init__(self):
+        self.batches: List[List[Path]] = []
+
+    def index_files_batch(self, paths, **kwargs):
+        assert kwargs["require_summaries"] is True
+        self.batches.append(list(paths))
+        return {"files_indexed": len(paths), "files_failed": 0, "files_skipped": 0}
+
+
+@pytest.fixture
+def loopback_semantic(monkeypatch):
+    """Fake summarizer writing authoritative summaries, fake preflight and embedder."""
+    summarized_files: List[str] = []
+
+    async def fake_summarize_file_chunks(self, **kwargs):
+        store = SQLiteStore(self.db_path)
+        try:
+            for chunk in kwargs["chunks"]:
+                store.store_chunk_summary(
+                    chunk_hash=chunk["chunk_id"],
+                    file_id=chunk["file_id"],
+                    chunk_start=chunk["line_start"],
+                    chunk_end=chunk["line_end"],
+                    summary_text=f"summary for {chunk['chunk_id']}",
+                    llm_model="loopback",
+                    is_authoritative=True,
+                    provider_name="loopback",
+                    profile_id=self.summarization_config.get("profile_id"),
+                    prompt_fingerprint=self._prompt_fingerprint(),
+                )
+        finally:
+            store.close()
+        summarized_files.append(kwargs["file_path"])
+        written = len(kwargs["chunks"])
+        return SummaryGenerationResult(
+            chunks_attempted=written,
+            summaries_written=written,
+            authoritative_chunks=written,
+            files_attempted=1,
+            files_summarized=1,
+        )
+
+    monkeypatch.setattr(ComprehensiveChunkWriter, "can_summarize", lambda self: True)
+    monkeypatch.setattr(
+        ComprehensiveChunkWriter, "summarize_file_chunks", fake_summarize_file_chunks
+    )
+    monkeypatch.setattr(
+        "mcp_server.setup.semantic_preflight.run_semantic_preflight",
+        lambda **_kwargs: SimpleNamespace(
+            to_dict=lambda: {"can_write_semantic_vectors": True, "blocker": None}
+        ),
+    )
+    indexer = _FakeSemanticIndexer()
+    monkeypatch.setattr(Dispatcher, "_get_semantic_indexer", lambda self, _ctx: indexer)
+    return SimpleNamespace(indexer=indexer, summarized_files=summarized_files)
+
+
+class TestSummaryPassBudgetRebuild:
+    def test_default_budget_blocks_a_repo_larger_than_the_budget(
+        self, tmp_path, monkeypatch, loopback_semantic
+    ):
+        monkeypatch.delenv("SEMANTIC_SUMMARY_PASS_BUDGET", raising=False)
+        ctx, store, paths = _build_fixture_repo(tmp_path)
+        try:
+            result = Dispatcher([]).rebuild_semantic_for_paths(ctx, paths)
+        finally:
+            store.close()
+
+        assert result["semantic_stage"] == "blocked_missing_summaries"
+        assert result["summary_passes"] == 8
+        assert result["summaries_written"] == 8
+        assert result["summary_remaining_chunks"] == FIXTURE_FILES - 8
+        assert result["summary_missing_chunks"] == FIXTURE_FILES - 8
+        assert result["summary_continuation_required"] is True
+        assert result["summary_scope_drained"] is False
+        assert len(loopback_semantic.summarized_files) == 8
+        # Strict pipeline: no vectors are written while summaries are missing.
+        assert loopback_semantic.indexer.batches == []
+
+    def test_unbounded_budget_summarizes_everything_then_embeds(
+        self, tmp_path, monkeypatch, loopback_semantic
+    ):
+        monkeypatch.setenv("SEMANTIC_SUMMARY_PASS_BUDGET", "0")
+        ctx, store, paths = _build_fixture_repo(tmp_path)
+        try:
+            result = Dispatcher([]).rebuild_semantic_for_paths(ctx, paths)
+        finally:
+            store.close()
+
+        assert result["semantic_stage"] == "indexed"
+        assert result["summary_passes"] == FIXTURE_FILES
+        assert result["summaries_written"] == FIXTURE_FILES
+        assert result["summary_remaining_chunks"] == 0
+        assert result["summary_missing_chunks"] == 0
+        assert result["summary_scope_drained"] is True
+        assert result["summary_continuation_required"] is False
+        assert sorted(loopback_semantic.summarized_files) == sorted(str(p) for p in paths)
+        assert loopback_semantic.indexer.batches == [paths]
+        assert result["semantic_indexed"] == FIXTURE_FILES
+
+    def test_explicit_budget_is_honoured(self, tmp_path, monkeypatch, loopback_semantic):
+        monkeypatch.setenv("SEMANTIC_SUMMARY_PASS_BUDGET", "3")
+        ctx, store, paths = _build_fixture_repo(tmp_path)
+        try:
+            result = Dispatcher([]).rebuild_semantic_for_paths(ctx, paths)
+        finally:
+            store.close()
+
+        assert result["semantic_stage"] == "blocked_missing_summaries"
+        assert result["summary_passes"] == 3
+        assert result["summary_remaining_chunks"] == FIXTURE_FILES - 3
+        assert "3 bounded summary passes" in result["semantic_error"]
+        assert loopback_semantic.indexer.batches == []

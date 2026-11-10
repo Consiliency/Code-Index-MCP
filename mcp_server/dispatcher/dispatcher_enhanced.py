@@ -19,6 +19,7 @@ from functools import wraps
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, Union
 
+from ..config.env_vars import get_semantic_summary_pass_budget
 from ..config.settings import reload_settings
 from ..core.errors import IndexingError, TransientArtifactError, record_handled_error
 from ..core.ignore_patterns import EXCLUDED_DIR_PARTS as _INDEX_EXCLUDED_DIRS
@@ -168,7 +169,11 @@ class _GraphState:
             self.edges = []
 
 
-_REPO_SCOPE_SUMMARY_PASS_BUDGET = 8
+# Language plugins are always built with plugin-level semantic search off. The
+# dispatcher's generation-scoped indexer (SemanticIndexerRegistry, ``ci__``
+# collections) is the only semantic path; the plugin path reads legacy
+# ``code-embeddings-<lang>`` collections with the legacy profile (#121).
+_PLUGIN_LEVEL_SEMANTIC = False
 
 
 def _get_profile_collection_name(profile: Any, fallback: str) -> str:
@@ -525,7 +530,9 @@ class EnhancedDispatcher:
             enable_advanced_features: Whether to enable advanced routing and aggregation
             use_plugin_factory: Whether to use PluginFactory for dynamic loading
             lazy_load: Whether to lazy-load plugins on demand
-            semantic_search_enabled: Whether to enable semantic search in plugins
+            semantic_search_enabled: Whether to enable the dispatcher's generation-scoped
+                semantic search. Plugins are always built with plugin-level semantic
+                search disabled.
             memory_aware: Whether to use memory-aware plugin management
             multi_repo_enabled: Whether to enable multi-repository support (None = auto from env)
             reranker_type: Reranker to use — "voyage", "flashrank", "cross-encoder", or "none"
@@ -696,7 +703,7 @@ class EnhancedDispatcher:
                                     plugin = self._memory_manager.get_plugin(lang)
                                 else:
                                     plugin = PluginFactory.create_plugin(
-                                        lang, None, self._semantic_enabled
+                                        lang, None, _PLUGIN_LEVEL_SEMANTIC
                                     )
 
                                 if plugin:
@@ -717,7 +724,7 @@ class EnhancedDispatcher:
                 else:
                     all_plugins = PluginFactory.create_all_plugins(
                         sqlite_store=None,
-                        enable_semantic=self._semantic_enabled,
+                        enable_semantic=_PLUGIN_LEVEL_SEMANTIC,
                     )
 
                     for lang, plugin in all_plugins.items():
@@ -787,7 +794,7 @@ class EnhancedDispatcher:
             plugin = PluginFactory.create_plugin(
                 language,
                 sqlite_store=None,
-                enable_semantic=self._semantic_enabled,
+                enable_semantic=_PLUGIN_LEVEL_SEMANTIC,
             )
 
             # Add to legacy collections
@@ -3091,7 +3098,10 @@ class EnhancedDispatcher:
         # the per-pass timeout instead of attempting the entire repo backlog at once.
         summary_limit = min(512, max(64, len(normalized_paths)))
         min_summary_limit = 1
-        max_summary_passes = _REPO_SCOPE_SUMMARY_PASS_BUDGET if len(normalized_paths) > 1 else None
+        # SEMANTIC_SUMMARY_PASS_BUDGET: None (env 0) lets a large first build drain.
+        max_summary_passes = (
+            get_semantic_summary_pass_budget() if len(normalized_paths) > 1 else None
+        )
         remaining_missing = self._count_missing_summaries_for_paths(ctx, normalized_paths)
         summary_missing_ids: List[str] = []
         previous_missing = remaining_missing

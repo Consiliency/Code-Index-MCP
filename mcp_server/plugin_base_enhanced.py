@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import warnings
 from abc import abstractmethod
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional
@@ -37,7 +38,17 @@ class SemanticSearchResult(TypedDict):
 
 
 class PluginWithSemanticSearch(IPlugin):
-    """Enhanced plugin base class with semantic search capabilities."""
+    """Enhanced plugin base class with optional plugin-level semantic search.
+
+    .. deprecated::
+        Plugin-level semantic search is deprecated and the dispatcher no longer
+        enables it. It builds a per-language ``SemanticIndexer`` with the legacy
+        default profile and reads legacy ``code-embeddings-<lang>`` collections,
+        which no current index generation writes. Semantic search is served by
+        the dispatcher's generation-scoped indexer (``SemanticIndexerRegistry``,
+        ``ci__`` collections). Passing ``enable_semantic=True`` with
+        ``SEMANTIC_SEARCH_ENABLED=true`` emits a ``DeprecationWarning``.
+    """
 
     def __init__(
         self,
@@ -54,6 +65,13 @@ class PluginWithSemanticSearch(IPlugin):
         )
 
         if self._enable_semantic:
+            warnings.warn(
+                "Plugin-level semantic search is deprecated: it reads legacy "
+                "code-embeddings-<lang> collections. Use the dispatcher's "
+                "generation-scoped semantic search instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
             try:
                 # Initialize semantic indexer with Qdrant configuration
                 qdrant_host = qdrant_host or os.getenv("QDRANT_HOST", "localhost")
@@ -137,6 +155,9 @@ class PluginWithSemanticSearch(IPlugin):
 
     def semantic_search(self, query: str, limit: int = 20) -> List[SemanticSearchResult]:
         """Perform semantic search using vector embeddings.
+
+        Deprecated: plugin-level semantic search reads legacy per-language
+        collections; see the class docstring.
 
         Args:
             query: Search query

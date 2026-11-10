@@ -13,6 +13,7 @@ tree-sitter based plugins for languages without specific implementations.
 
 import asyncio
 import importlib.util
+import inspect
 import logging
 import os
 from dataclasses import dataclass
@@ -28,6 +29,19 @@ if TYPE_CHECKING:
     from ..sandbox.capabilities import CapabilitySet
 
 logger = logging.getLogger(__name__)
+
+
+def _accepts_enable_semantic(plugin_class: type) -> bool:
+    """Whether a plugin class constructor takes an ``enable_semantic`` argument."""
+    try:
+        parameters = inspect.signature(plugin_class).parameters.values()
+    except (TypeError, ValueError):
+        return False
+    return any(
+        parameter.name == "enable_semantic" or parameter.kind is parameter.VAR_KEYWORD
+        for parameter in parameters
+    )
+
 
 # Import specific plugins if they exist
 # Can be either a plugin class or a factory function
@@ -453,8 +467,14 @@ class PluginFactory:
                 plugin = plugin_class_or_factory(
                     sqlite_store=sqlite_store, enable_semantic=enable_semantic
                 )
+            elif _accepts_enable_semantic(plugin_class_or_factory):
+                # It's a class; pass enable_semantic through so a caller's False
+                # is honoured instead of the class default (#121).
+                plugin = plugin_class_or_factory(
+                    sqlite_store=sqlite_store, enable_semantic=enable_semantic
+                )
             else:
-                # It's a class
+                # It's a class without plugin-level semantic search
                 plugin = plugin_class_or_factory(sqlite_store=sqlite_store)
         # Check if language is supported by generic plugin
         elif language in LANGUAGE_CONFIGS:

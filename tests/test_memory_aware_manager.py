@@ -176,7 +176,7 @@ class TestMemoryAwarePluginManager:
             "javascript": Mock(language="javascript"),
         }
 
-        def get_plugin_side_effect(lang):
+        def get_plugin_side_effect(lang, **_kwargs):
             return mock_plugins.get(lang)
 
         with patch.object(manager._factory, "get_plugin", side_effect=get_plugin_side_effect):

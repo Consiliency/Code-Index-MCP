@@ -99,6 +99,15 @@ This document provides a comprehensive reference of all environment variables su
   export MCP_PARSE_TIMEOUT=60
   ```
 
+### `SEMANTIC_SUMMARY_PASS_BUDGET`
+- **Description**: Maximum number of summary passes in one repository-wide semantic rebuild, applied only when the rebuild covers more than one file. Each pass summarizes the chunks of one file, and vectors are written only after every chunk in scope has an authoritative summary. When the budget runs out first, the rebuild stops with `semantic_stage: blocked_missing_summaries` and the staged generation is not published. Summaries written during a failed stage are discarded with it: the next rebuild starts again from the published index. A large first build therefore needs `0` (unbounded) or a separate summary prefill step, otherwise it can never finish. Unset, blank, non-integer and negative values use the default (Consiliency/Code-Index-MCP#121).
+- **Type**: Integer (`0` = unbounded)
+- **Default**: `8`
+- **Example**:
+  ```bash
+  export SEMANTIC_SUMMARY_PASS_BUDGET=0  # Summarize the whole repository before embedding
+  ```
+
 ## Database Configuration
 
 ### `MCP_QDRANT_PATH`

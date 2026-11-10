@@ -33,11 +33,16 @@ class Plugin(IPlugin):
 
     lang = "typescript"
 
-    def __init__(self, sqlite_store: Optional[SQLiteStore] = None) -> None:
+    def __init__(
+        self, sqlite_store: Optional[SQLiteStore] = None, enable_semantic: bool = True
+    ) -> None:
         """Initialize the TypeScript plugin.
 
         Args:
             sqlite_store: Optional SQLite store for persistence
+            enable_semantic: Deprecated plugin-level semantic indexing into a
+                per-instance ``typescript-<id>`` collection. The dispatcher always
+                passes False; its generation-scoped indexer is the semantic path.
         """
         # Initialize parsers for both JavaScript and TypeScript
         self._js_parser = Parser()
@@ -63,10 +68,13 @@ class Plugin(IPlugin):
         # Initialize indexers and storage
         self._indexer = FuzzyIndexer(sqlite_store=sqlite_store)
 
-        # Initialize semantic indexer only if Voyage API key is available
+        # Deprecated plugin-level semantic indexer: only when enabled and a Voyage
+        # API key is available.
         self._semantic_indexer = None
         try:
-            if os.getenv("VOYAGE_API_KEY") or os.getenv("VOYAGE_API_KEY_PATH"):
+            if not enable_semantic:
+                logger.debug("Plugin-level semantic indexing disabled for TypeScript plugin")
+            elif os.getenv("VOYAGE_API_KEY") or os.getenv("VOYAGE_API_KEY_PATH"):
                 self._semantic_indexer = SemanticIndexer(collection=f"typescript-{id(self)}")
                 logger.info("Semantic indexing enabled for TypeScript plugin")
             else:
