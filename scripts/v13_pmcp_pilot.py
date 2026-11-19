@@ -125,9 +125,33 @@ def chunker_version_label(installed: dict) -> str:
 
 
 def constrained_version(constraints: str, distribution: str) -> str | None:
-    """Return the exact ``==`` pin of ``distribution`` in a uv export, if any."""
-    match = re.search(rf"^{re.escape(distribution)}==([^\s;\\]+)", constraints, flags=re.MULTILINE)
-    return match.group(1) if match else None
+    """Return the single exact ``==`` pin of ``distribution`` in a uv export.
+
+    Names are compared in canonical form (case, ``-``/``_``/``.``), extras and
+    markers are allowed, and hash/comment continuations are ignored. ``None``
+    means no usable pin: absent, not an exact ``==``, or pinned more than once
+    with different versions.
+    """
+    from packaging.requirements import InvalidRequirement, Requirement
+    from packaging.utils import canonicalize_name
+
+    wanted = canonicalize_name(distribution)
+    pins: set[str] = set()
+    for raw in constraints.splitlines():
+        line = raw.split(" #", 1)[0].strip().rstrip("\\").strip()
+        if not line or line.startswith(("#", "-")):
+            continue
+        try:
+            requirement = Requirement(line)
+        except InvalidRequirement:
+            continue
+        if canonicalize_name(requirement.name) != wanted:
+            continue
+        specs = list(requirement.specifier)
+        if len(specs) != 1 or specs[0].operator != "==" or "*" in specs[0].version:
+            return None
+        pins.add(specs[0].version)
+    return pins.pop() if len(pins) == 1 else None
 
 
 def expected_profile_fingerprint(metadata: dict) -> str:

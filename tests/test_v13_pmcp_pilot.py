@@ -543,6 +543,23 @@ def test_constrained_version_reads_uv_export_pins():
     assert pilot.constrained_version(CONSTRAINTS, "treesitter-chunker") == "7.0.0"
     assert pilot.constrained_version(CONSTRAINTS, "dependency") == "1"
     assert pilot.constrained_version("xtreesitter-chunker==1\n", "treesitter-chunker") is None
+    # Canonical-name, extras, markers, hashes and comments are accepted.
+    assert (
+        pilot.constrained_version(
+            'TreeSitter_Chunker[extra]==7.0.0 ; python_version >= "3.14" \\\n'
+            "    --hash=sha256:00  # via index-it-mcp\n",
+            "treesitter-chunker",
+        )
+        == "7.0.0"
+    )
+    # Anything other than one exact pin is unusable.
+    assert pilot.constrained_version("treesitter-chunker>=7\n", "treesitter-chunker") is None
+    assert (
+        pilot.constrained_version(
+            "treesitter-chunker==7.0.0\ntreesitter-chunker==6.0.0\n", "treesitter-chunker"
+        )
+        is None
+    )
 
 
 def test_pmcp_interpreter_digest_checked_before_execution(tmp_path, monkeypatch):
