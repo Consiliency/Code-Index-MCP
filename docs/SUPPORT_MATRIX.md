@@ -167,7 +167,7 @@ topology, or install-surface support expansion.
 
 ## Parser stack and grammar cache
 
-The parser stack is treesitter-chunker 6.x, tree-sitter 0.26.x and
+The parser stack is treesitter-chunker 7.x, tree-sitter 0.26.x and
 tree-sitter-language-pack 1.20.x (Consiliency/Code-Index-MCP#115). Support
 tiers above are unchanged by the upgrade.
 
@@ -279,10 +279,13 @@ tiers above are unchanged by the upgrade.
 - **Grammar names.** The public language code `c_sharp` is unchanged; the pack
   grammar is `csharp`.
 - **Platform floor.** The language-pack Linux wheels need glibc 2.34 or newer.
-- **Index identity.** Chunk ids move to the `treesitter_chunk_id_v6` scheme. An
-  index built with treesitter-chunker 4.x (`treesitter_chunk_id_v4`) reports
+- **Index identity.** The scheme follows the chunker major: treesitter-chunker
+  7.x indexes are stamped `treesitter_chunk_id_v7`. An index built with 6.x
+  (`treesitter_chunk_id_v6`) or 4.x (`treesitter_chunk_id_v4`) reports
   `scheme_mismatch`, fails closed and needs a full `reindex`; it is never mixed
-  with 6.x ids. Semantic profiles fingerprint the chunker version, so 4.x
+  with 7.x ids. The 7.x chunk-id algorithm is unchanged from 6.x for the text
+  the indexer passes it, so the rebuild is required by the scheme guard, not by
+  changed ids. Semantic profiles fingerprint the chunker version, so older
   vectors and summaries read as profile-incompatible until rebuilt.
 - **Python.** Source installs and wheels built from `main` require Python 3.14
   (`requires-python = ">=3.14"`). The required agent gate runs on Python 3.14

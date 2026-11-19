@@ -58,9 +58,12 @@ TOOL_RECOVERABLE = tool_handlers_module._RECOVERABLE_REINDEX_STATES
 # A scheme value the installed chunker will never emit -> forces a mismatch.
 FOREIGN_SCHEME = "treesitter_chunk_id_recovery_foreign"
 # The marker a treesitter-chunker 4.x runtime stamped on every index it built.
-# Under chunker 6.x it must read as a mismatch and force a full rebuild
-# (Consiliency/Code-Index-MCP#115).
+# Under chunker 6.x and later it must read as a mismatch and force a full
+# rebuild (Consiliency/Code-Index-MCP#115).
 CHUNKER_V4_SCHEME = "treesitter_chunk_id_v4"
+# The marker a treesitter-chunker 6.x runtime stamped (the deployed 1.5/1.6
+# fleet). Under chunker 7.x it must likewise force a full rebuild.
+CHUNKER_V6_SCHEME = "treesitter_chunk_id_v6"
 
 
 # --------------------------------------------------------------------------- #
@@ -275,8 +278,8 @@ def test_tripped_states_are_recoverable_everywhere(state):
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize(
     "built_scheme",
-    [FOREIGN_SCHEME, CHUNKER_V4_SCHEME],
-    ids=["foreign-scheme", "chunker-v4-built-index"],
+    [FOREIGN_SCHEME, CHUNKER_V4_SCHEME, CHUNKER_V6_SCHEME],
+    ids=["foreign-scheme", "chunker-v4-built-index", "chunker-v6-built-index"],
 )
 def test_scheme_mismatch_is_refused_then_recovered_by_staged_rebuild(tmp_path, built_scheme):
     if built_scheme == current_chunk_id_scheme():

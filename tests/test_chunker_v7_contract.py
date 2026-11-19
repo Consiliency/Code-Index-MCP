@@ -1,13 +1,14 @@
-"""Real-v6 functional contract test for treesitter-chunker (CHUNKERSAFE Lane B).
+"""Real-v7 functional contract test for treesitter-chunker (CHUNKERSAFE Lane B).
 
-Pins the treesitter-chunker 6.x surface the Code-Index-MCP callers depend on, so
-a future 6.x change that moves an import, renames a ``CodeChunk`` field, or
+Pins the treesitter-chunker 7.x surface the Code-Index-MCP callers depend on, so
+a future 7.x change that moves an import, renames a ``CodeChunk`` field, or
 reshapes chunk metadata fails here instead of silently degrading indexing.
 
-It also pins the 6.0 identity behavior the index relies on
-(Consiliency/Code-Index-MCP#115): LF Python chunk ids are unchanged from 4.x,
-CRLF content and byte spans are raw, erroneous keyword-only ``lambda`` fragments
-are excluded, and the CHUNKERSAFE scheme moves to ``treesitter_chunk_id_v6`` so a
+It also pins the identity behavior the index relies on: LF Python chunk ids are
+unchanged from 4.x and 6.x, CRLF content and byte spans are raw (6.0,
+Consiliency/Code-Index-MCP#115), erroneous keyword-only ``lambda`` fragments are
+excluded, CR-only Python parses with real lines (7.0, treesitter-chunker#471),
+and the CHUNKERSAFE scheme moves to ``treesitter_chunk_id_v7`` so a 6.x- or
 4.x-built index is rebuilt in full instead of mixed.
 """
 
@@ -29,8 +30,8 @@ def _chunker_major() -> int:
         return 0
 
 
-if _chunker_major() != 6:
-    _reason = "real-v6 contract test requires treesitter-chunker 6.x"
+if _chunker_major() != 7:
+    _reason = "real-v7 contract test requires treesitter-chunker 7.x"
     # CI sets MCP_REQUIRE_GRAMMARS=1: a resolved chunker of another major must
     # fail the ID-pin contract rather than skip it quietly (#116 review N4).
     if os.environ.get("MCP_REQUIRE_GRAMMARS") == "1":
@@ -53,7 +54,7 @@ _PY_SRC = (
 
 def test_chunk_text_returns_nonempty_chunks():
     chunks = chunk_text(_PY_SRC, "python")
-    assert chunks, "v6 chunk_text produced no chunks"
+    assert chunks, "v7 chunk_text produced no chunks"
     assert all(isinstance(c, CodeChunk) for c in chunks)
 
 
@@ -74,13 +75,13 @@ def test_codechunk_attribute_contract():
         "node_type",
         "metadata",
     ):
-        assert hasattr(chunk, attr), f"v6 CodeChunk lost attribute {attr!r}"
+        assert hasattr(chunk, attr), f"v7 CodeChunk lost attribute {attr!r}"
     assert isinstance(chunk.chunk_id, str) and chunk.chunk_id
     assert isinstance(chunk.byte_start, int) and isinstance(chunk.byte_end, int)
     assert isinstance(chunk.metadata, dict)
 
 
-def test_v6_metadata_shape_is_adapter_compatible():
+def test_v7_metadata_shape_is_adapter_compatible():
     """v4+ nests the symbol name under metadata['signature']['name']; the
     version-tolerant chunker_adapter must still recover a symbol name + signature."""
     from mcp_server.utils.chunker_adapter import ChunkerAdapter
@@ -90,13 +91,13 @@ def test_v6_metadata_shape_is_adapter_compatible():
         c for c in chunk_text(_PY_SRC, "python") if c.node_type == "function_definition"
     )
     name = adapter._get_symbol_name(func_chunk)
-    assert name == "foo", f"adapter failed to recover v6 symbol name (got {name!r})"
+    assert name == "foo", f"adapter failed to recover v7 symbol name (got {name!r})"
     sig = adapter._get_signature(func_chunk)
-    assert sig, "adapter recovered no signature from v6 metadata"
+    assert sig, "adapter recovered no signature from v7 metadata"
 
 
 def test_graph_imports_resolve_and_are_callable():
-    """xref/graph-cut imports (used by the graph features) still resolve under v6."""
+    """xref/graph-cut imports (used by the graph features) still resolve under v7."""
     from chunker.core import chunk_file  # noqa: F401
     from chunker.graph.cut import graph_cut
     from chunker.graph.xref import build_xref
@@ -105,19 +106,25 @@ def test_graph_imports_resolve_and_are_callable():
     assert callable(graph_cut)
 
 
-def test_lane_a_guard_derives_v6_scheme():
-    """The CHUNKERSAFE identity-scheme guard must recognize v6 as a distinct
-    scheme, so a v4-built index (marker ``treesitter_chunk_id_v4``) trips the
-    guard and is rebuilt in full rather than mixed with 6.0 ids."""
+def test_lane_a_guard_derives_v7_scheme():
+    """The CHUNKERSAFE identity-scheme guard must recognize v7 as a distinct
+    scheme, so a v6- or v4-built index (marker ``treesitter_chunk_id_v6`` or
+    ``treesitter_chunk_id_v4``) trips the guard and is rebuilt in full rather
+    than mixed with 7.0 ids."""
     from mcp_server.storage.sqlite_store import current_chunk_id_scheme
 
     scheme = current_chunk_id_scheme()
-    assert scheme == "treesitter_chunk_id_v6", scheme
-    assert scheme not in {"treesitter_chunk_id_v1", "treesitter_chunk_id_v4"}
+    assert scheme == "treesitter_chunk_id_v7", scheme
+    assert scheme not in {
+        "treesitter_chunk_id_v1",
+        "treesitter_chunk_id_v4",
+        "treesitter_chunk_id_v6",
+    }
 
 
-def test_v4_artifact_manifest_is_rejected_under_v6():
-    """A published 4.x artifact must not be imported into a 6.x runtime."""
+@pytest.mark.parametrize("old_scheme", ["treesitter_chunk_id_v4", "treesitter_chunk_id_v6"])
+def test_older_artifact_manifest_is_rejected_under_v7(old_scheme):
+    """A published 4.x or 6.x artifact must not be imported into a 7.x runtime."""
     from mcp_server.artifacts.manifest_v2 import ArtifactManifestV2, ManifestUnit
 
     def _manifest(algorithm: str) -> ArtifactManifestV2:
@@ -143,13 +150,13 @@ def test_v4_artifact_manifest_is_rejected_under_v6():
             ],
         )
 
-    _manifest("treesitter_chunk_id_v6").validate()
+    _manifest("treesitter_chunk_id_v7").validate()
     with pytest.raises(ValueError, match="Unsupported chunk identity algorithm"):
-        _manifest("treesitter_chunk_id_v4").validate()
+        _manifest(old_scheme).validate()
 
 
 # --------------------------------------------------------------------------- #
-# 6.0 identity pins (Consiliency/Code-Index-MCP#115)
+# Identity pins (6.0: Consiliency/Code-Index-MCP#115; carried unchanged into 7.0)
 # --------------------------------------------------------------------------- #
 _LF_IDS = [
     "fa118e0fb54baf664bb5cc7feaca8c74a760e04a",
@@ -160,7 +167,8 @@ _PY_LF = "def foo(x):\n    return x + 1\n\nclass Bar:\n    def baz(self):\n     
 
 
 def test_lf_python_chunk_ids_are_unchanged_from_v4():
-    """6.0 keeps LF identities; these exact ids were produced by chunker 4.0.0."""
+    """6.0 and 7.0 keep LF identities; these exact ids were produced by chunker
+    4.0.0 and again by 6.0.0."""
     assert [c.chunk_id for c in chunk_text(_PY_LF, "python")] == _LF_IDS
 
 
@@ -221,12 +229,12 @@ def test_erroneous_keyword_only_lambda_fragments_are_excluded():
 
 def test_semantic_profile_fingerprint_moves_with_chunker_version():
     """Semantic profiles fingerprint the installed chunker version, so vectors
-    and summaries recorded under 4.x read as profile-incompatible under 6.x."""
+    and summaries recorded under 6.x read as profile-incompatible under 7.x."""
     from mcp_server.artifacts.semantic_profiles import SemanticProfile
     from mcp_server.config.settings import Settings
 
     label = Settings()._detect_treesitter_chunker_version()
-    assert label.startswith("treesitter-chunker@6."), label
+    assert label.startswith("treesitter-chunker@7."), label
 
     base = {
         "provider": "voyage",
@@ -237,6 +245,26 @@ def test_semantic_profile_fingerprint_moves_with_chunker_version():
         "normalization_policy": "l2",
         "chunk_schema_version": "2.0",
     }
-    v4 = SemanticProfile.from_dict("p", {**base, "chunker_version": "treesitter-chunker@4.0.0"})
-    v6 = SemanticProfile.from_dict("p", {**base, "chunker_version": label})
-    assert v4.compatibility_fingerprint != v6.compatibility_fingerprint
+    v6 = SemanticProfile.from_dict("p", {**base, "chunker_version": "treesitter-chunker@6.0.0"})
+    v7 = SemanticProfile.from_dict("p", {**base, "chunker_version": label})
+    assert v6.compatibility_fingerprint != v7.compatibility_fingerprint
+
+
+def test_cr_only_python_parses_with_real_lines():
+    """7.0 change (treesitter-chunker#471): CR-only Python is parsed from a
+    same-length CR->LF copy, so chunks report real lines while content and spans
+    stay raw. The indexer reads with universal newlines and never passes lone CR
+    to ``chunk_text``, so its persisted ids are unaffected."""
+    cr = _PY_LF.replace("\n", "\r")
+    raw = cr.encode("utf-8")
+    chunks = chunk_text(cr, "python")
+    assert [c.node_type for c in chunks] == [
+        "function_definition",
+        "class_definition",
+        "function_definition",
+    ]
+    assert [(c.start_line, c.end_line) for c in chunks] == [(1, 2), (4, 6), (5, 6)]
+    for chunk in chunks:
+        assert "\r" in chunk.content
+        assert raw[chunk.byte_start : chunk.byte_end].decode("utf-8") == chunk.content
+    assert set(c.chunk_id for c in chunks).isdisjoint(_LF_IDS)
