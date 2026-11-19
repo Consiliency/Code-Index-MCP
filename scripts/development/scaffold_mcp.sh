@@ -44,6 +44,7 @@ cat > pyproject.toml <<EOP
 name = "mcp_server"
 version = "0.0.0"
 description = "Local-first MCP server"
+requires-python = ">=3.14"
 dependencies = [
   "fastapi>=0.110",
   "uvicorn[standard]>=0.29",
@@ -59,7 +60,7 @@ EOP
 cat > .devcontainer/devcontainer.json <<EOD
 {
   "name": "MCP Server Dev",
-  "image": "mcr.microsoft.com/devcontainers/python:0-3.12",
+  "image": "mcr.microsoft.com/devcontainers/python:3-3.14-bookworm",
   "features": {
     "ghcr.io/devcontainers/features/docker-in-docker:2": {}
   },

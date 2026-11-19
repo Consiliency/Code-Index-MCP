@@ -1867,7 +1867,7 @@ def _verify_receipt_artifacts(root, manifest, kind, result, copies, expected_app
                         is None
                     ):
                         raise PilotRefused("browser_screenshot_blank")
-            except (OSError, ValueError):
+            except OSError, ValueError:
                 raise PilotRefused("browser_screenshot_invalid") from None
     else:
         _verify_live_records(
