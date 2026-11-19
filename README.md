@@ -450,7 +450,7 @@ for language/runtime support details.
 ## 🚀 Quickstart (Python)
 
 ### Prerequisites
-- Python 3.12+
+- Python 3.14+
 - Git
 
 ### Installation

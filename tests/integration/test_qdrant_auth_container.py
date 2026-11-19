@@ -44,7 +44,7 @@ def _docker_ready() -> bool:
     try:
         subprocess.run(["docker", "compose", "version"], capture_output=True, check=True)
         subprocess.run(["docker", "image", "inspect", IMAGE], capture_output=True, check=True)
-    except (OSError, subprocess.CalledProcessError):
+    except OSError, subprocess.CalledProcessError:
         return False
     return True
 

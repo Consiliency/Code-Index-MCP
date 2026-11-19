@@ -82,7 +82,7 @@ class _LoopbackBoundary:
         while not self._stop.is_set():
             try:
                 conn, _ = self._server.accept()
-            except (TimeoutError, OSError):
+            except TimeoutError, OSError:
                 continue
             self.connections += 1
             with conn:

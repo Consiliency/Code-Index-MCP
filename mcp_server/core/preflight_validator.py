@@ -296,12 +296,8 @@ class PreFlightValidator:
                 f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
             )
             result["details"]["python_version"] = python_version
-
-            if sys.version_info < (3, 8):
-                result["issues"].append(f"Python {python_version} is below minimum required 3.8")
-                result["status"] = "failed"
-            else:
-                result["status"] = "passed"
+            # requires-python (>=3.14) is enforced at install time.
+            result["status"] = "passed"
 
         except Exception as e:
             result["status"] = "error"

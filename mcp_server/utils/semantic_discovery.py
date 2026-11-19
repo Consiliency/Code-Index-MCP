@@ -91,7 +91,7 @@ class SemanticDatabaseDiscovery:
             remote_url = result.stdout.strip()
             if remote_url:
                 return remote_url
-        except (subprocess.CalledProcessError, FileNotFoundError):
+        except subprocess.CalledProcessError, FileNotFoundError:
             pass
 
         return str(self.workspace_root)
@@ -106,7 +106,7 @@ class SemanticDatabaseDiscovery:
                 cwd=str(self.workspace_root),
                 check=True,
             )
-        except (subprocess.CalledProcessError, FileNotFoundError):
+        except subprocess.CalledProcessError, FileNotFoundError:
             return None
 
         branch = result.stdout.strip()
@@ -124,7 +124,7 @@ class SemanticDatabaseDiscovery:
                 cwd=str(self.workspace_root),
                 check=True,
             )
-        except (subprocess.CalledProcessError, FileNotFoundError):
+        except subprocess.CalledProcessError, FileNotFoundError:
             return None
 
         commit = result.stdout.strip()

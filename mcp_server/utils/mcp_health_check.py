@@ -282,9 +282,6 @@ class MCPDiagnostics:
             py_version = f"{sys.version_info.major}.{sys.version_info.minor}"
             result["details"]["python_version"] = py_version
 
-            if sys.version_info < (3, 8):
-                result["issues"].append(f"Python {py_version} is below minimum 3.8")
-
             # Check environment type
             env_type = {
                 "docker": os.path.exists("/.dockerenv"),

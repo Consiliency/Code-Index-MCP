@@ -553,7 +553,7 @@ class APIClient:
         non_existent = Path("/non/existent/file.py")
         try:
             semantic_indexer.index_file(non_existent)
-        except (FileNotFoundError, OSError):
+        except FileNotFoundError, OSError:
             pass  # Expected error
         except Exception as e:
             pytest.fail(f"Unexpected error for non-existent file: {e}")

@@ -13,15 +13,10 @@ import json
 import os
 import shlex
 import subprocess
+import tomllib
 from pathlib import Path
 
 import pytest
-
-try:
-    import tomllib
-except ImportError:  # Python <3.11
-    import tomli as tomllib
-
 
 REPO = Path(__file__).parent.parent
 EXPECTED_VERSION = "1.6.0"

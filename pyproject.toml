@@ -9,14 +9,12 @@ license-files = ["LICENSE"]
 authors = [
     { name = "ViperJuice", email = "viperjuice@users.noreply.github.com" }
 ]
-requires-python = ">=3.12"
+requires-python = ">=3.14"
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.12",
-    "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: Text Processing :: Indexing",
@@ -104,7 +102,6 @@ dev = [
     "faker>=19.6.1",
     "responses>=0.23.3",
     "freezegun>=1.2.2",
-    "tomli>=2.0.1; python_version<\"3.11\"",
     "pytest-httpx>=0.22.0",
     "aiofiles>=23.2.1",
     # Code quality
@@ -181,7 +178,7 @@ mcp_server = ["py.typed", "storage/migrations/*.sql"]
 
 [tool.black]
 line-length = 100
-target-version = ["py311", "py312"]
+target-version = ["py314"]
 exclude = '''
 /(
     \.git
@@ -198,7 +195,7 @@ line_length = 100
 
 
 [tool.mypy]
-python_version = "3.12"
+python_version = "3.14"
 warn_return_any = true
 warn_unused_configs = true
 ignore_missing_imports = true

@@ -94,7 +94,7 @@ class MetricsMiddleware(BaseHTTPMiddleware):
                         content_length,
                         labels={"method": method, "endpoint": normalized_path},
                     )
-                except (ValueError, TypeError):
+                except ValueError, TypeError:
                     pass
 
             # Detailed endpoint metrics
@@ -264,7 +264,7 @@ class BusinessMetricsCollector:
             self.metrics_collector.observe_histogram(
                 "indexed_file_size_bytes", file_size, labels={"language": language}
             )
-        except (OSError, FileNotFoundError):
+        except OSError, FileNotFoundError:
             pass
 
     def record_search_performed(

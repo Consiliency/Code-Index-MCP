@@ -279,7 +279,7 @@ def smoke_wheel(wheel_path: Path | None = None, expected_sha256: str | None = No
 
 #: Python for the unconstrained install: the oldest supported interpreter, the
 #: one release smoke and the PMCP pilot run on.
-UNCONSTRAINED_PYTHON = "3.12"
+UNCONSTRAINED_PYTHON = "3.14"
 #: The only environment the unconstrained install sees. Any other installer
 #: setting (``UV_OFFLINE``, ``UV_DEFAULT_INDEX``, ``UV_FIND_LINKS``,
 #: ``UV_EXCLUDE``, constraints, overrides, date cutoffs...) could resolve older

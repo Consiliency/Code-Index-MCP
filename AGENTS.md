@@ -395,7 +395,7 @@ mcp_server/, plugin_system/, tree_sitter_wrapper/
 ## DEVELOPMENT_ENVIRONMENT
 
 ```bash
-# Python Version: 3.12+ (from pyproject.toml requires-python = ">=3.12")
+# Python Version: 3.14+ (from pyproject.toml requires-python = ">=3.14")
 # Virtual Environment: Required (managed by uv)
 uv sync --locked --extra dev  # install locked core + development dependencies
 # Or for a specific extras set:

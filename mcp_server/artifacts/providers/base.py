@@ -22,7 +22,7 @@ class ArtifactRecord:
         # Preserve numeric IDs as integers for API compatibility
         try:
             artifact_id: Any = int(self.artifact_id)
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             artifact_id = self.artifact_id
         return {
             "id": artifact_id,

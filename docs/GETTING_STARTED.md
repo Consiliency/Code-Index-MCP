@@ -29,7 +29,7 @@ This guide walks you through installing and using Code-Index-MCP to index and se
 
 ## Prerequisites
 
-- Python 3.12 or higher
+- Python 3.14 or higher
 - Git (for version control features)
 - A code repository to index
 - `gh` CLI authenticated with access to the repository artifacts (`gh auth login`)

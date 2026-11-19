@@ -171,7 +171,7 @@ class IndexArtifactDownloader:
                 time.monotonic() + 60,
             )
             available += 1
-        except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        except FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired:
             actions = io.BytesIO()
 
         artifacts = []
@@ -197,7 +197,7 @@ class IndexArtifactDownloader:
                 time.monotonic() + 60,
             )
             available += 1
-        except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        except FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired:
             releases = io.BytesIO()
             if not available:
                 raise RuntimeError("Artifact discovery failed for both GitHub backends") from None

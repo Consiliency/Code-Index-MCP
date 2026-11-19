@@ -51,11 +51,11 @@ check_prerequisites() {
         PYTHON_VERSION=$(python3 --version | cut -d' ' -f2)
         log "Python version: $PYTHON_VERSION"
         
-        # Check if version is 3.8 or higher
-        if python3 -c "import sys; exit(0 if sys.version_info >= (3, 8) else 1)"; then
+        # Check if version is 3.14 or higher (requires-python >=3.14)
+        if python3 -c "import sys; exit(0 if sys.version_info >= (3, 14) else 1)"; then
             success "Python version is compatible"
         else
-            error "Python 3.8+ required, found $PYTHON_VERSION"
+            error "Python 3.14+ required, found $PYTHON_VERSION"
             exit 1
         fi
     else

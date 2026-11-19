@@ -329,7 +329,7 @@ def test_git_reap_is_bounded_when_an_escaped_descendant_holds_the_pipes(
     finally:
         try:
             os.kill(int(escaped.read_text().strip()), signal.SIGKILL)
-        except (OSError, ValueError):
+        except OSError, ValueError:
             pass
 
 

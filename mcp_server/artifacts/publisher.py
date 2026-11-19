@@ -160,7 +160,7 @@ class ArtifactPublisher:
         try:
             data = json.loads(result.stdout)
             return data.get("targetCommitish") or None
-        except (json.JSONDecodeError, AttributeError):
+        except json.JSONDecodeError, AttributeError:
             return None
 
     def _run(
@@ -276,5 +276,5 @@ class ArtifactPublisher:
         try:
             data = json.loads(result.stdout)
             return bool(data.get("targetCommitish", "") == commit)
-        except (json.JSONDecodeError, AttributeError):
+        except json.JSONDecodeError, AttributeError:
             return False

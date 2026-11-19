@@ -25,7 +25,7 @@ permissions:
   contents: read
 
 env:
-  PYTHON_VERSION: '3.12'
+  PYTHON_VERSION: '3.14'
   NODE_VERSION: '18'
   DOCKER_REGISTRY: ghcr.io
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -33,17 +33,14 @@ env:
 
 jobs:
   agent-gate:
-    # The 3.12 leg keeps the exact required-check name; 3.13 and 3.14 report as
-    # "(Python 3.x)" legs and gate merges through agent-gate-passed (needs waits
-    # for every leg). Each leg runs the gate's pytest invocations serially
+    # Python 3.14 is the only supported runtime, so the gate runs as a single
+    # job (no matrix) that reports the exact required-check name; a matrix would
+    # suffix the name with its values. agent-gate-passed is the second required
+    # check. The gate runs its pytest invocations serially
     # (Consiliency/Code-Index-MCP#115).
-    name: ${{ matrix.python-version == '3.12' && 'Protected Evidence - Agent Gate' || format('Protected Evidence - Agent Gate (Python {0})', matrix.python-version) }}
+    name: Protected Evidence - Agent Gate
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ['3.12', '3.13', '3.14']
     env:
       # tree-sitter-language-pack 1.20 downloads grammars on first use; prefetch
       # them once into an explicit cache and fail (never skip) grammar tests.
@@ -58,7 +55,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install system dependencies
         run: |
@@ -97,14 +94,14 @@ jobs:
   agent-gate-passed:
     # Required check. GitHub skips a job whose needs failed, and a skipped
     # required check counts as passing, so this aggregator always runs and
-    # fails unless every agent-gate matrix leg succeeded.
+    # fails unless the agent-gate job succeeded.
     name: Protected Evidence - Agent Gate Passed
     if: ${{ always() }}
     runs-on: ubuntu-latest
     needs:
       - agent-gate
     steps:
-      - name: Confirm every protected agent gate leg passed
+      - name: Confirm the protected agent gate passed
         env:
           AGENT_GATE_RESULT: ${{ needs.agent-gate.result }}
         run: |

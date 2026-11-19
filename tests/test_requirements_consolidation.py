@@ -7,11 +7,7 @@ These tests confirm that:
 - uv.lock exists (pyproject.toml is the sole dependency source of truth)
 """
 
-try:
-    import tomllib
-except ImportError:  # Python <3.11
-    import tomli as tomllib
-
+import tomllib
 from pathlib import Path
 
 REPO = Path(__file__).parent.parent
@@ -42,7 +38,13 @@ def test_pyproject_parseable_toml():
 def test_pyproject_requires_python():
     with open(REPO / "pyproject.toml", "rb") as f:
         data = tomllib.load(f)
-    assert data["project"]["requires-python"] == ">=3.12"
+    assert data["project"]["requires-python"] == ">=3.14"
+    versions = [
+        c.rsplit("::", 1)[1].strip()
+        for c in data["project"]["classifiers"]
+        if c.startswith("Programming Language :: Python :: 3.")
+    ]
+    assert versions == ["3.14"]
 
 
 def test_agents_md_no_stale_python_claim():
@@ -81,22 +83,11 @@ def test_dockerfiles_do_not_reference_requirements_files():
     assert stale == {}, f"Dockerfiles reference removed requirements files: {stale}"
 
 
-def test_tomllib_import_guard_present():
-    import inspect
-    import sys
-
-    src = inspect.getsource(sys.modules[__name__])
-    assert "try:\n    import tomllib\nexcept ImportError:" in src
-    assert "import tomli as tomllib" in src
-
-
-def test_pyproject_declares_tomli_for_py310():
+def test_pyproject_has_no_dead_python_version_markers():
+    """requires-python is >=3.14, so markers for older interpreters are dead."""
     import re
 
-    with open(REPO / "pyproject.toml", "rb") as f:
-        data = tomllib.load(f)
-    dev_deps = data.get("project", {}).get("optional-dependencies", {}).get("dev", [])
-    normalized = [re.sub(r"\s+", " ", entry).strip() for entry in dev_deps]
-    assert (
-        'tomli>=2.0.1; python_version<"3.11"' in normalized
-    ), f"tomli conditional dep not found in dev deps: {normalized}"
+    text = (REPO / "pyproject.toml").read_text()
+    for match in re.finditer(r"python_version\s*<\s*[\"'](3\.\d+)[\"']", text):
+        major, minor = (int(part) for part in match.group(1).split("."))
+        assert (major, minor) > (3, 14), f"dead marker in pyproject.toml: {match.group(0)}"

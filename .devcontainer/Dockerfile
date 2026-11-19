@@ -1,5 +1,5 @@
 # bookworm (glibc 2.36): tree-sitter-language-pack 1.20 wheels need glibc >= 2.34
-FROM mcr.microsoft.com/devcontainers/python:1-3.12-bookworm
+FROM mcr.microsoft.com/devcontainers/python:3-3.14-bookworm
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1

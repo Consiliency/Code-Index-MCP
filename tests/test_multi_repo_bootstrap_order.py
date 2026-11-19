@@ -118,7 +118,7 @@ class TestStdioRunnerBootOrder:
                                 timeout=3.0,
                             )
                         )
-                    except (asyncio.TimeoutError, Exception):
+                    except asyncio.TimeoutError, Exception:
                         pass
 
         assert (
@@ -156,7 +156,7 @@ class TestStdioRunnerBootOrder:
                             timeout=3.0,
                         )
                     )
-                except (asyncio.TimeoutError, Exception):
+                except asyncio.TimeoutError, Exception:
                     pass
 
         assert "start_watching_all" in call_log, "start_watching_all not called"
@@ -189,7 +189,7 @@ class TestStdioRunnerBootOrder:
                             timeout=2.0,
                         )
                     )
-                except (asyncio.TimeoutError, Exception):
+                except asyncio.TimeoutError, Exception:
                     pass
 
         mock_multi_watcher.stop.assert_called()
@@ -234,7 +234,7 @@ class TestFileWatcherNotConstructed:
                                 timeout=2.0,
                             )
                         )
-                    except (asyncio.TimeoutError, Exception):
+                    except asyncio.TimeoutError, Exception:
                         pass
 
         assert fw_calls == [], (
@@ -258,7 +258,7 @@ class TestFileWatcherNotConstructed:
                             timeout=2.0,
                         )
                     )
-                except (asyncio.TimeoutError, Exception):
+                except asyncio.TimeoutError, Exception:
                     pass
 
         mock_multi_watcher.start_watching_all.assert_called()

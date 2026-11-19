@@ -266,7 +266,7 @@ def _read_coverage_marker(index_path: Path) -> Any:
     try:
         with closing(sqlite3.connect(index_path.resolve().as_uri() + "?mode=ro", uri=True)) as conn:
             marker = read_grammar_degradation(conn)
-    except (sqlite3.Error, OSError, ValueError):
+    except sqlite3.Error, OSError, ValueError:
         return _UNREAD
     with _coverage_marker_cache_lock:
         for stale in [cached for cached in _coverage_marker_cache if cached[0] == key[0]]:
@@ -816,7 +816,7 @@ def _git_state(path: Path) -> tuple[Optional[str], Optional[str], bool]:
             timeout=10,
             env=get_full_env(),
         )
-    except (OSError, subprocess.SubprocessError):
+    except OSError, subprocess.SubprocessError:
         # Bare repositories retain metadata resolution, never ready query admission.
         if (path / "HEAD").is_file() and (path / "objects").is_dir():
             bare_head = (
@@ -855,7 +855,7 @@ def _run_git(args: list[str], cwd: Path) -> Optional[str]:
         )
         value = result.stdout.strip()
         return value if value and value != "HEAD" else None
-    except (OSError, subprocess.SubprocessError):
+    except OSError, subprocess.SubprocessError:
         return None
 
 
@@ -960,7 +960,7 @@ def _metadata_int(metadata: Optional[dict[str, Any]], key: str) -> Optional[int]
     value = metadata.get(key)
     try:
         return int(value) if value is not None else None
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return None
 
 

@@ -183,7 +183,7 @@ class ComponentHealthChecker(IHealthCheck):
                 load_avg = psutil.getloadavg()
                 cpu_cores = psutil.cpu_count()
                 load_per_core = load_avg[0] / cpu_cores if cpu_cores else 0
-            except (AttributeError, OSError):
+            except AttributeError, OSError:
                 load_per_core = 0  # Windows doesn't have load average
 
             details = {

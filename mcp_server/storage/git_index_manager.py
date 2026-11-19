@@ -887,7 +887,7 @@ class GitAwareIndexManager:
                 ):
                     if not self._should_full_reindex(repo_path, candidate):
                         changes = candidate
-            except (OSError, subprocess.SubprocessError):
+            except OSError, subprocess.SubprocessError:
                 logger.info("Change inventory unavailable; staging a full rebuild")
         return self._rebuild_repository_index_locked(
             repo_id,
@@ -1747,7 +1747,7 @@ class GitAwareIndexManager:
         try:
             with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)) as conn:
                 return read_grammar_degradation(conn)
-        except (sqlite3.Error, OSError):
+        except sqlite3.Error, OSError:
             return None
 
     def _prune_superseded_generations(
@@ -1951,7 +1951,7 @@ class GitAwareIndexManager:
                     timeout=_GIT_TASKKILL_SECONDS,
                     check=False,
                 )
-            except (OSError, subprocess.SubprocessError):
+            except OSError, subprocess.SubprocessError:
                 pass
             try:
                 process.kill()
@@ -1960,7 +1960,7 @@ class GitAwareIndexManager:
         else:
             try:
                 os.killpg(process.pid, signal.SIGKILL)
-            except (ProcessLookupError, PermissionError):
+            except ProcessLookupError, PermissionError:
                 pass
             except OSError:
                 process.kill()
@@ -2026,7 +2026,7 @@ class GitAwareIndexManager:
             if strict:
                 raise
             return False
-        except (OSError, subprocess.SubprocessError, UnicodeDecodeError):
+        except OSError, subprocess.SubprocessError, UnicodeDecodeError:
             return False
 
     def _finalize_staged_vectors(self, repo_id: str, ctx: RepoContext) -> None:
@@ -2809,7 +2809,7 @@ class GitAwareIndexManager:
     def _accepts_keyword(func: Any, name: str) -> bool:
         try:
             parameters = inspect.signature(func).parameters.values()
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             return False
         return any(
             parameter.name == name or parameter.kind is inspect.Parameter.VAR_KEYWORD
@@ -3191,7 +3191,7 @@ class GitAwareIndexManager:
             return None
         try:
             return json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+        except OSError, json.JSONDecodeError:
             return None
 
     def _start_force_full_exit_trace(self, repo_info: Any, update: Dict[str, Any]) -> None:

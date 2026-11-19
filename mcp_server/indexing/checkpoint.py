@@ -47,7 +47,7 @@ def load(repo_root: Path) -> Optional[ReindexCheckpoint]:
         return None
     try:
         data = json.loads(state_file.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except OSError, json.JSONDecodeError:
         return None
     if data.get("schema_version") != REINDEX_STATE_VERSION:
         return None

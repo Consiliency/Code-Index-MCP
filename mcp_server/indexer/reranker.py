@@ -1103,7 +1103,7 @@ class EndpointReranker(IReranker):
             # 0/negative env can never disable the intrinsic per-call timeout.
             try:
                 timeout = max(float(os.getenv("MCP_RERANK_TIMEOUT_S", "30.0")), 1.0)
-            except (TypeError, ValueError):
+            except TypeError, ValueError:
                 timeout = 30.0
         self._timeout = timeout
         self.last_outcome: Optional[RerankOutcome] = None

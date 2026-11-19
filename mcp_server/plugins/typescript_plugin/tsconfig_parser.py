@@ -303,7 +303,7 @@ class TSConfigParser:
                             main_file = node_modules / main
                             if main_file.exists():
                                 return main_file
-                    except (json.JSONDecodeError, OSError):
+                    except json.JSONDecodeError, OSError:
                         pass
 
                 # Try index files

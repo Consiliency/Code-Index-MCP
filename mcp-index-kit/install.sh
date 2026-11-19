@@ -225,7 +225,7 @@ jobs:
         if: steps.check_index.outputs.found == 'false' && steps.download.outputs.downloaded == 'false'
         uses: actions/setup-python@v4
         with:
-          python-version: '3.11'
+          python-version: '3.14'
       
       - name: Install MCP Indexer
         if: steps.check_index.outputs.found == 'false' && steps.download.outputs.downloaded == 'false'

@@ -1,6 +1,6 @@
 # Dockerfile.minimal - Zero Configuration MCP Server
 # Features: Full code indexing, BM25 search, no external dependencies
-FROM python:3.12-slim as builder
+FROM python:3.14-slim as builder
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y \
@@ -31,7 +31,7 @@ RUN .venv/bin/python -m mcp_server.cli.grammar_commands prefetch --cache-dir /tm
     rm -rf /tmp/ts-grammar-cache
 
 # Final stage - minimal runtime
-FROM python:3.12-slim
+FROM python:3.14-slim
 
 # Install runtime dependencies only
 RUN apt-get update && apt-get install -y \

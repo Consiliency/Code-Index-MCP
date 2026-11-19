@@ -107,7 +107,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
-          python-version: '3.12'
+          python-version: '3.14'
 
       - name: Validate prepared version
         run: |
@@ -221,7 +221,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
-          python-version: '3.12'
+          python-version: '3.14'
 
       - name: Prove exact protected-main version
         run: |
@@ -333,7 +333,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
-          python-version: '3.12'
+          python-version: '3.14'
 
       - name: Build Python distributions
         run: |

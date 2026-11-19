@@ -11,6 +11,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Python 3.14 is the minimum supported runtime.** `requires-python` is now
+  `>=3.14` (classifier 3.14 only); `uv.lock`, the required agent gate (a single
+  Python 3.14 job that keeps the `Protected Evidence - Agent Gate` check name),
+  the release, container and artifact workflows, the Dockerfiles
+  (`python:3.14-slim`), release smoke's unconstrained install and the PMCP
+  pilot script move to 3.14. black targets `py314`, which rewrites
+  parenthesized multi-exception `except` clauses to the PEP 758 form. Published
+  `1.6.0` and earlier still declare `>=3.12`. Environments installed with
+  Python 3.12 or 3.13 must be recreated with 3.14 to take the next release.
 - **Per-language degradation when a tree-sitter grammar is unavailable**
   (Consiliency/Code-Index-MCP#117). Staged full and incremental builds leave a
   language whose grammar cannot load offline out of the generation whole and

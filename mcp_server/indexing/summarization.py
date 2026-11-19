@@ -665,7 +665,7 @@ class FileBatchSummarizer(ChunkWriter):
             raw_timeout = self.summarization_config.get("timeout_s", 10.0)
         try:
             timeout_seconds = float(raw_timeout)
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             timeout_seconds = 10.0
         return max(15.0, timeout_seconds * 3)
 

@@ -82,7 +82,7 @@ def _passwd_home() -> Optional[Path]:
         import pwd
 
         home = pwd.getpwuid(os.getuid()).pw_dir
-    except (ImportError, KeyError, AttributeError, OSError):
+    except ImportError, KeyError, AttributeError, OSError:
         return None
     return Path(home) if home else None
 
@@ -874,7 +874,7 @@ def install_offline_guard() -> OfflineGrammarGuard:
 
                 try:
                     language = json.loads(config).get("language")
-                except (ValueError, AttributeError):
+                except ValueError, AttributeError:
                     language = None
             guard.require(language)
             return original(source, config, *args, **kwargs)
