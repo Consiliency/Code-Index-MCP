@@ -392,6 +392,9 @@ def test_prepare_delivered_wheel_never_builds(tmp_path, monkeypatch, valid):
         assert (root / "dist" / wheel.name).as_uri() in " ".join(result["uvx_prefix"])
 
 
+CONSTRAINTS = "dependency==1\ntreesitter-chunker==7.0.0 \\\n    --hash=sha256:00\n"
+
+
 @pytest.mark.parametrize(
     "field",
     [
@@ -414,7 +417,7 @@ def test_prepared_runtime_identity_rejects_manifest_tampering(tmp_path, monkeypa
     (tmp_path / "dist").mkdir()
     wheel = tmp_path / "dist/fixture.whl"
     wheel.write_bytes(b"wheel")
-    (tmp_path / "constraints.txt").write_text("dependency==1\n")
+    (tmp_path / "constraints.txt").write_text(CONSTRAINTS)
     executable = tmp_path / "pmcp"
     executable.write_bytes(b"#!/bin/sh\n")
     monkeypatch.setattr(pilot, "source_identity", lambda: {"source": "a" * 40})
@@ -439,6 +442,7 @@ def test_prepared_runtime_identity_rejects_manifest_tampering(tmp_path, monkeypa
             "python_version": [*pilot.PILOT_PYTHON, 0],
             "wheel_files_verified": 2,
             "baml_files_verified": 1,
+            "treesitter_chunker_version": "7.0.0",
         },
         "uvx_prefix": pilot.uvx_prefix(tmp_path, wheel, python),
         "python": python,
@@ -459,6 +463,11 @@ def test_prepared_runtime_identity_rejects_manifest_tampering(tmp_path, monkeypa
     with pytest.raises(PilotRefused):
         pilot.validate_manifest(tmp_path, manifest)
     manifest[field] = original
+    # The installed chunker must be the one the exported lock pins.
+    for chunker_version in (None, "6.0.0"):
+        installed = {**manifest["installed"], "treesitter_chunker_version": chunker_version}
+        with pytest.raises(PilotRefused, match="installed_chunker_changed"):
+            pilot.validate_manifest(tmp_path, {**manifest, "installed": installed})
 
     for artifact, rejection in (
         (wheel, "wheel_binding_changed"),
@@ -472,7 +481,85 @@ def test_prepared_runtime_identity_rejects_manifest_tampering(tmp_path, monkeypa
         )
         with pytest.raises(PilotRefused, match=rejection):
             pilot.validate_manifest(tmp_path, manifest, execute=True)
-        artifact.write_bytes(b"wheel" if artifact == wheel else b"dependency==1\n")
+        artifact.write_bytes(b"wheel" if artifact == wheel else CONSTRAINTS.encode())
+
+
+def test_pilot_profile_has_no_hard_coded_chunker_version():
+    """Review of #148: the pilot profile must fingerprint the installed chunker,
+    not a literal (it was ``"4.0.0"``), or v6 and v7 runs share a fingerprint."""
+    import ast
+
+    from scripts import v13_pmcp_pilot as pilot
+
+    tree = ast.parse(Path(pilot.__file__).read_text(encoding="utf-8"))
+    values = [
+        value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Dict)
+        for key, value in zip(node.keys, node.values)
+        if isinstance(key, ast.Constant) and key.value == "chunker_version"
+    ]
+    assert values, "pilot no longer configures a semantic profile chunker_version"
+    assert not any(isinstance(value, ast.Constant) for value in values), [
+        ast.unparse(value) for value in values
+    ]
+
+
+def test_pilot_chunker_version_matches_installed_distribution():
+    """The configured profile's chunker_version is the installed distribution,
+    in the automatic-detection format, so it moves with the chunker."""
+    from importlib.metadata import version
+
+    from mcp_server.artifacts.semantic_profiles import SemanticProfile
+    from mcp_server.config.settings import Settings
+    from scripts import v13_pmcp_pilot as pilot
+
+    installed = {"treesitter_chunker_version": version("treesitter-chunker")}
+    label = pilot.chunker_version_label(installed)
+    assert label == Settings()._detect_treesitter_chunker_version()
+    assert label == f"treesitter-chunker@{version('treesitter-chunker')}"
+    with pytest.raises(PilotRefused, match="installed_chunker_unknown"):
+        pilot.chunker_version_label({})
+
+    def fingerprint(chunker: str) -> str:
+        profile = {
+            "provider": "openai_compatible",
+            "model_name": "embed",
+            "model_version": "unreported",
+            "vector_dimension": 8,
+            "distance_metric": "cosine",
+            "normalization_policy": "provider-default",
+            "chunk_schema_version": "1",
+            "chunker_version": pilot.chunker_version_label({"treesitter_chunker_version": chunker}),
+        }
+        return SemanticProfile.from_dict("pilot", profile).compatibility_fingerprint
+
+    assert fingerprint("6.0.0") != fingerprint("7.0.0")
+
+
+def test_constrained_version_reads_uv_export_pins():
+    from scripts import v13_pmcp_pilot as pilot
+
+    assert pilot.constrained_version(CONSTRAINTS, "treesitter-chunker") == "7.0.0"
+    assert pilot.constrained_version(CONSTRAINTS, "dependency") == "1"
+    assert pilot.constrained_version("xtreesitter-chunker==1\n", "treesitter-chunker") is None
+    # Canonical-name, extras, markers, hashes and comments are accepted.
+    assert (
+        pilot.constrained_version(
+            'TreeSitter_Chunker[extra]==7.0.0 ; python_version >= "3.14" \\\n'
+            "    --hash=sha256:00  # via index-it-mcp\n",
+            "treesitter-chunker",
+        )
+        == "7.0.0"
+    )
+    # Anything other than one exact pin is unusable.
+    assert pilot.constrained_version("treesitter-chunker>=7\n", "treesitter-chunker") is None
+    assert (
+        pilot.constrained_version(
+            "treesitter-chunker==7.0.0\ntreesitter-chunker==6.0.0\n", "treesitter-chunker"
+        )
+        is None
+    )
 
 
 def test_pmcp_interpreter_digest_checked_before_execution(tmp_path, monkeypatch):

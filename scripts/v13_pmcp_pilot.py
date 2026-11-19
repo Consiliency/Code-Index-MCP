@@ -34,6 +34,8 @@ REPO = Path(__file__).resolve().parents[1]
 #: The pilot runs on the package's supported interpreter (requires-python >=3.14).
 PILOT_PYTHON = (3, 14)
 PILOT_PYTHON_BIN = f"python{PILOT_PYTHON[0]}.{PILOT_PYTHON[1]}"
+#: Distribution whose installed version the semantic profile fingerprints.
+CHUNKER_DISTRIBUTION = "treesitter-chunker"
 QUERY_TEXTS = {
     "ledger": "calculate available balance from credits and debits",
     "catalog": "find a product by its code",
@@ -107,6 +109,49 @@ def digest_json(value: dict) -> str:
     return hashlib.sha256(
         json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
+
+
+def chunker_version_label(installed: dict) -> str:
+    """Semantic-profile ``chunker_version`` for the installed chunker.
+
+    Same ``treesitter-chunker@<version>`` form as the automatic detection in
+    ``Settings._detect_treesitter_chunker_version``, so pilot vectors are
+    fingerprinted with the chunker that actually built them.
+    """
+    version = installed.get("treesitter_chunker_version")
+    if not isinstance(version, str) or not version:
+        raise PilotRefused("installed_chunker_unknown")
+    return f"{CHUNKER_DISTRIBUTION}@{version}"
+
+
+def constrained_version(constraints: str, distribution: str) -> str | None:
+    """Return the single exact ``==`` pin of ``distribution`` in a uv export.
+
+    Names are compared in canonical form (case, ``-``/``_``/``.``), extras and
+    markers are allowed, and hash/comment continuations are ignored. ``None``
+    means no usable pin: absent, not an exact ``==``, or pinned more than once
+    with different versions.
+    """
+    from packaging.requirements import InvalidRequirement, Requirement
+    from packaging.utils import canonicalize_name
+
+    wanted = canonicalize_name(distribution)
+    pins: set[str] = set()
+    for raw in constraints.splitlines():
+        line = raw.split(" #", 1)[0].strip().rstrip("\\").strip()
+        if not line or line.startswith(("#", "-")):
+            continue
+        try:
+            requirement = Requirement(line)
+        except InvalidRequirement:
+            continue
+        if canonicalize_name(requirement.name) != wanted:
+            continue
+        specs = list(requirement.specifier)
+        if len(specs) != 1 or specs[0].operator != "==" or "*" in specs[0].version:
+            return None
+        pins.add(specs[0].version)
+    return pins.pop() if len(pins) == 1 else None
 
 
 def expected_profile_fingerprint(metadata: dict) -> str:
@@ -769,6 +814,7 @@ def installed_identity(wheel: Path) -> dict:
         "package_module": str(package / "__init__.py"),
         "version": version("index-it-mcp"),
         "prometheus_client_version": version("prometheus-client"),
+        "treesitter_chunker_version": version(CHUNKER_DISTRIBUTION),
         "wheel_files_verified": checked,
         "baml_files_verified": baml_checked,
     }
@@ -809,6 +855,11 @@ def validate_manifest(root: Path, manifest: dict, *, execute: bool = False) -> N
         or installed["baml_files_verified"] <= 0
     ):
         raise PilotRefused("installed_identity_changed")
+    chunker_version = installed.get("treesitter_chunker_version")
+    if not isinstance(chunker_version, str) or chunker_version != constrained_version(
+        (root / "constraints.txt").read_text(), CHUNKER_DISTRIBUTION
+    ):
+        raise PilotRefused("installed_chunker_changed")
     pmcp = Path(manifest.get("pmcp_path", ""))
     expected_pmcp = manifest.get("pmcp_distribution")
     if (
@@ -2532,7 +2583,7 @@ async def inference_pilot(
             "distance_metric": "cosine",
             "normalization_policy": "provider-default",
             "chunk_schema_version": "1",
-            "chunker_version": "4.0.0",
+            "chunker_version": chunker_version_label(manifest["installed"]),
             "build_metadata": {
                 "embedding_api_base": bases["embedding"],
                 "openai_api_base": bases["embedding"],

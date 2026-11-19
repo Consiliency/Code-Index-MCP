@@ -1644,7 +1644,7 @@ requires-dist = [
     { name = "tabulate", marker = "extra == 'dev'", specifier = ">=0.9.0" },
     { name = "tree-sitter", specifier = ">=0.26,<0.27" },
     { name = "tree-sitter-language-pack", specifier = ">=1.20,<1.21" },
-    { name = "treesitter-chunker", specifier = ">=6,<7" },
+    { name = "treesitter-chunker", specifier = ">=7,<8" },
     { name = "types-pyyaml", marker = "extra == 'dev'", specifier = ">=6.0.0" },
     { name = "types-requests", marker = "extra == 'dev'", specifier = ">=2.31.0" },
     { name = "types-setuptools", marker = "extra == 'dev'", specifier = ">=68.0.0" },
@@ -4525,7 +4525,7 @@ wheels = [
 
 [[package]]
 name = "treesitter-chunker"
-version = "6.0.0"
+version = "7.0.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "chardet" },
@@ -4533,7 +4533,9 @@ dependencies = [
     { name = "igraph" },
     { name = "leidenalg" },
     { name = "networkx" },
+    { name = "packaging" },
     { name = "pathspec" },
+    { name = "psutil" },
     { name = "pyarrow" },
     { name = "pygments" },
     { name = "python-dateutil" },
@@ -4549,9 +4551,9 @@ dependencies = [
     { name = "typer" },
     { name = "unicodedata2", marker = "python_full_version >= '3.15' or platform_python_implementation != 'CPython'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/eb/5b/a07c42ee3349b9e9c4421d48b7ff856f1a4019b24521887f62ae0b89593f/treesitter_chunker-6.0.0.tar.gz", hash = "sha256:4a26c80c5669a55737bc459484b9811e03f7c2b7a86724da3b373bbe3119715f", size = 1289472, upload-time = "2026-10-21T05:35:46.958Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/88/f8/06ef4d1d59d85cfd27d60ec7ee644e7c0b9bfafddf0253d75d47706d37e5/treesitter_chunker-7.0.0.tar.gz", hash = "sha256:c8dde63a36c9de38a9428b689ae2af54230066b857cf0dd01eaa7462a2e86902", size = 1702740, upload-time = "2026-11-19T12:02:01.849Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/3f/8c/e7eee7aa753f8ffeca2bc5ceceeb1257f8fcacd03c1adc01e2503965fa67/treesitter_chunker-6.0.0-py3-none-any.whl", hash = "sha256:8e5927f387b05115e408496efbbf01343c4b7eba76b6c42ba209130e19153345", size = 852064, upload-time = "2026-10-21T05:35:45.151Z" },
+    { url = "https://files.pythonhosted.org/packages/42/ff/e8206ccba0344ac6777d772d1adff64563d31b6ed4d6365dfbe48645cd9c/treesitter_chunker-7.0.0-py3-none-any.whl", hash = "sha256:1c15277fd9ded58a781dbe3a1a1e9d06032736d06df2df17c7ddb7861dc788a5", size = 945265, upload-time = "2026-11-19T12:01:59.928Z" },
 ]
 
 [[package]]

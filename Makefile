@@ -343,7 +343,7 @@ agent-gate-local: agent-fast-local
 		tests/test_python_client_search.py tests/test_watcher_multi_repo.py \
 		tests/test_endpoint_reranker.py -q --no-cov
 	SEMANTIC_SEARCH_ENABLED=false $(UV_RUN) --extra dev pytest \
-		tests/test_grammar_registry.py tests/test_chunker_v6_contract.py \
+		tests/test_grammar_registry.py tests/test_chunker_v7_contract.py \
 		tests/test_chunker_scheme_recovery.py tests/test_chunker_identity_migration.py \
 		tests/test_sandbox_default_on.py -q --no-cov
 	$(MAKE) release-smoke

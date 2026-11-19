@@ -853,17 +853,17 @@ print(json.dumps({{"indexed": stats["indexed_files"], "failed": stats["failed_fi
 
 
 @pytest.mark.parametrize("required", ["1", ""])
-def test_v6_contract_fails_instead_of_skipping_under_require_grammars(required):
-    """#116 review N4: a non-6.x chunker must not quietly skip the ID pins."""
+def test_v7_contract_fails_instead_of_skipping_under_require_grammars(required):
+    """#116 review N4: a non-7.x chunker must not quietly skip the ID pins."""
     import subprocess
     import sys
     from pathlib import Path
 
-    contract = Path(__file__).with_name("test_chunker_v6_contract.py")
+    contract = Path(__file__).with_name("test_chunker_v7_contract.py")
     script = f"""
 import importlib.metadata, runpy
 real = importlib.metadata.version
-importlib.metadata.version = lambda name: "7.0.0" if name == "treesitter-chunker" else real(name)
+importlib.metadata.version = lambda name: "8.0.0" if name == "treesitter-chunker" else real(name)
 try:
     namespace = runpy.run_path({str(contract)!r})
 except RuntimeError as exc:
