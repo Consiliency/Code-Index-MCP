@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import importlib.metadata
 import json
 import os
 import tempfile
@@ -23,6 +24,13 @@ from mcp_server.indexer.hybrid_search import HybridSearch, HybridSearchConfig
 from mcp_server.storage.sqlite_store import SQLiteStore
 from mcp_server.utils.fuzzy_indexer import FuzzyIndexer
 from mcp_server.utils.semantic_indexer import SemanticIndexer
+
+#: Semantic profiles fingerprint the installed chunker, in the same form as the
+#: automatic detection (``Settings._detect_treesitter_chunker_version``).
+try:
+    CHUNKER_VERSION = f"treesitter-chunker@{importlib.metadata.version('treesitter-chunker')}"
+except importlib.metadata.PackageNotFoundError:
+    CHUNKER_VERSION = "treesitter-chunker@not-installed"
 
 
 INDEXABLE_EXTENSIONS = {".py", ".md", ".yml", ".yaml", ".json"}
@@ -247,7 +255,7 @@ def run(args: argparse.Namespace) -> Dict[str, object]:
                 "distance_metric": "dot",
                 "normalization_policy": "l2",
                 "chunk_schema_version": "1",
-                "chunker_version": "treesitter-chunker@2.2.4",
+                "chunker_version": CHUNKER_VERSION,
                 "build_metadata": {"openai_api_base": args.fireworks_base},
             }
         }
@@ -260,7 +268,7 @@ def run(args: argparse.Namespace) -> Dict[str, object]:
                 "distance_metric": "dot",
                 "normalization_policy": "provider-default",
                 "chunk_schema_version": "1",
-                "chunker_version": "treesitter-chunker@2.2.4",
+                "chunker_version": CHUNKER_VERSION,
             }
 
         os.environ["OPENAI_API_BASE"] = args.fireworks_base
@@ -452,7 +460,7 @@ def run(args: argparse.Namespace) -> Dict[str, object]:
                     "distance_metric": "dot",
                     "normalization_policy": "l2",
                     "chunk_schema_version": "1",
-                    "chunker_version": "treesitter-chunker@2.2.4",
+                    "chunker_version": CHUNKER_VERSION,
                     "build_metadata": {
                         "openai_api_base": args.local_openai_base,
                         "openai_api_key": args.local_openai_key or fireworks_api_key,
