@@ -36,7 +36,7 @@ def verify_artifact_freshness(
         if ts.tzinfo is None:
             return FreshnessVerdict.INVALID
         ts = ts.astimezone(timezone.utc)
-    except (ValueError, TypeError, OverflowError):
+    except ValueError, TypeError, OverflowError:
         return FreshnessVerdict.INVALID
 
     now = datetime.now(timezone.utc)
@@ -52,7 +52,7 @@ def verify_artifact_freshness(
             cwd=repo_path,
             timeout=10,
         )
-    except (OSError, subprocess.SubprocessError):
+    except OSError, subprocess.SubprocessError:
         return FreshnessVerdict.STALE_COMMIT
 
     # Check age.

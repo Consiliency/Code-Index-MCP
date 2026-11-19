@@ -16,7 +16,7 @@ class NpmPackageJsonParser:
             return set()
         try:
             data = json.loads(manifest.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
+        except json.JSONDecodeError, OSError:
             return set()
         packages: Set[str] = set()
         for section in ("dependencies", "devDependencies", "peerDependencies"):

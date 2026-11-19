@@ -554,7 +554,7 @@ class IndexDiscovery:
             artifacts.sort(key=lambda x: x["created_at"], reverse=True)
             return artifacts[0]
 
-        except (subprocess.CalledProcessError, json.JSONDecodeError):
+        except subprocess.CalledProcessError, json.JSONDecodeError:
             return None
 
     def _find_recovery_artifact(

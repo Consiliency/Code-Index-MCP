@@ -1038,11 +1038,11 @@ def _malformed_line_reply(line: str) -> dict[str, Any] | Any | None:
     try:
         types.jsonrpc_message_adapter.validate_json(line, by_name=False)
         return None
-    except (ValueError, RecursionError):
+    except ValueError, RecursionError:
         pass
     try:
         payload = json.loads(line)
-    except (ValueError, RecursionError):
+    except ValueError, RecursionError:
         error = {"code": types.PARSE_ERROR, "message": "Parse error"}
         request_id: Any = None
     else:

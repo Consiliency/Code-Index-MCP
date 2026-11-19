@@ -99,7 +99,7 @@ def ensure_middleware_contract(server: Any) -> None:
         problems.append("Server.middleware is not a list")
     try:
         parameters = list(inspect.signature(ServerMiddleware.__call__).parameters)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         parameters = []
     if parameters[1:] != ["ctx", "call_next"]:
         problems.append(

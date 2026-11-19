@@ -24,7 +24,7 @@ class DirectSearcher:
             try:
                 subprocess.run([cmd, "--version"], capture_output=True, check=True)
                 setattr(self, attr, True)
-            except (subprocess.CalledProcessError, FileNotFoundError):
+            except subprocess.CalledProcessError, FileNotFoundError:
                 setattr(self, attr, False)
                 logger.warning(f"{cmd} not found in PATH")
 

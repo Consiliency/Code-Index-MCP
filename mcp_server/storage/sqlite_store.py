@@ -241,7 +241,7 @@ def read_grammar_degradation(conn: sqlite3.Connection) -> Optional[Dict[str, Any
         return None
     try:
         value = json.loads(raw)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         value = None
     languages = value.get("languages") if isinstance(value, dict) else None
     if (
@@ -1170,7 +1170,7 @@ class SQLiteStore:
                 # Extract version from filename (e.g., "002_relative_paths.sql" -> 2)
                 try:
                     version = int(migration_file.name.split("_")[0])
-                except (ValueError, IndexError):
+                except ValueError, IndexError:
                     continue
 
                 if (
@@ -2889,7 +2889,7 @@ class SQLiteStore:
                 continue
             try:
                 metadata = json.loads(metadata_raw)
-            except (TypeError, json.JSONDecodeError):
+            except TypeError, json.JSONDecodeError:
                 continue
             source_metadata = extract_matching_source_metadata(
                 metadata,
@@ -4443,7 +4443,7 @@ class SQLiteStore:
             if row[6]:
                 try:
                     metadata = json.loads(row[6])
-                except (TypeError, json.JSONDecodeError):
+                except TypeError, json.JSONDecodeError:
                     metadata = {}
             return {
                 "chunk_hash": row[0],

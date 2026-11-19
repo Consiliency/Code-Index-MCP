@@ -141,7 +141,7 @@ def _host_grammar_paths() -> "tuple[Optional[Path], Optional[Path]]":
             import pwd
 
             passwd_home = pwd.getpwuid(os.getuid()).pw_dir
-        except (ImportError, KeyError, AttributeError, OSError):
+        except ImportError, KeyError, AttributeError, OSError:
             passwd_home = ""
         if passwd_home:
             root = Path(passwd_home) / ".cache"
@@ -248,13 +248,13 @@ def _within_allowed(path: str, roots: tuple) -> bool:
         return False
     try:
         resolved = Path(os.fsdecode(path)).resolve(strict=False)
-    except (OSError, RuntimeError):
+    except OSError, RuntimeError:
         return False
     for r in roots:
         try:
             resolved.relative_to(Path(r).resolve(strict=False))
             return True
-        except (ValueError, OSError):
+        except ValueError, OSError:
             continue
     return False
 

@@ -61,24 +61,25 @@ def test_expanded_local_quality_gate_does_not_add_pull_request_compute() -> None
         assert "alpha-mypy-ratchet" not in text
 
     ci = pull_request_workflows["ci-cd-pipeline.yml"]
-    # Two matrices only: the dispatch-only cross-platform job and the required
-    # agent gate's Python-version legs (Consiliency/Code-Index-MCP#115).
-    assert ci.count("matrix:") == 2
+    # One matrix only: the dispatch-only cross-platform job. The required agent
+    # gate runs on Python 3.14 alone, without a matrix.
+    assert ci.count("matrix:") == 1
     matrix_job = ci[ci.index("informational-test-cross-platform:") :]
     assert "if: github.event_name == 'workflow_dispatch'" in matrix_job
 
 
-def test_agent_gate_python_matrix_is_bounded_and_keeps_required_name() -> None:
+def test_agent_gate_runs_on_python_314_and_keeps_required_name() -> None:
     import yaml
 
-    jobs = yaml.safe_load(_read("ci-cd-pipeline.yml"))["jobs"]
-    gate = jobs["agent-gate"]
-    matrix = gate["strategy"]["matrix"]
-    assert set(matrix) == {"python-version"}
-    assert matrix["python-version"] == ["3.12", "3.13", "3.14"]
-    assert gate["strategy"]["fail-fast"] is False
-    # The 3.12 leg evaluates to the exact required status-check name.
-    assert "matrix.python-version == '3.12' && 'Protected Evidence - Agent Gate'" in gate["name"]
+    workflow = yaml.safe_load(_read("ci-cd-pipeline.yml"))
+    gate = workflow["jobs"]["agent-gate"]
+    # No matrix: a matrix job would suffix its values to the name, and the
+    # literal name is the required status check.
+    assert "strategy" not in gate
+    assert gate["name"] == "Protected Evidence - Agent Gate"
+    assert workflow["env"]["PYTHON_VERSION"] == "3.14"
+    setup = next(step for step in gate["steps"] if step.get("name") == "Set up Python")
+    assert setup["with"]["python-version"] == "${{ env.PYTHON_VERSION }}"
     assert gate["env"]["MCP_REQUIRE_GRAMMARS"] == "1"
     steps = "\n".join(str(step.get("run", "")) for step in gate["steps"])
     assert "mcp-index grammars prefetch" in steps
@@ -97,7 +98,7 @@ def test_agent_gate_aggregator_fails_closed_when_a_leg_fails() -> None:
     assert "continue-on-error" not in aggregator
     assert aggregator["steps"] == [
         {
-            "name": "Confirm every protected agent gate leg passed",
+            "name": "Confirm the protected agent gate passed",
             "env": {"AGENT_GATE_RESULT": "${{ needs.agent-gate.result }}"},
             "run": (
                 'echo "agent-gate result: ${AGENT_GATE_RESULT}"\n'

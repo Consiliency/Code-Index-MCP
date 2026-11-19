@@ -284,9 +284,10 @@ tiers above are unchanged by the upgrade.
   `scheme_mismatch`, fails closed and needs a full `reindex`; it is never mixed
   with 6.x ids. Semantic profiles fingerprint the chunker version, so 4.x
   vectors and summaries read as profile-incompatible until rebuilt.
-- **Python.** The required agent gate runs on Python 3.12, 3.13 and 3.14 in
-  hosted Linux CI. That is CI evidence, not installed-runtime acceptance on
-  those versions.
+- **Python.** Source installs and wheels built from `main` require Python 3.14
+  (`requires-python = ">=3.14"`). The required agent gate runs on Python 3.14
+  only, in hosted Linux CI; that is CI evidence, not installed-runtime
+  acceptance. Published `1.6.0` and earlier declare `>=3.12` and are unchanged.
 
 ## Summarization runtime (BAML)
 
@@ -333,11 +334,13 @@ Production summaries record the configured model name and are unaffected.
 
 ## V13 Verification Boundary
 
-Published tiers above are unchanged. The `>=3.12` package requirement and
-OS-independent classifier are compatibility declarations, not proof of every
-Python release or operating system. Current remediation starts with Linux and
-Python 3.12; Python 3.13+, macOS and Windows need their own installed-runtime
-evidence before rollout on those combinations. No blanket 48-language result
+Published tiers above are unchanged. The `>=3.14` package requirement (from
+`main`; published `1.6.0` and earlier declare `>=3.12`) and OS-independent
+classifier are compatibility declarations, not proof of every Python release or
+operating system. The historical V13 installed-runtime evidence is Linux and
+Python 3.12; Python 3.14 needs its own installed-runtime acceptance (wheel,
+container and PMCP pilot) before the next release, and macOS and Windows need
+their own installed-runtime evidence before rollout on those combinations. No blanket 48-language result
 is implied by a Python fixture or a registry inventory.
 
 The installed wheel smoke now checks fresh and upgraded SQLite databases,

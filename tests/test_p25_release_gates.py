@@ -34,9 +34,6 @@ def _job_names(*workflow_paths: str) -> set[str]:
     for workflow_path in workflow_paths:
         for job in _jobs(workflow_path).values():
             names.add(job["name"])
-            if "'Protected Evidence - Agent Gate'" in job["name"]:
-                # Matrix name expression; its 3.12 leg is the required check.
-                names.add("Protected Evidence - Agent Gate")
     return names
 
 
@@ -67,7 +64,7 @@ def test_main_ci_required_aggregator_depends_on_agent_gate():
     assert aggregator["name"] == "Protected Evidence - Agent Gate Passed"
     assert _needs(aggregator) == {"agent-gate"}
     assert "continue-on-error" not in aggregator
-    # A failed matrix leg would otherwise skip the aggregator, and GitHub
+    # A failed agent gate would otherwise skip the aggregator, and GitHub
     # treats a skipped required check as passing (#116 review B1).
     assert aggregator["if"] == "${{ always() }}"
     result_steps = [
@@ -79,11 +76,10 @@ def test_main_ci_required_aggregator_depends_on_agent_gate():
     assert 'test "${AGENT_GATE_RESULT}" = "success"' in result_steps[0]["run"]
 
     gate = jobs["agent-gate"]
-    # Python-version matrix (#115): the 3.12 leg evaluates to the exact
-    # required check name; every leg gates the aggregator through needs.
-    assert "'Protected Evidence - Agent Gate'" in gate["name"]
-    assert "matrix.python-version == '3.12'" in gate["name"]
-    assert "3.12" in gate["strategy"]["matrix"]["python-version"]
+    # Single Python 3.14 job (no matrix), so the literal name is the
+    # required check; it gates the aggregator through needs.
+    assert gate["name"] == "Protected Evidence - Agent Gate"
+    assert "strategy" not in gate
     assert "continue-on-error" not in gate
 
 

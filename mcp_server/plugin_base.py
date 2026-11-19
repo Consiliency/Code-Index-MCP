@@ -149,7 +149,7 @@ def _construction_parameters(target: Any) -> list[inspect.Parameter]:
         return _hook_parameters(method)
     try:
         return list(inspect.signature(target).parameters.values())
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return []
 
 
@@ -157,7 +157,7 @@ def _hook_parameters(method: Any) -> list[inspect.Parameter]:
     """Parameters of a class's ``__init__``/``__new__`` without ``self``/``cls``."""
     try:
         parameters = list(inspect.signature(method).parameters.values())
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return []
     if parameters and parameters[0].kind in (
         inspect.Parameter.POSITIONAL_ONLY,
@@ -184,7 +184,7 @@ def _prebound_semantic(target: Any) -> bool:
         return False
     try:
         bound = inspect.signature(target.func).bind_partial(*target.args, **target.keywords)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return bool(target.keywords.get("enable_semantic"))
     return bool(bound.arguments.get("enable_semantic"))
 

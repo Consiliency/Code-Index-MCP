@@ -22,7 +22,7 @@ By participating in this project, you agree to abide by our Code of Conduct:
 ## Getting Started
 
 ### Prerequisites
-- Python 3.8 or higher
+- Python 3.14 or higher
 - Git
 - Basic understanding of language parsing and indexing
 

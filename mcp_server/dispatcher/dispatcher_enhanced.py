@@ -223,7 +223,7 @@ def _get_endpoint_rerank_timeout_seconds() -> float:
         return _DEFAULT_RERANK_TIMEOUT_S
     try:
         return max(float(raw), 1.0)
-    except (ValueError, TypeError):
+    except ValueError, TypeError:
         return _DEFAULT_RERANK_TIMEOUT_S
 
 
@@ -662,7 +662,7 @@ class EnhancedDispatcher:
             if _ms <= 0:
                 raise ValueError("non-positive")
             self._fallback_timeout_ms = _ms
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             logger.warning("Invalid MCP_DISPATCHER_FALLBACK_MS value; using default 2000ms")
             self._fallback_timeout_ms = 2000
 

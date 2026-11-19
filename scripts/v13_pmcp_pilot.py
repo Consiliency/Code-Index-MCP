@@ -31,6 +31,9 @@ import httpx
 import psutil
 
 REPO = Path(__file__).resolve().parents[1]
+#: The pilot runs on the package's supported interpreter (requires-python >=3.14).
+PILOT_PYTHON = (3, 14)
+PILOT_PYTHON_BIN = f"python{PILOT_PYTHON[0]}.{PILOT_PYTHON[1]}"
 QUERY_TEXTS = {
     "ledger": "calculate available balance from credits and debits",
     "catalog": "find a product by its code",
@@ -624,9 +627,9 @@ def prepare(
     root.mkdir(mode=0o700, parents=True, exist_ok=False)
     grammar_cache = resolve_grammar_cache(root, grammar_cache)
     (root / "home").mkdir()
-    python = str(Path(sys.base_prefix) / "bin" / "python3.12")
-    if sys.version_info[:2] != (3, 12) or not Path(python).is_file():
-        raise PilotRefused("python_312_required")
+    python = str(Path(sys.base_prefix) / "bin" / PILOT_PYTHON_BIN)
+    if sys.version_info[:2] != PILOT_PYTHON or not Path(python).is_file():
+        raise PilotRefused("python_314_required")
     if wheel_path is None:
         run_command(
             ["uv", "build", "--wheel", "--out-dir", str(root / "dist")],
@@ -745,7 +748,7 @@ def installed_identity(wheel: Path) -> dict:
     import mcp_server
 
     package = Path(mcp_server.__file__).resolve().parent
-    if "site-packages" not in package.parts or sys.version_info[:2] != (3, 12):
+    if "site-packages" not in package.parts or sys.version_info[:2] != PILOT_PYTHON:
         raise PilotRefused("installed_identity_failed")
     if mcp_server.__version__ != version("index-it-mcp"):
         raise PilotRefused("installed_version_mismatch")
@@ -783,7 +786,7 @@ def validate_manifest(root: Path, manifest: dict, *, execute: bool = False) -> N
         raise PilotRefused("wheel_binding_changed")
     if digest_file(root / "constraints.txt") != manifest["constraints_sha256"]:
         raise PilotRefused("constraints_binding_changed")
-    python = str(Path(sys.base_prefix) / "bin" / "python3.12")
+    python = str(Path(sys.base_prefix) / "bin" / PILOT_PYTHON_BIN)
     if manifest.get("python") != python or manifest.get("uvx_prefix") != uvx_prefix(
         root, wheel, python
     ):
@@ -799,7 +802,7 @@ def validate_manifest(root: Path, manifest: dict, *, execute: bool = False) -> N
     if (
         not isinstance(installed, dict)
         or installed.get("version") != manifest["wheel_source_contract"]["version"]
-        or installed.get("python_version", [])[:2] != [3, 12]
+        or installed.get("python_version", [])[:2] != list(PILOT_PYTHON)
         or type(installed.get("wheel_files_verified")) is not int
         or installed["wheel_files_verified"] <= 0
         or type(installed.get("baml_files_verified")) is not int
@@ -1864,7 +1867,7 @@ def _verify_receipt_artifacts(root, manifest, kind, result, copies, expected_app
                         is None
                     ):
                         raise PilotRefused("browser_screenshot_blank")
-            except (OSError, ValueError):
+            except OSError, ValueError:
                 raise PilotRefused("browser_screenshot_invalid") from None
     else:
         _verify_live_records(

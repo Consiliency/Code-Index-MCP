@@ -69,7 +69,7 @@ def _docker_available() -> bool:
             timeout=10,
         )
         return result == 0
-    except (FileNotFoundError, subprocess.TimeoutExpired):
+    except FileNotFoundError, subprocess.TimeoutExpired:
         return False
 
 
@@ -90,7 +90,7 @@ def _drain_lines(stream, max_lines: int, timeout: float) -> list[str]:
                 lines.append(line.rstrip("\n"))
                 if len(lines) >= max_lines:
                     break
-        except (ValueError, OSError):
+        except ValueError, OSError:
             pass
 
     t = threading.Thread(target=_reader, daemon=True)
@@ -181,7 +181,7 @@ def gateway_proc(tmp_path_factory):
             if resp.status_code < 500:
                 up = True
                 break
-        except (httpx.ConnectError, httpx.TimeoutException):
+        except httpx.ConnectError, httpx.TimeoutException:
             pass
         time.sleep(0.5)
 

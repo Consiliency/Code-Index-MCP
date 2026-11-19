@@ -22,6 +22,8 @@ candidate. PREP must select a new version and SHIP must verify registry delivery
 before that published version replaces the candidate-wheel reference.
 
 Pin the Python interpreter and distribution, then launch index-it-mcp stdio.
+`scripts/v13_pmcp_pilot.py` runs on Python 3.14 (`PILOT_PYTHON`), the package
+floor; the historical result recorded below ran on Python 3.12.
 The production extra supplies actual metrics/auth dependencies exercised by the
 pilot; a core-wheel pass is not a metrics-exporter pass. Keep optional learned
 reranking disabled unless a separate retrieval gate accepts it.

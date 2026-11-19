@@ -31,7 +31,7 @@ sleep 5
 # Run the development container
 echo -e "${GREEN}Launching development container...${NC}"
 echo "You'll have access to:"
-echo "  - Python 3.11 with all project dependencies"
+echo "  - Python 3.14 with all project dependencies"
 echo "  - Node.js and npm"
 echo "  - Claude Code CLI"
 echo "  - All testing and development tools"

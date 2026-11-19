@@ -238,7 +238,7 @@ def extract_matching_source_metadata(
             continue
         try:
             normalized = normalize_source_record(record)
-        except (KeyError, TypeError, ValueError):
+        except KeyError, TypeError, ValueError:
             continue
         if source_type and normalized["source_type"] != source_type:
             continue

@@ -13,16 +13,16 @@ This guide helps you resolve common issues with Code-Index-MCP.
 ## Installation Issues
 
 ### Python Version Mismatch
-**Problem**: `ERROR: This package requires Python 3.8+`
+**Problem**: the installer reports that `index-it-mcp` requires Python `>=3.14`
 
 **Solution**:
 ```bash
 # Check Python version
 python --version
 
-# Use pyenv to install correct version
-pyenv install 3.8.10
-pyenv local 3.8.10
+# Let uv provide a 3.14 interpreter for the project environment
+uv python install 3.14
+uv sync --locked --python 3.14
 ```
 
 ### Missing Dependencies

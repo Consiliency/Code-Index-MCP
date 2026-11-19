@@ -426,7 +426,7 @@ def test_prepared_runtime_identity_rejects_manifest_tampering(tmp_path, monkeypa
     monkeypatch.setattr(pilot, "browser_node_identity", lambda path: node_identity)
     for name in pilot.PILOT_HELPERS:
         (tmp_path / name).write_bytes((pilot.REPO / "scripts" / name).read_bytes())
-    python = str(Path(sys.base_prefix) / "bin/python3.12")
+    python = str(Path(sys.base_prefix) / "bin" / pilot.PILOT_PYTHON_BIN)
     manifest = {
         "schema": "v13-pilot-manifest.v1",
         "source": "a" * 40,
@@ -436,7 +436,7 @@ def test_prepared_runtime_identity_rejects_manifest_tampering(tmp_path, monkeypa
         "wheel_source_contract": {"version": "1.4.1"},
         "installed": {
             "version": "1.4.1",
-            "python_version": [3, 12, 0],
+            "python_version": [*pilot.PILOT_PYTHON, 0],
             "wheel_files_verified": 2,
             "baml_files_verified": 1,
         },

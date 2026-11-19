@@ -94,7 +94,7 @@ _SHELL_SUFFIXES = frozenset({".sh", ".bash", ".zsh"})
 def _relative_posix(path: Path, root: Path) -> Optional[str]:
     try:
         return path.resolve().relative_to(root.resolve()).as_posix()
-    except (OSError, ValueError):
+    except OSError, ValueError:
         return None
 
 

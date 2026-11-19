@@ -9,17 +9,12 @@ import re
 import subprocess
 import sys
 import tempfile
+import tomllib
 import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-
-try:
-    import tomllib
-except ImportError:  # Python <3.11
-    import tomli as tomllib
-
 
 REPO = Path(__file__).resolve().parents[2]
 GHCR_IMAGE = "ghcr.io/consiliency/code-index-mcp"
@@ -163,7 +158,7 @@ def test_unconstrained_smoke_installs_the_wheel_alone_and_starts_stdio(tmp_path,
     assert resolved["mcp"] == "2.3.0" and resolved["openai"] == "3.46.0"
     assert not any(command[:2] in (["uv", "build"], ["uv", "export"]) for command in commands)
     venv_command = next(command for command in commands if command[:2] == ["uv", "venv"])
-    assert venv_command[venv_command.index("--python") + 1] == "3.12"
+    assert venv_command[venv_command.index("--python") + 1] == "3.14"
     install, install_env = next(
         (command, env) for command, env in calls if command[:3] == ["uv", "pip", "install"]
     )
@@ -242,7 +237,7 @@ def test_release_smoke_cli_builds_once_for_locked_and_unconstrained(tmp_path, mo
     assert seen == [
         "build",
         ("locked", (built, "a" * 64)),
-        ("unconstrained", (built, "a" * 64), {"python": "3.12"}),
+        ("unconstrained", (built, "a" * 64), {"python": "3.14"}),
     ]
 
     monkeypatch.setattr(

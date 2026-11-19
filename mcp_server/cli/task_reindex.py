@@ -77,7 +77,7 @@ def _candidate_checkpoint_paths(target_path: Path, workspace_root: Path) -> list
             return [
                 target_path.expanduser().resolve(strict=True).relative_to(workspace_root).as_posix()
             ]
-        except (OSError, ValueError):
+        except OSError, ValueError:
             return []
     candidates: list[str] = []
     for path in target_path.rglob("*"):
@@ -87,7 +87,7 @@ def _candidate_checkpoint_paths(target_path: Path, workspace_root: Path) -> list
             candidates.append(
                 path.expanduser().resolve(strict=True).relative_to(workspace_root).as_posix()
             )
-        except (OSError, ValueError):
+        except OSError, ValueError:
             continue
     return candidates
 
