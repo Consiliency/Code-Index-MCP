@@ -1037,13 +1037,6 @@ class TestQueryIntent:
 class TestSymbolRouting:
     """Tests for _symbol_route and its integration into search()."""
 
-    def setup_method(self):
-        import os
-
-        # .env.native has MCP_ENABLE_MULTI_REPO=true with stale /workspaces paths.
-        # Force it off so dispatcher init doesn't try to create that directory.
-        os.environ["MCP_ENABLE_MULTI_REPO"] = "false"
-
     def _make_store(self, symbol_rows):
         """Return a mock SQLiteStore whose get_symbol returns symbol_rows."""
         store = MagicMock()
