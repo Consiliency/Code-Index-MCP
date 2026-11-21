@@ -1541,12 +1541,13 @@ def _build_prefill_writer(
 
 
 def _published_index_change(
-    registry: RepositoryRegistry, repo_id: str, published: tuple[Any, Path, Any]
+    registry: RepositoryRegistry, repo_id: str, published: tuple[Any, Any, Path, Any]
 ) -> Optional[str]:
     """Describe a change to the published index since the window started.
 
-    The writer lock keeps other index writers out, so this is a guard rather
-    than an expected path. Checkout edits, commits and branch switches are not
+    The writer lock keeps other index writers out, but not registry edits such
+    as ``repository unregister``, so the command checks this after every pass
+    and before reporting success. Checkout edits, commits and branch switches are not
     changes here: summaries are built only from the published index and its
     commit, and the next staged rebuild already drops the ones for files whose
     committed content changed.
@@ -1556,7 +1557,9 @@ def _published_index_change(
         return "the repository was unregistered"
     if getattr(current, "staleness_reason", None) in _STAGED_REBUILD_MARKERS:
         return f"a staged rebuild marker appeared ({current.staleness_reason})"
-    generation, index_path, commit = published
+    registration_id, generation, index_path, commit = published
+    if getattr(current, "registration_id", None) != registration_id:
+        return "the repository registration changed"
     if current.index_generation != generation or not current.index_path:
         return "the published generation changed"
     if Path(current.index_path).resolve() != index_path:
@@ -1657,10 +1660,6 @@ async def _run_summary_prefill(
         if window_closed():
             stop_reason = "max_seconds"
             break
-        detail = published_change()
-        if detail is not None:
-            stop_reason = "published_index_changed"
-            break
         pass_chunks = _PREFILL_PASS_CHUNKS
         if limit:
             pass_chunks = min(pass_chunks, limit - written)
@@ -1674,6 +1673,13 @@ async def _run_summary_prefill(
         written += stored
         attempted += result.chunks_attempted
         report(written, remaining)
+        # Recheck before reading any outcome: a success (drained, or the limit
+        # or window on the next iteration) must not be reported for a
+        # repository that changed or was unregistered during this pass.
+        detail = published_change()
+        if detail is not None:
+            stop_reason = "published_index_changed"
+            break
         if result.cancelled:
             stop_reason = "interrupted" if stop.requested else "max_seconds"
             break
@@ -1814,6 +1820,7 @@ def summarize(repo: str, limit: int, max_seconds: float, as_json: bool):
             _check_prefill_readiness(repo_info)
             index_path = Path(repo_info.index_path).resolve()
             published = (
+                getattr(repo_info, "registration_id", None),
                 repo_info.index_generation,
                 index_path,
                 repo_info.last_indexed_commit,

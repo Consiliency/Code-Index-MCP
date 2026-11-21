@@ -292,8 +292,9 @@ mcp-index repository summarize REPO [--limit N] [--max-seconds S] [--json]
   that is being stored, without keeping any of that batch.
 - Exit codes: `0` complete or partial, `1` refused, stalled (a whole pass
   stored nothing: an unreachable endpoint, or output with only unknown chunk
-  IDs) or aborted (the published generation or commit changed during the
-  window), `130` interrupted.
+  IDs) or aborted (during the window the repository was unregistered or
+  re-registered, or its published generation or commit changed; checked after
+  every pass, before any success is reported), `130` interrupted.
 
 Summaries are built only from the published index: chunk text comes from
 the index and the surrounding file context from the published commit (read

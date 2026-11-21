@@ -625,3 +625,42 @@ def test_interrupt_while_storing_keeps_no_part_of_the_batch(prefill):
     assert len(ctx["summarizer"].calls[0]) > 1
     assert payload["written"] == 0
     assert _summaries(ctx) == {}
+
+
+def test_unregister_during_the_final_pass_aborts_instead_of_completing(prefill):
+    ctx = prefill
+    chunks = _chunk_ids(ctx)
+
+    def unregister(n):
+        if n == 1:
+            assert ctx["registry"].unregister_repository(ctx["repo_id"])
+
+    ctx["summarizer"].on_call = unregister
+
+    result, payload = _summarize(ctx)
+
+    # The single pass drained every chunk, but the repository went away.
+    assert result.exit_code == 1, result.output
+    assert payload["status"] == "aborted"
+    assert payload["stop_reason"] == "published_index_changed"
+    assert payload["detail"] == "the repository was unregistered"
+    assert payload["remaining"] == 0
+    assert payload["written"] == len(chunks)
+
+
+def test_reregistration_during_a_limit_pass_aborts_instead_of_partial(prefill):
+    ctx = prefill
+
+    def reregister(n):
+        if n == 1:
+            assert ctx["registry"].unregister_repository(ctx["repo_id"])
+            assert ctx["registry"].register_repository(str(ctx["repo"])) == ctx["repo_id"]
+
+    ctx["summarizer"].on_call = reregister
+
+    result, payload = _summarize(ctx, "--limit", "2")
+
+    assert result.exit_code == 1, result.output
+    assert payload["status"] == "aborted"
+    assert payload["detail"] == "the repository registration changed"
+    assert payload["written"] == 2
