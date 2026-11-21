@@ -8,7 +8,7 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict
 
 import click
 
@@ -16,22 +16,32 @@ import click
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-from mcp_server.artifacts.semantic_profiles import SemanticProfileRegistry  # noqa: E402
 from mcp_server.config.env_vars import resolve_qdrant_server_api_key  # noqa: E402
-from mcp_server.config.settings import reload_settings  # noqa: E402
 from mcp_server.dispatcher.dispatcher_enhanced import EnhancedDispatcher  # noqa: E402
 from mcp_server.setup.semantic_preflight import run_semantic_preflight  # noqa: E402
 from mcp_server.storage.sqlite_store import SQLiteStore  # noqa: E402
-from mcp_server.utils import get_semantic_indexer  # noqa: E402
 
-
-def _get_profile_collection_name(profile: Any, fallback: str) -> str:
-    """Return per-profile collection name with fallback to global default."""
-    build_metadata = getattr(profile, "build_metadata", None) or {}
-    collection_name = build_metadata.get("collection_name")
-    if isinstance(collection_name, str) and collection_name.strip():
-        return collection_name.strip()
-    return fallback
+# Semantic vectors are owned by the generation-scoped SemanticIndexerRegistry
+# (``ci__`` collections with provenance). The commands here build no standalone
+# SemanticIndexer, so they neither read nor write a profile collection
+# (Consiliency/Code-Index-MCP#142).
+_SEMANTIC_REBUILD_POINTER = (
+    "Build semantic vectors with `mcp-index repository sync --force-full` "
+    "(register the checkout first with `mcp-index repository register <path>`)."
+)
+_LEGACY_SEMANTIC_REBUILD_REFUSAL = (
+    "The legacy semantic (vector) rebuild is disabled: it wrote standalone profile "
+    "collections that readiness and the generation-scoped semantic index cannot see. "
+    + _SEMANTIC_REBUILD_POINTER
+)
+_LEGACY_VECTOR_DIR = "vector_index.qdrant"
+_LEGACY_VECTOR_RESTORE_NOTE = (
+    "Not restoring the legacy vector index: semantic vectors are generation-scoped. "
+    + _SEMANTIC_REBUILD_POINTER
+)
+_VECTOR_COMPATIBILITY_NOTE = (
+    "generation-scoped, not checked here (see `mcp-index repository status`)"
+)
 
 
 def _get_vector_backend_status() -> Dict[str, Any]:
@@ -45,35 +55,17 @@ def _get_vector_backend_status() -> Dict[str, Any]:
                     total_size += os.path.getsize(os.path.join(dirpath, filename))
         return total_size / (1024 * 1024)
 
-    vector_path = os.getenv("QDRANT_PATH", "vector_index.qdrant")
+    vector_path = os.getenv("QDRANT_PATH", _LEGACY_VECTOR_DIR)
     if os.path.exists(vector_path):
-        collections: List[Dict[str, Any]] = []
-        try:
-            from qdrant_client import QdrantClient
-
-            lock_path = Path(vector_path) / ".lock"
-            if lock_path.exists():
-                lock_path.unlink()
-
-            client = QdrantClient(path=vector_path)
-            for collection_meta in client.get_collections().collections:
-                info = client.get_collection(collection_meta.name)
-                vectors = info.config.params.vectors
-                collections.append(
-                    {
-                        "name": collection_meta.name,
-                        "size": getattr(vectors, "size", None),
-                        "points": getattr(info, "points_count", None),
-                    }
-                )
-        except Exception:
-            collections = []
-
+        # A file-backed store is the legacy standalone layout. Opening it with
+        # QdrantClient takes (and can rewrite) its lock, so status reports it
+        # from the filesystem only and never opens it (#142).
         return {
             "backend": "file",
             "location": vector_path,
-            "collections": collections,
+            "collections": [],
             "size_mb": _directory_size_mb(vector_path),
+            "legacy_read_only": True,
         }
 
     server_url = os.getenv("QDRANT_URL", "http://localhost:6333")
@@ -143,113 +135,6 @@ def _build_sqlite_baseline() -> Dict[str, Any]:
             os.environ["MCP_LIGHTWEIGHT_DOC_INDEX"] = original_lightweight_docs
 
 
-def _build_semantic_baseline(
-    sample_size: int, selected_profiles: Optional[List[str]] = None
-) -> Dict[str, Dict[str, Any]]:
-    """Build the local semantic baseline only, pinned to file-backed Qdrant."""
-    SemanticIndexer = get_semantic_indexer()
-    if SemanticIndexer is None:
-        raise RuntimeError("semantic dependencies not installed")
-
-    settings = reload_settings()
-    registry = SemanticProfileRegistry.from_raw(
-        settings.get_semantic_profiles_config(),
-        settings.get_semantic_default_profile(),
-        tool_version=settings.app_version,
-    )
-    profile_ids = list(registry.list().keys())
-    if selected_profiles:
-        missing = [profile for profile in selected_profiles if profile not in profile_ids]
-        if missing:
-            raise RuntimeError("Unknown semantic profile(s): " + ", ".join(sorted(missing)))
-        profile_ids = [profile for profile in profile_ids if profile in selected_profiles]
-    qdrant_path = os.getenv("QDRANT_PATH", "vector_index.qdrant")
-    if qdrant_path == "vector_index.qdrant" and os.path.exists(qdrant_path):
-        import shutil
-
-        shutil.rmtree(qdrant_path)
-
-    original_qdrant_use_server = os.environ.get("QDRANT_USE_SERVER")
-    os.environ["QDRANT_USE_SERVER"] = "false"
-    try:
-        import glob
-
-        from mcp_server.core.ignore_patterns import IgnorePatternManager
-
-        ignore_manager = IgnorePatternManager(Path(".").resolve())
-        python_files = [
-            f
-            for f in glob.glob("**/*.py", recursive=True)
-            if not ignore_manager.should_ignore(Path(f))
-        ]
-        if sample_size > 0:
-            python_files = python_files[:sample_size]
-
-        click.echo(
-            f"  -> Candidate Python files: {len(python_files)}"
-            + (" (full repository)" if sample_size <= 0 else "")
-        )
-
-        profile_stats: Dict[str, Dict[str, Any]] = {}
-        store = SQLiteStore("code_index.db")
-        for profile_id in profile_ids:
-            click.echo(f"  -> Building semantic profile: {profile_id}")
-            profile = registry.get(profile_id)
-            indexer = SemanticIndexer(
-                collection=_get_profile_collection_name(profile, settings.semantic_collection_name),
-                qdrant_path=qdrant_path,
-                profile_registry=registry,
-                semantic_profile=profile_id,
-                sqlite_store=store,
-            )
-            indexed_count = 0
-            error_count = 0
-            with click.progressbar(python_files, label=f"Indexing files ({profile_id})") as files:
-                for file_path in files:
-                    try:
-                        result = indexer.index_file(Path(file_path))
-                        if result:
-                            indexed_count += 1
-                    except Exception:
-                        error_count += 1
-            profile_stats[profile_id] = {
-                "indexed_files": indexed_count,
-                "errors": error_count,
-            }
-
-            try:
-                collection_info = indexer.qdrant.get_collection(indexer.collection)
-                point_count = getattr(collection_info, "points_count", 0) or 0
-            except Exception:
-                point_count = 0
-
-            profile_stats[profile_id]["points"] = int(point_count)
-            profile_stats[profile_id]["collection"] = indexer.collection
-            profile_stats[profile_id]["connection_mode"] = str(indexer.connection_mode)
-
-            if point_count == 0 and indexed_count > 0:
-                raise RuntimeError(
-                    f"Semantic rebuild for {profile_id} produced 0 points in {indexer.collection} despite indexing {indexed_count} files"
-                )
-        return profile_stats
-    finally:
-        if original_qdrant_use_server is None:
-            os.environ.pop("QDRANT_USE_SERVER", None)
-        else:
-            os.environ["QDRANT_USE_SERVER"] = original_qdrant_use_server
-
-
-def _get_semantic_indexer_instance():
-    """Get SemanticIndexer instance if available."""
-    SemanticIndexer = get_semantic_indexer()
-    if SemanticIndexer is None:
-        return None
-    try:
-        return SemanticIndexer()
-    except Exception:
-        return None
-
-
 @click.group()
 def index():
     """Index management commands."""
@@ -260,11 +145,6 @@ def index():
 def check_compatibility(detailed: bool):
     """Check if current configuration is compatible with existing indexes."""
     try:
-        # Check vector index
-        indexer = _get_semantic_indexer_instance()
-        vector_compatible = indexer.check_compatibility() if indexer else False
-        vector_available = indexer is not None
-
         # Check SQLite index
         sqlite_exists = os.path.exists("code_index.db")
         sqlite_compatible = True
@@ -295,12 +175,7 @@ def check_compatibility(detailed: bool):
         # Display results
         click.echo("Index Compatibility Status:")
         click.echo(f"  SQLite index: {'✅ Compatible' if sqlite_compatible else '❌ Incompatible'}")
-        if not vector_available:
-            click.echo("  Vector index: ⚠️ Not available (semantic deps not installed)")
-        else:
-            click.echo(
-                f"  Vector index: {'✅ Compatible' if vector_compatible else '❌ Incompatible'}"
-            )
+        click.echo(f"  Vector index: ℹ️ {_VECTOR_COMPATIBILITY_NOTE}")
         click.echo(f"  Metadata: {'✅ Present' if metadata_exists else '❌ Missing'}")
 
         if sqlite_exists:
@@ -312,10 +187,9 @@ def check_compatibility(detailed: bool):
             click.echo(f"  Created: {metadata.get('created_at', 'unknown')}")
             click.echo(f"  Git commit: {metadata.get('git_commit', 'unknown')}")
 
-        # Overall compatible if SQLite works (vector is optional)
+        # Vector indexes are generation-scoped and attested by repository
+        # readiness, so the verdict here covers SQLite and metadata only.
         overall_compatible = sqlite_compatible and metadata_exists
-        if vector_available:
-            overall_compatible = overall_compatible and vector_compatible
         click.echo(f"\nOverall: {'✅ All compatible' if overall_compatible else '❌ Issues found'}")
 
         sys.exit(0 if overall_compatible else 1)
@@ -326,19 +200,28 @@ def check_compatibility(detailed: bool):
 
 
 @index.command()
-@click.option("--force", "-f", is_flag=True, help="Force rebuild even if compatible")
+@click.option(
+    "--force",
+    "-f",
+    is_flag=True,
+    help="Accepted for compatibility; the SQLite index is always rebuilt",
+)
 @click.option("--sqlite-only", is_flag=True, help="Rebuild SQLite index only")
-@click.option("--vector-only", is_flag=True, help="Rebuild vector index only")
+@click.option(
+    "--vector-only",
+    is_flag=True,
+    help="Disabled: semantic vectors are built by `repository sync --force-full`",
+)
 @click.option(
     "--semantic-profile",
     "semantic_profiles",
     multiple=True,
-    help="Limit semantic rebuild to one or more profile IDs",
+    help="Disabled: semantic vectors are built by `repository sync --force-full`",
 )
 @click.option(
     "--sample-size",
     default=0,
-    help="Number of files to index (0 means full repository)",
+    help="Ignored: it only limited the disabled legacy vector rebuild",
 )
 def rebuild(
     force: bool,
@@ -347,19 +230,10 @@ def rebuild(
     semantic_profiles: tuple[str, ...],
     sample_size: int,
 ):
-    """Rebuild index artifacts."""
+    """Rebuild the local SQLite index artifact."""
 
-    if not force:
-        # Check if rebuild is needed
-        try:
-            indexer = _get_semantic_indexer_instance()
-            if indexer:
-                compatible = indexer.check_compatibility()
-                if compatible and os.path.exists("code_index.db"):
-                    click.echo("Indexes appear compatible. Use --force to rebuild anyway.")
-                    return
-        except Exception:
-            pass  # Proceed with rebuild if check fails
+    if vector_only or semantic_profiles:
+        raise click.ClickException(_LEGACY_SEMANTIC_REBUILD_REFUSAL)
 
     click.echo("Starting index rebuild...")
     click.echo(
@@ -367,62 +241,30 @@ def rebuild(
     )
 
     if not sqlite_only:
-        if get_semantic_indexer() is None:
-            click.echo("⚠️ Skipping vector index (semantic dependencies not installed)")
-            click.echo("   Install with: pip install code-index-mcp[semantic]")
-        else:
-            click.echo("Rebuilding vector index...")
-            try:
-                profile_stats = _build_semantic_baseline(
-                    sample_size, list(semantic_profiles) or None
-                )
+        click.echo("⚠️ Skipping vector index: this command no longer rebuilds it.")
+        click.echo(f"   {_SEMANTIC_REBUILD_POINTER}")
 
-                click.echo(
-                    "✅ Vector index rebuilt for profiles: "
-                    + ", ".join(
-                        f"{profile_id}={stats['indexed_files']} files"
-                        for profile_id, stats in profile_stats.items()
-                    )
-                )
-                if any(stats["errors"] for stats in profile_stats.values()):
-                    click.echo(
-                        "⚠️  Files skipped due to forced errors: "
-                        + ", ".join(
-                            f"{profile_id}={stats['errors']}"
-                            for profile_id, stats in profile_stats.items()
-                            if stats["errors"]
-                        )
-                    )
+    click.echo("Rebuilding SQLite index...")
+    try:
+        # Remove old SQLite index (auto-backup first so users can restore if needed)
+        if os.path.exists("code_index.db"):
+            import shutil as _shutil
+            from datetime import datetime as _datetime
 
-            except Exception as e:
-                click.echo(f"❌ Vector index rebuild failed: {e}", err=True)
-                if not force:
-                    return
+            _bak = f"code_index.db.{_datetime.now().strftime('%Y%m%dT%H%M%S')}.bak"
+            _shutil.copy2("code_index.db", _bak)
+            click.echo(f"📦 Backed up existing index to {_bak}")
+            os.remove("code_index.db")
 
-    if not vector_only:
-        click.echo("Rebuilding SQLite index...")
-        try:
-            # Remove old SQLite index (auto-backup first so users can restore if needed)
-            if os.path.exists("code_index.db"):
-                import shutil as _shutil
-                from datetime import datetime as _datetime
+        sqlite_stats = _build_sqlite_baseline()
+        click.echo("✅ SQLite index rebuilt")
+        click.echo(f"   Files indexed: {sqlite_stats.get('indexed_files', 0)}")
+        click.echo(f"   Files ignored: {sqlite_stats.get('ignored_files', 0)}")
+        click.echo(f"   Files failed: {sqlite_stats.get('failed_files', 0)}")
+        click.echo(f"   Lexical rows: {sqlite_stats.get('lexical_rows', 0)}")
 
-                _bak = f"code_index.db.{_datetime.now().strftime('%Y%m%dT%H%M%S')}.bak"
-                _shutil.copy2("code_index.db", _bak)
-                click.echo(f"📦 Backed up existing index to {_bak}")
-                os.remove("code_index.db")
-
-            sqlite_stats = _build_sqlite_baseline()
-            click.echo("✅ SQLite index rebuilt")
-            click.echo(f"   Files indexed: {sqlite_stats.get('indexed_files', 0)}")
-            click.echo(f"   Files ignored: {sqlite_stats.get('ignored_files', 0)}")
-            click.echo(f"   Files failed: {sqlite_stats.get('failed_files', 0)}")
-            click.echo(f"   Lexical rows: {sqlite_stats.get('lexical_rows', 0)}")
-
-        except Exception as e:
-            click.echo(f"❌ SQLite index rebuild failed: {e}", err=True)
-            if not force:
-                return
+    except Exception as e:
+        raise click.ClickException(f"SQLite index rebuild failed: {e}") from e
 
     click.echo("🎉 Index rebuild completed!")
 
@@ -486,6 +328,11 @@ def status():
                             else ""
                         )
                     )
+            elif vector_status.get("legacy_read_only"):
+                click.echo(
+                    "  ⚠️ Legacy file-backed store: not opened (read-only report). "
+                    "Semantic vectors are generation-scoped; see `mcp-index repository status`."
+                )
             elif vector_status["backend"] == "file":
                 click.echo("  ⚠️ Could not read collection info")
 
@@ -541,11 +388,10 @@ def backup(backup_dir: str):
         files_backed_up += 1
         click.echo("📦 Backed up SQLite index")
 
-    # Backup vector index
-    if os.path.exists("vector_index.qdrant"):
-        shutil.copytree("vector_index.qdrant", f"{backup_dir}/vector_index.qdrant")
-        files_backed_up += 1
-        click.echo("📦 Backed up vector index")
+    # The legacy vector directory is not backed up: restore never brings it
+    # back, and semantic vectors are generation-scoped (#142).
+    if os.path.exists(_LEGACY_VECTOR_DIR):
+        click.echo("⚠️ Skipping legacy vector index (generation-scoped vectors are not backed up)")
 
     # Backup metadata
     if os.path.exists(".index_metadata.json"):
@@ -576,10 +422,6 @@ def restore(backup_dir: str):
         os.remove("code_index.db")
         click.echo("🗑️ Removed current SQLite index")
 
-    if os.path.exists("vector_index.qdrant"):
-        shutil.rmtree("vector_index.qdrant")
-        click.echo("🗑️ Removed current vector index")
-
     if os.path.exists(".index_metadata.json"):
         os.remove(".index_metadata.json")
         click.echo("🗑️ Removed current metadata")
@@ -593,12 +435,10 @@ def restore(backup_dir: str):
         files_restored += 1
         click.echo("♻️ Restored SQLite index")
 
-    # Restore vector index
-    backup_vector = f"{backup_dir}/vector_index.qdrant"
-    if os.path.exists(backup_vector):
-        shutil.copytree(backup_vector, "vector_index.qdrant")
-        files_restored += 1
-        click.echo("♻️ Restored vector index")
+    # The legacy vector directory is neither removed nor recreated: semantic
+    # vectors are generation-scoped and rebuilt by repository sync (#142).
+    if os.path.exists(os.path.join(backup_dir, _LEGACY_VECTOR_DIR)):
+        click.echo(f"⚠️ {_LEGACY_VECTOR_RESTORE_NOTE}")
 
     # Restore metadata
     backup_metadata = f"{backup_dir}/.index_metadata.json"
