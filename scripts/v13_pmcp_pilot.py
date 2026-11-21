@@ -51,6 +51,11 @@ PILOT_HELPERS = (
     "v13_pilot_budget.py",
 )
 REHEARSAL_INDEX_DELAY_SECONDS = 4
+#: The exact PMCP distribution the pilot binds (Consiliency/Code-Index-MCP#133).
+PMCP_VERSION = "3.0.3"
+#: Qdrant's stock HTTP and gRPC ports. On a shared host they may belong to a
+#: long-lived Qdrant, so host-network rehearsal never binds them by default.
+QDRANT_STOCK_PORTS = (6333, 6334)
 #: Tree-sitter grammar cache root the language pack and sandbox workers read.
 GRAMMAR_CACHE_ENV = "TREE_SITTER_LANGUAGE_PACK_CACHE_DIR"
 #: The pack's download manifest URL. Pointing it at
@@ -259,7 +264,13 @@ def pmcp_runtime_digest(roots: list[Path]) -> tuple[str, int]:
 
 
 def pmcp_console_script(executable: Path) -> tuple[Path, Path | None]:
-    """Resolve the deployed release wrapper without executing shell text."""
+    """Resolve the deployed release wrapper without executing shell text.
+
+    The wrapper names its release by the path it was installed at. dev0 later
+    moves old releases to an archive volume and leaves that path as a symlink,
+    so the resolved launcher's release may be the symlink's target. The named
+    release is accepted only when it resolves to the launcher's own release.
+    """
     if not executable.read_bytes().startswith(b"#!/bin/sh\n"):
         return executable, None
     lines = executable.read_text(encoding="utf-8").splitlines()
@@ -274,9 +285,10 @@ def pmcp_console_script(executable: Path) -> tuple[Path, Path | None]:
         raise PilotRefused("pmcp_launcher_unknown")
     node_bin = Path(path_line.group(1))
     console = Path(exec_line.group(1))
+    named_release = node_bin.parent.parent
     if (
-        node_bin.parent.parent != release
-        or console != release / "python/bin/pmcp"
+        named_release.resolve() != release.resolve()
+        or console != named_release / "python/bin/pmcp"
         or not node_bin.resolve().is_relative_to(release.resolve())
         or not console.resolve().is_relative_to(release.resolve())
         or not node_bin.is_dir()
@@ -779,8 +791,8 @@ def prepare(
         ).strip(),
     }
     if (
-        manifest["pmcp_version"] != "pmcp 2.7.3"
-        or manifest["pmcp_distribution"]["version"] != "2.7.3"
+        manifest["pmcp_version"] != f"pmcp {PMCP_VERSION}"
+        or manifest["pmcp_distribution"]["version"] != PMCP_VERSION
     ):
         raise PilotRefused("pmcp_version_mismatch")
     write_json(root / "manifest.json", manifest, exclusive=True)
@@ -870,8 +882,8 @@ def validate_manifest(root: Path, manifest: dict, *, execute: bool = False) -> N
         or digest_file(pmcp) != manifest.get("pmcp_sha256")
         or str(Path(shutil.which("pmcp") or "pmcp").resolve()) != str(pmcp)
         or pmcp_distribution_identity(pmcp, expected=expected_pmcp) != expected_pmcp
-        or manifest.get("pmcp_version") != "pmcp 2.7.3"
-        or expected_pmcp.get("version") != "2.7.3"
+        or manifest.get("pmcp_version") != f"pmcp {PMCP_VERSION}"
+        or expected_pmcp.get("version") != PMCP_VERSION
     ):
         raise PilotRefused("pmcp_binding_changed")
     expected_node = manifest.get("browser_node")
@@ -933,6 +945,133 @@ def free_port() -> int:
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         return sock.getsockname()[1]
+
+
+def require_free_port(port: int) -> int:
+    """Refuse a loopback port another process already holds."""
+    with socket.socket() as sock:
+        try:
+            sock.bind(("127.0.0.1", port))
+        except OSError:
+            raise PilotRefused(f"qdrant_port_in_use:{port}") from None
+    return port
+
+
+def qdrant_ports(
+    network: str, http_port: int | None = None, grpc_port: int | None = None
+) -> tuple[int, int | None]:
+    """Choose the host ports the disposable Qdrant binds (Consiliency/Code-Index-MCP#138).
+
+    Unset ports default to free ephemeral ones, never Qdrant's stock 6333/6334.
+    Host networking binds gRPC on the host too, so it always gets a port; a bridge
+    container publishes gRPC only when one is requested. A requested port that is
+    taken, or the same port twice, refuses before any container starts.
+    """
+    for port in (http_port, grpc_port):
+        if port is not None and not 1 <= port <= 65535:
+            raise PilotRefused(f"qdrant_port_invalid:{port}")
+    if http_port is not None and http_port == grpc_port:
+        raise PilotRefused("qdrant_ports_conflict")
+    chosen: list[int | None] = []
+    for requested, needed in ((http_port, True), (grpc_port, network == "host")):
+        if requested is not None:
+            chosen.append(require_free_port(requested))
+            continue
+        if not needed:
+            chosen.append(None)
+            continue
+        taken = {*QDRANT_STOCK_PORTS, http_port, grpc_port, *chosen}
+        port = free_port()
+        while port in taken:
+            port = free_port()
+        chosen.append(port)
+    return chosen[0], chosen[1]
+
+
+def validate_qdrant_runtime_ports(metadata: dict) -> None:
+    """Refuse saved runtime metadata whose Qdrant binding the driver could not choose."""
+    network = metadata.get("qdrant_network")
+    http_port = metadata.get("qdrant_http_port")
+    grpc_port = metadata.get("qdrant_grpc_port")
+    requested = metadata.get("qdrant_ports_requested")
+
+    def valid_port(port):
+        return type(port) is int and 1 <= port <= 65535
+
+    if (
+        network not in {"bridge", "host"}
+        or not valid_port(http_port)
+        or not (valid_port(grpc_port) or (grpc_port is None and network == "bridge"))
+        or http_port == grpc_port
+        or not isinstance(requested, dict)
+        or set(requested) != {"http", "grpc"}
+        or any(type(value) is not bool for value in requested.values())
+        # An unpublished bridge gRPC port was by definition not requested.
+        or (grpc_port is None and requested["grpc"])
+        # Bridge mode publishes gRPC only when it was requested.
+        or (network == "bridge" and grpc_port is not None and not requested["grpc"])
+        # Defaults are ephemeral; the stock ports appear only when asked for.
+        or (http_port in QDRANT_STOCK_PORTS and not requested["http"])
+        or (grpc_port in QDRANT_STOCK_PORTS and not requested["grpc"])
+        or metadata.get("qdrant_endpoint_verified") is not True
+    ):
+        raise PilotRefused("live_qdrant_ports_invalid")
+
+
+async def verify_qdrant_endpoint(
+    http, url: str, api_key: str, container_id: str, pid: int, directory: Path
+) -> None:
+    """Prove the selected endpoint is served by the pilot-owned container.
+
+    Port selection and the pre-start recheck only bind and close, so another
+    process could take the port before Qdrant binds it; ``docker run -d`` still
+    returns an id and ``/readyz`` would answer from the other service. The
+    per-run API key reached only this container, so the endpoint must refuse an
+    anonymous request and accept that key. The container must also still be
+    running with the process measured at start, before and after the probes.
+    """
+
+    async def owned_container_running(label):
+        state = json.loads(
+            await asyncio.to_thread(
+                run_command,
+                ["docker", "inspect", "--format", "{{json .State}}", container_id],
+                directory,
+                label,
+                timeout=5,
+            )
+        )
+        if state.get("Running") is not True or state.get("Pid") != pid:
+            raise PilotRefused("qdrant_endpoint_unverified")
+
+    await owned_container_running("qdrant-endpoint-state")
+    try:
+        anonymous = await http.get(url + "/collections", timeout=5)
+        owned = await http.get(url + "/collections", headers={"api-key": api_key}, timeout=5)
+    except httpx.HTTPError:
+        raise PilotRefused("qdrant_endpoint_unverified") from None
+    if anonymous.status_code not in (401, 403) or owned.status_code != 200:
+        raise PilotRefused("qdrant_endpoint_unverified")
+    await owned_container_running("qdrant-endpoint-recheck")
+
+
+def qdrant_network_args(network: str, http_port: int, grpc_port: int | None) -> list[str]:
+    """Docker arguments that bind Qdrant only to the chosen loopback ports."""
+    if network == "host":
+        return [
+            "--network",
+            "host",
+            "-e",
+            "QDRANT__SERVICE__HOST=127.0.0.1",
+            "-e",
+            f"QDRANT__SERVICE__HTTP_PORT={http_port}",
+            "-e",
+            f"QDRANT__SERVICE__GRPC_PORT={grpc_port}",
+        ]
+    args = ["-p", f"127.0.0.1:{http_port}:6333"]
+    if grpc_port is not None:
+        args += ["-p", f"127.0.0.1:{grpc_port}:6334"]
+    return args
 
 
 def create_fixture(root: Path, manifest: dict, *, label: str) -> dict:
@@ -2060,6 +2199,7 @@ def _verify_live_records(
             or (not rehearsal and metadata["endpoints"] != ENDPOINTS)
         ):
             raise PilotRefused("live_workload_mismatch")
+        validate_qdrant_runtime_ports(metadata)
         for role in ENDPOINTS:
             if not isinstance(metadata["models"][role], str) or not metadata["models"][role]:
                 raise PilotRefused("live_model_missing")
@@ -2339,7 +2479,13 @@ async def runtime_provenance(
 
 
 async def inference_pilot(
-    root: Path, manifest: dict, *, rehearsal: bool, qdrant_network: str = "bridge"
+    root: Path,
+    manifest: dict,
+    *,
+    rehearsal: bool,
+    qdrant_network: str = "bridge",
+    qdrant_http_port: int | None = None,
+    qdrant_grpc_port: int | None = None,
 ) -> dict:
     from v13_pilot_budget import (
         APPROVAL,
@@ -2355,6 +2501,8 @@ async def inference_pilot(
         validate_receipt(json.loads((root / "offline.json").read_text()), manifest, "offline")
         verify_saved_receipt(root, manifest, "browser")
         verify_saved_receipt(root, manifest, "rehearsal")
+    # Fail fast on a taken or clashing port, before building the fixture.
+    http_port, grpc_port = qdrant_ports(qdrant_network, qdrant_http_port, qdrant_grpc_port)
     label = "rehearsal" if rehearsal else "live"
     fixture = create_fixture(root, manifest, label=label)
     directory = fixture["root"]
@@ -2472,21 +2620,14 @@ async def inference_pilot(
         return value
 
     try:
-        port = free_port()
+        # Recheck: fixture creation takes a while, and another process may
+        # have taken a chosen port since.
+        for port in (http_port, grpc_port):
+            if port is not None:
+                require_free_port(port)
         # Per-run Qdrant API key, passed to docker by name only (never in argv or logs).
         qdrant_api_key = secrets.token_urlsafe(32)
-        network_args = (
-            [
-                "--network",
-                "host",
-                "-e",
-                "QDRANT__SERVICE__HOST=127.0.0.1",
-                "-e",
-                f"QDRANT__SERVICE__HTTP_PORT={port}",
-            ]
-            if qdrant_network == "host"
-            else ["-p", f"127.0.0.1:{port}:6333"]
-        )
+        network_args = qdrant_network_args(qdrant_network, http_port, grpc_port)
         container_id = (
             await asyncio.to_thread(
                 run_command,
@@ -2511,7 +2652,7 @@ async def inference_pilot(
         if len(container_id) != 64 or any(c not in "0123456789abcdef" for c in container_id):
             raise PilotRefused("qdrant_owner_identity")
         container_owner = await asyncio.to_thread(OwnedContainer, container_id, directory)
-        qdrant_url = f"http://127.0.0.1:{port}"
+        qdrant_url = f"http://127.0.0.1:{http_port}"
         async with httpx.AsyncClient(trust_env=False) as http:
             for _ in range(100):
                 try:
@@ -2522,6 +2663,10 @@ async def inference_pilot(
                 await asyncio.sleep(0.1)
             else:
                 raise PilotRefused("qdrant_start_failed")
+            # Fail closed unless our container, not a squatter, serves the port.
+            await verify_qdrant_endpoint(
+                http, qdrant_url, qdrant_api_key, container_id, container_owner.pid, directory
+            )
         endpoints = None
         if rehearsal:
             fake = rehearsal_provider()
@@ -2617,6 +2762,13 @@ async def inference_pilot(
                 "immutable_revision": "unreported",
                 "qdrant_image": image,
                 "qdrant_network": qdrant_network,
+                "qdrant_http_port": http_port,
+                "qdrant_grpc_port": grpc_port,
+                "qdrant_ports_requested": {
+                    "http": qdrant_http_port is not None,
+                    "grpc": qdrant_grpc_port is not None,
+                },
+                "qdrant_endpoint_verified": True,
                 "endpoints": endpoints or ENDPOINTS,
                 "workload_sha256": digest_json(workload),
             },
@@ -2875,7 +3027,24 @@ def main():
     )
     parser.add_argument("--inspector", type=Path)
     parser.add_argument("--qdrant-network", choices=("bridge", "host"), default="bridge")
+    parser.add_argument(
+        "--qdrant-http-port",
+        type=int,
+        help="rehearsal/live: host port for Qdrant HTTP (default: a free ephemeral port)",
+    )
+    parser.add_argument(
+        "--qdrant-grpc-port",
+        type=int,
+        help=(
+            "rehearsal/live: host port for Qdrant gRPC (default: a free ephemeral port "
+            "with --qdrant-network host; unpublished on bridge)"
+        ),
+    )
     args = parser.parse_args()
+    if args.mode not in {"rehearsal", "live"} and (
+        args.qdrant_http_port is not None or args.qdrant_grpc_port is not None
+    ):
+        raise PilotRefused("qdrant_ports_require_inference_mode")
     if args.mode == "identity":
         print(json.dumps(installed_identity(args.wheel)))
         return
@@ -2914,6 +3083,8 @@ def main():
                 load_manifest(root),
                 rehearsal=args.mode == "rehearsal",
                 qdrant_network=args.qdrant_network,
+                qdrant_http_port=args.qdrant_http_port,
+                qdrant_grpc_port=args.qdrant_grpc_port,
             )
         )
     print(json.dumps({"mode": args.mode, "root": str(root), "source": result["source"]}))

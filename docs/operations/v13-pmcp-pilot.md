@@ -116,6 +116,17 @@ a working systemd user manager and Docker. Owned user scopes retain detached
 children; the disposable Qdrant container is measured and stopped separately.
 Do not tune these limits after measurement.
 
+The driver binds PMCP 3.0.3 (`PMCP_VERSION`). `prepare` accepts a deployed
+release wrapper whose release directory was later archived behind a symlink.
+The disposable Qdrant binds loopback ports chosen by `--qdrant-http-port` and
+`--qdrant-grpc-port`. Unset ports default to free ephemeral ports, never the
+stock 6333/6334. With `--qdrant-network host`, gRPC always gets its own port;
+on bridge it is published only when requested. A port that is already in use
+refuses the run before any container starts. After start the driver confirms
+that its own container still runs and serves the HTTP port. The endpoint must
+refuse an anonymous request and accept the per-run API key. Otherwise the run
+fails closed. Saved receipts must record valid, distinct ports.
+
 verify-browser and verify-live consume saved evidence without inference.
 Live verification reopens the archived ledger read-only, reconciles request
 envelopes and accounting, refuses overlapping requests within one provider role,
