@@ -337,6 +337,73 @@ def test_sweep_deletion_of_a_committed_path_rebuilds_instead(
     assert manager._resolve_ctx(repo_id).sqlite_store.search_code_fts("case_sentinel")
 
 
+def test_sweep_drift_from_an_older_commit_is_not_applied_after_head_moves(
+    runtime, monkeypatch, caplog  # noqa: F811
+):
+    """Drift computed at commit A must not be applied once B is published.
+
+    The sweep reports a stale row for ``revived.py`` as deleted at A. Before
+    the repair takes the lock, B re-adds the file and an ordinary sync
+    publishes B. Applying the old deletion would remove valid B rows while
+    labelling the generation B.
+    """
+    repo, registry, repo_id, _store, manager = runtime
+    for index in range(6):
+        (repo / f"stable{index}.py").write_text(f"stable_value_{index} = {index}\n")
+    (repo / "revived.py").write_text("revived_old = 1\n")
+    _commit_all(repo, "A0 with revived.py")
+    assert manager.rebuild_repository_index(repo_id).action == "full_index"
+    (repo / "revived.py").unlink()
+    commit_a = _commit_all(repo, "A drops revived.py")
+    # The generation still holds the revived.py row but is labelled A.
+    registry.update_indexed_commit(repo_id, commit_a, branch="main")
+
+    watcher = SimpleNamespace(
+        registry=registry, index_manager=manager, mark_repository_changed=lambda _r: None
+    )
+    holder = {}
+    published = {}
+
+    def race_then_reconcile(rid):
+        drift = holder["sweeper"].current_drift(rid)
+        assert drift["deleted"] == ["revived.py"] and drift["commit"] == commit_a
+        (repo / "revived.py").write_text("revived_new = 2\n")
+        published["b"] = _commit_all(repo, "B re-adds revived.py")
+        assert manager.sync_repository_index(repo_id).action in {
+            "incremental_update",
+            "full_index",
+        }
+        return MultiRepositoryWatcher._reconcile_repository_drift(watcher, rid, drift=drift)
+
+    holder["sweeper"] = WatcherSweeper(
+        None,
+        lambda: {repo_id: registry.get(repo_id).path},
+        None,
+        store_provider=lambda _rid: manager._resolve_ctx(repo_id).sqlite_store,
+        on_repository_drift=race_then_reconcile,
+    )
+    deleted = []
+    real_incremental = manager._incremental_index_update
+
+    def spy(repo_id_arg, ctx, changes, *args, **kwargs):
+        deleted.extend(changes.deleted)
+        return real_incremental(repo_id_arg, ctx, changes, *args, **kwargs)
+
+    monkeypatch.setattr(manager, "_incremental_index_update", spy)
+    # Neither the stale deletion nor a fallback full rebuild may run.
+    _no_full_index(manager, monkeypatch)
+    with caplog.at_level(logging.INFO):
+        holder["sweeper"].sweep_once()
+
+    assert "revived.py" not in deleted
+    assert registry.get(repo_id).last_indexed_commit == published["b"]
+    store = manager._resolve_ctx(repo_id).sqlite_store
+    assert store.search_code_fts("revived_new")
+    assert any("Not applying sweep drift" in r.getMessage() for r in caplog.records)
+    # The next sweep recomputes against B and finds nothing to repair.
+    assert holder["sweeper"].sweep_once() == []
+
+
 def test_memory_release_is_best_effort(monkeypatch):
     assert isinstance(release_rebuild_memory("repo"), dict)
     monkeypatch.setenv("MCP_INDEX_MALLOC_TRIM", "false")

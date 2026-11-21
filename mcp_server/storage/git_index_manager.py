@@ -598,10 +598,17 @@ class GitAwareIndexManager:
         created: Any = (),
         modified: Any = (),
         deleted: Any = (),
+        observed_commit: Optional[str] = None,
+        observed_index_path: Optional[str] = None,
         expected_registration_id: Optional[str] = None,
         require_auto_sync: bool = False,
     ) -> IndexSyncResult:
         """Repair sweep-detected drift by re-indexing only the drifted paths.
+
+        ``observed_commit`` and ``observed_index_path`` are the commit and
+        published generation the sweep compared. If either changed before the
+        repository lock was acquired, the drift belongs to another tree or
+        generation and is not applied; the next sweep recomputes it.
 
         The watcher sweep compares the clean committed tree with the published
         rows. When HEAD is still the indexed commit, the drifted paths are the
@@ -618,6 +625,8 @@ class GitAwareIndexManager:
                 created=sorted(set(created)),
                 modified=sorted(set(modified)),
                 deleted=sorted(set(deleted)),
+                observed_commit=observed_commit,
+                observed_index_path=observed_index_path,
                 expected_registration_id=expected_registration_id,
                 require_auto_sync=require_auto_sync,
             )
@@ -629,6 +638,8 @@ class GitAwareIndexManager:
         created: List[str],
         modified: List[str],
         deleted: List[str],
+        observed_commit: Optional[str] = None,
+        observed_index_path: Optional[str] = None,
         expected_registration_id: Optional[str],
         require_auto_sync: bool,
     ) -> IndexSyncResult:
@@ -655,6 +666,37 @@ class GitAwareIndexManager:
         current_commit = git_state.get("commit") if git_state else None
         current_branch = git_state.get("branch") if git_state else None
         last_indexed_commit = repo_info.last_indexed_commit
+        stale = []
+        if observed_commit is not None and observed_commit != current_commit:
+            stale.append(
+                f"HEAD moved from {observed_commit[:12]} to {(current_commit or '?')[:12]}"
+            )
+        if observed_commit is not None and observed_commit != last_indexed_commit:
+            stale.append(
+                f"indexed commit is {(last_indexed_commit or 'none')[:12]}, "
+                f"not the swept {observed_commit[:12]}"
+            )
+        if observed_index_path is not None and (
+            not repo_info.index_path
+            or Path(repo_info.index_path).resolve(strict=False)
+            != Path(observed_index_path).resolve(strict=False)
+        ):
+            stale.append("the published generation changed after the sweep")
+        if stale:
+            # The drift was computed against another tree or generation;
+            # applying it could delete rows that are valid now (#145 review).
+            logger.info(
+                "Not applying sweep drift in %s (%s): %s; the next sweep recomputes it",
+                repo_id,
+                drift,
+                "; ".join(stale),
+            )
+            return IndexSyncResult(
+                action="refused",
+                commit=current_commit or "",
+                code="sweep_drift_stale",
+                error="Sweep drift no longer matches the indexed commit or generation",
+            )
         if (
             not current_commit
             or current_commit != last_indexed_commit

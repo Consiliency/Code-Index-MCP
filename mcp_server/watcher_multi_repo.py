@@ -541,6 +541,8 @@ class MultiRepositoryWatcher:
                 created=drift.get("created", ()),
                 modified=drift.get("modified", ()),
                 deleted=drift.get("deleted", ()),
+                observed_commit=drift.get("commit"),
+                observed_index_path=drift.get("index_path"),
                 expected_registration_id=repo.registration_id,
                 require_auto_sync=True,
             )

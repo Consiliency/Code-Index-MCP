@@ -91,7 +91,7 @@ class WatcherSweeper:
         # repo_id -> (signature, consecutive failures, sweeps left to skip).
         self._failed_drift: Dict[str, Tuple[str, int, int]] = {}
         # repo_id -> the drift handed to the current on_repository_drift call.
-        self._current_drift: Dict[str, Dict[str, List[str]]] = {}
+        self._current_drift: Dict[str, Dict[str, Any]] = {}
 
         # Env var overrides constructor arg when set
         env_val = os.environ.get(ENV_SWEEP_MINUTES)
@@ -159,6 +159,7 @@ class WatcherSweeper:
             repo_has_drift = False
             tracked_blobs = None
             tree_digest = ""
+            observed_commit: Optional[str] = None
             transformed_paths: set[str] = set()
             if (repo_root / ".git").exists():
                 clean = subprocess.run(
@@ -171,8 +172,21 @@ class WatcherSweeper:
                 if clean.returncode != 0:
                     continue
                 tracked_blobs = {}
+                # The drift is computed against exactly this commit; the
+                # repair revalidates it under the repository lock (#145).
+                observed_commit = (
+                    subprocess.run(
+                        ["git", "rev-parse", "--verify", "HEAD^{commit}"],
+                        cwd=repo_root,
+                        capture_output=True,
+                        check=True,
+                        timeout=30,
+                    )
+                    .stdout.decode("ascii")
+                    .strip()
+                )
                 listing = subprocess.run(
-                    ["git", "ls-tree", "-r", "-l", "-z", "HEAD"],
+                    ["git", "ls-tree", "-r", "-l", "-z", observed_commit],
                     cwd=repo_root,
                     capture_output=True,
                     check=True,
@@ -304,10 +318,15 @@ class WatcherSweeper:
                     len(deleted),
                     sorted(created | modified | deleted)[:_DRIFT_LOG_SAMPLE],
                 )
+                index_path = getattr(store, "db_path", None)
                 self._current_drift[repo_id] = {
                     "created": sorted(created),
                     "modified": sorted(modified),
                     "deleted": sorted(deleted),
+                    # What the drift was computed against: the HEAD tree and
+                    # the published generation the rows came from (#145).
+                    "commit": observed_commit,
+                    "index_path": str(index_path) if index_path else None,
                 }
                 try:
                     reconciled = self._on_repository_drift(repo_id) is True
@@ -342,14 +361,20 @@ class WatcherSweeper:
 
         return drifted
 
-    def current_drift(self, repo_id: str) -> Optional[Dict[str, List[str]]]:
-        """Drifted paths of the reconciliation now running for ``repo_id``.
+    def current_drift(self, repo_id: str) -> Optional[Dict[str, Any]]:
+        """Drift of the reconciliation now running for ``repo_id``.
 
-        Available only inside the ``on_repository_drift`` callback, so the
-        reconciler can repair exactly these paths (#145).
+        Holds the drifted paths plus the ``commit`` and ``index_path``
+        (published generation) they were computed against. Available only
+        inside the ``on_repository_drift`` callback, so the reconciler can
+        repair exactly these paths after revalidating both (#145).
         """
         drift = self._current_drift.get(repo_id)
-        return {key: list(paths) for key, paths in drift.items()} if drift else None
+        if not drift:
+            return None
+        return {
+            key: list(value) if isinstance(value, list) else value for key, value in drift.items()
+        }
 
     @staticmethod
     def _deferred_languages(store: Any) -> frozenset:
