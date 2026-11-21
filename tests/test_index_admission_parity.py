@@ -401,6 +401,137 @@ def test_rename_to_a_non_indexable_path_syncs_incrementally(parity_runtime):
     assert _index_snapshot(registry, repo_id) == incremental_snapshot
 
 
+# ---------------------------------------------------------------------------
+# Git type changes (#144)
+# ---------------------------------------------------------------------------
+
+LIB_SOURCE = "def lib_marker():\n    return 'lib'\n"
+
+
+def _rows_for(registry: RepositoryRegistry, repo_id: str, relative_path: str):
+    """File, symbol and chunk row counts the published generation holds for a path."""
+    info = RepositoryRegistry(registry.registry_path).get(repo_id)
+    with closing(sqlite3.connect(info.index_path)) as conn:
+        file_ids = [
+            row[0]
+            for row in conn.execute(
+                "SELECT id FROM files WHERE relative_path = ?", (relative_path,)
+            )
+        ]
+        marks = ",".join("?" * len(file_ids)) or "NULL"
+        symbols = conn.execute(
+            f"SELECT COUNT(*) FROM symbols WHERE file_id IN ({marks})", file_ids
+        ).fetchone()[0]
+        chunks = conn.execute(
+            f"SELECT COUNT(*) FROM code_chunks WHERE file_id IN ({marks})", file_ids
+        ).fetchone()[0]
+    return len(file_ids), symbols, chunks
+
+
+def _make_regular(repo: Path, relative: str) -> None:
+    path = repo / relative
+    if path.is_symlink() or path.is_file():
+        path.unlink()
+    elif path.is_dir():
+        path.rmdir()
+    path.write_text(LIB_SOURCE)
+    _git(repo, "add", "-A", relative)
+
+
+def _make_symlink(repo: Path, relative: str) -> None:
+    path = repo / relative
+    if path.is_symlink() or path.exists():
+        path.unlink()
+    path.symlink_to("hello.py")
+    _git(repo, "add", "-A", relative)
+
+
+def _make_gitlink(repo: Path, relative: str) -> None:
+    """Replace the entry with a submodule (gitlink) pointing at an existing commit."""
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo, check=True, capture_output=True, text=True
+    ).stdout.strip()
+    path = repo / relative
+    if path.is_symlink() or path.is_file():
+        path.unlink()
+    _git(repo, "rm", "-q", "--cached", "--ignore-unmatch", relative)
+    path.mkdir()  # a checked-out-but-uninitialized submodule is an empty directory
+    _git(repo, "update-index", "--add", "--cacheinfo", f"160000,{head},{relative}")
+
+
+TYPE_MAKERS = {"regular": _make_regular, "symlink": _make_symlink, "gitlink": _make_gitlink}
+
+
+@pytest.mark.parametrize(
+    "before, after",
+    [
+        ("regular", "symlink"),
+        ("symlink", "regular"),
+        ("regular", "gitlink"),
+        ("gitlink", "regular"),
+    ],
+)
+def test_git_type_change_syncs_incrementally_like_a_full_rebuild(parity_runtime, before, after):
+    """#144: a ``T`` change must drop rows for an entry the committed snapshot
+    no longer stores, and index one that became a regular file."""
+    repo, registry, repo_id, _dispatcher, manager = parity_runtime
+    TYPE_MAKERS[before](repo, "lib.py")
+    _git(repo, "commit", "-qm", f"lib.py is a {before}")
+    assert manager.sync_repository_index(repo_id, force_full=True).action == "full_index"
+    files_before, symbols_before, chunks_before = _rows_for(registry, repo_id, "lib.py")
+    assert files_before == int(before == "regular")
+    if before == "regular":
+        assert symbols_before and chunks_before
+
+    TYPE_MAKERS[after](repo, "lib.py")
+    _git(repo, "commit", "-qm", f"lib.py becomes a {after}")
+    status = subprocess.run(
+        ["git", "diff", "--name-status", "HEAD~1", "HEAD"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    assert status.splitlines() == ["T\tlib.py"]
+
+    incremental = manager.sync_repository_index(repo_id)
+    assert incremental.action == "incremental_update", incremental.error
+    incremental_rows = _index_snapshot(registry, repo_id)
+    files_after, symbols_after, chunks_after = _rows_for(registry, repo_id, "lib.py")
+    if after == "regular":
+        assert files_after == 1 and symbols_after and chunks_after
+        assert any(
+            path == "lib.py" and name == "lib_marker" for path, name, *_ in incremental_rows[1]
+        )
+    else:
+        assert (files_after, symbols_after, chunks_after) == (0, 0, 0)
+
+    full = manager.sync_repository_index(repo_id, force_full=True)
+    assert full.action == "full_index", full.error
+    assert _index_snapshot(registry, repo_id) == incremental_rows
+    assert _rows_for(registry, repo_id, "lib.py") == (files_after, symbols_after, chunks_after)
+
+
+def test_unclassifiable_git_change_falls_back_to_a_full_rebuild(parity_runtime, monkeypatch):
+    """#144: an ``X`` (unknown) status must not yield a silently partial change set."""
+    from mcp_server.indexing.change_detector import ChangeDetector
+
+    repo, registry, repo_id, _dispatcher, manager = parity_runtime
+    assert manager.sync_repository_index(repo_id, force_full=True).action == "full_index"
+    (repo / "hello.py").write_text("def hello():\n    return 9\n")
+    _git(repo, "commit", "-qam", "edit")
+    original = ChangeDetector._parse_status_line
+    monkeypatch.setattr(
+        ChangeDetector,
+        "_parse_status_line",
+        lambda self, line: original(self, "X\thello.py" if line else line),
+    )
+
+    result = manager.sync_repository_index(repo_id)
+
+    assert result.action == "full_index", result.error
+
+
 def test_error_summary_redacts_common_credential_formats():
     """#111 review S2: synthetic values only."""
     synthetic = {
