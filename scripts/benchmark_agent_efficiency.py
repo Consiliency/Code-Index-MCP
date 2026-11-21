@@ -88,9 +88,9 @@ def main():
         },
         {
             "category": "A. Exact Symbol (Go-To-Def)",
-            "name": "Find _build_semantic_baseline function",
-            "native_cmd": lambda: run_native_rg("def _build_semantic_baseline", cwd),
-            "mcp_path": "/symbol?symbol=_build_semantic_baseline",
+            "name": "Find _build_sqlite_baseline function",
+            "native_cmd": lambda: run_native_rg("def _build_sqlite_baseline", cwd),
+            "mcp_path": "/symbol?symbol=_build_sqlite_baseline",
             "expected_file": "index_management.py",
         },
         {
