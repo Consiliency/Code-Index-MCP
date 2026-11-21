@@ -5,19 +5,13 @@ A full rebuild ran on an unchanged, already-indexed commit, readiness reported
 rebuild was chosen.
 """
 
-import json
 import logging
-import os
 import subprocess
-import sys
-from pathlib import Path
 from types import SimpleNamespace
 
 from mcp_server.health.repository_readiness import (
-    PUBLICATION_OWNER_FILE,
     ReadinessClassifier,
     RepositoryReadinessState,
-    write_publication_owner,
 )
 from mcp_server.utils.memory_release import release_rebuild_memory
 from mcp_server.watcher.sweeper import WatcherSweeper
@@ -226,47 +220,61 @@ def test_unchanged_clean_indexed_commit_is_up_to_date(runtime, monkeypatch):  # 
     assert manager.repair_repository_drift(repo_id).action == "incremental_update"
 
 
-def _pending(runtime_tuple):
-    _repo, registry, repo_id, _store, manager = runtime_tuple
+def test_pending_publication_stays_fail_closed(runtime):  # noqa: F811
+    """A pending publication keeps failing closed (by design, unchanged by #145).
+
+    The 05:56Z ``missing_provenance`` sample was taken while the bd61265
+    incremental was building; queries fail closed until it publishes.
+    """
+    _repo, registry, repo_id, _store, manager = runtime
     assert manager.rebuild_repository_index(repo_id).action == "full_index"
     info = registry.get(repo_id)
     info.staleness_reason = "index_publication_pending"
-    return info
-
-
-def test_pending_publication_with_live_writer_is_not_missing_provenance(runtime):  # noqa: F811
-    info = _pending(runtime)
-    write_publication_owner(Path(info.index_location))
-    readiness = ReadinessClassifier.classify_registered(info)
-    assert readiness.state == RepositoryReadinessState.READY
-
-
-def test_pending_publication_without_live_writer_stays_missing_provenance(
-    runtime, tmp_path
-):  # noqa: F811
-    info = _pending(runtime)
-    assert (
-        ReadinessClassifier.classify_registered(info).state
-        == RepositoryReadinessState.MISSING_PROVENANCE
-    )
-    child = subprocess.Popen([sys.executable, "-c", "pass"])
-    child.wait()
-    owner = Path(info.index_location) / PUBLICATION_OWNER_FILE
-    owner.write_text(json.dumps({"pid": child.pid, "host": os.uname().nodename}))
     assert (
         ReadinessClassifier.classify_registered(info).state
         == RepositoryReadinessState.MISSING_PROVENANCE
     )
 
 
-def test_publication_owner_is_cleared_after_the_build(runtime):  # noqa: F811
+def test_sweep_deletes_stale_row_of_a_newly_ignored_file(runtime, monkeypatch):  # noqa: F811
+    """A mislabeled generation's row for a now-ignored file is drift to delete.
+
+    The raced commit adds ``generated.py`` to .gitignore, but the generation
+    published under it still holds the row from before. The full walk would
+    not store that file, so the sweep must report the row as a deletion.
+    """
     repo, registry, repo_id, _store, manager = runtime
-    (repo / "module.py").write_text("value = 1\n")
+    for index in range(6):
+        (repo / f"stable{index}.py").write_text(f"stable_value_{index} = {index}\n")
+    (repo / "generated.py").write_text("generated_sentinel = 1\n")
     _commit_all(repo, "baseline")
     assert manager.rebuild_repository_index(repo_id).action == "full_index"
-    info = registry.get(repo_id)
-    assert not (Path(info.index_location) / PUBLICATION_OWNER_FILE).exists()
-    assert info.staleness_reason is None
+    store = manager._resolve_ctx(repo_id).sqlite_store
+    assert store.search_code_fts("generated_sentinel")
+
+    gitignore = repo / ".gitignore"
+    existing = gitignore.read_text() if gitignore.exists() else ""
+    gitignore.write_text(existing + "generated.py\n")
+    head = _commit_all(repo, "ignore generated.py")
+    # Simulate the mislabel: the old rows are recorded as the new commit.
+    registry.update_indexed_commit(repo_id, head, branch="main")
+
+    deleted = []
+    real_incremental = manager._incremental_index_update
+
+    def spy(repo_id_arg, ctx, changes, *args, **kwargs):
+        deleted.extend(changes.deleted)
+        return real_incremental(repo_id_arg, ctx, changes, *args, **kwargs)
+
+    monkeypatch.setattr(manager, "_incremental_index_update", spy)
+    _no_full_index(manager, monkeypatch)
+    sweeper, _marked = _sweeper_for(manager, registry, repo_id, store)
+
+    assert sweeper.sweep_once() == [repo_id]
+    assert deleted == ["generated.py"]
+    store = manager._resolve_ctx(repo_id).sqlite_store
+    assert not store.search_code_fts("generated_sentinel")
+    assert sweeper.sweep_once() == []
 
 
 def test_memory_release_is_best_effort(monkeypatch):

@@ -48,10 +48,8 @@ from ..health.repository_readiness import (
     ReadinessClassifier,
     RepositoryReadiness,
     RepositoryReadinessState,
-    clear_publication_owner,
     coverage_from_marker,
     published_grammar_degradation,
-    write_publication_owner,
 )
 from ..indexing.change_detector import ChangeDetector
 from ..indexing.lock_registry import lock_registry
@@ -1401,7 +1399,6 @@ class GitAwareIndexManager:
                 **({"require_auto_sync": True} if require_auto_sync else {}),
             )
             mutation_admitted = True
-            self._write_publication_owner(repo_info)
             if changes is None and stage_operation is None:
                 # Every full rebuild says why it was chosen (#145).
                 logger.info(
@@ -1809,23 +1806,7 @@ class GitAwareIndexManager:
             if stage_dir is not None:
                 shutil.rmtree(stage_dir, ignore_errors=True)
             if mutation_admitted:
-                self._clear_publication_owner(repo_info)
                 release_rebuild_memory(repo_id)
-
-    @staticmethod
-    def _write_publication_owner(repo_info: Any) -> None:
-        """Name this process as the live writer of the pending publication (#145)."""
-        try:
-            write_publication_owner(Path(repo_info.index_location))
-        except OSError as exc:
-            logger.debug("Publication owner unavailable (%s)", type(exc).__name__)
-
-    @staticmethod
-    def _clear_publication_owner(repo_info: Any) -> None:
-        try:
-            clear_publication_owner(Path(repo_info.index_location))
-        except OSError as exc:
-            logger.debug("Publication owner not cleared (%s)", type(exc).__name__)
 
     def _grammar_availability(self) -> Optional[grammar_cache.GrammarAvailability]:
         """Snapshot which languages cannot load their grammars, once per build.

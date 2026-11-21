@@ -459,10 +459,17 @@ class WatcherSweeper:
     def _indexed_path_should_report_delete(
         self, repo_root: Path, rel: str, gitignore_filter
     ) -> bool:
+        """Whether an indexed row absent from the stored file set is drift.
+
+        A row whose path repository policy now ignores or excludes is always
+        drift: the full walk would not store that file, so the row is stale
+        (for example a mislabeled generation that predates a .gitignore
+        change, #145). Otherwise only rows of code files are reported.
+        """
         path = repo_root / rel
-        if path.suffix not in _CODE_EXTENSIONS:
-            return False
-        return not gitignore_filter(path)
+        if gitignore_filter(path):
+            return True
+        return path.suffix in _CODE_EXTENSIONS
 
     def _match_renames(
         self,
