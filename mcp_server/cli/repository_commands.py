@@ -1392,6 +1392,437 @@ def status(repo_id: Optional[str]):
         sys.exit(1)
 
 
+class _PrefillRefused(Exception):
+    """A clean refusal: nothing was written to the index."""
+
+    def __init__(self, reason: str, message: str, remediation: Optional[str] = None) -> None:
+        super().__init__(message)
+        self.reason = reason
+        self.message = message
+        self.remediation = remediation
+
+
+# Passes are small so progress is reported, and the stop checks run, often.
+_PREFILL_PASS_CHUNKS = 64
+_PREFILL_LOCK_TIMEOUT_SECONDS = 2.0
+# A registry marker a staged rebuild leaves while it owns (or crashed owning)
+# the generation transition. The prefill never writes while one is present.
+_STAGED_REBUILD_MARKERS = {"index_building", "index_publication_pending"}
+
+
+def _find_registered_repository(registry: RepositoryRegistry, selector: str) -> Optional[Any]:
+    """Resolve a repository ID, name or registered path (or a path inside one)."""
+    repo_info = registry.get_repository(selector)
+    if repo_info:
+        return repo_info
+    for info in registry.get_all_repositories().values():
+        if info.name == selector or info.path == selector:
+            return info
+    if Path(selector).exists():
+        return registry.get_repository_by_path(str(Path(selector).resolve()))
+    return None
+
+
+def _staging_dirs(repo_info: Any) -> tuple[Path, ...]:
+    # (``list`` is shadowed by the ``repository list`` command in this module.)
+    index_location = getattr(repo_info, "index_location", None)
+    if not index_location:
+        return ()
+    return tuple(sorted(Path(index_location).glob(".current.db.staging-*")))
+
+
+def _check_prefill_readiness(repo_info: Any) -> Any:
+    """Refuse unless the published index is the ready, current generation."""
+    if getattr(repo_info, "staleness_reason", None) in _STAGED_REBUILD_MARKERS:
+        raise _PrefillRefused(
+            "staged_rebuild_in_progress",
+            "A staged rebuild owns this repository's generation transition "
+            f"(staleness_reason={repo_info.staleness_reason}); summaries are only "
+            "prefilled into a published, ready index.",
+            "Wait for the rebuild to finish, or rerun `mcp-index repository sync "
+            "--force-full` to replace an interrupted one, then retry.",
+        )
+    readiness = ReadinessClassifier.classify_registered(repo_info)
+    if readiness.state.value == "index_building":
+        raise _PrefillRefused(
+            "staged_rebuild_in_progress",
+            "The repository index is being built.",
+            readiness.remediation,
+        )
+    if not readiness.ready:
+        raise _PrefillRefused(
+            "repository_not_ready",
+            f"Repository readiness is {readiness.state.value}, not ready.",
+            readiness.remediation,
+        )
+    return readiness
+
+
+def _build_prefill_writer(index_path: Path) -> tuple[Any, dict[str, Any]]:
+    """Build the summary writer exactly as the staged semantic build does.
+
+    ``EnhancedDispatcher.rebuild_semantic_for_paths`` and
+    ``get_semantic_summary_contract`` construct ``ComprehensiveChunkWriter``
+    from ``reload_settings()``, the resolved default profile and that profile's
+    summarization config. ``_prompt_fingerprint`` depends only on those inputs,
+    so rows written here carry the profile ID and prompt fingerprint that
+    ``SQLiteStore.prepare_generation`` keeps for the next staged rebuild.
+    """
+    from mcp_server.indexing.summarization import ComprehensiveChunkWriter
+
+    settings = reload_settings()
+    profile_id = settings.get_semantic_default_profile()
+    if not profile_id:
+        raise _PrefillRefused(
+            "summarization_unconfigured",
+            "No semantic profile is configured, so there is no summary contract to fill.",
+            "Set SEMANTIC_DEFAULT_PROFILE (and its summarization endpoint), then retry.",
+        )
+    summarization_config = settings.get_profile_summarization_config(profile_id)
+    summarization_config["profile_id"] = profile_id
+    writer = ComprehensiveChunkWriter(
+        db_path=str(index_path),
+        qdrant_client=None,
+        summarization_config=summarization_config,
+    )
+    if not writer.can_summarize():
+        raise _PrefillRefused(
+            "summarization_unconfigured",
+            f"Semantic summarization is not configured for profile '{profile_id}' "
+            "(no summarization endpoint or permitted provider key).",
+            "Configure the profile's summarization endpoint (for oss_high, "
+            "SEMANTIC_ENRICHMENT_BASE_URL) or a permitted provider key, then retry.",
+        )
+    contract = {
+        "profile_id": profile_id,
+        "prompt_fingerprint": writer._prompt_fingerprint(),
+        "semantic_search_enabled": bool(settings.semantic_search_enabled),
+    }
+    return writer, contract
+
+
+def _close_writer_store(writer: Any) -> None:
+    store = getattr(writer, "_sqlite_store", None)
+    if store is not None:
+        store.close()
+
+
+class _PrefillStop:
+    """Stop between summary calls on SIGINT/SIGTERM; a second SIGINT aborts now."""
+
+    def __init__(self) -> None:
+        self.requested_by: Optional[str] = None
+        self._previous: dict[int, Any] = {}
+
+    def __enter__(self) -> "_PrefillStop":
+        import signal
+
+        for signum in (signal.SIGINT, signal.SIGTERM):
+            try:
+                self._previous[signum] = signal.signal(signum, self._handle)
+            except ValueError:
+                # Not the main thread: signals cannot be observed here.
+                break
+        return self
+
+    def __exit__(self, *_exc: Any) -> None:
+        import signal
+
+        for signum, handler in self._previous.items():
+            signal.signal(signum, handler)
+        self._previous.clear()
+
+    def _handle(self, signum: int, _frame: Any) -> None:
+        import signal
+
+        if self.requested_by is not None and signum == signal.SIGINT:
+            raise KeyboardInterrupt
+        self.requested_by = signal.Signals(signum).name
+        click.echo(
+            "Stop requested: finishing the current summary call; "
+            "press Ctrl-C again to abort it.",
+            err=True,
+        )
+
+    @property
+    def requested(self) -> bool:
+        return self.requested_by is not None
+
+
+async def _run_summary_prefill(
+    writer: Any,
+    *,
+    limit: int,
+    max_seconds: float,
+    stop: _PrefillStop,
+    started: float,
+    report: Any,
+) -> dict[str, Any]:
+    import time
+
+    written = 0
+    attempted = 0
+    passes = 0
+    stop_reason = "drained"
+    blocked_reason: Optional[str] = None
+
+    def window_closed() -> bool:
+        return bool(max_seconds) and time.monotonic() - started >= max_seconds
+
+    def should_stop() -> bool:
+        return stop.requested or window_closed()
+
+    while True:
+        if stop.requested:
+            stop_reason = "interrupted"
+            break
+        if limit and written >= limit:
+            stop_reason = "limit"
+            break
+        if window_closed():
+            stop_reason = "max_seconds"
+            break
+        pass_chunks = _PREFILL_PASS_CHUNKS
+        if limit:
+            pass_chunks = min(pass_chunks, limit - written)
+        result = await writer.process_scope(
+            limit=pass_chunks, max_batches=1, cancel_check=should_stop
+        )
+        passes += 1
+        written += result.summaries_written
+        attempted += result.chunks_attempted
+        report(written, result.remaining_chunks)
+        if result.cancelled:
+            stop_reason = "interrupted" if stop.requested else "max_seconds"
+            break
+        if result.remaining_chunks == 0:
+            stop_reason = "drained"
+            break
+        if result.summaries_written == 0:
+            # The provider returned nothing for a whole pass; retrying the
+            # same chunks immediately would spin.
+            stop_reason = "no_progress"
+            blocked_reason = result.blocked_call_reason
+            break
+    return {
+        "written": written,
+        "attempted": attempted,
+        "passes": passes,
+        "stop_reason": stop_reason,
+        "blocked_call_reason": blocked_reason,
+    }
+
+
+_PREFILL_STATUS = {
+    "drained": "complete",
+    "limit": "partial",
+    "max_seconds": "partial",
+    "interrupted": "interrupted",
+    "no_progress": "stalled",
+}
+_PREFILL_EXIT_CODE = {"complete": 0, "partial": 0, "interrupted": 130, "stalled": 1}
+
+
+@repository.command()
+@click.argument("repo")
+@click.option(
+    "--limit",
+    type=click.IntRange(min=0),
+    default=0,
+    show_default=True,
+    help="Stop after writing this many chunk summaries (0 = unbounded)",
+)
+@click.option(
+    "--max-seconds",
+    type=click.FloatRange(min=0),
+    default=0,
+    show_default=True,
+    help="Stop starting new summary calls after this many seconds (0 = unbounded)",
+)
+@click.option("--json", "as_json", is_flag=True, help="Print a final JSON summary on stdout")
+def summarize(repo: str, limit: int, max_seconds: float, as_json: bool):
+    """Prefill authoritative chunk summaries into the published index.
+
+    Writes the summaries a semantic `sync --force-full` needs into the ready,
+    published index of REPO (an ID, name or path) under its writer lock, so the
+    work survives between runs. A rerun continues with the chunks still
+    missing a summary; the next staged rebuild reuses every one of them.
+    """
+    import asyncio
+    import contextlib
+    import json as json_module
+    import time
+
+    from mcp_server.indexing.lock_registry import lock_registry
+
+    started = time.monotonic()
+
+    def emit_refusal(refusal: _PrefillRefused) -> None:
+        if as_json:
+            click.echo(
+                json_module.dumps(
+                    {
+                        "status": "refused",
+                        "reason": refusal.reason,
+                        "message": refusal.message,
+                        "remediation": refusal.remediation,
+                    },
+                    indent=2,
+                )
+            )
+        click.echo(click.style(f"✗ {refusal.message}", fg="red"), err=True)
+        if refusal.remediation:
+            click.echo(f"  Remediation: {refusal.remediation}", err=True)
+        sys.exit(1)
+
+    def report(written: int, remaining: int) -> None:
+        click.echo(
+            f"  written {written}, remaining {remaining}, "
+            f"elapsed {time.monotonic() - started:.1f}s",
+            err=as_json,
+        )
+
+    try:
+        registry = RepositoryRegistry()
+        repo_info = _find_registered_repository(registry, repo)
+        if repo_info is None:
+            raise _PrefillRefused(
+                "repository_not_registered",
+                f"Repository not registered: {repo}",
+                "Register it with `mcp-index repository register <path>` and sync it first.",
+            )
+        repo_id = repo_info.repository_id
+        _check_prefill_readiness(repo_info)
+        with contextlib.ExitStack() as held:
+            try:
+                held.enter_context(
+                    lock_registry.acquire(
+                        repo_id,
+                        repo_path=Path(repo_info.path),
+                        timeout=_PREFILL_LOCK_TIMEOUT_SECONDS,
+                    )
+                )
+            except TimeoutError:
+                if _staging_dirs(repo_info):
+                    raise _PrefillRefused(
+                        "staged_rebuild_in_progress",
+                        "A staged rebuild holds the repository writer lock.",
+                        "Wait for the rebuild to finish, then retry.",
+                    )
+                raise _PrefillRefused(
+                    "writer_lock_held",
+                    "Another index writer holds the repository writer lock.",
+                    "Wait for the running sync or watcher update to finish, then retry.",
+                )
+            # Recheck under the lock: a rebuild may have published or failed
+            # between the first check and admission.
+            repo_info = registry.get_repository(repo_id)
+            if repo_info is None:
+                raise _PrefillRefused(
+                    "repository_not_registered", f"Repository not registered: {repo}"
+                )
+            _check_prefill_readiness(repo_info)
+            index_path = Path(repo_info.index_path).resolve()
+            writer, contract = _build_prefill_writer(index_path)
+            held.callback(_close_writer_store, writer)
+            remaining_at_start = writer._count_unsummarized_rows()
+            click.echo(
+                f"Prefilling summaries for {repo_info.name} "
+                f"(profile {contract['profile_id']}, generation "
+                f"{repo_info.index_generation or 'legacy'}): "
+                f"{remaining_at_start} chunks missing a summary",
+                err=as_json,
+            )
+            if not contract["semantic_search_enabled"]:
+                click.echo(
+                    "  Note: SEMANTIC_SEARCH_ENABLED is off; these summaries are kept "
+                    "and used once a semantic-enabled rebuild runs.",
+                    err=as_json,
+                )
+            outcome: dict[str, Any]
+            # The --max-seconds window covers summarizing, not admission.
+            started = time.monotonic()
+            with _PrefillStop() as stop:
+                try:
+                    outcome = asyncio.run(
+                        _run_summary_prefill(
+                            writer,
+                            limit=limit,
+                            max_seconds=max_seconds,
+                            stop=stop,
+                            started=started,
+                            report=report,
+                        )
+                    )
+                except KeyboardInterrupt:
+                    # Aborted mid-call: the counts come from what is durable.
+                    outcome = {
+                        "written": None,
+                        "attempted": None,
+                        "passes": None,
+                        "stop_reason": "interrupted",
+                        "blocked_call_reason": None,
+                    }
+            remaining = writer._count_unsummarized_rows()
+            if outcome["written"] is None:
+                outcome["written"] = max(0, remaining_at_start - remaining)
+    except _PrefillRefused as refusal:
+        emit_refusal(refusal)
+        return
+    except Exception as exc:
+        click.echo(click.style(f"✗ Summary prefill failed: {exc}", fg="red"), err=True)
+        sys.exit(1)
+
+    status_value = _PREFILL_STATUS[outcome["stop_reason"]]
+    summary = {
+        "status": status_value,
+        "stop_reason": outcome["stop_reason"],
+        "repository_id": repo_id,
+        "repository": repo_info.name,
+        "index_generation": repo_info.index_generation,
+        "index_path": str(index_path),
+        "profile_id": contract["profile_id"],
+        "prompt_fingerprint": contract["prompt_fingerprint"],
+        "semantic_search_enabled": contract["semantic_search_enabled"],
+        "written": outcome["written"],
+        "attempted": outcome["attempted"],
+        "passes": outcome["passes"],
+        "remaining_at_start": remaining_at_start,
+        "remaining": remaining,
+        "elapsed_seconds": round(time.monotonic() - started, 3),
+        "limit": limit,
+        "max_seconds": max_seconds,
+    }
+    if outcome.get("blocked_call_reason"):
+        summary["blocked_call_reason"] = outcome["blocked_call_reason"]
+    if as_json:
+        click.echo(json_module.dumps(summary, indent=2))
+    else:
+        colour = {"complete": "green", "partial": "yellow"}.get(status_value, "red")
+        click.echo(
+            click.style(
+                f"{'✓' if status_value in {'complete', 'partial'} else '✗'} "
+                f"Summary prefill {status_value} ({outcome['stop_reason']}): "
+                f"wrote {summary['written']}, {remaining} remaining, "
+                f"{summary['elapsed_seconds']:.1f}s",
+                fg=colour,
+            )
+        )
+        if remaining == 0:
+            click.echo(
+                "  Next: `mcp-index repository sync --force-full` reuses these summaries "
+                "and only embeds."
+            )
+        elif status_value == "stalled":
+            click.echo(
+                "  No summary was written in the last pass; check the summarization "
+                "endpoint, then rerun to continue."
+            )
+        else:
+            click.echo("  Rerun the same command to continue with the remaining chunks.")
+    sys.exit(_PREFILL_EXIT_CODE[status_value])
+
+
 @repository.command()
 @click.argument("search_paths", nargs=-1, required=True)
 @click.option(
