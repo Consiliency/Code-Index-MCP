@@ -17,6 +17,7 @@ Typical use::
 from __future__ import annotations
 
 import logging
+import os
 import sys
 from pathlib import Path
 from typing import Iterable, List, Optional
@@ -33,6 +34,65 @@ from mcp_server.sandbox.capabilities import CapabilitySet
 from mcp_server.sandbox.supervisor import SandboxSupervisor
 
 logger = logging.getLogger(__name__)
+
+WORKER_MODULE = "mcp_server.sandbox.worker_main"
+
+# The worker runs under ``-I`` (isolated mode: ignore ``PYTHON*`` variables,
+# keep the working directory and script directory off ``sys.path``, skip the
+# user site). Site-packages ``.pth`` files still load, so installed and
+# editable installs resolve as usual. This bootstrap then pins ``mcp_server`` to
+# the package root the host itself imported. When the isolated path does not
+# already resolve the package there (for example a plain source checkout), the
+# root is prepended; otherwise it is appended so modules beside the package (a
+# source checkout's ``tests`` fixtures, for instance) stay importable without
+# outranking the standard library or installed packages. If ``mcp_server``
+# still resolves elsewhere, the worker fails closed instead of running a
+# different copy (#146).
+_WORKER_BOOTSTRAP = """\
+import importlib, importlib.util, os, runpy, sys
+root = sys.argv.pop(1)
+def pinned():
+    spec = importlib.util.find_spec("mcp_server")
+    locs = list(spec.submodule_search_locations or ()) if spec else []
+    return bool(locs) and all(
+        os.path.dirname(os.path.realpath(p)) == root for p in locs
+    )
+if root not in sys.path:
+    if pinned():
+        sys.path.append(root)
+    else:
+        sys.path.insert(0, root)
+importlib.invalidate_caches()
+if not pinned():
+    sys.stderr.write("sandbox worker: mcp_server does not resolve to the host package\\n")
+    sys.exit(3)
+runpy.run_module(%r, run_name="__main__", alter_sys=True)
+""" % (WORKER_MODULE,)
+
+
+def host_package_root() -> str:
+    """Return the real directory that contains the host's ``mcp_server`` package."""
+    import mcp_server
+
+    return os.path.dirname(os.path.realpath(next(iter(mcp_server.__path__))))
+
+
+def build_worker_command(interpreter: str, plugin_module: str, caps_json: str) -> List[str]:
+    """Build an isolated worker command that runs the host's ``mcp_server``.
+
+    Never ``python -m``: that puts the working directory first on ``sys.path``
+    and honours ``PYTHONPATH``, so a checkout or environment containing a
+    top-level ``mcp_server`` could replace the worker (#146).
+    """
+    return [
+        interpreter,
+        "-I",
+        "-c",
+        _WORKER_BOOTSTRAP,
+        host_package_root(),
+        plugin_module,
+        caps_json,
+    ]
 
 
 class SandboxedPlugin(IPlugin):
@@ -52,13 +112,7 @@ class SandboxedPlugin(IPlugin):
         # Default ``"python"`` resolves via PATH; callers that need byte-for-byte
         # interpreter parity (test harness, mcp_server CLI) pass ``sys.executable``.
         interp = gh_cmd if gh_cmd != "python" else sys.executable or "python"
-        worker_cmd: List[str] = [
-            interp,
-            "-m",
-            "mcp_server.sandbox.worker_main",
-            plugin_module,
-            capabilities.to_json(),
-        ]
+        worker_cmd = build_worker_command(interp, plugin_module, capabilities.to_json())
         self._supervisor = SandboxSupervisor(worker_cmd, capabilities)
         self._closed = False
         self._cached_language: str | None = None
