@@ -664,3 +664,24 @@ def test_reregistration_during_a_limit_pass_aborts_instead_of_partial(prefill):
     assert payload["status"] == "aborted"
     assert payload["detail"] == "the repository registration changed"
     assert payload["written"] == 2
+
+
+def test_zero_pass_window_still_rechecks_the_registry(prefill, monkeypatch):
+    ctx = prefill
+    calls = []
+
+    def changed(*_args, **_kwargs):
+        calls.append(1)
+        return "the repository registration changed"
+
+    # The window closes before the first pass, so no pass recheck runs; the
+    # command must still check the registry before reporting success.
+    monkeypatch.setattr(repository_commands, "_published_index_change", changed)
+    # A window this short has always closed by the time the loop first checks it.
+    result, payload = _summarize(ctx, "--max-seconds", "0.000000001")
+
+    assert result.exit_code == 1, result.output
+    assert payload["status"] == "aborted"
+    assert payload["detail"] == "the repository registration changed"
+    assert calls
+    assert ctx["summarizer"].calls == []

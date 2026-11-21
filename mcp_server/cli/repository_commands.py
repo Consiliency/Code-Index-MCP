@@ -1692,6 +1692,12 @@ async def _run_summary_prefill(
             stop_reason = "no_progress"
             blocked_reason = result.blocked_call_reason
             break
+    if passes == 0:
+        # No pass ran (for example the window closed before the first one), so
+        # the post-pass recheck never happened; check before reporting success.
+        detail = published_change()
+        if detail is not None:
+            stop_reason = "published_index_changed"
     return {
         "written": written,
         "attempted": attempted,
