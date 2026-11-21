@@ -29,6 +29,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `grammar_degradation` index-config marker. Binaries older than this change
   ignore the marker and serve a degraded generation as complete until its next
   rebuild.
+- **PMCP pilot binds pmcp 3.0.3** (Consiliency/Code-Index-MCP#133, was 2.7.3).
+  Its launcher binder accepts a deployed release that was later archived behind
+  a symlink. Re-run `prepare` for existing pilot roots; the delivered offline
+  and rehearsal acceptance re-run is still pending.
+- **PMCP pilot Qdrant ports** (Consiliency/Code-Index-MCP#138). Rehearsal and
+  live take `--qdrant-http-port` and `--qdrant-grpc-port`. Unset ports default
+  to free ephemeral ports, so `--qdrant-network host` no longer binds the
+  stock gRPC port 6334. A taken port refuses before any container starts.
 
 ## [1.6.0] - 2026-11-09
 

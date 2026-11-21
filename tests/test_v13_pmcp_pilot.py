@@ -364,7 +364,7 @@ def test_prepare_delivered_wheel_never_builds(tmp_path, monkeypatch, valid):
     monkeypatch.setattr(
         pilot,
         "pmcp_distribution_identity",
-        lambda path, expected=None: {"version": "2.7.3", "node_executable": None},
+        lambda path, expected=None: {"version": "3.0.3", "node_executable": None},
     )
     monkeypatch.setattr(
         pilot, "browser_node_identity", lambda path: {"path": str(path), "sha256": "node"}
@@ -376,7 +376,7 @@ def test_prepare_delivered_wheel_never_builds(tmp_path, monkeypatch, valid):
         calls.append(command)
         if label == "pilot-lock-export":
             (directory / "constraints.txt").write_text("dependency==1\n")
-        return '{"version": "1.4.1"}' if label == "installed-identity" else "pmcp 2.7.3"
+        return '{"version": "1.4.1"}' if label == "installed-identity" else "pmcp 3.0.3"
 
     monkeypatch.setattr(pilot, "run_command", run)
     digest = pilot.digest_file(wheel) if valid else "0" * 64
@@ -423,7 +423,7 @@ def test_prepared_runtime_identity_rejects_manifest_tampering(tmp_path, monkeypa
     monkeypatch.setattr(pilot, "source_identity", lambda: {"source": "a" * 40})
     monkeypatch.setattr(pilot.shutil, "which", lambda name: str(executable))
     monkeypatch.setattr(
-        pilot, "pmcp_distribution_identity", lambda path, expected=None: {"version": "2.7.3"}
+        pilot, "pmcp_distribution_identity", lambda path, expected=None: {"version": "3.0.3"}
     )
     node_identity = {"path": str(tmp_path / "node"), "sha256": "node"}
     monkeypatch.setattr(pilot, "browser_node_identity", lambda path: node_identity)
@@ -449,9 +449,9 @@ def test_prepared_runtime_identity_rejects_manifest_tampering(tmp_path, monkeypa
         "grammar_cache": str(tmp_path),
         "pmcp_path": str(executable),
         "pmcp_sha256": pilot.digest_file(executable),
-        "pmcp_distribution": {"version": "2.7.3"},
+        "pmcp_distribution": {"version": "3.0.3"},
         "browser_node": node_identity,
-        "pmcp_version": "pmcp 2.7.3",
+        "pmcp_version": "pmcp 3.0.3",
         "helper_sha256": {name: pilot.digest_file(tmp_path / name) for name in pilot.PILOT_HELPERS},
     }
     pilot.validate_manifest(tmp_path, manifest)
@@ -712,6 +712,261 @@ def test_pmcp_release_wrapper_binds_python_314_and_node_runtime(tmp_path, monkey
     launcher.write_text(launcher.read_text() + "echo unbound\n")
     with pytest.raises(PilotRefused, match="pmcp_launcher_unknown"):
         pilot.pmcp_distribution_identity(launcher, expected=expected)
+
+
+def _pmcp3_release(base: Path, name: str, interpreter: Path) -> Path:
+    """Lay out one dev0 tooling release the way pmcp 3.x deploys it."""
+    release = base / "archive" / name
+    python = release / "python"
+    site = python / "lib/python3.14/site-packages"
+    node_bin = release / "node-v24.22.3-linux-x64/bin"
+    for directory in (release / "bin", python / "bin", site / "pmcp", node_bin):
+        directory.mkdir(parents=True, exist_ok=True)
+    # A venv interpreter: python -> python3 -> the base python3.14.
+    (python / "bin/python3").symlink_to(interpreter)
+    (python / "bin/python").symlink_to("python3")
+    (python / "pyvenv.cfg").write_text(
+        f"home = {interpreter.parent}\ninclude-system-site-packages = false\n" "version = 3.14.4\n"
+    )
+    named = base / "releases" / name
+    (python / "bin/pmcp").write_text(
+        f"#!{named}/python/bin/python\nfrom pmcp.cli import main\nmain()\n"
+    )
+    node = node_bin / "node"
+    node.write_bytes(b"trusted node")
+    node.chmod(0o755)
+    (site / "pmcp/__init__.py").write_text('__version__ = "3.0.3"\n')
+    info = site / "pmcp-3.0.3.dist-info"
+    info.mkdir()
+    (info / "METADATA").write_text("Metadata-Version: 2.4\nName: pmcp\nVersion: 3.0.3\n")
+    (info / "RECORD").write_text(
+        "pmcp/__init__.py,,\npmcp-3.0.3.dist-info/METADATA,,\npmcp-3.0.3.dist-info/RECORD,,\n"
+    )
+    (release / "bin/pmcp").write_text(
+        "#!/bin/sh\n"
+        f'export PATH={named}/node-v24.22.3-linux-x64/bin:"$PATH"\n'
+        f'exec {named}/python/bin/pmcp "$@"\n'
+    )
+    # dev0 moved the release to an archive volume and left a symlink behind.
+    named.parent.mkdir(exist_ok=True)
+    named.symlink_to(release)
+    return named
+
+
+def test_pmcp3_archived_release_wrapper_binds_resolved_release(tmp_path, monkeypatch):
+    """#133: a pmcp 3.x release archived behind a symlink still binds."""
+    from scripts import v13_pmcp_pilot as pilot
+
+    interpreter = tmp_path / "base/bin/python3.14"
+    interpreter.parent.mkdir(parents=True)
+    interpreter.write_bytes(b"trusted python")
+    named = _pmcp3_release(tmp_path, "sync-1", interpreter)
+    # The pilot binds the resolved launcher, which lands in the archive.
+    launcher = (named / "bin/pmcp").resolve()
+    assert launcher.is_relative_to(tmp_path / "archive")
+    console, node_root = pilot.pmcp_console_script(launcher)
+    assert console == named / "python/bin/pmcp"
+    assert node_root == named / "node-v24.22.3-linux-x64"
+    monkeypatch.setattr(
+        pilot.subprocess,
+        "run",
+        lambda *args, **kwargs: pytest.fail("executed unverified PMCP runtime"),
+    )
+    identity = pilot.pmcp_distribution_identity(launcher)
+    assert identity["version"] == pilot.PMCP_VERSION == "3.0.3"
+    assert identity["console"] == str(console)
+    assert identity["node_executable"] == str(node_root / "bin/node")
+    assert pilot.pmcp_distribution_identity(launcher, expected=identity) == identity
+    (named / "python/lib/python3.14/site-packages/pmcp/__init__.py").write_text("changed\n")
+    with pytest.raises(PilotRefused, match="pmcp_runtime_changed"):
+        pilot.pmcp_distribution_identity(launcher, expected=identity)
+
+
+def test_pmcp3_wrapper_naming_another_release_is_refused(tmp_path):
+    from scripts import v13_pmcp_pilot as pilot
+
+    interpreter = tmp_path / "base/bin/python3.14"
+    interpreter.parent.mkdir(parents=True)
+    interpreter.write_bytes(b"trusted python")
+    named = _pmcp3_release(tmp_path, "sync-1", interpreter)
+    other = _pmcp3_release(tmp_path, "sync-2", interpreter)
+    launcher = (named / "bin/pmcp").resolve()
+    launcher.write_text(launcher.read_text().replace(str(named), str(other)))
+    with pytest.raises(PilotRefused, match="pmcp_launcher_unknown"):
+        pilot.pmcp_console_script(launcher)
+    # Mixing releases: Node from this one, the console script from another.
+    launcher.write_text(
+        "#!/bin/sh\n"
+        f'export PATH={named}/node-v24.22.3-linux-x64/bin:"$PATH"\n'
+        f'exec {other}/python/bin/pmcp "$@"\n'
+    )
+    with pytest.raises(PilotRefused, match="pmcp_launcher_unknown"):
+        pilot.pmcp_console_script(launcher)
+
+
+@pytest.mark.parametrize("version", ["2.7.3", "3.0.2", "3.1.0"])
+def test_prepare_refuses_a_pmcp_other_than_the_pin(tmp_path, monkeypatch, version):
+    from scripts import v13_pmcp_pilot as pilot
+
+    calls = []
+    _prepare_fakes(monkeypatch, pilot, calls)
+    monkeypatch.setattr(
+        pilot,
+        "pmcp_distribution_identity",
+        lambda path, expected=None: {"version": version, "node_executable": None},
+    )
+    wheel = tmp_path / "index_it_mcp-1.6.0-py3-none-any.whl"
+    wheel.write_bytes(b"registry wheel fixture")
+    with pytest.raises(PilotRefused, match="pmcp_version_mismatch"):
+        pilot.prepare(tmp_path / "owned", wheel, pilot.digest_file(wheel))
+
+
+@pytest.fixture
+def held_port():
+    import socket
+
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        sock.listen()
+        yield sock.getsockname()[1]
+
+
+def test_qdrant_host_mode_defaults_to_distinct_ephemeral_ports():
+    """#138: host networking never binds the stock 6333/6334 by default."""
+    from scripts import v13_pmcp_pilot as pilot
+
+    http_port, grpc_port = pilot.qdrant_ports("host")
+    assert grpc_port is not None
+    assert http_port != grpc_port
+    assert not {http_port, grpc_port} & set(pilot.QDRANT_STOCK_PORTS)
+    args = pilot.qdrant_network_args("host", http_port, grpc_port)
+    assert f"QDRANT__SERVICE__HTTP_PORT={http_port}" in args
+    assert f"QDRANT__SERVICE__GRPC_PORT={grpc_port}" in args
+    assert "QDRANT__SERVICE__HOST=127.0.0.1" in args
+
+
+def test_qdrant_default_ephemeral_choice_skips_stock_ports(monkeypatch):
+    from scripts import v13_pmcp_pilot as pilot
+
+    offered = iter([6333, 6334, 6333, 40001, 40001, 40002])
+    monkeypatch.setattr(pilot, "free_port", lambda: next(offered))
+    assert pilot.qdrant_ports("host") == (40001, 40002)
+
+
+def test_qdrant_bridge_mode_publishes_grpc_only_when_requested():
+    from scripts import v13_pmcp_pilot as pilot
+
+    http_port, grpc_port = pilot.qdrant_ports("bridge")
+    assert grpc_port is None
+    assert pilot.qdrant_network_args("bridge", http_port, None) == [
+        "-p",
+        f"127.0.0.1:{http_port}:6333",
+    ]
+    http_port, grpc_port = pilot.qdrant_ports("bridge", grpc_port=pilot.free_port())
+    assert pilot.qdrant_network_args("bridge", http_port, grpc_port) == [
+        "-p",
+        f"127.0.0.1:{http_port}:6333",
+        "-p",
+        f"127.0.0.1:{grpc_port}:6334",
+    ]
+
+
+def test_qdrant_explicit_ports_are_honoured_and_validated(held_port):
+    from scripts import v13_pmcp_pilot as pilot
+
+    http_port, grpc_port = pilot.free_port(), pilot.free_port()
+    if http_port == grpc_port:
+        grpc_port = pilot.free_port()
+    assert pilot.qdrant_ports("host", http_port, grpc_port) == (http_port, grpc_port)
+    for network in ("host", "bridge"):
+        with pytest.raises(PilotRefused, match=f"qdrant_port_in_use:{held_port}"):
+            pilot.qdrant_ports(network, http_port=held_port)
+        with pytest.raises(PilotRefused, match=f"qdrant_port_in_use:{held_port}"):
+            pilot.qdrant_ports(network, grpc_port=held_port)
+    with pytest.raises(PilotRefused, match="qdrant_ports_conflict"):
+        pilot.qdrant_ports("host", http_port, http_port)
+    for invalid in (0, 65536):
+        with pytest.raises(PilotRefused, match="qdrant_port_invalid"):
+            pilot.qdrant_ports("host", http_port=invalid)
+
+
+@pytest.mark.asyncio
+async def test_qdrant_port_in_use_refuses_before_any_fixture_or_container(
+    tmp_path, manifest, monkeypatch, held_port
+):
+    from scripts import v13_pmcp_pilot as pilot
+
+    monkeypatch.syspath_prepend(str(pilot.REPO / "scripts"))
+    monkeypatch.setattr(
+        pilot, "create_fixture", lambda *args, **kwargs: pytest.fail("built a fixture")
+    )
+    monkeypatch.setattr(pilot, "run_command", lambda *args, **kwargs: pytest.fail("ran a command"))
+    with pytest.raises(PilotRefused, match=f"qdrant_port_in_use:{held_port}"):
+        await pilot.inference_pilot(
+            tmp_path,
+            manifest,
+            rehearsal=True,
+            qdrant_network="host",
+            qdrant_grpc_port=held_port,
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("explicit", [False, True])
+async def test_host_mode_rehearsal_starts_qdrant_on_the_chosen_ports(
+    tmp_path, manifest, monkeypatch, explicit
+):
+    from scripts import v13_pmcp_pilot as pilot
+
+    monkeypatch.syspath_prepend(str(pilot.REPO / "scripts"))
+    monkeypatch.setattr(pilot, "create_fixture", lambda *args, **kwargs: {"root": tmp_path})
+    calls = []
+
+    def run(command, *args, **kwargs):
+        calls.append(command)
+        if command[:2] == ["docker", "run"]:
+            raise subprocess.TimeoutExpired(command, 1)
+        return ""
+
+    monkeypatch.setattr(pilot, "run_command", run)
+    requested = {}
+    if explicit:
+        requested = {"qdrant_http_port": pilot.free_port(), "qdrant_grpc_port": pilot.free_port()}
+        if requested["qdrant_http_port"] == requested["qdrant_grpc_port"]:
+            requested["qdrant_grpc_port"] = pilot.free_port()
+    with pytest.raises(subprocess.TimeoutExpired):
+        await pilot.inference_pilot(
+            tmp_path, manifest, rehearsal=True, qdrant_network="host", **requested
+        )
+    start = calls[0]
+    assert start[:2] == ["docker", "run"]
+    env = dict(
+        start[index + 1].partition("=")[::2]
+        for index, arg in enumerate(start)
+        if arg == "-e" and "=" in start[index + 1]
+    )
+    http_port = int(env["QDRANT__SERVICE__HTTP_PORT"])
+    grpc_port = int(env["QDRANT__SERVICE__GRPC_PORT"])
+    assert http_port != grpc_port
+    assert not {http_port, grpc_port} & set(pilot.QDRANT_STOCK_PORTS)
+    if explicit:
+        assert (http_port, grpc_port) == (
+            requested["qdrant_http_port"],
+            requested["qdrant_grpc_port"],
+        )
+    assert calls[-1][:3] == ["docker", "rm", "--force"]
+
+
+@pytest.mark.parametrize("mode", ["prepare", "offline", "browser", "verify-live"])
+def test_qdrant_ports_require_an_inference_mode(monkeypatch, mode):
+    from scripts import v13_pmcp_pilot as pilot
+
+    monkeypatch.setattr(
+        sys, "argv", ["v13_pmcp_pilot.py", "--mode", mode, "--qdrant-grpc-port", "40000"]
+    )
+    monkeypatch.setattr(pilot, "source_identity", lambda: pytest.fail("reached mode dispatch"))
+    with pytest.raises(PilotRefused, match="qdrant_ports_require_inference_mode"):
+        pilot.main()
 
 
 def test_semantic_sample_refuses_lexical_fallback_and_wrong_generation():
@@ -1447,7 +1702,7 @@ def _prepare_fakes(monkeypatch, pilot, calls):
     monkeypatch.setattr(
         pilot,
         "pmcp_distribution_identity",
-        lambda path, expected=None: {"version": "2.7.3", "node_executable": None},
+        lambda path, expected=None: {"version": "3.0.3", "node_executable": None},
     )
     monkeypatch.setattr(
         pilot, "browser_node_identity", lambda path: {"path": str(path), "sha256": "node"}
@@ -1458,7 +1713,7 @@ def _prepare_fakes(monkeypatch, pilot, calls):
         calls.append((label, command, kwargs.get("env")))
         if label == "pilot-lock-export":
             (directory / "constraints.txt").write_text("dependency==1\n")
-        return '{"version": "1.6.0"}' if label == "installed-identity" else "pmcp 2.7.3"
+        return '{"version": "1.6.0"}' if label == "installed-identity" else "pmcp 3.0.3"
 
     monkeypatch.setattr(pilot, "run_command", run)
 
