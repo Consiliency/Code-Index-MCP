@@ -16,12 +16,27 @@ from ..utils.subprocess_env import get_full_env
 logger = logging.getLogger(__name__)
 
 
+class ChangeInventoryError(subprocess.SubprocessError):
+    """Git reported a change this detector cannot classify.
+
+    It subclasses ``SubprocessError`` so that callers which already treat a
+    failed change inventory as "rebuild from the committed tree" (the staged
+    sync in ``git_index_manager``) fail closed instead of publishing an
+    incremental update that silently omitted the change.
+    """
+
+
 @dataclass
 class FileChange:
     """Represents a single file change."""
 
     path: str
     change_type: str  # "added", "modified", "deleted", "renamed"
+    # A Git type change (``T``: regular file <-> symlink <-> gitlink) and an
+    # unmerged path (``U``) are reported as "modified": the consumer re-derives
+    # whether the new entry is indexable (the staged sync admits only regular
+    # committed blobs), so a file that became a symlink or submodule loses its
+    # rows and one that became a regular file is indexed.
     old_path: Optional[str] = None  # For renames
 
 
@@ -145,23 +160,39 @@ class ChangeDetector:
             return None
 
         status = parts[0]
-        if status == "A":
+        code = status[:1]
+        if code == "A":
             path = parts[1]
             if self._is_supported_file(path):
                 return FileChange(path, "added")
-        elif status == "M":
+        elif code in {"M", "T", "U"}:
+            # T: the entry changed type (file/symlink/gitlink). U: unmerged.
+            # Both mean the path's indexed content must be re-derived.
             path = parts[1]
             if self._is_supported_file(path):
                 return FileChange(path, "modified")
-        elif status == "D":
+        elif code == "D":
             path = parts[1]
             if self._is_supported_file(path):
                 return FileChange(path, "deleted")
-        elif status.startswith("R") and len(parts) >= 3:
+        elif code in {"R", "C"} and len(parts) < 3:
+            # Malformed rename/copy record; ignored as before.
+            return None
+        elif code == "R":
             old_path = parts[1]
             new_path = parts[2]
             if self._is_supported_file(old_path) or self._is_supported_file(new_path):
                 return FileChange(new_path, "renamed", old_path)
+        elif code == "C":
+            # A copy leaves the source untouched; only the destination is new.
+            new_path = parts[2]
+            if self._is_supported_file(new_path):
+                return FileChange(new_path, "added")
+        else:
+            # X ("unknown", a Git bug) or any status this parser does not know:
+            # dropping it would let a sync publish rows for content that is no
+            # longer in the tree, so the inventory is refused instead.
+            raise ChangeInventoryError(f"Unclassifiable git change status {status!r}")
 
         return None
 
