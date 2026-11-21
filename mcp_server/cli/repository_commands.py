@@ -1159,7 +1159,11 @@ def sync(repo_id: Optional[str], force_full: bool, sync_all: bool):
             registry.update_current_commit(repo_id)
 
             # Sync the repository
-            result = index_manager.sync_repository_index(repo_id, force_full=force_full)
+            result = index_manager.sync_repository_index(
+                repo_id,
+                force_full=force_full,
+                **({"reason": "operator requested --force-full"} if force_full else {}),
+            )
 
             if result.action == "up_to_date":
                 click.echo(click.style("✓ Repository is already up to date", fg="green"))

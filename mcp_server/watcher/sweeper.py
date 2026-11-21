@@ -90,6 +90,8 @@ class WatcherSweeper:
         self._suppressed_drift_logged: Dict[str, str] = {}
         # repo_id -> (signature, consecutive failures, sweeps left to skip).
         self._failed_drift: Dict[str, Tuple[str, int, int]] = {}
+        # repo_id -> the drift handed to the current on_repository_drift call.
+        self._current_drift: Dict[str, Dict[str, List[str]]] = {}
 
         # Env var overrides constructor arg when set
         env_val = os.environ.get(ENV_SWEEP_MINUTES)
@@ -293,11 +295,27 @@ class WatcherSweeper:
                 # Only a reconciliation that reports success (``True``) records
                 # the signature. A failed or refused sync, or one that raised,
                 # is retried with bounded backoff, never suppressed (#114 review).
+                logger.info(
+                    "watcher sweep: drift in %s (%d created, %d modified, %d deleted; "
+                    "sample %s); reconciling",
+                    repo_id,
+                    len(created),
+                    len(modified),
+                    len(deleted),
+                    sorted(created | modified | deleted)[:_DRIFT_LOG_SAMPLE],
+                )
+                self._current_drift[repo_id] = {
+                    "created": sorted(created),
+                    "modified": sorted(modified),
+                    "deleted": sorted(deleted),
+                }
                 try:
                     reconciled = self._on_repository_drift(repo_id) is True
                 except Exception:
                     self._record_reconcile_failure(repo_id, signature)
                     raise
+                finally:
+                    self._current_drift.pop(repo_id, None)
                 drifted.append(repo_id)
                 if reconciled:
                     self._acted_drift[repo_id] = signature
@@ -323,6 +341,15 @@ class WatcherSweeper:
                 drifted.append(repo_id)
 
         return drifted
+
+    def current_drift(self, repo_id: str) -> Optional[Dict[str, List[str]]]:
+        """Drifted paths of the reconciliation now running for ``repo_id``.
+
+        Available only inside the ``on_repository_drift`` callback, so the
+        reconciler can repair exactly these paths (#145).
+        """
+        drift = self._current_drift.get(repo_id)
+        return {key: list(paths) for key, paths in drift.items()} if drift else None
 
     @staticmethod
     def _deferred_languages(store: Any) -> frozenset:

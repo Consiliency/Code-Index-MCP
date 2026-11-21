@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import sqlite3
 import subprocess
 import threading
@@ -348,6 +349,79 @@ def classify_coverage(index_path: Optional[Path]) -> Optional[dict[str, Any]]:
     return coverage_from_marker(marker)
 
 
+#: Sidecar naming the process that is building the pending generation (#145).
+PUBLICATION_OWNER_FILE = "publication_owner.json"
+
+
+def _process_start_ticks(pid: int) -> Optional[str]:
+    """Kernel start time of ``pid`` (Linux), which tells a reused pid apart."""
+    try:
+        with open(f"/proc/{pid}/stat", "rb") as stat:
+            fields = stat.read().rsplit(b")", 1)[1].split()
+        return fields[19].decode("ascii")
+    except OSError, IndexError, UnicodeDecodeError:
+        return None
+
+
+def write_publication_owner(index_location: Path) -> None:
+    """Record this process as the live writer of a pending generation."""
+    pid = os.getpid()
+    payload = {
+        "pid": pid,
+        "host": socket.gethostname(),
+        "start_ticks": _process_start_ticks(pid),
+    }
+    index_location.mkdir(parents=True, exist_ok=True)
+    target = index_location / PUBLICATION_OWNER_FILE
+    temporary = target.with_name(f".{PUBLICATION_OWNER_FILE}.{pid}.tmp")
+    temporary.write_text(json.dumps(payload), encoding="utf-8")
+    os.replace(temporary, target)
+
+
+def clear_publication_owner(index_location: Path) -> None:
+    """Remove the sidecar if this process wrote it."""
+    target = index_location / PUBLICATION_OWNER_FILE
+    try:
+        owner = json.loads(target.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return
+    except OSError, ValueError:
+        owner = None
+    if isinstance(owner, dict) and owner.get("pid") not in {None, os.getpid()}:
+        return
+    target.unlink(missing_ok=True)
+
+
+def publication_owner_alive(index_location: Optional[Path]) -> bool:
+    """Whether a live process on this host is building the pending generation.
+
+    A staged build writes a sibling generation; the published one stays
+    intact until the atomic registry switch. While its writer is alive the
+    ``index_publication_pending`` marker therefore means "an update is
+    running", not "an interrupted generation needs quarantine" (#145). A
+    missing, unreadable, foreign-host or dead owner keeps the old meaning.
+    """
+    if index_location is None:
+        return False
+    try:
+        owner = json.loads(
+            (Path(index_location) / PUBLICATION_OWNER_FILE).read_text(encoding="utf-8")
+        )
+        pid = int(owner["pid"])
+    except OSError, ValueError, KeyError, TypeError:
+        return False
+    if owner.get("host") != socket.gethostname() or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except PermissionError:
+        pass
+    except OSError:
+        return False
+    recorded = owner.get("start_ticks")
+    return recorded is None or recorded == _process_start_ticks(pid)
+
+
 def _clear_index_inspection_cache() -> None:
     with _healthy_index_cache_lock:
         _healthy_index_cache.clear()
@@ -443,7 +517,10 @@ class ReadinessClassifier:
                     "The chunk-identity scheme is incompatible with the installed "
                     "chunker; run reindex to rebuild the index under the current scheme."
                 )
-            elif staleness_reason in {"index_publication_pending", "partial_index_failure"}:
+            elif staleness_reason == "partial_index_failure" or (
+                staleness_reason == "index_publication_pending"
+                and not publication_owner_alive(getattr(repo_info, "index_location", None))
+            ):
                 state = RepositoryReadinessState.MISSING_PROVENANCE
                 remediation = "Run reindex to quarantine the interrupted generation and rebuild it."
             elif db_state == RepositoryReadinessState.INDEX_EMPTY:
