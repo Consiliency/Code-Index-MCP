@@ -8,7 +8,7 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 import click
 
@@ -34,6 +34,11 @@ _LEGACY_SEMANTIC_REBUILD_REFUSAL = (
     "collections that readiness and the generation-scoped semantic index cannot see. "
     + _SEMANTIC_REBUILD_POINTER
 )
+_LEGACY_VECTOR_DIR = "vector_index.qdrant"
+_LEGACY_VECTOR_RESTORE_NOTE = (
+    "Not restoring the legacy vector index: semantic vectors are generation-scoped. "
+    + _SEMANTIC_REBUILD_POINTER
+)
 _VECTOR_COMPATIBILITY_NOTE = (
     "generation-scoped, not checked here (see `mcp-index repository status`)"
 )
@@ -50,35 +55,17 @@ def _get_vector_backend_status() -> Dict[str, Any]:
                     total_size += os.path.getsize(os.path.join(dirpath, filename))
         return total_size / (1024 * 1024)
 
-    vector_path = os.getenv("QDRANT_PATH", "vector_index.qdrant")
+    vector_path = os.getenv("QDRANT_PATH", _LEGACY_VECTOR_DIR)
     if os.path.exists(vector_path):
-        collections: List[Dict[str, Any]] = []
-        try:
-            from qdrant_client import QdrantClient
-
-            lock_path = Path(vector_path) / ".lock"
-            if lock_path.exists():
-                lock_path.unlink()
-
-            client = QdrantClient(path=vector_path)
-            for collection_meta in client.get_collections().collections:
-                info = client.get_collection(collection_meta.name)
-                vectors = info.config.params.vectors
-                collections.append(
-                    {
-                        "name": collection_meta.name,
-                        "size": getattr(vectors, "size", None),
-                        "points": getattr(info, "points_count", None),
-                    }
-                )
-        except Exception:
-            collections = []
-
+        # A file-backed store is the legacy standalone layout. Opening it with
+        # QdrantClient takes (and can rewrite) its lock, so status reports it
+        # from the filesystem only and never opens it (#142).
         return {
             "backend": "file",
             "location": vector_path,
-            "collections": collections,
+            "collections": [],
             "size_mb": _directory_size_mb(vector_path),
+            "legacy_read_only": True,
         }
 
     server_url = os.getenv("QDRANT_URL", "http://localhost:6333")
@@ -213,7 +200,12 @@ def check_compatibility(detailed: bool):
 
 
 @index.command()
-@click.option("--force", "-f", is_flag=True, help="Report completion even if a step fails")
+@click.option(
+    "--force",
+    "-f",
+    is_flag=True,
+    help="Accepted for compatibility; the SQLite index is always rebuilt",
+)
 @click.option("--sqlite-only", is_flag=True, help="Rebuild SQLite index only")
 @click.option(
     "--vector-only",
@@ -272,9 +264,7 @@ def rebuild(
         click.echo(f"   Lexical rows: {sqlite_stats.get('lexical_rows', 0)}")
 
     except Exception as e:
-        click.echo(f"❌ SQLite index rebuild failed: {e}", err=True)
-        if not force:
-            return
+        raise click.ClickException(f"SQLite index rebuild failed: {e}") from e
 
     click.echo("🎉 Index rebuild completed!")
 
@@ -338,6 +328,11 @@ def status():
                             else ""
                         )
                     )
+            elif vector_status.get("legacy_read_only"):
+                click.echo(
+                    "  ⚠️ Legacy file-backed store: not opened (read-only report). "
+                    "Semantic vectors are generation-scoped; see `mcp-index repository status`."
+                )
             elif vector_status["backend"] == "file":
                 click.echo("  ⚠️ Could not read collection info")
 
@@ -393,11 +388,10 @@ def backup(backup_dir: str):
         files_backed_up += 1
         click.echo("📦 Backed up SQLite index")
 
-    # Backup vector index
-    if os.path.exists("vector_index.qdrant"):
-        shutil.copytree("vector_index.qdrant", f"{backup_dir}/vector_index.qdrant")
-        files_backed_up += 1
-        click.echo("📦 Backed up vector index")
+    # The legacy vector directory is not backed up: restore never brings it
+    # back, and semantic vectors are generation-scoped (#142).
+    if os.path.exists(_LEGACY_VECTOR_DIR):
+        click.echo("⚠️ Skipping legacy vector index (generation-scoped vectors are not backed up)")
 
     # Backup metadata
     if os.path.exists(".index_metadata.json"):
@@ -428,10 +422,6 @@ def restore(backup_dir: str):
         os.remove("code_index.db")
         click.echo("🗑️ Removed current SQLite index")
 
-    if os.path.exists("vector_index.qdrant"):
-        shutil.rmtree("vector_index.qdrant")
-        click.echo("🗑️ Removed current vector index")
-
     if os.path.exists(".index_metadata.json"):
         os.remove(".index_metadata.json")
         click.echo("🗑️ Removed current metadata")
@@ -445,12 +435,10 @@ def restore(backup_dir: str):
         files_restored += 1
         click.echo("♻️ Restored SQLite index")
 
-    # Restore vector index
-    backup_vector = f"{backup_dir}/vector_index.qdrant"
-    if os.path.exists(backup_vector):
-        shutil.copytree(backup_vector, "vector_index.qdrant")
-        files_restored += 1
-        click.echo("♻️ Restored vector index")
+    # The legacy vector directory is neither removed nor recreated: semantic
+    # vectors are generation-scoped and rebuilt by repository sync (#142).
+    if os.path.exists(os.path.join(backup_dir, _LEGACY_VECTOR_DIR)):
+        click.echo(f"⚠️ {_LEGACY_VECTOR_RESTORE_NOTE}")
 
     # Restore metadata
     backup_metadata = f"{backup_dir}/.index_metadata.json"

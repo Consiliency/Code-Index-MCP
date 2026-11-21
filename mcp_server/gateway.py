@@ -1,3 +1,4 @@
+import dataclasses
 import hashlib
 import json
 import logging
@@ -221,6 +222,7 @@ _HYBRID_SEMANTIC_DISABLED_DETAIL = {
         "mode=semantic (or semantic=true) on /search."
     ),
 }
+_LEXICAL_SEARCH_MODES = frozenset({"hybrid", "bm25", "fuzzy"})
 profile_hydration_status: Dict[str, Any] | None = None
 semantic_setup_status: Dict[str, Any] | None = None
 _repo_registry = None
@@ -1619,6 +1621,23 @@ async def search(
         file_filter: Filter by file path pattern
         current_user: Authenticated user
     """
+    if semantic and mode in _LEXICAL_SEARCH_MODES:
+        raise HTTPException(
+            400,
+            detail={
+                "error": "Conflicting search mode",
+                "code": "semantic_mode_conflict",
+                "message": (
+                    f"semantic=true cannot be combined with mode={mode}; use mode=semantic "
+                    "(or mode=auto with semantic=true)."
+                ),
+            },
+        )
+    if semantic and mode == "classic":
+        # Legacy callers pair semantic=true with the dispatcher mode; route it
+        # as semantic so the dispatcher flag and the cache key agree.
+        mode = "semantic"
+
     if dispatcher is None and mode == "classic":
         logger.error("Search attempted but dispatcher not ready")
         raise HTTPException(503, "Dispatcher not ready")
@@ -1678,6 +1697,13 @@ async def search(
                 effective_mode = "hybrid"
             else:
                 effective_mode = "bm25" if repo_bm25 else "classic"
+
+        # The dispatcher's semantic flag follows the resolved mode, never the raw
+        # ``semantic`` query parameter, so mode=semantic reaches the
+        # generation-scoped semantic path and the cache key matches what ran.
+        effective_semantic = effective_mode == "semantic"
+        if options.semantic != effective_semantic:
+            options = dataclasses.replace(options, semantic=effective_semantic)
 
         logger.debug(
             f"Searching (query_chars={len(q)}, mode={effective_mode}, limit={limit}, language={language})"

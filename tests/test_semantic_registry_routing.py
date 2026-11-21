@@ -52,6 +52,27 @@ def test_entry_point_builds_no_standalone_semantic_indexer(path):
     assert _forbidden_semantic_references(path) == []
 
 
+def _legacy_vector_store_mutations(path: Path) -> list[str]:
+    """Calls that delete, copy over or open a file-backed Qdrant store."""
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    found: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        name = getattr(func, "id", None) or getattr(func, "attr", None)
+        if name in {"rmtree", "copytree", "unlink"}:
+            found.append(f"call {name}")
+        if name == "QdrantClient" and any(kw.arg == "path" for kw in node.keywords):
+            found.append("QdrantClient(path=...)")
+    return found
+
+
+def test_legacy_cli_never_mutates_or_opens_file_vector_store():
+    path = REPO_ROOT / "mcp_server" / "cli" / "index_management.py"
+    assert _legacy_vector_store_mutations(path) == []
+
+
 # --------------------------------------------------------------------------
 # Legacy CLI
 # --------------------------------------------------------------------------
@@ -113,6 +134,101 @@ def test_rebuild_sqlite_only_skips_vector_notice(monkeypatch, tmp_path, no_seman
 
     assert result.exit_code == 0, result.output
     assert "Skipping vector index" not in result.output
+
+
+@pytest.mark.parametrize("args", [["rebuild"], ["rebuild", "--force"]])
+def test_failed_sqlite_rebuild_exits_nonzero_without_success_banner(
+    monkeypatch, tmp_path, no_semantic_indexer, args
+):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        index_management,
+        "_build_sqlite_baseline",
+        Mock(side_effect=RuntimeError("synthetic sqlite failure")),
+    )
+
+    result = CliRunner().invoke(index_management.index, args)
+
+    assert result.exit_code != 0
+    assert "SQLite index rebuild failed: synthetic sqlite failure" in result.output
+    assert "Index rebuild completed" not in result.output
+
+
+@pytest.fixture
+def qdrant_client_forbidden(monkeypatch):
+    import qdrant_client
+
+    def _boom(*_args, **_kwargs):
+        raise AssertionError("QdrantClient opened")
+
+    monkeypatch.setattr(qdrant_client, "QdrantClient", _boom)
+
+
+def test_status_reports_legacy_store_without_opening_it(
+    monkeypatch, tmp_path, qdrant_client_forbidden
+):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("QDRANT_PATH", raising=False)
+    store = tmp_path / "vector_index.qdrant"
+    store.mkdir()
+    lock = store / ".lock"
+    lock.write_text("held")
+
+    result = CliRunner().invoke(index_management.index, ["status"])
+
+    assert result.exit_code == 0, result.output
+    assert lock.read_text() == "held"
+    assert sorted(p.name for p in store.iterdir()) == [".lock"]
+    assert "not opened (read-only report)" in result.output
+
+
+def _make_backup(root: Path) -> Path:
+    backup = root / "backup"
+    (backup / "vector_index.qdrant").mkdir(parents=True)
+    (backup / "vector_index.qdrant" / "from_backup").write_text("old")
+    (backup / "code_index.db").write_text("sqlite")
+    return backup
+
+
+def test_restore_leaves_existing_legacy_vector_dir_untouched(monkeypatch, tmp_path):
+    workdir = tmp_path / "work"
+    workdir.mkdir()
+    backup = _make_backup(tmp_path)
+    live = workdir / "vector_index.qdrant"
+    live.mkdir()
+    (live / "current").write_text("live")
+    monkeypatch.chdir(workdir)
+
+    result = CliRunner().invoke(index_management.index, ["restore", str(backup)])
+
+    assert result.exit_code == 0, result.output
+    assert sorted(p.name for p in live.iterdir()) == ["current"]
+    assert (workdir / "code_index.db").read_text() == "sqlite"
+    assert "Not restoring the legacy vector index" in result.output
+
+
+def test_restore_does_not_recreate_legacy_vector_dir(monkeypatch, tmp_path):
+    workdir = tmp_path / "work"
+    workdir.mkdir()
+    backup = _make_backup(tmp_path)
+    monkeypatch.chdir(workdir)
+
+    result = CliRunner().invoke(index_management.index, ["restore", str(backup)])
+
+    assert result.exit_code == 0, result.output
+    assert not (workdir / "vector_index.qdrant").exists()
+
+
+def test_backup_skips_legacy_vector_dir(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "vector_index.qdrant").mkdir()
+    (tmp_path / "code_index.db").write_text("sqlite")
+
+    result = CliRunner().invoke(index_management.index, ["backup", str(tmp_path / "bk")])
+
+    assert result.exit_code == 0, result.output
+    assert (tmp_path / "bk" / "code_index.db").exists()
+    assert not (tmp_path / "bk" / "vector_index.qdrant").exists()
 
 
 def test_check_compatibility_does_not_probe_vectors(monkeypatch, tmp_path, no_semantic_indexer):
