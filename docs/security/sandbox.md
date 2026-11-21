@@ -12,6 +12,22 @@ and memory MiB. SQLite defaults to none; memory defaults to 2048 MiB.
 Worker startup imports and constructs the trusted plugin before enabling the
 filesystem wrappers.
 
+Workers start in Python isolated mode (`-I`): `PYTHON*` variables such as
+`PYTHONPATH`, the user site and the working directory never reach `sys.path`,
+so an indexed checkout or inherited environment containing a top-level
+`mcp_server` package cannot replace the worker. A small bootstrap pins
+`mcp_server` to the package directory the host imported (installed, user-site,
+editable or source checkout). The directory holding that package is only ever
+appended to `sys.path`, after the standard library and installed packages, so
+a module beside it (for example a `dataclasses.py` in a user-site
+`site-packages`) cannot shadow them. When the default path would resolve
+`mcp_server` elsewhere, the bootstrap loads it from that directory alone, and
+every `mcp_server.*` submodule resolves only through the pinned package. If
+the package cannot be found there, the worker exits before running anything.
+Plugin modules must therefore be importable from site-packages or beside the
+host's `mcp_server` package; modules reachable only through `PYTHONPATH` are
+not loaded.
+
 Supported Python filesystem forms include builtins/io/pathlib opens, string,
 Path and byte paths, and resolvable descriptors, including `os.open(dir_fd=...)`.
 Canonical paths must remain within their declared read/write roots. Only that
