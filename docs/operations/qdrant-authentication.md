@@ -103,9 +103,11 @@ Plan for downtime.
    jobs if any, and operator shells. Source and editable checkouts also load
    `.env.local`, `.env` and `.env.native` from the checkout root
    (`mcp_server/config/environment.py` `load_local_env_files`) unless
-   `PYTHON_DOTENV_DISABLED=1` is set. python-dotenv itself honours that variable from
-   version 1.2 (the lock pins 1.2.2); an install that does not use `uv.lock` can resolve
-   an older python-dotenv that ignores it. Values already in the process environment win.
+   `PYTHON_DOTENV_DISABLED=1` is set; `load_local_env_files` checks that variable itself.
+   The STDIO runner's separate `load_dotenv()` call for `.env` relies on python-dotenv,
+   which honours the variable from version 1.2 (the lock pins 1.2.2); an install that
+   does not use `uv.lock` can resolve an older python-dotenv that ignores it there.
+   Values already in the process environment win.
    Treat a `QDRANT_API_KEY` or `QDRANT_URL` in those files as a client credential source.
 5. Restart Qdrant through the repository Compose file with the key in the environment:
    `op run --env-file=<env> -- docker compose -f docker-compose.qdrant.yml [-f <host override>] up -d qdrant`.
