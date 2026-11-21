@@ -29,7 +29,7 @@ Performed comprehensive cleanup of duplicate and vestigial code across the codeb
   - `create_simple_mcp_index.py`
 
 #### BM25 Scripts
-- **Kept**: `scripts/cli/mcp_server_bm25.py`
+- **Kept**: `scripts/cli/mcp_server_bm25.py` (later removed with its generator `scripts/patch_mcp_server.py`; it was never ported to the `mcp` 2.x SDK)
 - **Archived**:
   - `populate_bm25_simple.py`
   - `populate_bm25_quick.py`

@@ -1803,7 +1803,11 @@ async def _serve(registry_path=None) -> None:
 
     from dotenv import load_dotenv
 
-    load_dotenv()
+    from mcp_server.config.environment import local_env_files_disabled
+
+    # python-dotenv < 1.2 ignores PYTHON_DOTENV_DISABLED, so check it here too.
+    if not local_env_files_disabled():
+        load_dotenv()
 
     logging.basicConfig(
         level=logging.INFO,

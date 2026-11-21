@@ -2088,6 +2088,9 @@ def test_offline_fixture_env_reindexes_with_network_denied_only_from_a_prefetche
         "SEMANTIC_SEARCH_ENABLED": "false",
         "MCP_SKIP_PLUGIN_PREINDEX": "true",
         "MCP_METRICS_PORT": "0",
+        # clean_env() drops the test process's PYTHON_DOTENV_DISABLED; keep the
+        # checkout's tracked .env.native out of this STDIO server too.
+        "PYTHON_DOTENV_DISABLED": "1",
     }
     reindex, search = _raw_stdio_call(
         [sys.executable, "-m", "mcp_server.cli.stdio_runner"],

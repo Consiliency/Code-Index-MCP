@@ -11,12 +11,30 @@ from dotenv import load_dotenv
 
 _DOTENV_LOADED = False
 
+# Same switch and truthy values python-dotenv itself uses; checked here so it
+# also works with python-dotenv releases that predate it.
+DOTENV_DISABLED_ENV = "PYTHON_DOTENV_DISABLED"
+_DOTENV_DISABLED_VALUES = frozenset({"1", "true", "t", "yes", "y"})
+
+
+def local_env_files_disabled() -> bool:
+    """Return True when ``PYTHON_DOTENV_DISABLED`` turns local env file loading off."""
+    return os.getenv(DOTENV_DISABLED_ENV, "").strip().casefold() in _DOTENV_DISABLED_VALUES
+
 
 def load_local_env_files() -> None:
-    """Load local env files once for CLI and development workflows."""
+    """Load local env files once for CLI and development workflows.
+
+    Copies ``.env.local``, ``.env`` and ``.env.native`` from the checkout root
+    into ``os.environ`` without overriding values already set. Set
+    ``PYTHON_DOTENV_DISABLED=1`` to skip the load; the test suite does so in
+    ``tests/conftest.py`` so that the tracked ``.env.native`` cannot leak into
+    a test process. A skipped load is not recorded as done, so clearing the
+    variable later lets the next call load the files.
+    """
     global _DOTENV_LOADED
 
-    if _DOTENV_LOADED:
+    if _DOTENV_LOADED or local_env_files_disabled():
         return
 
     repo_root = Path(__file__).resolve().parents[2]
