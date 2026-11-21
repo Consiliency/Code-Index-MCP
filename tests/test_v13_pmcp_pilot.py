@@ -957,14 +957,145 @@ async def test_host_mode_rehearsal_starts_qdrant_on_the_chosen_ports(
     assert calls[-1][:3] == ["docker", "rm", "--force"]
 
 
-@pytest.mark.parametrize("mode", ["prepare", "offline", "browser", "verify-live"])
-def test_qdrant_ports_require_an_inference_mode(monkeypatch, mode):
+def _qdrant_endpoint(api_key, *, anonymous=401, keyed=200, fail=False):
+    """A mock HTTP endpoint behaving like a Qdrant that knows ``api_key``."""
+    import httpx
+
+    def handler(request):
+        if fail:
+            raise httpx.ConnectError("reset", request=request)
+        if request.headers.get("api-key") is None:
+            return httpx.Response(anonymous)
+        return httpx.Response(keyed if request.headers["api-key"] == api_key else 401)
+
+    return httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+
+def _container_states(monkeypatch, pilot, states):
+    calls = []
+
+    def run(command, directory, label, **kwargs):
+        assert command[:3] == ["docker", "inspect", "--format"]
+        calls.append(label)
+        return json.dumps(states[len(calls) - 1])
+
+    monkeypatch.setattr(pilot, "run_command", run)
+    return calls
+
+
+RUNNING = {"Running": True, "Pid": 4242}
+
+
+@pytest.mark.asyncio
+async def test_qdrant_endpoint_served_by_the_owned_container_is_verified(tmp_path, monkeypatch):
     from scripts import v13_pmcp_pilot as pilot
 
+    calls = _container_states(monkeypatch, pilot, [RUNNING, RUNNING])
+    async with _qdrant_endpoint("our-key") as http:
+        await pilot.verify_qdrant_endpoint(
+            http, "http://127.0.0.1:41001", "our-key", "a" * 64, 4242, tmp_path
+        )
+    assert calls == ["qdrant-endpoint-state", "qdrant-endpoint-recheck"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "case",
+    [
+        "unauthenticated_squatter",
+        "foreign_key_qdrant",
+        "exited_before_probe",
+        "pid_changed",
+        "exited_during_probe",
+        "connection_reset",
+    ],
+)
+async def test_qdrant_endpoint_not_owned_by_the_container_fails_closed(tmp_path, monkeypatch, case):
+    """#138 review: a squatter that won the port race must never be used."""
+    from scripts import v13_pmcp_pilot as pilot
+
+    states = [RUNNING, RUNNING]
+    endpoint = {}
+    if case == "unauthenticated_squatter":
+        endpoint = {"anonymous": 200}
+    elif case == "foreign_key_qdrant":
+        endpoint = {"keyed": 401}
+    elif case == "exited_before_probe":
+        states[0] = {"Running": False, "Pid": 0}
+    elif case == "pid_changed":
+        states[0] = {"Running": True, "Pid": 9999}
+    elif case == "exited_during_probe":
+        states[1] = {"Running": False, "Pid": 0}
+    elif case == "connection_reset":
+        endpoint = {"fail": True}
+    _container_states(monkeypatch, pilot, states)
+    async with _qdrant_endpoint("our-key", **endpoint) as http:
+        with pytest.raises(PilotRefused, match="qdrant_endpoint_unverified"):
+            await pilot.verify_qdrant_endpoint(
+                http, "http://127.0.0.1:41001", "our-key", "a" * 64, 4242, tmp_path
+            )
+
+
+@pytest.mark.asyncio
+async def test_rehearsal_refuses_a_squatter_on_the_qdrant_port_and_removes_its_container(
+    tmp_path, manifest, monkeypatch
+):
+    import httpx
+
+    from scripts import v13_pmcp_pilot as pilot
+
+    monkeypatch.syspath_prepend(str(pilot.REPO / "scripts"))
+    monkeypatch.setattr(pilot, "create_fixture", lambda *args, **kwargs: {"root": tmp_path})
+    container_id = "c" * 64
+    calls = []
+
+    def run(command, *args, **kwargs):
+        calls.append(command)
+        if command[:2] == ["docker", "run"]:
+            return container_id + "\n"
+        if command[:2] == ["docker", "inspect"]:
+            # Our container still runs, but the squatter holds the HTTP port.
+            return json.dumps(RUNNING)
+        return ""
+
+    class Container:
+        def __init__(self, identity, root):
+            self.container, self.pid, self.group = identity, RUNNING["Pid"], root
+            self.exit_seconds, self.peak_rss_mib, self.survivors = 0.1, 1.0, []
+            self.exit_state = None
+
+        def observe(self):
+            pass
+
+        def stop(self):
+            calls.append(["stop", self.container])
+
+    # The squatter answers readiness and serves data without any API key.
+    squatter = httpx.MockTransport(lambda request: httpx.Response(200))
+    real_client = httpx.AsyncClient
     monkeypatch.setattr(
-        sys, "argv", ["v13_pmcp_pilot.py", "--mode", mode, "--qdrant-grpc-port", "40000"]
+        pilot.httpx,
+        "AsyncClient",
+        lambda **kwargs: real_client(transport=squatter),
     )
+    monkeypatch.setattr(pilot, "run_command", run)
+    monkeypatch.setattr(pilot, "OwnedContainer", Container)
+    with pytest.raises(PilotRefused, match="qdrant_endpoint_unverified"):
+        await pilot.inference_pilot(tmp_path, manifest, rehearsal=True, qdrant_network="host")
+    assert calls[-1] == ["stop", container_id]
+    assert not (tmp_path / "allowance").exists()
+
+
+@pytest.mark.parametrize("flag", ["--qdrant-http-port", "--qdrant-grpc-port"])
+@pytest.mark.parametrize("mode", ["identity", "prepare", "offline", "browser", "verify-live"])
+def test_qdrant_ports_require_an_inference_mode(monkeypatch, mode, flag):
+    from scripts import v13_pmcp_pilot as pilot
+
+    monkeypatch.setattr(sys, "argv", ["v13_pmcp_pilot.py", "--mode", mode, flag, "6333"])
     monkeypatch.setattr(pilot, "source_identity", lambda: pytest.fail("reached mode dispatch"))
+    monkeypatch.setattr(
+        pilot, "installed_identity", lambda wheel: pytest.fail("reached identity mode")
+    )
     with pytest.raises(PilotRefused, match="qdrant_ports_require_inference_mode"):
         pilot.main()
 
@@ -1363,6 +1494,11 @@ def live_records(tmp_path, manifest, request, monkeypatch):
         "dimension": 8,
         "immutable_revision": "unreported",
         "qdrant_image": QDRANT_IMAGE,
+        "qdrant_network": "host",
+        "qdrant_http_port": 41001,
+        "qdrant_grpc_port": 41002,
+        "qdrant_ports_requested": {"http": False, "grpc": False},
+        "qdrant_endpoint_verified": True,
         "endpoints": ENDPOINTS,
         "workload_sha256": digest_json(workload),
     }
@@ -1452,6 +1588,19 @@ def live_records(tmp_path, manifest, request, monkeypatch):
         "resource_shutdown",
         "qdrant_start",
         "qdrant_exit",
+        "qdrant_ports_missing",
+        "qdrant_network_unknown",
+        "qdrant_port_range",
+        "qdrant_port_type",
+        "qdrant_ports_equal",
+        "qdrant_host_grpc_missing",
+        "qdrant_stock_port_default",
+        "qdrant_stock_grpc_default",
+        "qdrant_requested_missing",
+        "qdrant_unpublished_grpc_requested",
+        "qdrant_endpoint_unverified",
+        "qdrant_stock_port_requested",
+        "qdrant_bridge_unpublished_grpc",
     ],
 )
 def test_live_record_reduction_is_consistent_and_read_only(
@@ -1548,6 +1697,37 @@ def test_live_record_reduction_is_consistent_and_read_only(
         documents["qdrant_start"] = "d" * 64
     elif damage == "qdrant_exit":
         documents["qdrant_stop_state"]["ExitCode"] = 137
+    elif damage and damage.startswith("qdrant_"):
+        metadata = documents["runtime_metadata"]
+        if damage == "qdrant_ports_missing":
+            del metadata["qdrant_http_port"]
+        elif damage == "qdrant_network_unknown":
+            metadata["qdrant_network"] = "overlay"
+        elif damage == "qdrant_port_range":
+            metadata["qdrant_http_port"] = 65536
+        elif damage == "qdrant_port_type":
+            metadata["qdrant_http_port"] = "41001"
+        elif damage == "qdrant_ports_equal":
+            metadata["qdrant_grpc_port"] = metadata["qdrant_http_port"]
+        elif damage == "qdrant_host_grpc_missing":
+            metadata["qdrant_grpc_port"] = None
+        elif damage == "qdrant_stock_port_default":
+            metadata["qdrant_http_port"] = 6333
+        elif damage == "qdrant_stock_grpc_default":
+            metadata["qdrant_grpc_port"] = 6334
+        elif damage == "qdrant_requested_missing":
+            del metadata["qdrant_ports_requested"]
+        elif damage == "qdrant_unpublished_grpc_requested":
+            metadata.update(qdrant_network="bridge", qdrant_grpc_port=None)
+            metadata["qdrant_ports_requested"]["grpc"] = True
+        elif damage == "qdrant_endpoint_unverified":
+            metadata["qdrant_endpoint_verified"] = False
+        # The last two are valid: an explicit stock port, and bridge without gRPC.
+        elif damage == "qdrant_stock_port_requested":
+            metadata.update(qdrant_http_port=6333, qdrant_grpc_port=6334)
+            metadata["qdrant_ports_requested"] = {"http": True, "grpc": True}
+        elif damage == "qdrant_bridge_unpublished_grpc":
+            metadata.update(qdrant_network="bridge", qdrant_grpc_port=None)
     paths = {"allowance_ledger": ledger_path.relative_to(tmp_path).as_posix()}
     for role, document in documents.items():
         paths[role] = role + ".json"
@@ -1562,7 +1742,9 @@ def test_live_record_reduction_is_consistent_and_read_only(
         result["artifacts"].append(result["artifacts"][0])
     (tmp_path / "live.json").write_text(json.dumps(result))
     before = {path: (tmp_path / path).read_bytes() for path in paths.values()}
-    if damage and damage != "cross_role_overlap":
+    valid = {None, "cross_role_overlap", "qdrant_stock_port_requested"}
+    valid.add("qdrant_bridge_unpublished_grpc")
+    if damage not in valid:
         with pytest.raises(PilotRefused):
             verify_saved_receipt(tmp_path, manifest, "live", expected_approval=ledger.approval)
     else:
@@ -1929,6 +2111,9 @@ def test_offline_fixture_env_reindexes_with_network_denied_only_from_a_prefetche
         assert search["result"]["structuredContent"]["results"]
     else:
         assert reindex["result"]["isError"] is True
-        # The network-denied worker's offline guard refused the download.
-        assert "not in the local grammar cache" in json.dumps(payload)
+        # The network-denied worker could not download the grammar, so since #117
+        # the rebuild refuses as grammar-unavailable instead of publishing nothing.
+        assert payload["code"] == "grammar_unavailable", payload
+        assert payload["mutation_performed"] is False
+        assert "GrammarUnavailableRebuildError" in payload["details"]
         assert not any(Path(cache).iterdir()), "a network-denied run wrote the cold cache"

@@ -988,6 +988,71 @@ def qdrant_ports(
     return chosen[0], chosen[1]
 
 
+def validate_qdrant_runtime_ports(metadata: dict) -> None:
+    """Refuse saved runtime metadata whose Qdrant binding the driver could not choose."""
+    network = metadata.get("qdrant_network")
+    http_port = metadata.get("qdrant_http_port")
+    grpc_port = metadata.get("qdrant_grpc_port")
+    requested = metadata.get("qdrant_ports_requested")
+
+    def valid_port(port):
+        return type(port) is int and 1 <= port <= 65535
+
+    if (
+        network not in {"bridge", "host"}
+        or not valid_port(http_port)
+        or not (valid_port(grpc_port) or (grpc_port is None and network == "bridge"))
+        or http_port == grpc_port
+        or not isinstance(requested, dict)
+        or set(requested) != {"http", "grpc"}
+        or any(type(value) is not bool for value in requested.values())
+        # An unpublished bridge gRPC port was by definition not requested.
+        or (grpc_port is None and requested["grpc"])
+        # Defaults are ephemeral; the stock ports appear only when asked for.
+        or (http_port in QDRANT_STOCK_PORTS and not requested["http"])
+        or (grpc_port in QDRANT_STOCK_PORTS and not requested["grpc"])
+        or metadata.get("qdrant_endpoint_verified") is not True
+    ):
+        raise PilotRefused("live_qdrant_ports_invalid")
+
+
+async def verify_qdrant_endpoint(
+    http, url: str, api_key: str, container_id: str, pid: int, directory: Path
+) -> None:
+    """Prove the selected endpoint is served by the pilot-owned container.
+
+    Port selection and the pre-start recheck only bind and close, so another
+    process could take the port before Qdrant binds it; ``docker run -d`` still
+    returns an id and ``/readyz`` would answer from the other service. The
+    per-run API key reached only this container, so the endpoint must refuse an
+    anonymous request and accept that key. The container must also still be
+    running with the process measured at start, before and after the probes.
+    """
+
+    async def owned_container_running(label):
+        state = json.loads(
+            await asyncio.to_thread(
+                run_command,
+                ["docker", "inspect", "--format", "{{json .State}}", container_id],
+                directory,
+                label,
+                timeout=5,
+            )
+        )
+        if state.get("Running") is not True or state.get("Pid") != pid:
+            raise PilotRefused("qdrant_endpoint_unverified")
+
+    await owned_container_running("qdrant-endpoint-state")
+    try:
+        anonymous = await http.get(url + "/collections", timeout=5)
+        owned = await http.get(url + "/collections", headers={"api-key": api_key}, timeout=5)
+    except httpx.HTTPError:
+        raise PilotRefused("qdrant_endpoint_unverified") from None
+    if anonymous.status_code not in (401, 403) or owned.status_code != 200:
+        raise PilotRefused("qdrant_endpoint_unverified")
+    await owned_container_running("qdrant-endpoint-recheck")
+
+
 def qdrant_network_args(network: str, http_port: int, grpc_port: int | None) -> list[str]:
     """Docker arguments that bind Qdrant only to the chosen loopback ports."""
     if network == "host":
@@ -2132,6 +2197,7 @@ def _verify_live_records(
             or (not rehearsal and metadata["endpoints"] != ENDPOINTS)
         ):
             raise PilotRefused("live_workload_mismatch")
+        validate_qdrant_runtime_ports(metadata)
         for role in ENDPOINTS:
             if not isinstance(metadata["models"][role], str) or not metadata["models"][role]:
                 raise PilotRefused("live_model_missing")
@@ -2595,6 +2661,10 @@ async def inference_pilot(
                 await asyncio.sleep(0.1)
             else:
                 raise PilotRefused("qdrant_start_failed")
+            # Fail closed unless our container, not a squatter, serves the port.
+            await verify_qdrant_endpoint(
+                http, qdrant_url, qdrant_api_key, container_id, container_owner.pid, directory
+            )
         endpoints = None
         if rehearsal:
             fake = rehearsal_provider()
@@ -2692,6 +2762,11 @@ async def inference_pilot(
                 "qdrant_network": qdrant_network,
                 "qdrant_http_port": http_port,
                 "qdrant_grpc_port": grpc_port,
+                "qdrant_ports_requested": {
+                    "http": qdrant_http_port is not None,
+                    "grpc": qdrant_grpc_port is not None,
+                },
+                "qdrant_endpoint_verified": True,
                 "endpoints": endpoints or ENDPOINTS,
                 "workload_sha256": digest_json(workload),
             },
@@ -2964,6 +3039,10 @@ def main():
         ),
     )
     args = parser.parse_args()
+    if args.mode not in {"rehearsal", "live"} and (
+        args.qdrant_http_port is not None or args.qdrant_grpc_port is not None
+    ):
+        raise PilotRefused("qdrant_ports_require_inference_mode")
     if args.mode == "identity":
         print(json.dumps(installed_identity(args.wheel)))
         return
@@ -2971,10 +3050,6 @@ def main():
         raise PilotRefused("delivered_wheel_requires_prepare_mode")
     if args.mode != "prepare" and args.grammar_cache is not None:
         raise PilotRefused("grammar_cache_requires_prepare_mode")
-    if args.mode not in {"rehearsal", "live"} and (
-        args.qdrant_http_port is not None or args.qdrant_grpc_port is not None
-    ):
-        raise PilotRefused("qdrant_ports_require_inference_mode")
     root = args.root or REPO / ".phase-loop" / "runs" / (
         "v13-PILOT-" + source_identity()["source"][:12]
     )
