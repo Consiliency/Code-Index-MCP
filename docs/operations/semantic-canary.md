@@ -11,21 +11,30 @@ synthetic data and a dedicated per-run collection.
 1. Creates a two-file synthetic git repository (the v13 pilot corpus,
    `balance.py` and `catalog.py`) in a private temporary directory.
 2. Starts `index-it-mcp stdio` with a minimal environment: a per-run
-   `canary-<id>` profile in `SEMANTIC_PROFILES_JSON`, a private registry and
+   `canary-<id>` profile (`<id>` is 128 random bits) in `SEMANTIC_PROFILES_JSON`, a private registry and
    index directory, `SEMANTIC_AUTOSTART_QDRANT=false` and
    `PYTHON_DOTENV_DISABLED=1`. No caller variables leak into the server, apart
    from `PATH` and the tree-sitter grammar cache locations.
 3. Registers and reindexes the repository and requires `get_status` to report
    semantic readiness `ready`.
-4. Runs two semantic queries. Each expected file must be the top hit, with
-   `semantic_source == "semantic"`, the canary profile id and one collection that
-   matches readiness. The collection must contain the canary profile segment
-   (`ci__<repo>__canary-<id>__<generation>`, the registry's naming scheme) and
-   hold points of the probed dimension.
+4. Runs two opaque semantic queries. No query term of three or more characters
+   occurs in any fixture path or source, so the indexer's lexical overlap bonus
+   (`SemanticIndexer._query_overlap_bonus`, a substring match) is the same for
+   every result and only vector similarity orders them. Each expected file must be
+   the top hit, with `semantic_source == "semantic"`, the canary profile id and
+   one collection that matches readiness. The collection must sit in this run's
+   exact namespace (`ci__<repo hash>__canary-<id>__<generation>`, the registry's
+   naming scheme), have the probed dimension, and hold a non-sentinel vector for
+   each file (read back with an authenticated scroll; the provenance point does
+   not count).
 5. Requires anonymous `GET /collections` to return 401 before the run, every 0.5 s
-   while the server runs, and after cleanup.
-6. Deletes every collection carrying this run's profile segment, also on
-   failure, and removes the temporary directory.
+   while the server runs, and after cleanup. These checks are evaluated on every
+   path, and an anonymous-access failure outranks any other failure code.
+6. Snapshots the collection list before the server starts. At the end, also on
+   failure, deletes only collections that appeared after the snapshot and start
+   with this run's exact `ci__<repo hash>__canary-<id>__` prefix. Nothing else is
+   ever deleted. Then removes the temporary directory; a failure to remove it
+   fails the run with `temporary_cleanup_failed`.
 
 The receipt carries only `schema`, `result` (`pass`/`fail`), `failed_check` (a
 fixed code such as `semantic_top_hit_mismatch`), `model`, `dimension`,
@@ -62,21 +71,33 @@ URLs or hostnames. The exit status is 0 on pass and 1 on fail.
 starts a disposable authenticated Qdrant with the `authenticated_qdrant` fixture
 from `tests/integration/test_qdrant_auth_container.py` (repository Compose file,
 per-run random key, random loopback ports, tmpfs storage). It also starts a
-loopback OpenAI-compatible embedder that requires a per-run bearer token and
-embeds with a deterministic hashed bag-of-words. It then runs the canary end to
-end, and runs it again with query embeddings refused after indexing, which must
-fail with `semantic_query_refused` and still delete the collection.
+loopback OpenAI-compatible embedder that requires a per-run bearer token. The
+embedder maps each fixture file and its query to the same basis vector and the
+two files to orthogonal ones, so only vector similarity can rank the opaque
+queries. Each case also creates a decoy collection shaped like a canary
+collection, which must survive. The cases:
 
-This proves the wiring: profile, stdio server, reindex with summaries, readiness,
-collection linkage and shape, anonymous denial, receipt and cleanup. It does not
-prove retrieval quality or that a real model, the `ai` endpoints or a deployed
-Qdrant work. The top-hit check is also not pure vector evidence: semantic results
-pass through `SemanticIndexer._rerank_query_results`, which multiplies the vector
-score by a query-overlap bonus, so even identical vectors can rank the expected
-file first. Vector linkage is shown by the collection's dimension and point count.
+- pass: the canary passes end to end;
+- swapped query vectors (each query points at the other file): the canary must
+  fail with `semantic_top_hit_mismatch`;
+- query embeddings refused after indexing: the canary must fail with
+  `semantic_query_refused`.
 
-The test skips when Docker Compose or the pinned Qdrant image is missing. No CI
-job currently provides the image, so it runs locally:
+After every case the receipt must be secret-free, only the decoy may remain and
+anonymous access must still return 401.
+
+This proves the wiring, including that ranking through the server follows the
+vectors. It does not prove retrieval quality or that a real model, the `ai`
+endpoints or a deployed Qdrant work.
+
+CI runs it in the `Integration - Semantic Canary (Tier A)` job of
+`ci-cd-pipeline.yml`: Ubuntu, the Qdrant image pulled by digest, serial, with a
+30-minute job limit. It is a separate job and neither waits on nor gates any
+other job. `SEMANTIC_CANARY_REQUIRE_DOCKER=1` makes a missing Docker or image a
+failure there instead of a skip. The offline unit tests
+(`tests/test_semantic_canary.py`) run in the protected agent gate.
+
+Locally, the test skips when Docker Compose or the pinned image is missing:
 
 ```bash
 docker pull qdrant/qdrant:v1.17.0@sha256:f1c7272cdac52b38c1a0e89313922d940ba50afd90d593a1605dbbc214e66ffb
@@ -113,4 +134,4 @@ op run --env-file=semantic-canary.env -- \
 Check the model id against `GET http://ai:8001/v1/models` first; pass
 `--dimension` when the expected dimension is known. Acceptance is a receipt with
 `"result": "pass"`. Afterwards, confirm with a GET-only, authenticated
-`GET /collections` that no `__canary-` collection remains.
+`GET /collections` that the run's collection (named in the receipt) is gone.

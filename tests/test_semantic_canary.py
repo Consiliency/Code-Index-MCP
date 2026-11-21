@@ -122,3 +122,130 @@ def test_failure_code_unwraps_task_groups():
     assert canary.failure_code(nested) == "x_code"
     assert canary.failure_code(ExceptionGroup("g", [TimeoutError()])) == "timeout"
     assert canary.failure_code(ValueError("secret text")) == "unexpected_ValueError"
+
+
+def test_queries_share_no_lexical_term_with_any_fixture_file():
+    texts = [*canary.CORPUS, *canary.CORPUS.values()]
+    for query, expected in canary.QUERIES:
+        assert expected in canary.CORPUS
+        assert canary.overlap_terms(query, texts) == set(), query
+    # The helper does catch overlap (the old, lexically matching queries).
+    assert canary.overlap_terms("find a product by its code", texts) == {
+        "find",
+        "product",
+        "code",
+        "its",
+    }
+
+
+def test_owned_collections_are_new_and_in_the_exact_namespace():
+    prefix = canary.namespace_prefix("repo-a", "canary-" + "a" * 32)
+    other_repo = canary.namespace_prefix("repo-b", "canary-" + "a" * 32)
+    assert prefix.startswith("ci__") and prefix.endswith("__canary-" + "a" * 32 + "__")
+    before = {prefix + "old", "unrelated"}
+    after = before | {prefix + "gen1", other_repo + "gen1", "ci__x__canary-b__gen", "new-other"}
+    assert canary.owned_collections(before, after, prefix) == [prefix + "gen1"]
+    assert canary.RUN_ID_BYTES >= 16
+
+
+def test_anonymous_verdict():
+    assert canary.anonymous_verdict([401, 401], 401) is None
+    assert canary.anonymous_verdict(None, 401) is None
+    assert canary.anonymous_verdict([401, 200], 401) == "anonymous_access_during"
+    assert canary.anonymous_verdict([], 401) == "anonymous_access_during"
+    assert canary.anonymous_verdict([401], 0) == "anonymous_access_after"
+    assert canary.anonymous_verdict(None, 200) == "anonymous_access_after"
+
+
+@pytest.fixture
+def fake_flow(monkeypatch):
+    """Stub every external step so run_canary's bookkeeping can be checked offline."""
+    state = {"anon": [], "session": None, "rmtree_fails": False, "deleted": []}
+    monkeypatch.setenv("QDRANT_API_KEY", "q-secret")
+
+    def anonymous_status(_url):
+        return state["anon"].pop(0) if len(state["anon"]) > 1 else state["anon"][0]
+
+    async def run_session(*_args, **_kwargs):
+        if isinstance(state["session"], Exception):
+            raise state["session"]
+        return state["session"]
+
+    real_rmtree = canary.shutil.rmtree
+
+    def rmtree(path, *args, **kwargs):
+        real_rmtree(path, ignore_errors=True)
+        if state["rmtree_fails"]:
+            raise OSError("synthetic")
+
+    monkeypatch.setattr(canary, "anonymous_status", anonymous_status)
+    monkeypatch.setattr(canary, "ANONYMOUS_PROBE_INTERVAL_SECONDS", 0.01)
+    monkeypatch.setattr(canary, "http_json", lambda *a, **k: (200, None))
+    monkeypatch.setattr(canary, "probe_dimension", lambda *a: 8)
+    monkeypatch.setattr(canary, "create_repository", lambda root: root / "repo")
+    monkeypatch.setattr(canary, "server_env", lambda *a, **k: {})
+    monkeypatch.setattr(canary, "run_quiet", lambda *a, **k: None)
+    monkeypatch.setattr(canary, "read_repository_id", lambda root: "repo-id")
+    monkeypatch.setattr(canary, "list_collections", lambda *a: set())
+    monkeypatch.setattr(canary, "run_session", run_session)
+    monkeypatch.setattr(canary, "collection_shape", lambda *a: (8, 3))
+    monkeypatch.setattr(canary, "require_file_vectors", lambda *a: None)
+    monkeypatch.setattr(
+        canary,
+        "delete_owned_collections",
+        lambda url, key, before, prefix: state["deleted"].append(prefix) or True,
+    )
+    monkeypatch.setattr(canary.shutil, "rmtree", rmtree)
+    state["prefix"] = lambda profile: canary.namespace_prefix("repo-id", profile)
+    return state
+
+
+def _session_collection(monkeypatch, state):
+    """Make the fake session return a collection in the run's own namespace."""
+    real = canary.namespace_prefix
+
+    def capture(repo_id, profile_id):
+        prefix = real(repo_id, profile_id)
+        if state["session"] is None:
+            state["session"] = prefix + "gen"
+        return prefix
+
+    monkeypatch.setattr(canary, "namespace_prefix", capture)
+
+
+def test_fake_flow_passes_and_cleans_up(fake_flow, monkeypatch):
+    fake_flow["anon"] = [401]
+    _session_collection(monkeypatch, fake_flow)
+    receipt = canary.run_canary(_args())
+    assert receipt["result"] == "pass", receipt["failed_check"]
+    assert len(fake_flow["deleted"]) == 1
+
+
+def test_anonymous_failure_during_a_failed_session_outranks_it(fake_flow):
+    fake_flow["anon"] = [401, 200]
+    fake_flow["session"] = canary.CanaryFailure("semantic_top_hit_mismatch")
+    receipt = canary.run_canary(_args())
+    assert receipt["result"] == "fail"
+    assert receipt["failed_check"] == "anonymous_access_during"
+    assert len(fake_flow["deleted"]) == 1  # cleanup still ran
+
+
+def test_anonymous_failure_after_an_earlier_failure_outranks_it(fake_flow, monkeypatch):
+    fake_flow["anon"] = [401, 0]
+
+    def fail(*_args):
+        raise canary.CanaryFailure("embedder_dimension_probe_failed")
+
+    monkeypatch.setattr(canary, "probe_dimension", fail)
+    receipt = canary.run_canary(_args())
+    assert receipt["failed_check"] == "anonymous_access_after"
+    assert fake_flow["deleted"] == []  # nothing was created, nothing is deleted
+
+
+def test_temporary_cleanup_failure_fails_a_passing_run(fake_flow, monkeypatch):
+    fake_flow["anon"] = [401]
+    fake_flow["rmtree_fails"] = True
+    _session_collection(monkeypatch, fake_flow)
+    receipt = canary.run_canary(_args())
+    assert receipt["result"] == "fail"
+    assert receipt["failed_check"] == "temporary_cleanup_failed"

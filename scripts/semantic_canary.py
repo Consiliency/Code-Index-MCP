@@ -5,16 +5,19 @@ The canary checks that embedding-backed semantic search works through the MCP
 server against an authenticated Qdrant:
 
 1. Create a small synthetic git repository in a private temporary directory.
-2. Start ``index-it-mcp stdio`` with a per-run ``canary-<id>`` semantic profile.
-   Its vectors go to a dedicated per-run collection
-   (``ci__<repo>__canary-<id>__<generation>``).
+2. Start ``index-it-mcp stdio`` with a per-run ``canary-<128-bit id>`` semantic
+   profile. Its vectors go to a dedicated per-run collection
+   (``ci__<repo hash>__canary-<id>__<generation>``).
 3. Register and reindex the repository, then require semantic readiness ``ready``.
-4. Run semantic queries. The expected file must be the top hit, with
-   ``semantic_source == "semantic"`` and the canary collection.
+4. Run opaque semantic queries that share no term with any fixture file, so the
+   indexer's lexical overlap bonus cannot rank them. The expected file must be
+   the top hit, with ``semantic_source == "semantic"`` and the canary
+   collection, and Qdrant must hold a non-sentinel vector for each file.
 5. Require that anonymous Qdrant access returns 401 before, during and after.
+   An anonymous-access failure outranks every other failure code.
 6. Write a receipt holding only the model id, dimension, collection name,
-   timings and the pass/fail result. Delete the canary collections at the end,
-   also on failure.
+   timings and the pass/fail result. At the end, also on failure, delete only
+   the collections this run created in its exact namespace.
 
 Secrets come only from the environment: ``QDRANT_API_KEY`` and, optionally, the
 embedder key named by ``--embedder-key-env``. They are never printed, never put
@@ -28,6 +31,7 @@ import argparse
 import asyncio
 import json
 import os
+import re
 import secrets
 import shutil
 import subprocess
@@ -56,10 +60,15 @@ CORPUS = {
     path: content for entries in SYNTHETIC_CORPUS.values() for path, content in entries.items()
 }
 #: (query, file that must be the top hit). Two queries, so a constant ranking fails.
+#: No query term of three or more characters occurs in any fixture file's path or
+#: content: ``SemanticIndexer._query_overlap_bonus`` matches such terms as
+#: substrings, so only vector similarity can order these results.
 QUERIES = (
-    ("calculate available balance from credits and debits", "balance.py"),
-    ("find a product by its code", "catalog.py"),
+    ("work out leftover money once outgoing payments leave an account", "balance.py"),
+    ("look up an item inside an inventory listing by a unique identifier", "catalog.py"),
 )
+#: Bits of randomness in the per-run profile id (and so in the collection name).
+RUN_ID_BYTES = 16
 DEFAULT_EMBEDDER_KEY_ENV = "CANARY_EMBEDDER_API_KEY"
 ANONYMOUS_PROBE_INTERVAL_SECONDS = 0.5
 #: Variables passed through to the server child, if set. Locations, not credentials.
@@ -359,6 +368,13 @@ def check_search(value: Any, expected_file: str, profile_id: str) -> str:
     return collection
 
 
+def overlap_terms(query: str, texts: list[str]) -> set[str]:
+    """Query terms the indexer's lexical bonus would match in ``texts``."""
+    haystack = " ".join(texts).lower()
+    terms = {token for token in re.findall(r"[a-z0-9_]+", query.lower()) if len(token) >= 3}
+    return {term for term in terms if term in haystack}
+
+
 def qdrant_headers(key: str) -> dict[str, str]:
     return {"api-key": key}
 
@@ -379,22 +395,98 @@ def collection_shape(qdrant_url: str, key: str, collection: str) -> tuple[int, i
         ) from None
 
 
-def canary_collections(qdrant_url: str, key: str, segment: str) -> list[str]:
+def require_file_vectors(qdrant_url: str, key: str, collection: str, files: list[str]) -> None:
+    """Require a non-sentinel point for every file (the provenance point does not count)."""
+    seen: set[str] = set()
+    offset: Any = None
+    for _ in range(100):
+        body: dict[str, Any] = {"limit": 256, "with_payload": True, "with_vector": False}
+        if offset is not None:
+            body["offset"] = offset
+        status, value = http_json(
+            "POST",
+            f"{qdrant_url}/collections/{collection}/points/scroll",
+            headers=qdrant_headers(key),
+            body=body,
+        )
+        if status != 200 or not isinstance(value, dict):
+            raise CanaryFailure("collection_scroll_failed")
+        result = value.get("result") or {}
+        for point in result.get("points") or []:
+            data = point.get("payload") or {}
+            if data.get("__provenance__"):
+                continue
+            path = next(
+                (
+                    data.get(field)
+                    for field in ("relative_path", "file", "filepath", "path", "file_path")
+                    if data.get(field)
+                ),
+                "",
+            )
+            seen.add(Path(str(path)).name)
+        offset = result.get("next_page_offset")
+        if offset is None:
+            break
+    if not set(files) <= seen:
+        raise CanaryFailure("file_vectors_missing")
+
+
+def list_collections(qdrant_url: str, key: str) -> set[str]:
     status, value = http_json("GET", qdrant_url + "/collections", headers=qdrant_headers(key))
     if status != 200 or not isinstance(value, dict):
         raise CanaryFailure("collection_list_failed")
-    names = [row.get("name") for row in value.get("result", {}).get("collections", [])]
-    return sorted(name for name in names if isinstance(name, str) and f"__{segment}__" in name)
+    rows = (value.get("result") or {}).get("collections") or []
+    return {
+        row["name"] for row in rows if isinstance(row, dict) and isinstance(row.get("name"), str)
+    }
 
 
-def delete_collections(qdrant_url: str, key: str, segment: str) -> bool:
-    """Delete this run's collections. True when none remain afterwards."""
+def namespace_prefix(repo_id: str, profile_id: str) -> str:
+    """Exact collection prefix for this repository and profile (the registry's scheme)."""
+    from mcp_server.artifacts.semantic_namespace import SemanticNamespaceResolver
+
+    resolver = SemanticNamespaceResolver()
+    return f"ci__{resolver.derive_repo_hash(repo_id)}__{resolver.sanitize_profile_id(profile_id)}__"
+
+
+def owned_collections(before: set[str], after: set[str], prefix: str) -> list[str]:
+    """Collections this run created in its own namespace; nothing else is ever owned."""
+    return sorted(name for name in after - before if name.startswith(prefix))
+
+
+def delete_owned_collections(qdrant_url: str, key: str, before: set[str], prefix: str) -> bool:
+    """Delete only collections created by this run. True when none of them remain."""
     try:
-        for name in canary_collections(qdrant_url, key, segment):
+        owned = owned_collections(before, list_collections(qdrant_url, key), prefix)
+        for name in owned:
             http_json("DELETE", f"{qdrant_url}/collections/{name}", headers=qdrant_headers(key))
-        return not canary_collections(qdrant_url, key, segment)
+        return not set(owned) & list_collections(qdrant_url, key)
     except OSError, CanaryFailure:
         return False
+
+
+def anonymous_verdict(during: list[int] | None, after: int) -> str | None:
+    """Failure code for the during/after anonymous checks, or None when all were 401.
+
+    ``during`` is None when the server never started (nothing to observe).
+    """
+    if during is not None and (not during or any(status != 401 for status in during)):
+        return "anonymous_access_during"
+    if after != 401:
+        return "anonymous_access_after"
+    return None
+
+
+def read_repository_id(root: Path) -> str:
+    """The single repository id in the canary's private registry."""
+    try:
+        registry = json.loads((root / "registry.json").read_text())
+    except OSError, ValueError:
+        raise CanaryFailure("registry_unreadable") from None
+    if not isinstance(registry, dict) or len(registry) != 1:
+        raise CanaryFailure("registry_unreadable")
+    return next(iter(registry))
 
 
 async def run_session(
@@ -484,8 +576,7 @@ def run_canary(args: argparse.Namespace) -> dict:
     key_env = args.embedder_key_env or None
     embedder_key = os.environ.get(key_env) if key_env else None
     # Per-run profile id; its sanitized form is the collection's profile segment.
-    run_id = secrets.token_hex(4)
-    profile_id = f"canary-{run_id}"
+    profile_id = f"canary-{secrets.token_hex(RUN_ID_BYTES)}"
     timings: dict[str, float] = {}
     receipt: dict = {
         "schema": RECEIPT_SCHEMA,
@@ -498,11 +589,16 @@ def run_canary(args: argparse.Namespace) -> dict:
     }
     started = time.monotonic()
     root = Path(tempfile.mkdtemp(prefix="semantic-canary-"))
-    cleanup_needed = False
+    passed = False
+    denied_before = False
+    probe: AnonymousProbe | None = None
+    before: set[str] | None = None
+    prefix: str | None = None
     try:
         if not qdrant_key:
             raise CanaryFailure("qdrant_api_key_missing")
         require_anonymous_denied([anonymous_status(qdrant_url)], "anonymous_access_before")
+        denied_before = True
         status, _ = http_json(
             "GET", qdrant_url + "/collections", headers=qdrant_headers(qdrant_key)
         )
@@ -538,9 +634,14 @@ def run_canary(args: argparse.Namespace) -> dict:
             env=env,
             code="register_failed",
         )
+        run_prefix = namespace_prefix(read_repository_id(root), profile_id)
+        # Snapshot before the server starts: cleanup only ever deletes collections
+        # that appear after this point inside this run's exact namespace.
+        before = list_collections(qdrant_url, qdrant_key)
+        prefix = run_prefix
 
-        cleanup_needed = True
-        with AnonymousProbe(qdrant_url) as probe:
+        probe = AnonymousProbe(qdrant_url)
+        with probe:
             collection = asyncio.run(
                 asyncio.wait_for(
                     run_session(
@@ -549,26 +650,32 @@ def run_canary(args: argparse.Namespace) -> dict:
                     timeout=args.timeout,
                 )
             )
-        require_anonymous_denied(probe.statuses, "anonymous_access_during")
-        if f"__{profile_id}__" not in collection:
+        if not collection.startswith(prefix) or collection in before:
             raise CanaryFailure("collection_not_dedicated")
-        size, points = collection_shape(qdrant_url, qdrant_key, collection)
-        # At least one vector per synthetic file (the provenance sentinel is extra).
-        if size != dimension or points < len(CORPUS):
+        size, _points = collection_shape(qdrant_url, qdrant_key, collection)
+        if size != dimension:
             raise CanaryFailure("collection_shape_mismatch")
+        require_file_vectors(qdrant_url, qdrant_key, collection, sorted(CORPUS))
         receipt["collection"] = collection
-        receipt["result"] = "pass"
+        passed = True
     except Exception as exc:  # noqa: BLE001 - report a fixed code, never a message
         receipt["failed_check"] = failure_code(exc)
     finally:
-        if cleanup_needed and qdrant_key:
-            if not delete_collections(qdrant_url, qdrant_key, profile_id):
-                receipt["result"] = "fail"
+        if before is not None and prefix is not None:
+            if not delete_owned_collections(qdrant_url, qdrant_key, before, prefix):
                 receipt["failed_check"] = receipt["failed_check"] or "collection_cleanup_failed"
-        if anonymous_status(qdrant_url) != 401 and receipt["result"] == "pass":
-            receipt["result"] = "fail"
-            receipt["failed_check"] = "anonymous_access_after"
-        shutil.rmtree(root, ignore_errors=True)
+        if denied_before:
+            # Evaluated on every path; an authentication failure outranks the rest.
+            verdict = anonymous_verdict(
+                probe.statuses if probe is not None else None, anonymous_status(qdrant_url)
+            )
+            if verdict:
+                receipt["failed_check"] = verdict
+        try:
+            shutil.rmtree(root)
+        except OSError:
+            receipt["failed_check"] = receipt["failed_check"] or "temporary_cleanup_failed"
+        receipt["result"] = "pass" if passed and receipt["failed_check"] is None else "fail"
         timings["total"] = round(time.monotonic() - started, 3)
     return receipt
 
