@@ -9,6 +9,7 @@ replace the worker. These tests plant such a shadow package in both places.
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 import textwrap
@@ -23,7 +24,7 @@ from mcp_server.plugins.sandboxed_plugin import (
     host_package_root,
 )
 from mcp_server.sandbox.capabilities import CapabilitySet
-from mcp_server.sandbox.supervisor import SandboxCallError
+from mcp_server.sandbox.supervisor import SandboxCallError, SandboxSupervisor
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 _CAPS_JSON = (
@@ -181,3 +182,97 @@ def test_bootstrap_fails_closed_when_package_resolves_elsewhere(tmp_path):
     assert proc.returncode == 3
     assert proc.stdout == ""
     assert "does not resolve to the host package" in proc.stderr
+
+
+_ROOT_PROBE_PLUGIN = textwrap.dedent("""\
+    import os
+
+    import mcp_server.plugin_base as plugin_base
+    from mcp_server.plugin_base import IPlugin
+
+
+    class Plugin(IPlugin):
+        lang = os.path.realpath(plugin_base.__file__)
+
+        def __init__(self, sqlite_store=None, enable_semantic=False):
+            pass
+
+        def supports(self, path):
+            return True
+
+        def indexFile(self, path, content):
+            return {"file": str(path), "symbols": [], "language": "probe"}
+
+        def getDefinition(self, symbol):
+            return None
+
+        def findReferences(self, symbol):
+            return []
+
+        def search(self, query, opts=None):
+            return []
+    """)
+
+
+def test_hidden_user_site_root_never_outranks_stdlib_or_installed_packages(tmp_path):
+    """A ``pip install --user`` root (hidden by ``-I``) is appended, never prepended.
+
+    The simulated user site holds a full ``mcp_server`` copy next to fake
+    standard-library and dependency modules. The host copy that the default
+    path resolves (the editable install) must not be used either: the worker
+    loads ``mcp_server`` and every submodule from the pinned root only.
+    """
+    marker = tmp_path / "fake-stdlib-imported.txt"
+    user_site = tmp_path / "user-site"
+    user_site.mkdir()
+    shutil.copytree(
+        Path(host_package_root()) / "mcp_server",
+        user_site / "mcp_server",
+        ignore=shutil.ignore_patterns("__pycache__"),
+    )
+    record = f"open({str(marker)!r}, 'a').write(__name__ + '\\n')\n"
+    for name in ("dataclasses", "json", "inspect", "typing_extensions"):
+        (user_site / f"{name}.py").write_text(record)
+    (user_site / "user_site_probe_plugin.py").write_text(_ROOT_PROBE_PLUGIN)
+
+    cmd = build_worker_command(sys.executable, "user_site_probe_plugin", _CAPS_JSON)
+    cmd[4] = str(user_site)
+    sup = SandboxSupervisor(cmd, CapabilitySet((), (), frozenset()))
+    try:
+        loaded_from = Path(sup.call("language", {})["value"])
+    finally:
+        sup.close()
+
+    assert loaded_from == (user_site / "mcp_server" / "plugin_base.py").resolve()
+    assert not marker.exists(), marker.read_text()
+
+
+def test_root_only_reachable_through_bootstrap_is_appended_after_stdlib(tmp_path):
+    """Reviewer repro: with nothing else resolving ``mcp_server`` (``-S`` hides
+    every site dir, as ``-I`` hides a user site), the root must still be appended,
+    so a ``dataclasses.py`` beside the package never shadows the standard library."""
+    marker = tmp_path / "fake-stdlib-imported.txt"
+    user_site = tmp_path / "user-site"
+    (user_site / "mcp_server").mkdir(parents=True)
+    (user_site / "mcp_server" / "__init__.py").write_text("")
+    record = f"open({str(marker)!r}, 'a').write(__name__ + '\\n')\n"
+    for name in ("dataclasses", "json", "inspect"):
+        (user_site / f"{name}.py").write_text(record)
+    probe = textwrap.dedent("""\
+        import runpy, sys
+        def report(name, **kw):
+            import dataclasses, inspect, json, mcp_server
+            print(mcp_server.__file__)
+            print(sys.path[-1])
+        runpy.run_module = report
+        """)
+    cmd = build_worker_command(sys.executable, "pkg.plugin", _CAPS_JSON)
+    cmd[1:2] = ["-I", "-S"]
+    cmd[4] = probe + cmd[4]
+    cmd[5] = str(user_site)
+    proc = _probe(cmd, tmp_path)
+    assert proc.returncode == 0, proc.stderr
+    pkg_file, last_path_entry = proc.stdout.splitlines()
+    assert Path(pkg_file).resolve() == (user_site / "mcp_server" / "__init__.py").resolve()
+    assert last_path_entry == str(user_site)
+    assert not marker.exists(), marker.read_text()
