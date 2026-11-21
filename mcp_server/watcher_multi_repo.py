@@ -16,7 +16,7 @@ from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
 from .artifacts.commit_artifacts import CommitArtifactManager
-from .core.ignore_patterns import build_walker_filter
+from .core.ignore_patterns import EXCLUDED_DIR_PARTS, build_walker_filter
 from .core.lifecycle import retirement_watchdog
 from .core.repo_context import RepoContext
 from .core.repo_resolver import RepoResolver, run_repository_mutation
@@ -133,6 +133,25 @@ class MultiRepositoryHandler(FileSystemEventHandler):
         self.ctx = ctx
         self.code_extensions = get_all_extensions()
         self._gitignore_filter = build_walker_filter(repo_path)
+        self._root = Path(repo_path).absolute()
+
+    def _in_excluded_dir(self, path: Path) -> bool:
+        """Cheap filter for paths no reconciliation can index.
+
+        The staged index lives in ``<repo>/.mcp-index``, so a rebuild's SQLite
+        writes and snapshot copies raise inotify events inside the watched
+        tree, often thousands per second. Watchdog delivers events through one
+        unbounded queue on one thread. Each event that reached
+        ``_refresh_context`` cost a full readiness classification, so the
+        queue held millions of pending events and server RSS grew by GBs
+        (Consiliency/Code-Index-MCP#145). These paths are dropped before any
+        registry, readiness or ignore-file work; the walk excludes them too.
+        """
+        try:
+            relative = Path(path).absolute().relative_to(self._root)
+        except ValueError:
+            return True
+        return any(part in EXCLUDED_DIR_PARTS for part in relative.parts)
 
     def _refresh_context(self) -> bool:
         resolver = getattr(self.parent_watcher, "repo_resolver", None)
@@ -356,7 +375,8 @@ class MultiRepositoryHandler(FileSystemEventHandler):
 
     def _reconcile_committed_event(self, path: Path) -> bool:
         """Watchdog is a hint to reconcile Git, never authority for working-tree bytes."""
-        if not self._refresh_context() or build_walker_filter(self.repo_path)(path):
+        # Ignore rules first: they are far cheaper than a readiness refresh.
+        if build_walker_filter(self.repo_path)(path) or not self._refresh_context():
             return False
         try:
             result = self.parent_watcher.index_manager.sync_repository_index(
@@ -374,10 +394,14 @@ class MultiRepositoryHandler(FileSystemEventHandler):
         if event.is_directory:
             return
 
-        logger.debug("Event in %s: %s", self.repo_id, event)
-
         src = Path(event.src_path)
         etype = event.event_type
+        if self._in_excluded_dir(src) and (
+            etype != "moved" or self._in_excluded_dir(Path(event.dest_path))
+        ):
+            return
+
+        logger.debug("Event in %s: %s", self.repo_id, event)
 
         if etype in ("created", "modified"):
             mutated = self._trigger_reindex_with_ctx(src)
