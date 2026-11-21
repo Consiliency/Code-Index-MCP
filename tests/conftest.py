@@ -16,6 +16,12 @@ from unittest.mock import MagicMock, Mock
 import pytest
 from fastapi.testclient import TestClient
 
+# Keep checkout-root dotenv files (.env.local, .env, tracked .env.native) out of the
+# test process and the subprocesses it starts: get_env_var() would otherwise load them
+# into os.environ on first use, for every later test in the worker. Set before the
+# mcp_server imports below, which may read settings at import time.
+os.environ["PYTHON_DOTENV_DISABLED"] = "1"
+
 from mcp_server.core.repo_context import RepoContext
 from mcp_server.dispatcher import EnhancedDispatcher
 from mcp_server.dispatcher.protocol import DispatcherProtocol
@@ -440,6 +446,8 @@ def sample_search_results() -> List[SearchResult]:
 def test_environment(monkeypatch, tmp_path):
     """Set up test environment variables."""
     monkeypatch.setenv("MCP_TEST_MODE", "1")
+    # Re-assert per test in case an earlier test removed it without restoring.
+    monkeypatch.setenv("PYTHON_DOTENV_DISABLED", "1")
     monkeypatch.setenv("LOG_LEVEL", "DEBUG")
     monkeypatch.setenv("DATABASE_URL", "sqlite:///:memory:")
     monkeypatch.setenv("MCP_SKIP_PLUGIN_PREINDEX", "true")
