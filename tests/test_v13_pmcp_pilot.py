@@ -1598,6 +1598,7 @@ def live_records(tmp_path, manifest, request, monkeypatch):
         "qdrant_stock_grpc_default",
         "qdrant_requested_missing",
         "qdrant_unpublished_grpc_requested",
+        "qdrant_bridge_grpc_unrequested",
         "qdrant_endpoint_unverified",
         "qdrant_stock_port_requested",
         "qdrant_bridge_unpublished_grpc",
@@ -1720,6 +1721,9 @@ def test_live_record_reduction_is_consistent_and_read_only(
         elif damage == "qdrant_unpublished_grpc_requested":
             metadata.update(qdrant_network="bridge", qdrant_grpc_port=None)
             metadata["qdrant_ports_requested"]["grpc"] = True
+        elif damage == "qdrant_bridge_grpc_unrequested":
+            # Bridge publishes gRPC only on request, so this receipt is impossible.
+            metadata["qdrant_network"] = "bridge"
         elif damage == "qdrant_endpoint_unverified":
             metadata["qdrant_endpoint_verified"] = False
         # The last two are valid: an explicit stock port, and bridge without gRPC.

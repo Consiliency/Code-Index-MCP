@@ -1008,6 +1008,8 @@ def validate_qdrant_runtime_ports(metadata: dict) -> None:
         or any(type(value) is not bool for value in requested.values())
         # An unpublished bridge gRPC port was by definition not requested.
         or (grpc_port is None and requested["grpc"])
+        # Bridge mode publishes gRPC only when it was requested.
+        or (network == "bridge" and grpc_port is not None and not requested["grpc"])
         # Defaults are ephemeral; the stock ports appear only when asked for.
         or (http_port in QDRANT_STOCK_PORTS and not requested["http"])
         or (grpc_port in QDRANT_STOCK_PORTS and not requested["grpc"])
