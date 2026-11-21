@@ -35,12 +35,6 @@ from mcp_server.storage.sqlite_store import SQLiteStore
 PROBE_LANG = "probe_semantic_lang"
 
 
-@pytest.fixture(autouse=True)
-def _no_local_dotenv(monkeypatch):
-    """Settings reads would load repo .env files into os.environ for the whole process."""
-    monkeypatch.setattr("mcp_server.config.environment._DOTENV_LOADED", True)
-
-
 class _LegacyIndexerRecorder:
     """Stands in for SemanticIndexer; records every construction."""
 
