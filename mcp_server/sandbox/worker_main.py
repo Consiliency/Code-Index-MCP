@@ -4,6 +4,11 @@ Invoked as::
 
     python -m mcp_server.sandbox.worker_main <plugin_module> <caps_json>
 
+``SandboxedPlugin`` does not use ``-m`` directly: it starts the worker in
+isolated mode through :func:`mcp_server.plugins.sandboxed_plugin.build_worker_command`
+so ``PYTHONPATH``, the user site and the working directory cannot supply a
+different ``mcp_server`` (#146).
+
 The worker:
 
   1. Parses the capability set from argv[2].

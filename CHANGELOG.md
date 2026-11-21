@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 [Unreleased]: # placeholder for post-rc5 work
 
+### Security
+
+- **Sandbox workers start in isolated mode** (Consiliency/Code-Index-MCP#146).
+  Plugin workers now run under `python -I` with a bootstrap that pins
+  `mcp_server` and its submodules to the host's own package directory, instead
+  of `python -m mcp_server.sandbox.worker_main`. That directory is only ever
+  appended to `sys.path`, so neighbouring modules cannot shadow the standard
+  library or installed packages. A top-level `mcp_server` in the working
+  directory, on `PYTHONPATH` or in the user site can no longer replace the
+  worker. Plugin modules reachable only through `PYTHONPATH` are no longer
+  loaded.
+
 ### Changed
 
 - **Per-language degradation when a tree-sitter grammar is unavailable**
