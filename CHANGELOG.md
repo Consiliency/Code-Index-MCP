@@ -30,6 +30,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ignore the marker and serve a degraded generation as complete until its next
   rebuild.
 
+### Removed
+
+- Deleted the legacy `scripts/patch_mcp_server.py` and the two servers it
+  generated, `scripts/cli/mcp_server_cli_patched.py` and
+  `scripts/cli/mcp_server_bm25.py` (Consiliency/Code-Index-MCP#134). They were
+  never ported to the `mcp` 2.x SDK, were not shipped in the wheel, and the
+  patched server imported a module that does not exist. The supported STDIO
+  server is unchanged (`python -m mcp_server.cli stdio`).
+
 ## [1.6.0] - 2026-11-09
 
 Prepared minor release: the port to the `mcp` 2.x SDK (Code-Index-MCP#124,
