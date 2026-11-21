@@ -1387,6 +1387,8 @@ class TestSearchSemanticFlagFollowsMode:
         assert lookup_type is stored_type is QueryType.SEMANTIC_SEARCH
         assert lookup_params["mode"] == stored_params["mode"] == "semantic"
         assert lookup_params["semantic"] is stored_params["semantic"] is True
+        # Pre-#142 entries stored lexical results under the semantic key.
+        assert lookup_params["cache_route"] == stored_params["cache_route"] == 2
 
     def test_classic_mode_stays_lexical(self, test_client_with_dispatcher, monkeypatch):
         import mcp_server.gateway as gateway

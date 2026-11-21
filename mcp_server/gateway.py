@@ -1717,6 +1717,10 @@ async def search(
             filters["file_filter"] = file_filter
 
         cache_params = {
+            # Bump when routing changes what a key's results mean. v2: the
+            # semantic flag follows the resolved mode (#142); earlier
+            # mode=semantic entries could hold lexical results.
+            "cache_route": 2,
             "repo_id": ctx.repo_id,
             "generation": ctx.generation_key,
             "mode": effective_mode,
