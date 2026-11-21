@@ -140,7 +140,13 @@ jobs:
         run: mcp-index grammars prefetch --cache-dir "$TREE_SITTER_LANGUAGE_PACK_CACHE_DIR"
 
       - name: Pull the pinned Qdrant image
-        run: docker pull "$QDRANT_IMAGE"
+        run: |
+          for attempt in 1 2 3; do
+            docker pull "$QDRANT_IMAGE" && exit 0
+            echo "docker pull failed (attempt $attempt of 3)"
+            sleep $((attempt * 10))
+          done
+          exit 1
 
       - name: Run the semantic canary integration test (serial)
         run: |
