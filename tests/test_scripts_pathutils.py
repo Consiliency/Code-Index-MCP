@@ -45,11 +45,11 @@ def test_pathutils_returns_valid_path():
 def test_script_syntax_validity():
     """
     Smoke test: verify that every FIXED script compiles without syntax errors.
-    Only checks the 48 scripts fixed by SL-3.
+    Only checks the scripts fixed by SL-3 that still exist.
     """
     scripts_dir = Path(__file__).parent.parent / "scripts"
 
-    # List of 48 scripts we fixed in SL-3
+    # Scripts fixed in SL-3
     fixed_scripts = {
         "run_comprehensive_query_test.py",
         "demo_mcp_vs_native_analysis.py",
@@ -57,7 +57,6 @@ def test_script_syntax_validity():
         "index_remaining_repos.py",
         "mcp_test_dispatcher.py",
         "validate_test_repositories.py",
-        "patch_mcp_server.py",
         "continue_mcp_indexing.py",
         "real_mcp_analysis.py",
         "check_test_index_schema.py",
