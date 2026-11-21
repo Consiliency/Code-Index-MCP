@@ -489,7 +489,13 @@ class MultiRepositoryWatcher:
             )
             return {repo_id: Path(repo.path) for repo_id, repo in owners.items()}
 
-        return WatcherSweeper(
+        sweeper: Optional[WatcherSweeper] = None
+
+        def reconcile(repo_id: str) -> bool:
+            drift = sweeper.current_drift(repo_id) if sweeper is not None else None
+            return self._reconcile_repository_drift(repo_id, owner=owners.get(repo_id), drift=drift)
+
+        sweeper = WatcherSweeper(
             on_missed_path=None,
             repo_roots_provider=_repo_roots,
             store=None,
@@ -497,12 +503,11 @@ class MultiRepositoryWatcher:
             on_missed_create=self._on_missed_create,
             on_missed_delete=self._on_missed_delete,
             on_missed_rename=self._on_missed_rename,
-            on_repository_drift=lambda repo_id: self._reconcile_repository_drift(
-                repo_id, owner=owners.get(repo_id)
-            ),
+            on_repository_drift=reconcile,
             # One admission predicate for the indexer and the sweep (#114).
             admission_reason=self._sweep_admission_reason(),
         )
+        return sweeper
 
     def _sweep_admission_reason(self):
         """Share the dispatcher's admission predicate with the sweep when available."""
@@ -511,8 +516,14 @@ class MultiRepositoryWatcher:
             return dispatcher.index_admission_reason
         return None
 
-    def _reconcile_repository_drift(self, repo_id: str, *, owner=None) -> bool:
-        """Rebuild after sweep drift; return True only if a generation was published.
+    def _reconcile_repository_drift(self, repo_id: str, *, owner=None, drift=None) -> bool:
+        """Repair sweep drift; return True only if a generation was published.
+
+        With the drifted paths at hand only those paths are re-indexed; the
+        old unconditional force-full rebuild re-indexed every file of an
+        unchanged, already-indexed commit (#145). Without them (a caller that
+        does not pass the drift) a full rebuild still runs, with its reason
+        logged.
 
         The sweep suppresses identical drift only after a successful
         reconciliation, so failed, refused and skipped attempts return False
@@ -523,12 +534,27 @@ class MultiRepositoryWatcher:
             return False
         if owner is not None and owner.registration_id != repo.registration_id:
             return False
-        result = self.index_manager.sync_repository_index(
-            repo_id,
-            force_full=True,
-            expected_registration_id=repo.registration_id,
-            require_auto_sync=True,
-        )
+        repair = getattr(self.index_manager, "repair_repository_drift", None)
+        if drift is not None and callable(repair):
+            result = repair(
+                repo_id,
+                created=drift.get("created", ()),
+                modified=drift.get("modified", ()),
+                deleted=drift.get("deleted", ()),
+                observed_commit=drift.get("commit"),
+                observed_index_path=drift.get("index_path"),
+                expected_registration_id=repo.registration_id,
+                require_auto_sync=True,
+            )
+        else:
+            logger.info("Sweep drift in %s carries no path detail; forcing a full rebuild", repo_id)
+            result = self.index_manager.sync_repository_index(
+                repo_id,
+                force_full=True,
+                expected_registration_id=repo.registration_id,
+                require_auto_sync=True,
+                reason="watcher sweep drift without path detail",
+            )
         if result.action in {"full_index", "incremental_update"}:
             self.mark_repository_changed(repo_id)
             return True
@@ -814,6 +840,7 @@ class MultiRepositoryWatcher:
             )
             if force_full:
                 kwargs["force_full"] = True
+                kwargs["reason"] = "full rescan enqueued (force-push or rewritten history)"
             result = self.index_manager.sync_repository_index(repo_id, **kwargs)
 
             successful_mutation = result.action in {"full_index", "incremental_update"}

@@ -251,6 +251,7 @@ def test_enqueue_full_rescan_passes_repo_id():
         force_full=True,
         expected_registration_id="admitted-registration",
         require_auto_sync=True,
+        reason="full rescan enqueued (force-push or rewritten history)",
     )
 
 

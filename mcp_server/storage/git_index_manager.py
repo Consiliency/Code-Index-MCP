@@ -55,6 +55,7 @@ from ..indexing.change_detector import ChangeDetector
 from ..indexing.lock_registry import lock_registry
 from ..plugins.language_registry import get_language_by_extension
 from ..utils import grammar_cache
+from ..utils.memory_release import release_rebuild_memory
 from .repository_registry import RepositoryRegistry
 from .sqlite_store import SnapshotStalledError, SQLiteStore, read_grammar_degradation
 from .store_registry import StoreRegistry
@@ -68,6 +69,11 @@ def should_reindex_for_branch(current: Optional[str], tracked: Optional[str]) ->
 
 
 logger = logging.getLogger(__name__)
+
+#: Refusal code of a staged build whose change set was computed for another
+#: commit than the HEAD it found (#145); the sync recomputes it.
+_COMMIT_MOVED = "commit_moved"
+_COMMIT_MOVED_RETRIES = 2
 _FORCE_FULL_EXIT_TRACE = "force_full_exit_trace.json"
 _RECOVERABLE_REBUILD_STATES = frozenset(
     {
@@ -566,8 +572,14 @@ class GitAwareIndexManager:
         *,
         expected_registration_id: Optional[str] = None,
         require_auto_sync: bool = False,
+        reason: Optional[str] = None,
     ) -> IndexSyncResult:
-        """Serialize repository synchronization through the shared per-repo lock."""
+        """Serialize repository synchronization through the shared per-repo lock.
+
+        ``reason`` says why the caller asked; it is logged, and recorded in the
+        force-full trace, whenever the sync ends up choosing a full rebuild
+        (Consiliency/Code-Index-MCP#145).
+        """
         repo = self.registry.get_repository(repo_id)
         with lock_registry.acquire(repo_id, repo_path=repo.path if repo else None):
             return self._sync_repository_index_locked(
@@ -576,7 +588,173 @@ class GitAwareIndexManager:
                 bypass_branch_guard=bypass_branch_guard,
                 expected_registration_id=expected_registration_id,
                 require_auto_sync=require_auto_sync,
+                reason=reason,
             )
+
+    def repair_repository_drift(
+        self,
+        repo_id: str,
+        *,
+        created: Any = (),
+        modified: Any = (),
+        deleted: Any = (),
+        observed_commit: Optional[str] = None,
+        observed_index_path: Optional[str] = None,
+        expected_registration_id: Optional[str] = None,
+        require_auto_sync: bool = False,
+    ) -> IndexSyncResult:
+        """Repair sweep-detected drift by re-indexing only the drifted paths.
+
+        ``observed_commit`` and ``observed_index_path`` are the commit and
+        published generation the sweep compared. If either changed before the
+        repository lock was acquired, the drift belongs to another tree or
+        generation and is not applied; the next sweep recomputes it.
+
+        The watcher sweep compares the clean committed tree with the published
+        rows. When HEAD is still the indexed commit, the drifted paths are the
+        whole difference, so they are projected onto the live generation as an
+        incremental change set instead of rebuilding every file (#145). When
+        HEAD has moved, or the index cannot take an incremental change, the
+        ordinary sync decides; a targeted repair that fails falls back to a
+        full rebuild whose reason is logged.
+        """
+        repo = self.registry.get_repository(repo_id)
+        with lock_registry.acquire(repo_id, repo_path=repo.path if repo else None):
+            return self._repair_repository_drift_locked(
+                repo_id,
+                created=sorted(set(created)),
+                modified=sorted(set(modified)),
+                deleted=sorted(set(deleted)),
+                observed_commit=observed_commit,
+                observed_index_path=observed_index_path,
+                expected_registration_id=expected_registration_id,
+                require_auto_sync=require_auto_sync,
+            )
+
+    def _repair_repository_drift_locked(
+        self,
+        repo_id: str,
+        *,
+        created: List[str],
+        modified: List[str],
+        deleted: List[str],
+        observed_commit: Optional[str] = None,
+        observed_index_path: Optional[str] = None,
+        expected_registration_id: Optional[str],
+        require_auto_sync: bool,
+    ) -> IndexSyncResult:
+        drift = f"{len(created)} created, {len(modified)} modified, {len(deleted)} deleted"
+        sync_kwargs = {
+            "expected_registration_id": expected_registration_id,
+            "require_auto_sync": require_auto_sync,
+        }
+        repo_info = self.registry.get_repository(repo_id)
+        if repo_info is None:
+            return IndexSyncResult(
+                action="failed", commit="", error=f"Repository not found: {repo_id}"
+            )
+        if (
+            expected_registration_id is not None
+            and repo_info.registration_id != expected_registration_id
+        ):
+            return IndexSyncResult(
+                action="refused", commit="", error="Repository registration changed"
+            )
+        if require_auto_sync and (not repo_info.auto_sync or not repo_info.active):
+            return IndexSyncResult(action="refused", commit="", error="Automatic sync disabled")
+        git_state = self.registry.update_git_state(repo_id)
+        current_commit = git_state.get("commit") if git_state else None
+        current_branch = git_state.get("branch") if git_state else None
+        last_indexed_commit = repo_info.last_indexed_commit
+        stale = []
+        if observed_commit is not None and observed_commit != current_commit:
+            stale.append(
+                f"HEAD moved from {observed_commit[:12]} to {(current_commit or '?')[:12]}"
+            )
+        if observed_commit is not None and observed_commit != last_indexed_commit:
+            stale.append(
+                f"indexed commit is {(last_indexed_commit or 'none')[:12]}, "
+                f"not the swept {observed_commit[:12]}"
+            )
+        if observed_index_path is not None and (
+            not repo_info.index_path
+            or Path(repo_info.index_path).resolve(strict=False)
+            != Path(observed_index_path).resolve(strict=False)
+        ):
+            stale.append("the published generation changed after the sweep")
+        if stale:
+            # The drift was computed against another tree or generation;
+            # applying it could delete rows that are valid now (#145 review).
+            logger.info(
+                "Not applying sweep drift in %s (%s): %s; the next sweep recomputes it",
+                repo_id,
+                drift,
+                "; ".join(stale),
+            )
+            return IndexSyncResult(
+                action="refused",
+                commit=current_commit or "",
+                code="sweep_drift_stale",
+                error="Sweep drift no longer matches the indexed commit or generation",
+            )
+        if (
+            not current_commit
+            or current_commit != last_indexed_commit
+            or repo_info.staleness_reason
+            or not self._index_exists(repo_info)
+            or not self._git_source_unchanged(
+                Path(repo_info.path), current_commit, current_branch or repo_info.tracked_branch
+            )
+        ):
+            logger.info(
+                "Sweep drift in %s (%s) is not a targeted repair (HEAD %s, indexed %s); "
+                "running an ordinary sync",
+                repo_id,
+                drift,
+                (current_commit or "unknown")[:12],
+                (last_indexed_commit or "none")[:12],
+            )
+            return self._sync_repository_index_locked(
+                repo_id, reason=f"watcher sweep drift ({drift})", **sync_kwargs
+            )
+        conflicts = self._deletions_present_in_tree(
+            repo_id, Path(repo_info.path), current_commit, deleted
+        )
+        if conflicts:
+            # The sweep saw these paths missing from disk, yet the indexed
+            # commit still holds them and the indexer would store them (for
+            # example a case-only spelling mismatch on a case-insensitive
+            # filesystem). Never publish such a deletion; rebuild from the
+            # tree instead (#145 review).
+            reason = (
+                f"sweep_deletion_conflicts_with_tree: {len(conflicts)} path(s) the sweep "
+                f"reports deleted are committed and admitted (sample {conflicts[:5]})"
+            )
+            return self._sync_repository_index_locked(
+                repo_id, force_full=True, reason=reason, **sync_kwargs
+            )
+        logger.info(
+            "Repairing sweep drift in %s at %s by re-indexing the drifted paths only (%s)",
+            repo_id,
+            current_commit[:12],
+            drift,
+        )
+        result = self._rebuild_repository_index_locked(
+            repo_id,
+            changes=ChangeSet(added=created, modified=modified, deleted=deleted, renamed=[]),
+            changes_commit=current_commit,
+            expected_registration_id=repo_info.registration_id,
+            require_auto_sync=require_auto_sync,
+        )
+        if result.action in {"incremental_update", "refused"}:
+            return result
+        reason = (
+            f"targeted repair of watcher sweep drift ({drift}) did not complete: "
+            f"{result.error or result.action}"
+        )
+        return self._sync_repository_index_locked(
+            repo_id, force_full=True, reason=reason, **sync_kwargs
+        )
 
     def _sync_repository_index_locked(
         self,
@@ -586,6 +764,7 @@ class GitAwareIndexManager:
         *,
         expected_registration_id: Optional[str] = None,
         require_auto_sync: bool = False,
+        reason: Optional[str] = None,
     ) -> IndexSyncResult:
         """Sync under the repository lock; a force-full run owns a fresh trace.
 
@@ -599,6 +778,7 @@ class GitAwareIndexManager:
             "bypass_branch_guard": bypass_branch_guard,
             "expected_registration_id": expected_registration_id,
             "require_auto_sync": require_auto_sync,
+            "reason": reason,
         }
         trace_repo = self.registry.get_repository(repo_id) if force_full else None
         # A queued job from an old registration (or one whose automatic sync
@@ -622,6 +802,7 @@ class GitAwareIndexManager:
                     trace_repo.current_commit,
                     indexed_before,
                     registration_id=self._trace_registration_id(trace_repo),
+                    reason=reason,
                 ),
             )
         except OSError as exc:
@@ -661,9 +842,11 @@ class GitAwareIndexManager:
         indexed_commit_before: Optional[str],
         *,
         registration_id: Optional[str] = None,
+        reason: Optional[str] = None,
     ) -> Dict[str, Any]:
         return {
             "registration_id": registration_id,
+            "full_rebuild_reason": reason or "force_full requested",
             "status": "running",
             "stage": "force_full_started",
             "stage_family": "lexical",
@@ -712,7 +895,24 @@ class GitAwareIndexManager:
             },
         )
 
-    def _sync_repository_index_unwrapped(
+    def _sync_repository_index_unwrapped(self, repo_id: str, **kwargs: Any) -> IndexSyncResult:
+        """Sync, recomputing the change set when HEAD moves before staging.
+
+        A change set is valid only for the commit it was computed against.
+        When HEAD moves between the inventory and the staged build (a
+        ``git pull`` whose file events start a sync mid-checkout), the build
+        refuses with ``commit_moved`` and the sync is recomputed against the
+        new HEAD instead of publishing the old change set under the new
+        commit (#145).
+        """
+        result = self._sync_repository_index_attempt(repo_id, **kwargs)
+        for _attempt in range(_COMMIT_MOVED_RETRIES):
+            if result.code != _COMMIT_MOVED:
+                break
+            result = self._sync_repository_index_attempt(repo_id, **kwargs)
+        return result
+
+    def _sync_repository_index_attempt(
         self,
         repo_id: str,
         force_full: bool = False,
@@ -720,6 +920,7 @@ class GitAwareIndexManager:
         *,
         expected_registration_id: Optional[str] = None,
         require_auto_sync: bool = False,
+        reason: Optional[str] = None,
     ) -> IndexSyncResult:
         """Sync index with repository's current git state.
 
@@ -828,6 +1029,10 @@ class GitAwareIndexManager:
                 force_full=force_full,
                 expected_registration_id=repo_info.registration_id,
                 require_auto_sync=require_auto_sync,
+                full_reason=(
+                    f"readiness is {readiness.state.value}"
+                    + (f"; forced: {reason}" if force_full and reason else "")
+                ),
             )
 
         # Matching provenance is insufficient when the database is not ready.
@@ -850,6 +1055,7 @@ class GitAwareIndexManager:
                 return self._rebuild_repository_index_locked(
                     repo_id,
                     changes=ChangeSet(added=[], modified=[], deleted=[], renamed=[]),
+                    changes_commit=current_commit,
                     expected_registration_id=repo_info.registration_id,
                     require_auto_sync=require_auto_sync,
                 )
@@ -868,33 +1074,43 @@ class GitAwareIndexManager:
                         duration_seconds=(datetime.now() - start_time).total_seconds(),
                     )
         changes = None
-        if (
-            last_indexed_commit
-            and not force_full
-            and index_exists_before_mutation
-            and repo_info.staleness_reason
-            not in {"index_publication_pending", "partial_index_failure"}
-            and not (published_grammar_degradation(Path(repo_info.index_path)) or {}).get(
-                "unreadable"
-            )
-        ):
+        full_reason = None
+        if force_full:
+            full_reason = f"forced: {reason or 'force_full requested'}"
+        elif not last_indexed_commit:
+            full_reason = "no previously indexed commit"
+        elif not index_exists_before_mutation:
+            full_reason = "no durable index to update"
+        elif repo_info.staleness_reason in {"index_publication_pending", "partial_index_failure"}:
+            full_reason = f"previous generation left {repo_info.staleness_reason}"
+        elif (published_grammar_degradation(Path(repo_info.index_path)) or {}).get("unreadable"):
+            full_reason = "grammar-degradation marker unreadable"
+        else:
             try:
                 candidate = self._get_changed_files(repo_path, last_indexed_commit, current_commit)
                 policy_paths = candidate.added + candidate.modified + candidate.deleted
                 policy_paths += [path for pair in candidate.renamed for path in pair]
-                if not any(
+                if any(
                     Path(path).name in {".gitignore", ".mcp-index-ignore"} for path in policy_paths
                 ):
-                    if not self._should_full_reindex(repo_path, candidate):
-                        changes = candidate
+                    full_reason = "ignore policy changed"
+                elif self._should_full_reindex(repo_path, candidate):
+                    full_reason = (
+                        f"{candidate.total_changes()} changed paths are at least half "
+                        "of the tracked files"
+                    )
+                else:
+                    changes = candidate
             except OSError, subprocess.SubprocessError:
-                logger.info("Change inventory unavailable; staging a full rebuild")
+                full_reason = "change inventory unavailable"
         return self._rebuild_repository_index_locked(
             repo_id,
             changes=changes,
+            changes_commit=current_commit if changes is not None else None,
             force_full=force_full,
             expected_registration_id=repo_info.registration_id,
             require_auto_sync=require_auto_sync,
+            full_reason=full_reason,
         )
 
     def rebuild_repository_index(self, repo_id: str) -> IndexSyncResult:
@@ -1125,6 +1341,8 @@ class GitAwareIndexManager:
         require_auto_sync: bool = False,
         expected_owner=None,
         verify_stage=None,
+        changes_commit: Optional[str] = None,
+        full_reason: Optional[str] = None,
     ) -> IndexSyncResult:
         start_time = datetime.now()
         repo_info = self.registry.get_repository(repo_id)
@@ -1150,6 +1368,23 @@ class GitAwareIndexManager:
         current_branch = git_state.get("branch") if git_state else None
         if not current_commit:
             return IndexSyncResult(action="failed", commit="", error="Failed to get current commit")
+        if changes is not None and changes_commit is not None and current_commit != changes_commit:
+            # The change set brings the index to ``changes_commit`` only.
+            # Publishing it under another HEAD would label stale rows as
+            # current; the sync recomputes it instead (#145).
+            logger.info(
+                "HEAD of %s moved from %s to %s after its change set was computed; recomputing",
+                repo_id,
+                changes_commit[:12],
+                current_commit[:12],
+            )
+            return IndexSyncResult(
+                action="refused",
+                commit=current_commit,
+                code=_COMMIT_MOVED,
+                error="HEAD moved after the change set was computed",
+                duration_seconds=(datetime.now() - start_time).total_seconds(),
+            )
         repo_info.current_commit = current_commit
         if current_branch:
             repo_info.current_branch = current_branch
@@ -1222,15 +1457,32 @@ class GitAwareIndexManager:
                 **({"require_auto_sync": True} if require_auto_sync else {}),
             )
             mutation_admitted = True
+            if changes is None and stage_operation is None:
+                # Every full rebuild says why it was chosen (#145).
+                logger.info(
+                    "Full rebuild of %s at %s (indexed %s): %s",
+                    repo_id,
+                    current_commit[:12],
+                    (indexed_before or "none")[:12],
+                    full_reason or ("forced" if force_full else "full rebuild requested"),
+                )
             if force_full:
                 # Normally already fresh from the sync entry; resetting again
                 # keeps a direct force-full caller from inheriting old fields.
+                previous_reason = None
+                try:
+                    previous_reason = (self._read_force_full_exit_trace(repo_info) or {}).get(
+                        "full_rebuild_reason"
+                    )
+                except OSError:
+                    pass
                 self._start_force_full_exit_trace(
                     repo_info,
                     self._force_full_started_trace(
                         current_commit,
                         indexed_before,
                         registration_id=self._trace_registration_id(repo_info),
+                        reason=full_reason or previous_reason,
                     ),
                 )
             generation_dir.mkdir(parents=True, exist_ok=True)
@@ -1611,6 +1863,8 @@ class GitAwareIndexManager:
                     stage_store.close()
             if stage_dir is not None:
                 shutil.rmtree(stage_dir, ignore_errors=True)
+            if mutation_admitted:
+                release_rebuild_memory(repo_id)
 
     def _grammar_availability(self) -> Optional[grammar_cache.GrammarAvailability]:
         """Snapshot which languages cannot load their grammars, once per build.
@@ -3023,7 +3277,9 @@ class GitAwareIndexManager:
 
     def enqueue_full_rescan(self, repo_id: str) -> IndexSyncResult:
         """Trigger a guarded full rescan without bypassing the tracked-branch check."""
-        return self.sync_repository_index(repo_id, force_full=True)
+        return self.sync_repository_index(
+            repo_id, force_full=True, reason="full rescan enqueued (force-push detected)"
+        )
 
     def _runtime_paths(self, repo_info: Any) -> Tuple[Path, Path]:
         index_location = Path(repo_info.index_location)
@@ -3121,6 +3377,30 @@ class GitAwareIndexManager:
                 release_workers = getattr(self.dispatcher, "release_staged_plugin_workers", None)
                 if callable(release_workers) and self._stage_owner_is_current(repo_id, repo_info):
                     release_workers(repo_id)
+
+    def _deletions_present_in_tree(
+        self, repo_id: str, repo_path: Path, commit: str, deleted: List[str]
+    ) -> List[str]:
+        """Deleted drift paths that ``commit`` still holds and the indexer stores.
+
+        The tree is clean at ``commit`` (checked by the caller), so admission
+        is judged on the checkout. A git failure treats every deletion as a
+        conflict, which makes the caller rebuild instead of deleting.
+        """
+        if not deleted:
+            return []
+        try:
+            listing = self._run_git(["ls-tree", "-r", "-z", "--name-only", commit], repo_path)
+        except OSError, subprocess.SubprocessError, RebuildShutdownRequested:
+            return list(deleted)
+        committed = {os.fsdecode(entry) for entry in listing.stdout.split(b"\0") if entry}
+        is_excluded = build_walker_filter(repo_path)
+        return [
+            path
+            for path in deleted
+            if path in committed
+            and self._stage_admission_reason(repo_id, repo_path, path, is_excluded) is None
+        ]
 
     def _stage_admission_reason(
         self, repo_id: str, root: Path, relative: str, is_excluded

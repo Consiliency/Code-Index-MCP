@@ -90,6 +90,8 @@ class WatcherSweeper:
         self._suppressed_drift_logged: Dict[str, str] = {}
         # repo_id -> (signature, consecutive failures, sweeps left to skip).
         self._failed_drift: Dict[str, Tuple[str, int, int]] = {}
+        # repo_id -> the drift handed to the current on_repository_drift call.
+        self._current_drift: Dict[str, Dict[str, Any]] = {}
 
         # Env var overrides constructor arg when set
         env_val = os.environ.get(ENV_SWEEP_MINUTES)
@@ -157,6 +159,7 @@ class WatcherSweeper:
             repo_has_drift = False
             tracked_blobs = None
             tree_digest = ""
+            observed_commit: Optional[str] = None
             transformed_paths: set[str] = set()
             if (repo_root / ".git").exists():
                 clean = subprocess.run(
@@ -169,8 +172,21 @@ class WatcherSweeper:
                 if clean.returncode != 0:
                     continue
                 tracked_blobs = {}
+                # The drift is computed against exactly this commit; the
+                # repair revalidates it under the repository lock (#145).
+                observed_commit = (
+                    subprocess.run(
+                        ["git", "rev-parse", "--verify", "HEAD^{commit}"],
+                        cwd=repo_root,
+                        capture_output=True,
+                        check=True,
+                        timeout=30,
+                    )
+                    .stdout.decode("ascii")
+                    .strip()
+                )
                 listing = subprocess.run(
-                    ["git", "ls-tree", "-r", "-l", "-z", "HEAD"],
+                    ["git", "ls-tree", "-r", "-l", "-z", observed_commit],
                     cwd=repo_root,
                     capture_output=True,
                     check=True,
@@ -293,11 +309,32 @@ class WatcherSweeper:
                 # Only a reconciliation that reports success (``True``) records
                 # the signature. A failed or refused sync, or one that raised,
                 # is retried with bounded backoff, never suppressed (#114 review).
+                logger.info(
+                    "watcher sweep: drift in %s (%d created, %d modified, %d deleted; "
+                    "sample %s); reconciling",
+                    repo_id,
+                    len(created),
+                    len(modified),
+                    len(deleted),
+                    sorted(created | modified | deleted)[:_DRIFT_LOG_SAMPLE],
+                )
+                index_path = getattr(store, "db_path", None)
+                self._current_drift[repo_id] = {
+                    "created": sorted(created),
+                    "modified": sorted(modified),
+                    "deleted": sorted(deleted),
+                    # What the drift was computed against: the HEAD tree and
+                    # the published generation the rows came from (#145).
+                    "commit": observed_commit,
+                    "index_path": str(index_path) if index_path else None,
+                }
                 try:
                     reconciled = self._on_repository_drift(repo_id) is True
                 except Exception:
                     self._record_reconcile_failure(repo_id, signature)
                     raise
+                finally:
+                    self._current_drift.pop(repo_id, None)
                 drifted.append(repo_id)
                 if reconciled:
                     self._acted_drift[repo_id] = signature
@@ -323,6 +360,21 @@ class WatcherSweeper:
                 drifted.append(repo_id)
 
         return drifted
+
+    def current_drift(self, repo_id: str) -> Optional[Dict[str, Any]]:
+        """Drift of the reconciliation now running for ``repo_id``.
+
+        Holds the drifted paths plus the ``commit`` and ``index_path``
+        (published generation) they were computed against. Available only
+        inside the ``on_repository_drift`` callback, so the reconciler can
+        repair exactly these paths after revalidating both (#145).
+        """
+        drift = self._current_drift.get(repo_id)
+        if not drift:
+            return None
+        return {
+            key: list(value) if isinstance(value, list) else value for key, value in drift.items()
+        }
 
     @staticmethod
     def _deferred_languages(store: Any) -> frozenset:
@@ -432,10 +484,17 @@ class WatcherSweeper:
     def _indexed_path_should_report_delete(
         self, repo_root: Path, rel: str, gitignore_filter
     ) -> bool:
+        """Whether an indexed row absent from the stored file set is drift.
+
+        A row whose path repository policy now ignores or excludes is always
+        drift: the full walk would not store that file, so the row is stale
+        (for example a mislabeled generation that predates a .gitignore
+        change, #145). Otherwise only rows of code files are reported.
+        """
         path = repo_root / rel
-        if path.suffix not in _CODE_EXTENSIONS:
-            return False
-        return not gitignore_filter(path)
+        if gitignore_filter(path):
+            return True
+        return path.suffix in _CODE_EXTENSIONS
 
     def _match_renames(
         self,
