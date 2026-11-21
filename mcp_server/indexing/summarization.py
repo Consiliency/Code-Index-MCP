@@ -1065,7 +1065,19 @@ class FileBatchSummarizer(ChunkWriter):
             summaries = recovery
 
         if persist and summaries:
-            with sqlite3.connect(self.db_path) as conn:
+            chunk_lookup = {c["chunk_id"]: c for c in active_chunks}
+            # Resolve the model before the write transaction opens: the first
+            # resolution may probe the profile endpoint.
+            model_name = (
+                self._get_model_name()
+                if any(summary.chunk_id in chunk_lookup for summary in summaries)
+                else None
+            )
+            persisted_count = 0
+            # One transaction per provider batch: a failure or interrupt while
+            # storing leaves none of the batch rather than part of it.
+            with self._get_sqlite_store()._get_connection() as conn:
+                conn.execute("BEGIN IMMEDIATE")
                 persisted_hashes = {
                     row[0]
                     for row in conn.execute(
@@ -1074,29 +1086,26 @@ class FileBatchSummarizer(ChunkWriter):
                         (self.summarization_config.get("profile_id"), self._prompt_fingerprint()),
                     ).fetchall()
                 }
-            summaries_to_persist = [
-                summary for summary in summaries if summary.chunk_id not in persisted_hashes
-            ]
-            chunk_lookup = {c["chunk_id"]: c for c in active_chunks}
-            model_name = self._get_model_name() if summaries_to_persist else None
-            for s in summaries_to_persist:
-                c = chunk_lookup.get(s.chunk_id)
-                if c is None:
-                    continue
-                sym = _symbol_name(symbol_map, c)
-                self._persist_summary(
-                    chunk_hash=s.chunk_id,
-                    file_id=file_id,
-                    chunk_start=c.get("line_start") or 1,
-                    chunk_end=c.get("line_end") or 1,
-                    symbol=sym,
-                    summary_text=s.summary,
-                    model_name=model_name or "unknown",
-                    is_authoritative=True,
-                )
+                for s in summaries:
+                    c = chunk_lookup.get(s.chunk_id)
+                    if c is None or s.chunk_id in persisted_hashes:
+                        continue
+                    sym = _symbol_name(symbol_map, c)
+                    self._persist_summary(
+                        chunk_hash=s.chunk_id,
+                        file_id=file_id,
+                        chunk_start=c.get("line_start") or 1,
+                        chunk_end=c.get("line_end") or 1,
+                        symbol=sym,
+                        summary_text=s.summary,
+                        model_name=model_name or "unknown",
+                        is_authoritative=True,
+                    )
+                    persisted_hashes.add(s.chunk_id)
+                    persisted_count += 1
             logger.info(
                 "FileBatchSummarizer: persisted %d summaries for %s",
-                len(summaries_to_persist),
+                persisted_count,
                 file_path,
             )
 
@@ -1216,6 +1225,18 @@ class ComprehensiveChunkWriter(FileBatchSummarizer):
         if repo_scope and normalized_language in _DOC_CONTEXT_LANGUAGES:
             return _REPO_SCOPE_DOC_FILE_CHUNK_WINDOW
         return None
+
+    def _read_scope_file_content(self, file_path: str) -> str:
+        """Return the file text given to the summarizer as context for its chunks.
+
+        The default reads the checkout. A caller summarizing a published index
+        outside a staged build overrides this to read the published commit.
+        """
+        try:
+            with open(file_path, encoding="utf-8", errors="replace") as fh:
+                return fh.read()
+        except Exception:
+            return ""
 
     async def process_scope(
         self,
@@ -1347,11 +1368,7 @@ class ComprehensiveChunkWriter(FileBatchSummarizer):
                     file_language,
                     repo_scope=repo_scope,
                 )
-                try:
-                    with open(file_path, encoding="utf-8", errors="replace") as fh:
-                        file_content = fh.read()
-                except Exception:
-                    file_content = ""
+                file_content = self._read_scope_file_content(file_path)
 
                 try:
                     file_result = await self.summarize_file_chunks(

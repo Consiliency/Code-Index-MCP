@@ -26,6 +26,7 @@ from mcp_server.core.repo_resolver import RepoResolver  # noqa: E402
 from mcp_server.dispatcher.dispatcher_enhanced import EnhancedDispatcher  # noqa: E402
 from mcp_server.health.repo_status import build_health_row  # noqa: E402
 from mcp_server.health.repository_readiness import ReadinessClassifier  # noqa: E402
+from mcp_server.indexing.summarization import ComprehensiveChunkWriter  # noqa: E402
 from mcp_server.setup.semantic_preflight import run_semantic_preflight  # noqa: E402
 from mcp_server.storage.git_index_manager import GitAwareIndexManager  # noqa: E402
 from mcp_server.storage.repository_registry import (  # noqa: E402
@@ -1458,8 +1459,46 @@ def _check_prefill_readiness(repo_info: Any) -> Any:
     return readiness
 
 
-def _build_prefill_writer(index_path: Path) -> tuple[Any, dict[str, Any]]:
-    """Build the summary writer exactly as the staged semantic build does.
+class _PublishedCommitChunkWriter(ComprehensiveChunkWriter):
+    """Summarize a published index from its own commit, never the checkout.
+
+    Chunk text already comes from the published index; this makes the file
+    context come from the published commit as well, read with ``git cat-file
+    blob`` the way the staged build snapshots its inputs. Edits, commits or
+    checkouts during a window therefore cannot leak into a stored summary.
+    """
+
+    def __init__(self, *args: Any, repo_path: Path, commit: str, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._repo_path = Path(repo_path).resolve()
+        self._commit = commit
+
+    def _read_scope_file_content(self, file_path: str) -> str:
+        import subprocess
+
+        try:
+            relative = Path(file_path).resolve(strict=False).relative_to(self._repo_path)
+        except ValueError:
+            return ""  # Retained rows outside the checkout have no committed blob.
+        try:
+            blob = subprocess.run(
+                ["git", "cat-file", "blob", f"{self._commit}:{relative.as_posix()}"],
+                cwd=self._repo_path,
+                capture_output=True,
+                timeout=get_index_git_timeout_seconds(),
+                check=False,
+            )
+        except OSError, subprocess.TimeoutExpired:
+            return ""
+        if blob.returncode != 0:
+            return ""
+        return blob.stdout.decode("utf-8", errors="replace")
+
+
+def _build_prefill_writer(
+    index_path: Path, *, repo_path: Path, commit: str
+) -> tuple[Any, dict[str, Any]]:
+    """Build the summary writer with the staged semantic build's contract.
 
     ``EnhancedDispatcher.rebuild_semantic_for_paths`` and
     ``get_semantic_summary_contract`` construct ``ComprehensiveChunkWriter``
@@ -1468,8 +1507,6 @@ def _build_prefill_writer(index_path: Path) -> tuple[Any, dict[str, Any]]:
     so rows written here carry the profile ID and prompt fingerprint that
     ``SQLiteStore.prepare_generation`` keeps for the next staged rebuild.
     """
-    from mcp_server.indexing.summarization import ComprehensiveChunkWriter
-
     settings = reload_settings()
     profile_id = settings.get_semantic_default_profile()
     if not profile_id:
@@ -1480,10 +1517,12 @@ def _build_prefill_writer(index_path: Path) -> tuple[Any, dict[str, Any]]:
         )
     summarization_config = settings.get_profile_summarization_config(profile_id)
     summarization_config["profile_id"] = profile_id
-    writer = ComprehensiveChunkWriter(
+    writer = _PublishedCommitChunkWriter(
         db_path=str(index_path),
         qdrant_client=None,
         summarization_config=summarization_config,
+        repo_path=repo_path,
+        commit=commit,
     )
     if not writer.can_summarize():
         raise _PrefillRefused(
@@ -1499,6 +1538,32 @@ def _build_prefill_writer(index_path: Path) -> tuple[Any, dict[str, Any]]:
         "semantic_search_enabled": bool(settings.semantic_search_enabled),
     }
     return writer, contract
+
+
+def _published_index_change(
+    registry: RepositoryRegistry, repo_id: str, published: tuple[Any, Path, Any]
+) -> Optional[str]:
+    """Describe a change to the published index since the window started.
+
+    The writer lock keeps other index writers out, so this is a guard rather
+    than an expected path. Checkout edits, commits and branch switches are not
+    changes here: summaries are built only from the published index and its
+    commit, and the next staged rebuild already drops the ones for files whose
+    committed content changed.
+    """
+    current = registry.get_repository(repo_id)
+    if current is None:
+        return "the repository was unregistered"
+    if getattr(current, "staleness_reason", None) in _STAGED_REBUILD_MARKERS:
+        return f"a staged rebuild marker appeared ({current.staleness_reason})"
+    generation, index_path, commit = published
+    if current.index_generation != generation or not current.index_path:
+        return "the published generation changed"
+    if Path(current.index_path).resolve() != index_path:
+        return "the published index path changed"
+    if current.last_indexed_commit != commit:
+        return "the published commit changed"
+    return None
 
 
 def _close_writer_store(writer: Any) -> None:
@@ -1557,7 +1622,16 @@ async def _run_summary_prefill(
     stop: _PrefillStop,
     started: float,
     report: Any,
+    missing: int,
+    published_change: Any,
 ) -> dict[str, Any]:
+    """Summarize in passes, counting progress from durable missing counts.
+
+    ``SummaryGenerationResult.summaries_written`` counts what the provider
+    returned, including chunk IDs that were never stored, so progress, the
+    ``--limit`` budget and stall detection use the drop in chunks still
+    missing a current summary instead.
+    """
     import time
 
     written = 0
@@ -1565,6 +1639,7 @@ async def _run_summary_prefill(
     passes = 0
     stop_reason = "drained"
     blocked_reason: Optional[str] = None
+    detail: Optional[str] = None
 
     def window_closed() -> bool:
         return bool(max_seconds) and time.monotonic() - started >= max_seconds
@@ -1582,6 +1657,10 @@ async def _run_summary_prefill(
         if window_closed():
             stop_reason = "max_seconds"
             break
+        detail = published_change()
+        if detail is not None:
+            stop_reason = "published_index_changed"
+            break
         pass_chunks = _PREFILL_PASS_CHUNKS
         if limit:
             pass_chunks = min(pass_chunks, limit - written)
@@ -1589,18 +1668,21 @@ async def _run_summary_prefill(
             limit=pass_chunks, max_batches=1, cancel_check=should_stop
         )
         passes += 1
-        written += result.summaries_written
+        remaining = writer._count_unsummarized_rows()
+        stored = max(0, missing - remaining)
+        missing = remaining
+        written += stored
         attempted += result.chunks_attempted
-        report(written, result.remaining_chunks)
+        report(written, remaining)
         if result.cancelled:
             stop_reason = "interrupted" if stop.requested else "max_seconds"
             break
-        if result.remaining_chunks == 0:
+        if remaining == 0:
             stop_reason = "drained"
             break
-        if result.summaries_written == 0:
-            # The provider returned nothing for a whole pass; retrying the
-            # same chunks immediately would spin.
+        if stored == 0:
+            # A whole pass stored nothing (no output, or only unknown chunk
+            # IDs); retrying the same chunks immediately would spin.
             stop_reason = "no_progress"
             blocked_reason = result.blocked_call_reason
             break
@@ -1610,6 +1692,7 @@ async def _run_summary_prefill(
         "passes": passes,
         "stop_reason": stop_reason,
         "blocked_call_reason": blocked_reason,
+        "detail": detail,
     }
 
 
@@ -1619,8 +1702,15 @@ _PREFILL_STATUS = {
     "max_seconds": "partial",
     "interrupted": "interrupted",
     "no_progress": "stalled",
+    "published_index_changed": "aborted",
 }
-_PREFILL_EXIT_CODE = {"complete": 0, "partial": 0, "interrupted": 130, "stalled": 1}
+_PREFILL_EXIT_CODE = {
+    "complete": 0,
+    "partial": 0,
+    "interrupted": 130,
+    "stalled": 1,
+    "aborted": 1,
+}
 
 
 @repository.command()
@@ -1723,7 +1813,16 @@ def summarize(repo: str, limit: int, max_seconds: float, as_json: bool):
                 )
             _check_prefill_readiness(repo_info)
             index_path = Path(repo_info.index_path).resolve()
-            writer, contract = _build_prefill_writer(index_path)
+            published = (
+                repo_info.index_generation,
+                index_path,
+                repo_info.last_indexed_commit,
+            )
+            writer, contract = _build_prefill_writer(
+                index_path,
+                repo_path=Path(repo_info.path),
+                commit=str(repo_info.last_indexed_commit),
+            )
             held.callback(_close_writer_store, writer)
             remaining_at_start = writer._count_unsummarized_rows()
             click.echo(
@@ -1752,6 +1851,10 @@ def summarize(repo: str, limit: int, max_seconds: float, as_json: bool):
                             stop=stop,
                             started=started,
                             report=report,
+                            missing=remaining_at_start,
+                            published_change=lambda: _published_index_change(
+                                registry, repo_id, published
+                            ),
                         )
                     )
                 except KeyboardInterrupt:
@@ -1762,6 +1865,7 @@ def summarize(repo: str, limit: int, max_seconds: float, as_json: bool):
                         "passes": None,
                         "stop_reason": "interrupted",
                         "blocked_call_reason": None,
+                        "detail": None,
                     }
             remaining = writer._count_unsummarized_rows()
             if outcome["written"] is None:
@@ -1795,6 +1899,8 @@ def summarize(repo: str, limit: int, max_seconds: float, as_json: bool):
     }
     if outcome.get("blocked_call_reason"):
         summary["blocked_call_reason"] = outcome["blocked_call_reason"]
+    if outcome.get("detail"):
+        summary["detail"] = outcome["detail"]
     if as_json:
         click.echo(json_module.dumps(summary, indent=2))
     else:
@@ -1815,8 +1921,13 @@ def summarize(repo: str, limit: int, max_seconds: float, as_json: bool):
             )
         elif status_value == "stalled":
             click.echo(
-                "  No summary was written in the last pass; check the summarization "
+                "  No summary was stored in the last pass; check the summarization "
                 "endpoint, then rerun to continue."
+            )
+        elif status_value == "aborted":
+            click.echo(
+                f"  Stopped because {outcome['detail']}; what was stored is kept. "
+                "Check `mcp-index repository status`, then rerun."
             )
         else:
             click.echo("  Rerun the same command to continue with the remaining chunks.")

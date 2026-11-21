@@ -78,6 +78,8 @@ class _LoopbackSummarizer:
         self.calls: list[list[str]] = []
         self.on_call = None
         self.delay_seconds = 0.0
+        # Which chunk IDs the "provider" answers for; default: all requested.
+        self.answer = None
 
     async def __call__(self, writer, system, prompt, *, max_tokens=150):
         chunk_ids = re.findall(r"^chunk_id: (.+)$", prompt, flags=re.MULTILINE)
@@ -86,10 +88,11 @@ class _LoopbackSummarizer:
             self.on_call(len(self.calls))
         if self.delay_seconds:
             await asyncio.sleep(self.delay_seconds)
+        answered = self.answer(chunk_ids) if self.answer is not None else chunk_ids
         body = {
             "summaries": [
                 {"chunk_id": cid, "summary": f"Summary of {cid}. It is synthetic."}
-                for cid in chunk_ids
+                for cid in answered
             ]
         }
         return json.dumps(body), "fixture-summarizer"
@@ -498,3 +501,127 @@ def test_refuses_while_a_staged_rebuild_holds_the_lock(prefill, foreign_writer):
 
     _assert_refused(ctx, result, payload, "staged_rebuild_in_progress")
     assert sorted(p.name for p in staging.iterdir()) == before
+
+
+def test_window_uses_published_content_not_the_live_checkout(prefill):
+    """Edits and commits during a window never reach a stored summary."""
+    ctx = prefill
+    chunks = _chunk_ids(ctx)
+    repo = ctx["repo"]
+    seen: dict[str, str] = {}
+    original = summarization.FileBatchSummarizer.summarize_file_chunks
+
+    async def recording(self, file_id, file_path, file_content, chunks, *args, **kwargs):
+        seen[Path(file_path).name] = file_content
+        return await original(self, file_id, file_path, file_content, chunks, *args, **kwargs)
+
+    ctx["monkeypatch"].setattr(
+        summarization.FileBatchSummarizer, "summarize_file_chunks", recording
+    )
+
+    def edit_checkout(n):
+        if n != 1:
+            return
+        # An uncommitted edit, and a new commit that moves HEAD.
+        (repo / "beta.py").write_text("def beta_one(items):\n    raise RuntimeError\n")
+        (repo / "gamma.py").write_text("def gamma(value):\n    return 'changed'\n")
+        subprocess.run(["git", "add", "gamma.py"], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "-qm", "mid-window"], cwd=repo, check=True)
+
+    ctx["summarizer"].on_call = edit_checkout
+
+    result, payload = _summarize(ctx)
+
+    assert result.exit_code == 0, result.output
+    assert payload["status"] == "complete"
+    assert set(_summaries(ctx)) == chunks
+    assert len(ctx["summarizer"].calls) >= 3
+    for name in ("alpha.py", "beta.py", "gamma.py"):
+        assert seen[name] == _SOURCES[name], name
+
+
+def test_unknown_chunk_ids_are_not_counted_as_written(prefill):
+    ctx = prefill
+    chunks = _chunk_ids(ctx)
+    ctx["summarizer"].answer = lambda ids: [f"{cid}-hallucinated" for cid in ids]
+
+    result, payload = _summarize(ctx)
+
+    assert result.exit_code == 1, result.output
+    assert payload["status"] == "stalled"
+    assert payload["stop_reason"] == "no_progress"
+    assert payload["written"] == 0
+    assert payload["remaining"] == len(chunks)
+    assert _summaries(ctx) == {}
+
+    limited, limited_payload = _summarize(ctx, "--limit", "2")
+    assert limited.exit_code == 1, limited.output
+    assert limited_payload["status"] == "stalled"
+    assert limited_payload["written"] == 0
+    assert _summaries(ctx) == {}
+
+
+def test_written_counts_only_stored_summaries(prefill):
+    ctx = prefill
+    chunks = _chunk_ids(ctx)
+    # Each call answers its first chunk plus one unknown ID.
+    ctx["summarizer"].answer = lambda ids: [ids[0], "not-a-chunk"]
+
+    result, payload = _summarize(ctx)
+
+    assert result.exit_code == 0, result.output
+    assert payload["status"] == "complete"
+    assert payload["written"] == len(chunks)
+    assert payload["passes"] > 1
+    assert set(_summaries(ctx)) == chunks
+
+
+def test_republished_index_aborts_between_passes(prefill):
+    ctx = prefill
+    chunks = _chunk_ids(ctx)
+    ctx["summarizer"].answer = lambda ids: ids[:1]
+
+    def republish(n):
+        if n == 1:
+            ctx["registry"].update_indexed_commit(ctx["repo_id"], "f" * 40)
+
+    ctx["summarizer"].on_call = republish
+
+    result, payload = _summarize(ctx)
+
+    assert result.exit_code == 1, result.output
+    assert payload["status"] == "aborted"
+    assert payload["stop_reason"] == "published_index_changed"
+    # update_indexed_commit also mints a new index generation.
+    assert payload["detail"] == "the published generation changed"
+    assert payload["passes"] == 1
+    stored = _summaries(ctx)
+    assert 0 < len(stored) == payload["written"] < len(chunks)
+
+
+def test_interrupt_while_storing_keeps_no_part_of_the_batch(prefill):
+    _requires_main_thread()
+    ctx = prefill
+    from mcp_server.storage.sqlite_store import SQLiteStore
+
+    original = SQLiteStore.store_chunk_summary
+    stores = []
+
+    def store_then_interrupt(self, *args, **kwargs):
+        stored = original(self, *args, **kwargs)
+        stores.append(args[0] if args else kwargs.get("chunk_hash"))
+        if len(stores) == 1:
+            os.kill(os.getpid(), signal.SIGINT)
+            os.kill(os.getpid(), signal.SIGINT)
+        return stored
+
+    ctx["monkeypatch"].setattr(SQLiteStore, "store_chunk_summary", store_then_interrupt)
+
+    result, payload = _summarize(ctx)
+
+    assert result.exit_code == 130, result.output
+    assert payload["status"] == "interrupted"
+    assert len(stores) == 1  # one row was stored inside the batch transaction
+    assert len(ctx["summarizer"].calls[0]) > 1
+    assert payload["written"] == 0
+    assert _summaries(ctx) == {}

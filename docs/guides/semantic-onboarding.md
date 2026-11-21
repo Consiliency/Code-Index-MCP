@@ -277,16 +277,31 @@ mcp-index repository summarize REPO [--limit N] [--max-seconds S] [--json]
   default) leaves that dimension unbounded. A summary call already in flight
   when the window closes finishes and is kept.
 - Progress lines report summaries written, chunks remaining and elapsed time.
-  `--json` prints a final JSON summary on stdout (progress goes to stderr):
-  `status` (`complete`, `partial`, `interrupted` or `stalled`), `stop_reason`,
-  `written`, `remaining_at_start`, `remaining`, `elapsed_seconds`, plus the
-  `profile_id`, `prompt_fingerprint` and generation it wrote under.
+  `written` counts summaries actually stored (the drop in chunks still
+  missing a current summary), not what the provider returned. `--json`
+  prints a final JSON summary on stdout (progress goes to stderr): `status`
+  (`complete`, `partial`, `interrupted`, `stalled` or `aborted`),
+  `stop_reason`, `written`, `remaining_at_start`, `remaining`,
+  `elapsed_seconds`, plus the `profile_id`, `prompt_fingerprint` and
+  generation it wrote under.
 - A rerun continues with only the chunks still missing a current summary.
-- Ctrl-C (or SIGTERM) stops after the current summary call; what was written
-  stays written. A second Ctrl-C abandons the call in flight without writing
-  any of it.
-- Exit codes: `0` complete or partial, `1` refused or stalled (a whole pass
-  wrote nothing, usually an unreachable endpoint), `130` interrupted.
+- Each provider batch (one file's chunks in a call) is stored in one
+  transaction, so a batch is either stored whole or not at all.
+- Ctrl-C (or SIGTERM) stops after the current summary call; what was stored
+  stays stored. A second Ctrl-C abandons the call in flight, including a batch
+  that is being stored, without keeping any of that batch.
+- Exit codes: `0` complete or partial, `1` refused, stalled (a whole pass
+  stored nothing: an unreachable endpoint, or output with only unknown chunk
+  IDs) or aborted (the published generation or commit changed during the
+  window), `130` interrupted.
+
+Summaries are built only from the published index: chunk text comes from
+the index and the surrounding file context from the published commit (read
+with `git cat-file blob`, as the staged build reads its inputs), never from
+the working tree. Editing, committing or switching branches during a window
+therefore cannot leak into a stored summary. A later commit only makes the
+summaries of files whose content changed stale; the next staged rebuild drops
+those and keeps the rest.
 
 It writes the same rows a staged build writes: `is_authoritative=1`, the
 active profile ID, and the prompt fingerprint derived from that profile's
