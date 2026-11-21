@@ -116,7 +116,6 @@ def test_client_with_dispatcher(
         "bm25_indexer",
         "hybrid_search",
         "fuzzy_indexer",
-        "semantic_indexer",
         "query_cache",
     ):
         if hasattr(gateway, _attr):
@@ -202,26 +201,6 @@ class TestGatewayStartupShutdown:
                 pass
         cache.shutdown.assert_awaited_once()
         mock_store.return_value.close.assert_called_once()
-
-    def test_shutdown_closes_standalone_semantic_client(self, monkeypatch):
-        import asyncio
-
-        import mcp_server.gateway as gateway
-
-        semantic = Mock()
-        for owner in (
-            "ref_poller",
-            "multi_watcher",
-            "dispatcher",
-            "plugin_manager",
-            "cache_manager",
-            "_store_registry",
-            "sqlite_store",
-        ):
-            monkeypatch.setattr(gateway, owner, None)
-        monkeypatch.setattr(gateway, "semantic_indexer", semantic)
-        asyncio.run(gateway.shutdown_event())
-        semantic.qdrant.close.assert_called_once()
 
     @pytest.mark.parametrize(
         "boundary", ["watcher_construct", "poller_construct", "watcher_start", "poller_start"]
@@ -1356,3 +1335,83 @@ class TestRepoCtxResolution:
             assert (
                 "sqlite_store=" not in line
             ), f"Found sqlite_store kwarg in EnhancedDispatcher ctor: {line}"
+
+
+class _RecordingQueryCache:
+    """In-memory stand-in for QueryResultCache that records cache keys."""
+
+    def __init__(self):
+        self.config = type("Config", (), {"enabled": True})()
+        self.lookups = []
+        self.stored = []
+
+    async def get_cached_result(self, query_type, **params):
+        self.lookups.append((query_type, params))
+        return None
+
+    async def cache_result(self, query_type, result, **params):
+        self.stored.append((query_type, params))
+        return True
+
+
+class TestSearchSemanticFlagFollowsMode:
+    """The dispatcher's semantic flag and the cache key follow the resolved mode (#142)."""
+
+    @staticmethod
+    def _result():
+        return ClientSearchResult(
+            query="x", results=(ClientSearchMatch(file="a.py", line=1, snippet="a"),)
+        )
+
+    @pytest.mark.parametrize(
+        "query",
+        ["q=x&mode=semantic", "q=x&semantic=true&mode=semantic", "q=x&semantic=true&mode=classic"],
+    )
+    def test_semantic_mode_sends_semantic_to_dispatcher_and_cache(
+        self, test_client_with_dispatcher, monkeypatch, query
+    ):
+        import mcp_server.gateway as gateway
+        from mcp_server.cache import QueryType
+
+        cache = _RecordingQueryCache()
+        monkeypatch.setattr(gateway, "query_cache", cache)
+        with patch(
+            "mcp_server.gateway.execute_search_service", return_value=self._result()
+        ) as mock_execute:
+            response = test_client_with_dispatcher.get(f"/search?{query}")
+
+        assert response.status_code == 200, response.text
+        assert mock_execute.call_args.kwargs["options"].semantic is True
+        [(lookup_type, lookup_params)] = cache.lookups
+        [(stored_type, stored_params)] = cache.stored
+        assert lookup_type is stored_type is QueryType.SEMANTIC_SEARCH
+        assert lookup_params["mode"] == stored_params["mode"] == "semantic"
+        assert lookup_params["semantic"] is stored_params["semantic"] is True
+        # Pre-#142 entries stored lexical results under the semantic key.
+        assert lookup_params["cache_route"] == stored_params["cache_route"] == 2
+
+    def test_classic_mode_stays_lexical(self, test_client_with_dispatcher, monkeypatch):
+        import mcp_server.gateway as gateway
+        from mcp_server.cache import QueryType
+
+        cache = _RecordingQueryCache()
+        monkeypatch.setattr(gateway, "query_cache", cache)
+        with patch(
+            "mcp_server.gateway.execute_search_service", return_value=self._result()
+        ) as mock_execute:
+            response = test_client_with_dispatcher.get("/search?q=x&mode=classic")
+
+        assert response.status_code == 200, response.text
+        assert mock_execute.call_args.kwargs["options"].semantic is False
+        [(stored_type, stored_params)] = cache.stored
+        assert stored_type is QueryType.SEARCH
+        assert stored_params["semantic"] is False
+
+    @pytest.mark.parametrize("mode", ["bm25", "fuzzy", "hybrid"])
+    def test_semantic_flag_with_lexical_mode_is_rejected(self, test_client_with_dispatcher, mode):
+        with patch("mcp_server.gateway.execute_search_service") as mock_execute:
+            response = test_client_with_dispatcher.get(f"/search?q=x&semantic=true&mode={mode}")
+
+        assert response.status_code == 400
+        assert response.json()["detail"]["code"] == "semantic_mode_conflict"
+        mock_execute.assert_not_called()

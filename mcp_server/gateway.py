@@ -1,3 +1,4 @@
+import dataclasses
 import hashlib
 import json
 import logging
@@ -20,7 +21,6 @@ from .cache import (
     QueryResultCache,
     QueryType,
 )
-from .cli.index_management import _get_profile_collection_name
 from .cli.preflight_commands import format_preflight_report, run_startup_preflight
 from .client import (
     ClientValidationError,
@@ -205,7 +205,24 @@ bm25_indexer: BM25Indexer | None = None
 hybrid_search: HybridSearch | None = None
 fuzzy_indexer: FuzzyIndexer | None = None
 git_index_manager: Any = None
-semantic_indexer = None
+# True when semantic search is served by the dispatcher through generation-scoped
+# SemanticIndexerRegistry leases. The gateway owns no SemanticIndexer of its own
+# (Consiliency/Code-Index-MCP#142).
+semantic_generation_scoped_ready: bool = False
+_SEMANTIC_REBUILD_POINTER = (
+    "Semantic vectors are generation-scoped and are not rebuilt here. Run "
+    "`mcp-index repository sync --force-full` for the registered repository."
+)
+_HYBRID_SEMANTIC_DISABLED_DETAIL = {
+    "error": "Hybrid semantic branch is disabled",
+    "code": "hybrid_semantic_disabled",
+    "message": (
+        "Hybrid search is lexical-only (BM25 + fuzzy). Semantic search is served by "
+        "the dispatcher through the generation-scoped semantic index: use "
+        "mode=semantic (or semantic=true) on /search."
+    ),
+}
+_LEXICAL_SEARCH_MODES = frozenset({"hybrid", "bm25", "fuzzy"})
 profile_hydration_status: Dict[str, Any] | None = None
 semantic_setup_status: Dict[str, Any] | None = None
 _repo_registry = None
@@ -564,7 +581,7 @@ app.state.security_config = security_config
 @app.on_event("startup")
 async def startup_event():
     """Initialize the dispatcher and register plugins on startup."""
-    global dispatcher, repo_resolver, sqlite_store, multi_watcher, ref_poller, plugin_manager, plugin_loader, auth_manager, security_config, cache_manager, query_cache, bm25_indexer, hybrid_search, fuzzy_indexer, git_index_manager, semantic_indexer, profile_hydration_status, semantic_setup_status, language_detection_status, _store_registry
+    global dispatcher, repo_resolver, sqlite_store, multi_watcher, ref_poller, plugin_manager, plugin_loader, auth_manager, security_config, cache_manager, query_cache, bm25_indexer, hybrid_search, fuzzy_indexer, git_index_manager, semantic_generation_scoped_ready, profile_hydration_status, semantic_setup_status, language_detection_status, _store_registry
 
     app.state.startup_time = time.monotonic()
     background_startup_complete = False
@@ -962,43 +979,28 @@ async def startup_event():
         if not semantic_setup_report.overall_ready:
             semantic_runtime_enabled = False
 
-        # Check if semantic indexer is available and enabled
-        semantic_indexer = None
-        if semantic_runtime_enabled:
-            try:
-                from .utils.semantic_indexer import SemanticIndexer
-
-                # Use the canonical local file-backed semantic baseline by default.
-                qdrant_path = os.getenv("QDRANT_PATH", "vector_index.qdrant")
-                semantic_profile_id = settings.get_semantic_default_profile()
-                semantic_profile = profile_registry.get(semantic_profile_id)
-                if semantic_profile is None:
-                    raise RuntimeError(
-                        f"Semantic default profile '{semantic_profile_id}' is not available"
-                    )
-                semantic_indexer = SemanticIndexer(
-                    collection=_get_profile_collection_name(
-                        semantic_profile, settings.semantic_collection_name
-                    ),
-                    qdrant_path=qdrant_path,
-                    profile_registry=profile_registry,
-                    semantic_profile=semantic_profile_id,
-                )
-                logger.info(
-                    "Semantic indexer initialized successfully with Qdrant at %s "
-                    "(profile=%s, collection=%s)",
-                    qdrant_path,
-                    semantic_profile_id,
-                    semantic_indexer.collection,
-                )
-            except ImportError:
-                logger.warning("Semantic indexer not available (missing dependencies)")
-            except Exception as e:
-                logger.error(f"Failed to initialize semantic indexer: {type(e).__name__}")
-        else:
+        # Semantic search is served only by the dispatcher, through
+        # generation-scoped SemanticIndexerRegistry leases (ci__ collections
+        # with provenance). The gateway builds no standalone SemanticIndexer, so
+        # nothing here reads or writes a profile collection and the global
+        # HybridSearch stays lexical (Consiliency/Code-Index-MCP#142).
+        semantic_generation_scoped_ready = bool(
+            semantic_runtime_enabled and semantic_indexer_registry is not None
+        )
+        if semantic_generation_scoped_ready:
             logger.info(
-                "Semantic indexer disabled after preflight; lexical/bm25/fuzzy remain active"
+                "Semantic search is generation-scoped: served by the dispatcher through "
+                "SemanticIndexerRegistry leases (use mode=semantic). Hybrid search is "
+                "lexical-only (BM25 + fuzzy); its semantic branch is disabled."
             )
+        elif semantic_runtime_enabled:
+            logger.warning(
+                "Semantic search is unavailable: no generation-scoped SemanticIndexerRegistry. "
+                "The gateway does not fall back to a standalone semantic index; "
+                "lexical/bm25/fuzzy remain active"
+            )
+        else:
+            logger.info("Semantic search disabled; lexical/bm25/fuzzy remain active")
 
         # Initialize Hybrid Search
         logger.info("Initializing Hybrid Search...")
@@ -1007,7 +1009,7 @@ async def startup_event():
             semantic_weight=float(os.getenv("HYBRID_SEMANTIC_WEIGHT", "0.3")),
             fuzzy_weight=float(os.getenv("HYBRID_FUZZY_WEIGHT", "0.2")),
             enable_bm25=True,
-            enable_semantic=semantic_indexer is not None,
+            enable_semantic=False,
             enable_fuzzy=True,
             parallel_execution=True,
             cache_results=True,
@@ -1015,7 +1017,7 @@ async def startup_event():
         hybrid_search = HybridSearch(
             storage=sqlite_store,
             bm25_indexer=bm25_indexer,
-            semantic_indexer=semantic_indexer,
+            semantic_indexer=None,
             fuzzy_indexer=fuzzy_indexer,
             config=hybrid_config,
         )
@@ -1104,7 +1106,7 @@ async def startup_event():
         app.state.hybrid_search = hybrid_search
         app.state.fuzzy_indexer = fuzzy_indexer
         app.state.git_index_manager = git_index_manager
-        app.state.semantic_indexer = semantic_indexer
+        app.state.semantic_generation_scoped_ready = semantic_generation_scoped_ready
         app.state.profile_hydration = profile_hydration_status
         app.state.semantic_setup = semantic_setup_status
         app.state.language_detection = language_detection_status
@@ -1119,7 +1121,7 @@ async def startup_event():
             search_capabilities.append("bm25")
         if fuzzy_indexer:
             search_capabilities.append("fuzzy")
-        if semantic_indexer:
+        if semantic_generation_scoped_ready:
             search_capabilities.append("semantic")
         if hybrid_search:
             search_capabilities.append("hybrid")
@@ -1188,8 +1190,6 @@ async def shutdown_event():
                 raise RuntimeError("Plugin manager shutdown failed")
         if cache_manager:
             await cache_manager.shutdown()
-        if semantic_indexer:
-            semantic_indexer.qdrant.close()
         if _store_registry:
             _store_registry.shutdown()
         if sqlite_store:
@@ -1621,6 +1621,23 @@ async def search(
         file_filter: Filter by file path pattern
         current_user: Authenticated user
     """
+    if semantic and mode in _LEXICAL_SEARCH_MODES:
+        raise HTTPException(
+            400,
+            detail={
+                "error": "Conflicting search mode",
+                "code": "semantic_mode_conflict",
+                "message": (
+                    f"semantic=true cannot be combined with mode={mode}; use mode=semantic "
+                    "(or mode=auto with semantic=true)."
+                ),
+            },
+        )
+    if semantic and mode == "classic":
+        # Legacy callers pair semantic=true with the dispatcher mode; route it
+        # as semantic so the dispatcher flag and the cache key agree.
+        mode = "semantic"
+
     if dispatcher is None and mode == "classic":
         logger.error("Search attempted but dispatcher not ready")
         raise HTTPException(503, "Dispatcher not ready")
@@ -1681,6 +1698,13 @@ async def search(
             else:
                 effective_mode = "bm25" if repo_bm25 else "classic"
 
+        # The dispatcher's semantic flag follows the resolved mode, never the raw
+        # ``semantic`` query parameter, so mode=semantic reaches the
+        # generation-scoped semantic path and the cache key matches what ran.
+        effective_semantic = effective_mode == "semantic"
+        if options.semantic != effective_semantic:
+            options = dataclasses.replace(options, semantic=effective_semantic)
+
         logger.debug(
             f"Searching (query_chars={len(q)}, mode={effective_mode}, limit={limit}, language={language})"
         )
@@ -1693,6 +1717,10 @@ async def search(
             filters["file_filter"] = file_filter
 
         cache_params = {
+            # Bump when routing changes what a key's results mean. v2: the
+            # semantic flag follows the resolved mode (#142); earlier
+            # mode=semantic entries could hold lexical results.
+            "cache_route": 2,
             "repo_id": ctx.repo_id,
             "generation": ctx.generation_key,
             "mode": effective_mode,
@@ -1941,16 +1969,20 @@ async def get_search_capabilities(
         "available_modes": {
             "bm25": bm25_indexer is not None,
             "fuzzy": fuzzy_indexer is not None,
-            "semantic": semantic_indexer is not None,
+            "semantic": semantic_generation_scoped_ready,
             "hybrid": hybrid_search is not None,
             "classic": dispatcher is not None,
         },
         "semantic_config": {
-            "enabled": semantic_indexer is not None,
+            "enabled": semantic_generation_scoped_ready,
             "api_key_configured": bool(voyage_key),
             "openai_api_base": openai_base,
             "semantic_enabled_flag": semantic_enabled,
-            "status": "ready" if semantic_indexer else "not_configured",
+            "status": "ready" if semantic_generation_scoped_ready else "not_configured",
+            # Semantic queries go through the dispatcher's generation-scoped
+            # registry (mode=semantic); hybrid mode never queries vectors.
+            "route": "generation_scoped_registry",
+            "hybrid_semantic_branch": "disabled",
             "setup": semantic_setup_status,
         },
         "language_detection": language_detection_status,
@@ -2096,7 +2128,7 @@ async def get_status(
             status_data["search_capabilities"].append("bm25")
         if fuzzy_indexer:
             status_data["search_capabilities"].append("fuzzy")
-        if hasattr(app.state, "semantic_indexer") and app.state.semantic_indexer:
+        if semantic_generation_scoped_ready:
             status_data["search_capabilities"].append("semantic")
         if hybrid_search:
             status_data["search_capabilities"].append("hybrid")
@@ -2718,6 +2750,10 @@ async def toggle_search_methods(
     """Enable or disable search methods (admin only)."""
     if not hybrid_search:
         raise HTTPException(503, "Hybrid search not available")
+    if semantic:
+        # No standalone SemanticIndexer backs hybrid search, so enabling the
+        # branch would only make the reported config untrue.
+        raise HTTPException(409, detail=_HYBRID_SEMANTIC_DISABLED_DETAIL)
 
     try:
         hybrid_search.enable_methods(bm25=bm25, semantic=semantic, fuzzy=fuzzy)
@@ -2873,11 +2909,10 @@ async def rebuild_search_indexes(
             logger.info("Fuzzy index rebuilt")
 
         if index_type in ["all", "semantic"]:
-            # Semantic index rebuild would go here if available
-            if hasattr(hybrid_search, "semantic_indexer") and hybrid_search.semantic_indexer:
-                results["semantic"] = "rebuild_not_implemented"
-            else:
-                results["semantic"] = "not_available"
+            # Semantic vectors are generation-scoped and built with the SQLite
+            # generation; this endpoint never rebuilds them.
+            results["semantic"] = "generation_scoped"
+            results["semantic_remediation"] = _SEMANTIC_REBUILD_POINTER
 
         logger.info(f"Search indexes rebuilt by {current_user.username}: {index_type}")
 
