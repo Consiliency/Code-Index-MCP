@@ -277,6 +277,66 @@ def test_sweep_deletes_stale_row_of_a_newly_ignored_file(runtime, monkeypatch): 
     assert sweeper.sweep_once() == []
 
 
+def test_sweep_deletion_of_a_committed_path_rebuilds_instead(
+    runtime, monkeypatch, caplog  # noqa: F811
+):
+    """A case-only spelling mismatch must not delete valid committed code.
+
+    On a case-insensitive filesystem the walk can list ``module.py`` while the
+    tree records ``Module.py``; the sweep then reports ``Module.py`` deleted.
+    The targeted repair must refuse that deletion and rebuild from the tree.
+    """
+    import os as os_module
+
+    import mcp_server.watcher.sweeper as sweeper_module
+
+    repo, registry, repo_id, _store, manager = runtime
+    for index in range(6):
+        (repo / f"stable{index}.py").write_text(f"stable_value_{index} = {index}\n")
+    (repo / "Module.py").write_text("case_sentinel = 1\n")
+    head = _commit_all(repo, "baseline")
+    assert manager.rebuild_repository_index(repo_id).action == "full_index"
+
+    real_walk = os_module.walk
+
+    def case_folding_walk(top, *args, **kwargs):
+        for directory, children, filenames in real_walk(top, *args, **kwargs):
+            yield directory, children, [
+                "module.py" if name == "Module.py" else name for name in filenames
+            ]
+
+    class CaseFoldingOs:
+        """``os`` for the sweeper only; the indexer keeps the real walk."""
+
+        walk = staticmethod(case_folding_walk)
+
+        def __getattr__(self, name):
+            return getattr(os_module, name)
+
+    monkeypatch.setattr(sweeper_module, "os", CaseFoldingOs())
+    deleted = []
+    real_incremental = manager._incremental_index_update
+
+    def spy(repo_id_arg, ctx, changes, *args, **kwargs):
+        deleted.extend(changes.deleted)
+        return real_incremental(repo_id_arg, ctx, changes, *args, **kwargs)
+
+    monkeypatch.setattr(manager, "_incremental_index_update", spy)
+    store = manager._resolve_ctx(repo_id).sqlite_store
+    sweeper, _marked = _sweeper_for(manager, registry, repo_id, store)
+
+    with caplog.at_level(logging.INFO):
+        assert sweeper.sweep_once() == [repo_id]
+
+    assert deleted == []
+    messages = [record.getMessage() for record in caplog.records]
+    assert any(
+        "Full rebuild of" in m and "sweep_deletion_conflicts_with_tree" in m for m in messages
+    )
+    assert registry.get(repo_id).last_indexed_commit == head
+    assert manager._resolve_ctx(repo_id).sqlite_store.search_code_fts("case_sentinel")
+
+
 def test_memory_release_is_best_effort(monkeypatch):
     assert isinstance(release_rebuild_memory("repo"), dict)
     monkeypatch.setenv("MCP_INDEX_MALLOC_TRIM", "false")

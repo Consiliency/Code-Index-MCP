@@ -675,6 +675,22 @@ class GitAwareIndexManager:
             return self._sync_repository_index_locked(
                 repo_id, reason=f"watcher sweep drift ({drift})", **sync_kwargs
             )
+        conflicts = self._deletions_present_in_tree(
+            repo_id, Path(repo_info.path), current_commit, deleted
+        )
+        if conflicts:
+            # The sweep saw these paths missing from disk, yet the indexed
+            # commit still holds them and the indexer would store them (for
+            # example a case-only spelling mismatch on a case-insensitive
+            # filesystem). Never publish such a deletion; rebuild from the
+            # tree instead (#145 review).
+            reason = (
+                f"sweep_deletion_conflicts_with_tree: {len(conflicts)} path(s) the sweep "
+                f"reports deleted are committed and admitted (sample {conflicts[:5]})"
+            )
+            return self._sync_repository_index_locked(
+                repo_id, force_full=True, reason=reason, **sync_kwargs
+            )
         logger.info(
             "Repairing sweep drift in %s at %s by re-indexing the drifted paths only (%s)",
             repo_id,
@@ -3319,6 +3335,30 @@ class GitAwareIndexManager:
                 release_workers = getattr(self.dispatcher, "release_staged_plugin_workers", None)
                 if callable(release_workers) and self._stage_owner_is_current(repo_id, repo_info):
                     release_workers(repo_id)
+
+    def _deletions_present_in_tree(
+        self, repo_id: str, repo_path: Path, commit: str, deleted: List[str]
+    ) -> List[str]:
+        """Deleted drift paths that ``commit`` still holds and the indexer stores.
+
+        The tree is clean at ``commit`` (checked by the caller), so admission
+        is judged on the checkout. A git failure treats every deletion as a
+        conflict, which makes the caller rebuild instead of deleting.
+        """
+        if not deleted:
+            return []
+        try:
+            listing = self._run_git(["ls-tree", "-r", "-z", "--name-only", commit], repo_path)
+        except OSError, subprocess.SubprocessError, RebuildShutdownRequested:
+            return list(deleted)
+        committed = {os.fsdecode(entry) for entry in listing.stdout.split(b"\0") if entry}
+        is_excluded = build_walker_filter(repo_path)
+        return [
+            path
+            for path in deleted
+            if path in committed
+            and self._stage_admission_reason(repo_id, repo_path, path, is_excluded) is None
+        ]
 
     def _stage_admission_reason(
         self, repo_id: str, root: Path, relative: str, is_excluded
