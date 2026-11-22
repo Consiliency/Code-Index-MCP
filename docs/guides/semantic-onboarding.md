@@ -288,7 +288,9 @@ mcp-index repository summarize REPO [--limit N] [--max-seconds S] [--json]
 - Each provider batch (one file's chunks in a call) is stored in one
   transaction, so a batch is either stored whole or not at all.
 - Ctrl-C (or SIGTERM) stops after the current summary call; what was stored
-  stays stored. A second Ctrl-C abandons the call in flight, including a batch
+  stays stored. Stops are checked between provider calls: a call already in
+  flight, including the provider SDK's own short retries, finishes first, and
+  no further call (fallback step, batch or model probe) starts after it. A second Ctrl-C abandons the call in flight, including a batch
   that is being stored, without keeping any of that batch.
 - Exit codes: `0` complete or partial, `1` refused, stalled (a whole pass
   stored nothing: an unreachable endpoint, or output with only unknown chunk

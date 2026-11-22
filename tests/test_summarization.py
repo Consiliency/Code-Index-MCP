@@ -2234,103 +2234,75 @@ async def test_stop_during_profile_recovery_starts_no_next_batch(tmp_path, monke
         assert len(recovered) == 130
 
 
-def _fake_openai_client(monkeypatch, outcomes):
-    """Patch AsyncOpenAI with a client whose create() plays ``outcomes`` in order."""
-    record = {"init": [], "creates": 0}
-
-    class FakeCompletions:
-        async def create(self, **_kwargs):
-            outcome = outcomes[record["creates"]]
-            record["creates"] += 1
-            if isinstance(outcome, BaseException):
-                raise outcome
-            return SimpleNamespace(
-                choices=[SimpleNamespace(message=SimpleNamespace(content=outcome))]
-            )
-
-    class FakeAsyncOpenAI:
-        def __init__(self, **kwargs):
-            record["init"].append(kwargs)
-            self.chat = SimpleNamespace(completions=FakeCompletions())
-
-        async def close(self):
-            return None
-
-    monkeypatch.setattr("openai.AsyncOpenAI", FakeAsyncOpenAI)
-    return record
-
-
-def _profile_writer(monkeypatch):
-    writer = ChunkWriter(
-        db_path="/tmp/unused.db",
-        qdrant_client=None,
-        summarization_config={"base_url": "http://127.0.0.1:9/v1", "model_name": "chat"},
-    )
-    monkeypatch.setattr(
-        writer,
-        "_resolve_effective_profile_model",
-        lambda: EnrichmentModelResolution(
-            configured_model="chat", effective_model="chat", resolution_strategy="configured"
-        ),
-    )
-    return writer
-
-
-def _connection_error():
-    import httpx
-    import openai
-
-    return openai.APIConnectionError(request=httpx.Request("POST", "http://127.0.0.1:9/v1"))
-
-
+@pytest.mark.parametrize("stop_set", [True, False])
 @pytest.mark.asyncio
-async def test_profile_call_with_a_stop_check_disables_sdk_retries_and_stops_in_backoff(
-    monkeypatch,
+async def test_stop_before_model_resolution_never_starts_the_models_probe(
+    tmp_path, monkeypatch, stop_set
 ):
+    """A call that succeeds after a stop records the model without probing /models."""
     from mcp_server.indexing import summarization
-    from mcp_server.indexing.summarization import SummaryStopRequested
 
+    store, file_id = _seed_chunk_summary_tables(tmp_path / "probe.db", tmp_path)
+    store.close()
     monkeypatch.delenv("MCP_DEPLOYMENT_PROFILE", raising=False)
-    record = _fake_openai_client(monkeypatch, [_connection_error(), "never reached"])
-    monkeypatch.setattr(summarization, "_STOP_AWARE_RETRY_DELAYS_SECONDS", (30.0, 30.0))
-    writer = _profile_writer(monkeypatch)
+    monkeypatch.setenv("CEREBRAS_API_KEY", "dummy-offline")
     stop = {"requested": False}
+    probes: list[str] = []
 
-    async def request_stop_soon():
-        await asyncio.sleep(0.2)
-        stop["requested"] = True
+    def fake_resolve(**kwargs):
+        probes.append(kwargs["base_url"])
+        return EnrichmentModelResolution(
+            configured_model=kwargs["configured_model"],
+            effective_model="served-model",
+            resolution_strategy="single_served_model",
+            available_models=["served-model"],
+        )
 
-    started = time.monotonic()
-    stopper = asyncio.create_task(request_stop_soon())
-    with pytest.raises(SummaryStopRequested):
-        await writer._call_profile_api("system", "prompt", cancel_check=lambda: stop["requested"])
-    await stopper
+    async def baml_succeeds_after_stop(**_kwargs):
+        stop["requested"] = True  # the stop arrives while BAML is in flight
+        return SimpleNamespace(summary="Summary from BAML. It is synthetic.")
 
-    assert record["init"][0]["max_retries"] == 0  # the SDK does not retry on its own
-    assert record["creates"] == 1  # the stop arrived during backoff; no retry started
-    assert time.monotonic() - started < 5  # not stuck behind the 30 s backoff
+    monkeypatch.setattr(summarization, "resolve_enrichment_model", fake_resolve)
+    monkeypatch.setattr("baml_sdk.SummarizeChunkAlone_async", baml_succeeds_after_stop)
+    writer = ChunkWriter(
+        db_path=str(tmp_path / "probe.db"),
+        qdrant_client=None,
+        summarization_config={
+            "base_url": "http://127.0.0.1:9/v1",
+            "model_name": "chat",
+            "profile_id": "fixture",
+        },
+    )
+    monkeypatch.setattr(writer, "_has_sampling_capability", lambda: False)
 
+    summary = await writer.summarize_chunk(
+        chunk_hash="chunk-probe",
+        file_id=file_id,
+        chunk_start=1,
+        chunk_end=2,
+        symbol="alpha",
+        content="def alpha():\n    return 1\n",
+        language="python",
+        is_authoritative=True,
+        cancel_check=(lambda: stop["requested"]) if stop_set else None,
+    )
 
-@pytest.mark.asyncio
-async def test_profile_call_with_a_stop_check_still_retries_transient_failures(monkeypatch):
-    from mcp_server.indexing import summarization
-
-    monkeypatch.delenv("MCP_DEPLOYMENT_PROFILE", raising=False)
-    record = _fake_openai_client(monkeypatch, [_connection_error(), "Recovered summary."])
-    monkeypatch.setattr(summarization, "_STOP_AWARE_RETRY_DELAYS_SECONDS", (0.0, 0.0))
-    writer = _profile_writer(monkeypatch)
-
-    text, model = await writer._call_profile_api("system", "prompt", cancel_check=lambda: False)
-
-    assert (text, model) == ("Recovered summary.", "chat")
-    assert record["creates"] == 2
-
-
-@pytest.mark.asyncio
-async def test_profile_call_without_a_stop_check_keeps_sdk_retry_defaults(monkeypatch):
-    monkeypatch.delenv("MCP_DEPLOYMENT_PROFILE", raising=False)
-    record = _fake_openai_client(monkeypatch, ["Summary."])
-    writer = _profile_writer(monkeypatch)
-
-    assert await writer._call_profile_api("system", "prompt") == ("Summary.", "chat")
-    assert "max_retries" not in record["init"][0]
+    assert summary == "Summary from BAML. It is synthetic."
+    with sqlite3.connect(tmp_path / "probe.db") as conn:
+        llm_model, audit = conn.execute(
+            "SELECT llm_model, audit_metadata FROM chunk_summaries WHERE chunk_hash = ?",
+            ("chunk-probe",),
+        ).fetchone()
+    audit = json.loads(audit)
+    if stop_set:
+        assert probes == []  # no uncached GET /models after the stop
+        assert llm_model == "chat"
+        assert audit["configured_model_name"] == "chat"
+        assert audit["model_resolution_strategy"] == "unresolved_stop_requested"
+        assert "effective_model_name" not in audit
+    else:
+        # Default (no stop check): resolved once, then cached, as before.
+        assert probes == ["http://127.0.0.1:9/v1"]
+        assert llm_model == "served-model"
+        assert audit["effective_model_name"] == "served-model"
+        assert audit["model_resolution_strategy"] == "single_served_model"
