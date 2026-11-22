@@ -730,6 +730,7 @@ class FileBatchSummarizer(ChunkWriter):
         warning_prefix: str,
         error: Exception,
         retry_profile_batch: bool = True,
+        cancel_check: Optional[Callable[[], bool]] = None,
     ) -> Tuple[GeneratedSummary, ...]:
         logger.warning(
             "%s for %s (%s), falling back to per-chunk path",
@@ -737,6 +738,8 @@ class FileBatchSummarizer(ChunkWriter):
             file_path,
             type(error).__name__,
         )
+        if cancel_check is not None and cancel_check():
+            return ()
         if retry_profile_batch and self.summarization_config.get("base_url"):
             try:
                 return _normalize_generated_summaries(
@@ -759,6 +762,7 @@ class FileBatchSummarizer(ChunkWriter):
             max_chunks=self._topological_recovery_chunk_limit(
                 (chunks[0].get("language") or "unknown") if chunks else "unknown"
             ),
+            cancel_check=cancel_check,
         )
 
     def _topological_recovery_chunk_limit(self, language: str) -> Optional[int]:
@@ -908,8 +912,14 @@ class FileBatchSummarizer(ChunkWriter):
         chunks: List[Dict],
         symbol_map: Dict[int, str],
         max_chunks: Optional[int] = None,
+        cancel_check: Optional[Callable[[], bool]] = None,
     ) -> Tuple[GeneratedSummary, ...]:
-        """Per-chunk fallback: summarize in topological order (leaves first)."""
+        """Per-chunk fallback: summarize in topological order (leaves first).
+
+        ``cancel_check`` is consulted before each per-chunk provider call; once
+        it returns true no further call starts, and the summaries of calls that
+        already completed (each stored by ``summarize_chunk``) are returned.
+        """
         order = _topological_order(chunks)
         if max_chunks is not None:
             order = order[:max_chunks]
@@ -918,6 +928,8 @@ class FileBatchSummarizer(ChunkWriter):
         results: List[GeneratedSummary] = []
 
         for chunk_id in order:
+            if cancel_check is not None and cancel_check():
+                break
             c = chunk_map[chunk_id]
             symbol = _symbol_name(symbol_map, c)
 
@@ -963,6 +975,7 @@ class FileBatchSummarizer(ChunkWriter):
         persist: bool = True,
         max_chunks: Optional[int] = None,
         call_timeout_seconds: Optional[float] = None,
+        cancel_check: Optional[Callable[[], bool]] = None,
     ) -> SummaryGenerationResult:
         """Summarize all chunks of a file, preferring the batch API path.
 
@@ -1049,6 +1062,7 @@ class FileBatchSummarizer(ChunkWriter):
                 warning_prefix="Large-file fallback",
                 error=exc,
                 retry_profile_batch=True,
+                cancel_check=cancel_check,
             )
             summaries = recovery
         except Exception as exc:
@@ -1061,6 +1075,7 @@ class FileBatchSummarizer(ChunkWriter):
                 warning_prefix="Batch API failed",
                 error=exc,
                 retry_profile_batch=not self.summarization_config.get("base_url"),
+                cancel_check=cancel_check,
             )
             summaries = recovery
 
@@ -1380,6 +1395,7 @@ class ComprehensiveChunkWriter(FileBatchSummarizer):
                         persist=True,
                         max_chunks=file_chunk_window,
                         call_timeout_seconds=call_timeout_seconds,
+                        cancel_check=cancel_check,
                     )
                     pass_summaries_written += file_result.summaries_written
                     total_summaries_written += file_result.summaries_written

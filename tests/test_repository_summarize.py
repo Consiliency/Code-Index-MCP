@@ -685,3 +685,66 @@ def test_zero_pass_window_still_rechecks_the_registry(prefill, monkeypatch):
     assert payload["detail"] == "the repository registration changed"
     assert calls
     assert ctx["summarizer"].calls == []
+
+
+def _fail_first_batch(on_failure=None):
+    """Fail the first (batch) call so summarize_file_chunks takes its fallback."""
+
+    def on_call(n):
+        if n == 1:
+            if on_failure is not None:
+                on_failure()
+            raise RuntimeError("batch endpoint failed")
+
+    return on_call
+
+
+def test_failed_batch_falls_back_to_per_chunk_calls_without_a_stop(prefill):
+    """Control: the per-chunk fallback is reachable through the loopback."""
+    ctx = prefill
+    ctx["summarizer"].on_call = _fail_first_batch()
+
+    result, payload = _summarize(ctx, "--limit", "3")
+
+    assert result.exit_code == 0, result.output
+    # One failed batch call, then per-chunk calls (prompts without chunk_id lines).
+    assert len(ctx["summarizer"].calls) > 1
+    assert ctx["summarizer"].calls[1] == []
+    assert payload["written"] >= 1
+
+
+def test_stop_during_a_failed_batch_starts_no_per_chunk_calls(prefill):
+    _requires_main_thread()
+    ctx = prefill
+    chunks = _chunk_ids(ctx)
+    ctx["summarizer"].on_call = _fail_first_batch(lambda: os.kill(os.getpid(), signal.SIGINT))
+
+    result, payload = _summarize(ctx)
+
+    assert result.exit_code == 130, result.output
+    assert payload["status"] == "interrupted"
+    assert len(ctx["summarizer"].calls) == 1  # no per-chunk fallback call started
+    assert payload["written"] == 0
+    assert payload["remaining"] == len(chunks)
+    assert _summaries(ctx) == {}
+
+
+def test_window_closing_during_a_failed_batch_starts_no_per_chunk_calls(prefill):
+    ctx = prefill
+
+    def slow_then_fail(n):
+        if n == 1:
+            import time
+
+            time.sleep(0.6)
+            raise RuntimeError("batch endpoint failed")
+
+    ctx["summarizer"].on_call = slow_then_fail
+
+    result, payload = _summarize(ctx, "--max-seconds", "0.25")
+
+    assert result.exit_code == 0, result.output
+    assert payload["status"] == "partial"
+    assert payload["stop_reason"] == "max_seconds"
+    assert len(ctx["summarizer"].calls) == 1
+    assert payload["written"] == 0

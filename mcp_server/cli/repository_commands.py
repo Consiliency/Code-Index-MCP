@@ -1686,6 +1686,11 @@ async def _run_summary_prefill(
         if remaining == 0:
             stop_reason = "drained"
             break
+        if should_stop():
+            # A stop that cut a per-chunk fallback short inside the pass is
+            # a stop, not a stall.
+            stop_reason = "interrupted" if stop.requested else "max_seconds"
+            break
         if stored == 0:
             # A whole pass stored nothing (no output, or only unknown chunk
             # IDs); retrying the same chunks immediately would spin.
