@@ -627,7 +627,9 @@ def test_write_summaries_stops_when_a_rebuild_starts_mid_run(tmp_path, monkeypat
         assert len(calls) == 1
         assert response["code"] == "rebuild_in_progress"
         assert response["chunks_summarized"] == 1
-        assert "Rerun" in response["note"]
+        assert response["mutation_performed"] is True
+        assert response["retryable"] is True
+        assert "kept" in response["note"]
         _assert_matches_schema("write_summaries", response)
 
 
@@ -809,12 +811,19 @@ def _assert_matches_schema(tool: str, response: dict) -> None:
 
 
 class _RebuildStarter:
-    """Starts a staged rebuild the way a real one fences readers and writers."""
+    """Starts a competing writer while a summary provider call is in flight.
+
+    ``fence_flag``: a staged build fenced the registry entry. ``rebuild_lock``:
+    a staged build holds the writer lock and recorded itself as the live
+    owner, before fencing. ``busy_lock``: an ordinary writer (a sync, or
+    ``repository summarize``) holds the lock; no rebuild runs.
+    """
 
     def __init__(self, server, repo_id: str, path: Path, how: str):
         self.server, self.repo_id, self.path, self.how = server, repo_id, path, how
         self._release = threading.Event()
         self._thread: threading.Thread | None = None
+        self._owner: dict | None = None
 
     def start(self) -> None:
         if self.how == "none":
@@ -828,9 +837,17 @@ class _RebuildStarter:
             )
             return
         acquired = threading.Event()
+        info = self.server.registry.get(self.repo_id)
 
         def hold():
             with locks.lock_registry.acquire(self.repo_id, repo_path=self.path):
+                if self.how == "rebuild_lock":
+                    self._owner = locks.record_rebuild_owner(
+                        self.path,
+                        registration_id=info.registration_id,
+                        published_generation=info.index_generation,
+                        target_commit=git_head(self.path),
+                    )
                 acquired.set()
                 self._release.wait(10)
 
@@ -842,6 +859,8 @@ class _RebuildStarter:
         self._release.set()
         if self._thread is not None:
             self._thread.join(10)
+        if self._owner is not None:
+            locks.clear_rebuild_owner(self.path, self._owner["token"])
 
 
 def _summary_rows(db_path: Path) -> int:
@@ -877,7 +896,7 @@ def _seed_chunk(db_path: Path) -> tuple[int, str]:
     return file_id, "chunk-alpha"
 
 
-@pytest.mark.parametrize("how", ["none", "fence_flag", "writer_lock"])
+@pytest.mark.parametrize("how", ["none", "fence_flag", "rebuild_lock", "busy_lock"])
 def test_summarize_sample_write_is_fenced_after_the_provider_call(tmp_path, monkeypatch, how):
     path, repo_id = build_temp_repo(tmp_path, f"fenced-sample-{how}", seed_files=SEED)
     with boot_test_server(tmp_path, [path]) as server:
@@ -917,14 +936,17 @@ def test_summarize_sample_write_is_fenced_after_the_provider_call(tmp_path, monk
             assert _summary_rows(published) == 1
             _assert_matches_schema("summarize_sample", response)
             return
-        assert response["code"] == "rebuild_in_progress", response
+        expected = "writer_busy" if how == "busy_lock" else "rebuild_in_progress"
+        assert response["code"] == expected, response
+        assert response["retryable"] is True
+        assert response["mutation_performed"] is False
         assert response["files"][0]["summaries_written"] == 0
         assert response["total_chunks"] == 0
-        assert _summary_rows(published) == 0  # nothing reached the old generation
+        assert _summary_rows(published) == 0  # nothing reached the index
         _assert_matches_schema("summarize_sample", response)
 
 
-@pytest.mark.parametrize("how", ["fence_flag", "writer_lock"])
+@pytest.mark.parametrize("how", ["fence_flag", "rebuild_lock"])
 def test_lazy_queue_entry_is_dropped_when_a_rebuild_starts_mid_call(tmp_path, monkeypatch, how):
     path, repo_id = build_temp_repo(tmp_path, f"fenced-lazy-{how}", seed_files=SEED)
     with boot_test_server(tmp_path, [path]) as server:
@@ -964,7 +986,8 @@ def test_lazy_queue_entry_is_dropped_when_a_rebuild_starts_mid_call(tmp_path, mo
             starter.stop()
         assert provider_calls == [1]
         assert stored is None
-        assert writer.fenced_writes == 1
+        assert writer.fenced_writes == 1 and writer.busy_writes == 0
+        assert writer.queue.qsize() == 0  # dropped, not requeued
         assert _summary_rows(published) == 0
 
         # An entry whose generation is already fenced is dropped before any
@@ -1024,16 +1047,16 @@ def test_search_enqueues_lazy_entries_with_a_generation_fence(tmp_path):
         )
         assert summarizer.enqueued
         _chunk, fence = summarizer.enqueued[0]
-        with fence() as allowed:
-            assert allowed is True
+        with fence() as gate:
+            assert gate is locks.WriteGate.ALLOWED
         info = server.registry.get(repo_id)
         server.registry.begin_generation_mutation(
             repo_id,
             expected_registration_id=info.registration_id,
             expected_generation=info.index_generation,
         )
-        with fence() as allowed:
-            assert allowed is False
+        with fence() as gate:
+            assert gate is locks.WriteGate.FENCED
 
 
 def test_rebuild_in_progress_responses_match_the_advertised_schemas(tmp_path, monkeypatch):
@@ -1066,3 +1089,222 @@ def test_rebuild_in_progress_responses_match_the_advertised_schemas(tmp_path, mo
         assert observed["sample"]["code"] == "rebuild_in_progress"
         _assert_matches_schema("write_summaries", observed["write"])
         _assert_matches_schema("summarize_sample", observed["sample"])
+
+
+# ---------------------------------------------------------------------------
+# A busy (non-rebuild) writer is retryable, never a silent drop
+# ---------------------------------------------------------------------------
+
+
+def _lazy_writer(published: Path, monkeypatch, on_call=None) -> tuple:
+    monkeypatch.delenv("CEREBRAS_API_KEY", raising=False)
+    writer = LazyChunkWriter(
+        db_path=str(published),
+        qdrant_client=None,
+        summarization_config={"base_url": "http://synthetic.invalid/v1"},
+    )
+    calls: list = []
+
+    async def direct(*args, **kwargs):
+        calls.append(1)
+        if on_call is not None:
+            on_call()
+        return "Synthetic summary.", "fake-model"
+
+    monkeypatch.setattr(writer, "_has_sampling_capability", lambda: False)
+    monkeypatch.setattr(writer, "_call_direct_api", direct)
+    return writer, calls
+
+
+def _lazy_chunk(file_id: int, chunk_id: str) -> dict:
+    return dict(
+        chunk_hash=chunk_id,
+        file_id=file_id,
+        chunk_start=1,
+        chunk_end=2,
+        symbol="alpha_token",
+        content="def alpha_token():",
+        language="python",
+    )
+
+
+def test_lazy_entry_is_requeued_while_a_non_rebuild_writer_holds_the_lock(tmp_path, monkeypatch):
+    path, repo_id = build_temp_repo(tmp_path, "lazy-busy", seed_files=SEED)
+    with boot_test_server(tmp_path, [path]) as server:
+        info = server.registry.get(repo_id)
+        published = Path(info.index_path)
+        file_id, chunk_id = _seed_chunk(published)
+        fence = server.repo_resolver.generation_write_fence(repo_id, info, path)
+        busy = _RebuildStarter(server, repo_id, path, "busy_lock")
+        writer, calls = _lazy_writer(published, monkeypatch, on_call=busy.start)
+        writer.enqueue(_lazy_chunk(file_id, chunk_id), write_fence=fence)
+        try:
+            # The busy writer took the lock during the provider call.
+            assert asyncio.run(writer._summarize_queued(writer.queue.get_nowait())) is None
+            assert writer.busy_writes == 1 and writer.fenced_writes == 0
+            assert _summary_rows(published) == 0
+            requeued = writer.queue.get_nowait()
+            assert requeued.attempts == 1 and requeued.not_before > 0
+            # Still busy when it comes round again: requeued before any
+            # provider call.
+            calls.clear()
+            assert asyncio.run(writer._summarize_queued(requeued)) is None
+            assert calls == []
+            requeued = writer.queue.get_nowait()
+            assert requeued.attempts == 2
+        finally:
+            busy.stop()
+        # The other writer finished and no rebuild ran: the generation is
+        # rechecked and the entry is stored.
+        assert asyncio.run(writer._summarize_queued(requeued)) == "Synthetic summary."
+        assert _summary_rows(published) == 1
+        assert writer.queue.qsize() == 0
+        if writer._sqlite_store is not None:
+            writer._sqlite_store.close()
+
+
+def test_lazy_busy_retries_are_bounded(tmp_path, monkeypatch, caplog):
+    from mcp_server.indexing.summarization import _QueuedSummary
+
+    path, repo_id = build_temp_repo(tmp_path, "lazy-bounded", seed_files=SEED)
+    with boot_test_server(tmp_path, [path]) as server:
+        info = server.registry.get(repo_id)
+        published = Path(info.index_path)
+        file_id, chunk_id = _seed_chunk(published)
+        fence = server.repo_resolver.generation_write_fence(repo_id, info, path)
+        writer, calls = _lazy_writer(published, monkeypatch)
+        busy = _RebuildStarter(server, repo_id, path, "busy_lock")
+        busy.start()
+        try:
+            last = _QueuedSummary(
+                chunk=_lazy_chunk(file_id, chunk_id),
+                fence=fence,
+                attempts=writer.MAX_BUSY_RETRIES,
+            )
+            with caplog.at_level("WARNING"):
+                assert asyncio.run(writer._summarize_queued(last)) is None
+        finally:
+            busy.stop()
+        assert writer.queue.qsize() == 0
+        assert calls == []
+        assert "stayed busy" in caplog.text
+
+
+def test_write_summaries_reports_writer_busy_with_partial_counts(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from mcp_server.indexing.summarization import ComprehensiveChunkWriter
+
+    path, repo_id = build_temp_repo(tmp_path, "busy-write", seed_files=SEED)
+    with boot_test_server(tmp_path, [path]) as server:
+        published = Path(server.registry.get(repo_id).index_path)
+        _seed_chunk(published)
+        busy = _RebuildStarter(server, repo_id, path, "busy_lock")
+
+        async def provider(self, *args, **kwargs):
+            if not busy._release.is_set():
+                busy.start()
+            return [SimpleNamespace(chunk_id="chunk-alpha", summary="Synthetic summary.")]
+
+        monkeypatch.setattr(FileBatchSummarizer, "_call_batch_api", provider)
+        monkeypatch.setattr(FileBatchSummarizer, "_call_profile_batch_api", provider)
+        monkeypatch.setattr(
+            FileBatchSummarizer, "_get_model_name", lambda self, **kwargs: "fake-model"
+        )
+        monkeypatch.setattr(ComprehensiveChunkWriter, "can_summarize", lambda self: True)
+        common = dict(
+            arguments={"repository": str(path)},
+            dispatcher=server.dispatcher,
+            repo_resolver=server.repo_resolver,
+            lazy_summarizer=_FakeSummarizer(),
+        )
+        try:
+            response = _run_tool("handle_write_summaries", **common)
+        finally:
+            busy.stop()
+
+        assert response["code"] == "writer_busy", response
+        assert response["retryable"] is True
+        assert response["mutation_performed"] is False
+        assert response["chunks_summarized"] == 0
+        assert response["summary_chunks_attempted"] == 1
+        assert response["readiness"]["rebuild"] is None  # no rebuild was running
+        assert _summary_rows(published) == 0
+        _assert_matches_schema("write_summaries", response)
+
+        # Once the other writer is done, the retry stores the summary.
+        retry = _run_tool("handle_write_summaries", **common)
+        assert retry["persisted"] is True and retry["chunks_summarized"] == 1, retry
+        assert _summary_rows(published) == 1
+        _assert_matches_schema("write_summaries", retry)
+
+
+class _FakeTask:
+    def __init__(self, task_id: str) -> None:
+        self.task_id = task_id
+        self.is_cancelled = False
+
+    def request_cancellation(self) -> None:
+        self.is_cancelled = True
+
+    async def update_status(self, message: str) -> None:
+        pass
+
+
+@pytest.mark.parametrize(
+    ("outcome", "code"),
+    [("write_fenced", "rebuild_in_progress"), ("write_busy", "writer_busy")],
+)
+def test_task_write_summaries_refusal_matches_the_advertised_schema(monkeypatch, outcome, code):
+    from types import SimpleNamespace
+
+    from mcp.types import TaskMetadata
+
+    from mcp_server.cli import task_write_summaries
+    from mcp_server.indexing.summarization import SummaryGenerationResult
+    from mcp_server.storage.mcp_task_registry import MCPTaskRegistry
+
+    class Writer:
+        def __init__(self, **kwargs):
+            pass
+
+        async def process_scope(self, **kwargs):
+            # The very first batch is refused, so nothing was persisted.
+            return SummaryGenerationResult(
+                chunks_attempted=2, summaries_written=0, remaining_chunks=2, **{outcome: True}
+            )
+
+    monkeypatch.setattr(task_write_summaries, "ComprehensiveChunkWriter", Writer)
+    monkeypatch.setattr(
+        task_write_summaries.Settings,
+        "from_environment",
+        staticmethod(
+            lambda: SimpleNamespace(
+                get_semantic_default_profile=lambda: "oss_high",
+                get_profile_summarization_config=lambda _profile: {},
+            )
+        ),
+    )
+
+    async def run():
+        registry = MCPTaskRegistry()
+        state = await registry.create_task(TaskMetadata())
+        return await task_write_summaries.run_write_summaries_task(
+            task=_FakeTask(state.task_id),
+            registry=registry,
+            active_store=SimpleNamespace(db_path="/synthetic/index.db"),
+            current_session=None,
+            client_name=None,
+            limit_arg=10,
+            model_used="fake-model",
+            write_blocked=lambda: False,
+        )
+
+    payload = asyncio.run(run()).structured_content
+    assert payload["code"] == code
+    assert payload["tool"] == "write_summaries"
+    assert payload["mutation_performed"] is False
+    assert payload["chunks_summarized"] == 0
+    assert payload["summary_chunks_attempted"] == 2
+    assert payload["summary_missing_chunks"] == 2
+    _assert_matches_schema("write_summaries", payload)

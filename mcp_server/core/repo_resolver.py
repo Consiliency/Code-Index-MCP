@@ -13,7 +13,7 @@ from mcp_server.health.repository_readiness import (
     RepositoryReadiness,
     RepositoryReadinessState,
 )
-from mcp_server.indexing.lock_registry import lock_registry
+from mcp_server.indexing.lock_registry import WriteGate, live_rebuild_owner, lock_registry
 from mcp_server.storage.repository_registry import RepositoryRegistry
 from mcp_server.storage.store_registry import StoreRegistry
 
@@ -144,25 +144,50 @@ class RepoResolver:
         """Return a fence that persistent writers enter around each write (#145).
 
         Entering it takes the repository writer lock without waiting, so no
-        staged build can begin until the write commits; a build that already
-        holds the lock, a fenced registry entry, or a replaced generation
-        yields False and the writer stores nothing.
+        staged build can begin until the write commits. It yields a
+        ``WriteGate`` (falsy unless ``ALLOWED``):
+
+        - ``FENCED`` when a staged rebuild owns the generation (a live owner
+          holds the lock, or the registry entry is fenced) or the
+          registration or generation changed: the work is obsolete.
+        - ``BUSY`` when another writer holds the lock but the generation is
+          unchanged and no rebuild runs: the write is retryable.
         """
 
         @contextmanager
-        def fence() -> Iterator[bool]:
+        def fence() -> Iterator[WriteGate]:
             held = lock_registry.acquire(repo_id, repo_path=repo_path, timeout=0)
             try:
                 held.__enter__()
             except TimeoutError:
-                yield False
+                yield self._contended_gate(repo_id, expected, repo_path)
                 return
             try:
-                yield self._accepts_writes_for(repo_id, expected)
+                yield (
+                    WriteGate.ALLOWED
+                    if self._accepts_writes_for(repo_id, expected)
+                    else WriteGate.FENCED
+                )
             finally:
                 held.__exit__(None, None, None)
 
         return fence
+
+    def _contended_gate(self, repo_id: str, expected: Any, repo_path: Path) -> WriteGate:
+        """Classify a held writer lock: a rebuild (or changed generation) vs. a busy writer."""
+        if not self._accepts_writes_for(repo_id, expected):
+            return WriteGate.FENCED
+        if (
+            live_rebuild_owner(
+                Path(repo_path),
+                registration_id=getattr(expected, "registration_id", None),
+                published_generation=getattr(expected, "index_generation", None),
+            )
+            is not None
+        ):
+            # The build holds the lock and recorded itself before fencing.
+            return WriteGate.FENCED
+        return WriteGate.BUSY
 
     def mutate(
         self, ctx: RepoContext, operation: Callable[[RepoContext], _MutationResult]

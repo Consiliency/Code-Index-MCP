@@ -9,6 +9,7 @@ import threading
 import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
+from enum import Enum
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -91,6 +92,30 @@ lock_registry: IndexingLockRegistry = IndexingLockRegistry()
 # pid, process start time and host rule out a different process holding it.
 
 _OWNER_FILE = "rebuild-owner.json"
+
+
+class WriteGate(str, Enum):
+    """What a persistent-write fence decided (Consiliency/Code-Index-MCP#145).
+
+    ``FENCED``: a staged rebuild owns the target generation, or the
+    registration or generation changed; work for it is obsolete. ``BUSY``:
+    another writer (a sync, ``repository summarize``) holds the writer lock
+    while the generation is unchanged; the write is retryable.
+    """
+
+    ALLOWED = "allowed"
+    FENCED = "fenced"
+    BUSY = "busy"
+
+    def __bool__(self) -> bool:
+        return self is WriteGate.ALLOWED
+
+    @classmethod
+    def of(cls, value: object) -> "WriteGate":
+        """Normalize a fence's yield: True/False (legacy) or a WriteGate."""
+        if isinstance(value, WriteGate):
+            return value
+        return cls.ALLOWED if value is True else cls.FENCED
 
 
 def _index_lock_dir(repo_path: Path) -> Path:

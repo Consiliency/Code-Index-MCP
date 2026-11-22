@@ -13,6 +13,61 @@ from mcp_server.config.settings import Settings
 from mcp_server.indexing.summarization import ComprehensiveChunkWriter
 from mcp_server.storage.mcp_task_registry import MCPTaskRegistry
 
+REBUILD_IN_PROGRESS = "rebuild_in_progress"
+WRITER_BUSY = "writer_busy"
+
+_REFUSALS: dict[str, tuple[str, str, str]] = {
+    REBUILD_IN_PROGRESS: (
+        "Rebuild in progress",
+        "A staged index rebuild owns this repository's published generation; "
+        "summaries written to it now would be lost when the rebuild publishes.",
+        "Retry after the staged rebuild publishes (already summarized chunks are skipped).",
+    ),
+    WRITER_BUSY: (
+        "Index writer busy",
+        "Another index writer (a sync, or `mcp-index repository summarize`) holds the "
+        "repository writer lock. No rebuild is running; summaries that could not be "
+        "stored were not written.",
+        "Retry shortly (already summarized chunks are skipped).",
+    ),
+}
+
+
+def summary_write_refusal(
+    code: str,
+    tool: str,
+    *,
+    readiness: dict[str, Any] | None = None,
+    **extra: Any,
+) -> dict[str, Any]:
+    """The shared envelope for a summary write that could not be stored (#145).
+
+    ``code`` is ``rebuild_in_progress`` (the generation is being replaced) or
+    ``writer_busy`` (another writer holds the lock; retry shortly). Partial
+    counters in ``extra`` (``chunks_summarized``, ``total_chunks``, ...) say
+    what was already committed; committed work always precedes any rebuild's
+    snapshot, so it is kept.
+    """
+    error, message, remediation = _REFUSALS[code]
+    written = int(extra.get("chunks_summarized") or extra.get("total_chunks") or 0)
+    payload: dict[str, Any] = {
+        "error": error,
+        "code": code,
+        "tool": tool,
+        "mutation_performed": written > 0,
+        "retryable": True,
+        "readiness": readiness,
+        "message": message,
+        "remediation": remediation,
+        **extra,
+    }
+    if written and "note" not in payload:
+        payload["note"] = (
+            f"{written} summaries were committed before the write was refused and are "
+            "kept; the rest were not written."
+        )
+    return payload
+
 
 def _call_tool_result(payload: dict[str, Any], *, is_error: bool = False) -> types.CallToolResult:
     return types.CallToolResult(
@@ -63,6 +118,7 @@ async def run_write_summaries_task(
     remaining_budget = limit_arg
     persisted_any = False
     write_fenced = False
+    write_busy = False
     per_pass_limit = min(64, limit_arg)
 
     async def cancel_observer() -> None:
@@ -86,6 +142,7 @@ async def run_write_summaries_task(
                 or (write_blocked is not None and write_blocked()),
             )
             write_fenced = write_fenced or bool(getattr(result, "write_fenced", False))
+            write_busy = write_busy or bool(getattr(result, "write_busy", False))
             total_written += result.summaries_written
             total_attempted += result.chunks_attempted
             total_missing = result.remaining_chunks
@@ -105,7 +162,7 @@ async def run_write_summaries_task(
                     "persisted": persisted_any,
                 },
             )
-            if result.cancelled or task.is_cancelled or write_fenced:
+            if result.cancelled or task.is_cancelled or write_fenced or write_busy:
                 break
             if result.summaries_written == 0 or result.remaining_chunks == 0:
                 break
@@ -120,15 +177,15 @@ async def run_write_summaries_task(
         "summary_chunks_attempted": total_attempted,
         "summary_missing_chunks": total_missing,
     }
-    if write_fenced or (write_blocked is not None and write_blocked()):
-        payload.update(
-            code="rebuild_in_progress",
-            note=(
-                "A staged rebuild started during this task. Summaries already committed "
-                "were written before it began and are kept; the rest were not written. "
-                "Rerun after the rebuild publishes (already summarized chunks are skipped)."
-            ),
-        )
+    refusal = (
+        REBUILD_IN_PROGRESS
+        if write_fenced or (write_blocked is not None and write_blocked())
+        else WRITER_BUSY if write_busy else None
+    )
+    if refusal is not None and not task.is_cancelled:
+        # Same envelope as the synchronous tool, with the task's counters (#145).
+        counters = {key: value for key, value in payload.items() if key != "persisted"}
+        return _call_tool_result(summary_write_refusal(refusal, "write_summaries", **counters))
     if task.is_cancelled:
         payload["cancelled"] = True
         result = _call_tool_result(payload)

@@ -5,6 +5,7 @@ import logging
 import os
 import re
 import sqlite3
+import time
 import warnings
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -28,6 +29,7 @@ from mcp.shared.exceptions import MCPDeprecationWarning
 from mcp.types.version import HANDSHAKE_PROTOCOL_VERSIONS
 
 from ..config.settings import commercial_egress_allowed, learned_models_allowed
+from ..indexing.lock_registry import WriteGate
 from ..setup.semantic_preflight import EnrichmentModelResolution, resolve_enrichment_model
 from ..storage.sqlite_store import SQLiteStore, assert_chunk_scheme_readable
 
@@ -134,6 +136,10 @@ class SummaryGenerationResult:
     #: fenced or replaced by a staged rebuild, so those summaries were not
     #: stored (Consiliency/Code-Index-MCP#145).
     write_fenced: bool = False
+    #: Another writer held the repository writer lock at a write while the
+    #: generation was unchanged; those summaries were not stored and the call
+    #: is retryable (#145).
+    write_busy: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "missing_chunk_ids", tuple(self.missing_chunk_ids))
@@ -157,6 +163,7 @@ class SummaryGenerationResult:
             "blocked_call_timeout_seconds": self.blocked_call_timeout_seconds,
             "cancelled": self.cancelled,
             "write_fenced": self.write_fenced,
+            "write_busy": self.write_busy,
             "summaries": [
                 {"chunk_id": item.chunk_id, "summary": item.summary} for item in self.summaries
             ],
@@ -225,25 +232,30 @@ class ChunkWriter:
         self._sqlite_store: Optional[SQLiteStore] = None
         self._profile_model_resolution: Optional[EnrichmentModelResolution] = None
         #: Entered around every summary write, after the provider call
-        #: returns: it yields False when the target generation no longer
-        #: accepts writes (a staged rebuild fenced or replaced it), and the
-        #: write is then skipped (Consiliency/Code-Index-MCP#145).
+        #: returns: it yields a ``WriteGate`` (or a bool) and the write is
+        #: skipped unless it is allowed. ``fenced_writes`` counts writes a
+        #: staged rebuild made obsolete, ``busy_writes`` writes refused only
+        #: because another writer held the lock (Consiliency/Code-Index-MCP#145).
         self.write_fence = write_fence
         self.fenced_writes = 0
+        self.busy_writes = 0
 
     @contextmanager
     def _fenced_write(
-        self, fence: Optional[Callable[[], ContextManager[bool]]] = None
-    ) -> Iterator[bool]:
-        """Yield whether a write may proceed; counts refusals in ``fenced_writes``."""
+        self, fence: Optional[Callable[[], ContextManager[Any]]] = None
+    ) -> Iterator[WriteGate]:
+        """Yield the fence's ``WriteGate`` for one write and count refusals."""
         fence = fence if fence is not None else self.write_fence
         if fence is None:
-            yield True
+            yield WriteGate.ALLOWED
             return
-        with fence() as allowed:
-            if not allowed:
+        with fence() as decision:
+            gate = WriteGate.of(decision)
+            if gate is WriteGate.FENCED:
                 self.fenced_writes += 1
-            yield bool(allowed)
+            elif gate is WriteGate.BUSY:
+                self.busy_writes += 1
+            yield gate
 
     def _get_sqlite_store(self) -> SQLiteStore:
         if self._sqlite_store is None:
@@ -747,7 +759,7 @@ class ChunkWriter:
         # begin; check at the write itself (#145).
         with self._fenced_write(write_fence) as allowed:
             if not allowed:
-                logger.info("Chunk summary dropped: its index generation is being rebuilt")
+                logger.info("Chunk summary not stored: index write %s", allowed.value)
                 return None
             self._persist_summary(
                 chunk_hash=chunk_hash,
@@ -1119,6 +1131,7 @@ class FileBatchSummarizer(ChunkWriter):
         if symbol_map is None:
             symbol_map = {}
         fenced_before = self.fenced_writes
+        busy_before = self.busy_writes
 
         # Filter already-authoritative chunks.
         with sqlite3.connect(self.db_path) as conn:
@@ -1299,6 +1312,7 @@ class FileBatchSummarizer(ChunkWriter):
             scope_drained=len(missing_chunk_ids) == 0,
             summaries=summaries,
             write_fenced=self.fenced_writes > fenced_before,
+            write_busy=self.busy_writes > busy_before,
         )
 
 
@@ -1563,9 +1577,10 @@ class ComprehensiveChunkWriter(FileBatchSummarizer):
                     total_authoritative_chunks += file_result.authoritative_chunks
                     total_files_summarized += file_result.files_summarized
                     missing_chunk_ids.extend(file_result.missing_chunk_ids)
-                    if file_result.write_fenced:
-                        # A staged rebuild fenced the target generation: stop
-                        # rather than spend provider calls on unwritable work.
+                    if file_result.write_fenced or file_result.write_busy:
+                        # A staged rebuild fenced the target generation, or
+                        # another writer holds the lock: stop rather than spend
+                        # provider calls on work that cannot be stored now.
                         remaining_chunks = self._count_unsummarized_rows(target_paths=target_paths)
                         return SummaryGenerationResult(
                             chunks_attempted=total_attempted,
@@ -1577,7 +1592,8 @@ class ComprehensiveChunkWriter(FileBatchSummarizer):
                             batches_processed=batches_processed,
                             remaining_chunks=remaining_chunks,
                             scope_drained=False,
-                            write_fenced=True,
+                            write_fenced=file_result.write_fenced,
+                            write_busy=file_result.write_busy,
                         )
                     if file_result.blocked_call_reason is not None:
                         remaining_chunks = self._count_unsummarized_rows(target_paths=target_paths)
@@ -1687,6 +1703,10 @@ class LazyChunkWriter(ChunkWriter):
         while True:
             item = await self.queue.get()
             try:
+                if isinstance(item, _QueuedSummary):
+                    delay = item.not_before - time.monotonic()
+                    if delay > 0:
+                        await asyncio.sleep(delay)
                 await self._summarize_queued(item)
             except Exception as exc:
                 logger.error("Error summarizing chunk (%s)", type(exc).__name__)
@@ -1694,28 +1714,76 @@ class LazyChunkWriter(ChunkWriter):
                 self.queue.task_done()
 
     async def _summarize_queued(self, item: Any) -> Optional[str]:
-        """Summarize one queued entry unless its index generation was fenced (#145).
+        """Summarize one queued entry against the generation it was found in (#145).
 
-        An entry carries the write fence of the generation it was enqueued
-        for. It is dropped before the provider call when that generation is
-        already fenced or replaced, and the fence is checked again at the write.
+        An entry carries the write fence of its generation. It is dropped when
+        a staged rebuild has fenced or replaced that generation (before the
+        provider call, or at the write). When another writer only holds the
+        lock, it is requeued with backoff, up to ``MAX_BUSY_RETRIES`` times.
         """
-        chunk, fence = item if isinstance(item, tuple) else (item, None)
-        if fence is not None:
-            with self._fenced_write(fence) as allowed:
-                if not allowed:
-                    logger.info("Queued chunk summary dropped: its generation is being rebuilt")
-                    return None
-        return await self.summarize_chunk(**chunk, write_fence=fence)
+        if isinstance(item, _QueuedSummary):
+            entry = item
+        elif isinstance(item, tuple):
+            entry = _QueuedSummary(chunk=item[0], fence=item[1])
+        else:
+            entry = _QueuedSummary(chunk=item, fence=None)
+        if entry.fence is not None:
+            with self._fenced_write(entry.fence) as gate:
+                pass
+            if gate is WriteGate.FENCED:
+                logger.info("Queued chunk summary dropped: its generation is being rebuilt")
+                return None
+            if gate is WriteGate.BUSY:
+                self._requeue_busy(entry)
+                return None
+        busy_before = self.busy_writes
+        summary = await self.summarize_chunk(**entry.chunk, write_fence=entry.fence)
+        if summary is None and self.busy_writes > busy_before:
+            self._requeue_busy(entry)
+        return summary
+
+    #: Requeues of one lazy entry while another writer holds the lock.
+    MAX_BUSY_RETRIES = 5
+    #: Backoff seconds for the first busy retry; doubles per retry, capped.
+    BUSY_RETRY_BASE_SECONDS = 2.0
+    BUSY_RETRY_MAX_SECONDS = 60.0
+
+    def _requeue_busy(self, entry: "_QueuedSummary") -> None:
+        if entry.attempts >= self.MAX_BUSY_RETRIES:
+            logger.warning(
+                "Queued chunk summary dropped after %d retries: the index writer stayed busy",
+                entry.attempts,
+            )
+            return
+        delay = min(self.BUSY_RETRY_MAX_SECONDS, self.BUSY_RETRY_BASE_SECONDS * (2**entry.attempts))
+        self.queue.put_nowait(
+            _QueuedSummary(
+                chunk=entry.chunk,
+                fence=entry.fence,
+                attempts=entry.attempts + 1,
+                not_before=time.monotonic() + delay,
+            )
+        )
 
     def enqueue(
         self,
         chunk_data: Dict[str, Any],
-        write_fence: Optional[Callable[[], ContextManager[bool]]] = None,
+        write_fence: Optional[Callable[[], ContextManager[Any]]] = None,
     ) -> None:
         """Add a chunk to the background summarization queue (non-blocking).
 
         ``write_fence`` binds the entry to the generation it was found in, so a
-        staged rebuild that begins before it is stored drops it (#145).
+        staged rebuild that begins before it is stored drops it, and a busy
+        writer delays it (#145).
         """
-        self.queue.put_nowait((chunk_data, write_fence))
+        self.queue.put_nowait(_QueuedSummary(chunk=chunk_data, fence=write_fence))
+
+
+@dataclass(frozen=True)
+class _QueuedSummary:
+    """One lazy summary entry and the generation fence it was enqueued with."""
+
+    chunk: Dict[str, Any]
+    fence: Optional[Callable[[], ContextManager[Any]]]
+    attempts: int = 0
+    not_before: float = 0.0

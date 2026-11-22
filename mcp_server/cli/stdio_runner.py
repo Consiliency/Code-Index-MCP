@@ -237,6 +237,7 @@ _REBUILD_IN_PROGRESS_SCHEMA: dict[str, Any] = {
         "readiness": {"type": ["object", "null"]},
         "message": {"type": "string"},
         "remediation": {"type": ["string", "array", "object", "null"]},
+        "retryable": {"type": "boolean"},
         "chunks_summarized": {"type": "integer"},
         "files": {"type": "array"},
         "total_chunks": {"type": "integer"},
@@ -244,6 +245,16 @@ _REBUILD_IN_PROGRESS_SCHEMA: dict[str, Any] = {
     },
     "required": ["error", "code", "tool", "mutation_performed", "message"],
     "additionalProperties": True,
+}
+#: Another writer held the repository writer lock while no rebuild ran; the
+#: summary write is retryable (#145).
+_WRITER_BUSY_SCHEMA: dict[str, Any] = {
+    **_REBUILD_IN_PROGRESS_SCHEMA,
+    "properties": {
+        **_REBUILD_IN_PROGRESS_SCHEMA["properties"],
+        "error": {"const": "Index writer busy"},
+        "code": {"const": "writer_busy"},
+    },
 }
 _SQLITE_NOT_INITIALIZED_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -798,6 +809,7 @@ def _build_tool_list() -> list[types.Tool]:
                     _INDEX_UNAVAILABLE_SCHEMA,
                     _SECONDARY_READINESS_REFUSAL_SCHEMA,
                     _REBUILD_IN_PROGRESS_SCHEMA,
+                    _WRITER_BUSY_SCHEMA,
                     _SUMMARIZATION_UNAVAILABLE_SCHEMA,
                     _SQLITE_NOT_INITIALIZED_SCHEMA,
                     _object_schema(
@@ -870,6 +882,7 @@ def _build_tool_list() -> list[types.Tool]:
                     _SECONDARY_READINESS_REFUSAL_SCHEMA,
                     _CONFLICTING_SCOPE_SCHEMA,
                     _REBUILD_IN_PROGRESS_SCHEMA,
+                    _WRITER_BUSY_SCHEMA,
                     _SUMMARIZATION_UNAVAILABLE_SCHEMA,
                     _SQLITE_NOT_INITIALIZED_SCHEMA,
                     _object_schema(

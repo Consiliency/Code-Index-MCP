@@ -24,7 +24,12 @@ from mcp_server.cli.task_reindex import (
     _record_reindexed_files,
     run_reindex_task,
 )
-from mcp_server.cli.task_write_summaries import run_write_summaries_task
+from mcp_server.cli.task_write_summaries import (
+    REBUILD_IN_PROGRESS,
+    WRITER_BUSY,
+    run_write_summaries_task,
+    summary_write_refusal,
+)
 from mcp_server.client import ClientValidationError, build_search_options, execute_search_service
 from mcp_server.core.repo_context import RepoContext
 from mcp_server.core.repo_resolver import RepoResolver, run_repository_mutation
@@ -271,27 +276,27 @@ def _rebuild_in_progress_response(
     written to it now would vanish when the rebuild publishes.
     """
     return _json_text_response(
-        {
-            "error": "Rebuild in progress",
-            "code": "rebuild_in_progress",
-            "tool": tool,
-            "mutation_performed": False,
-            "readiness": readiness.to_dict() if readiness is not None else None,
-            "message": (
-                "A staged index rebuild is in progress; writes to the published "
-                "generation would be lost when it publishes."
-            ),
-            "remediation": "Retry after the rebuild publishes (readiness.rebuild becomes null).",
+        summary_write_refusal(
+            REBUILD_IN_PROGRESS,
+            tool,
+            readiness=readiness.to_dict() if readiness is not None else None,
             **extra,
-        }
+        )
     )
 
 
-_FENCED_WRITE_NOTE = (
-    "A staged rebuild started during this run. Summaries already committed were "
-    "written before it began and are kept; the rest were not written. Rerun after "
-    "the rebuild publishes (already summarized chunks are skipped)."
-)
+def _writer_busy_response(
+    tool: str, readiness: Optional[RepositoryReadiness] = None, **extra: Any
+) -> list[types.TextContent]:
+    """Another writer held the lock at a write; no rebuild runs; retryable (#145)."""
+    return _json_text_response(
+        summary_write_refusal(
+            WRITER_BUSY,
+            tool,
+            readiness=readiness.to_dict() if readiness is not None else None,
+            **extra,
+        )
+    )
 
 
 def _write_fence(repo_resolver: Any, ctx: Optional[RepoContext]) -> Any:
@@ -1663,12 +1668,20 @@ async def handle_write_summaries(
         write_fence=write_fence,
     )
     summary_result = await writer.process_scope(limit=limit_arg, cancel_check=write_blocked)
+    partial = dict(
+        chunks_summarized=summary_result.summaries_written,
+        limit=limit_arg,
+        model_used=model_used,
+        summary_chunks_attempted=summary_result.chunks_attempted,
+        summary_missing_chunks=len(summary_result.missing_chunk_ids),
+    )
     if getattr(summary_result, "write_fenced", False) or write_blocked():
         return _rebuild_in_progress_response(
-            "write_summaries",
-            _classify_ctx(repo_resolver, repository),
-            chunks_summarized=summary_result.summaries_written,
-            note=_FENCED_WRITE_NOTE,
+            "write_summaries", _classify_ctx(repo_resolver, repository), **partial
+        )
+    if getattr(summary_result, "write_busy", False):
+        return _writer_busy_response(
+            "write_summaries", _classify_ctx(repo_resolver, repository), **partial
         )
 
     return [
@@ -1954,15 +1967,22 @@ async def handle_summarize_sample(
                 "summaries": summary_list,
             }
         )
-        if persist_flag and getattr(summary_result, "write_fenced", False):
-            # A rebuild began during the provider call: this file's summaries
-            # were not stored (#145).
-            return _rebuild_in_progress_response(
+        if persist_flag and (
+            getattr(summary_result, "write_fenced", False)
+            or getattr(summary_result, "write_busy", False)
+        ):
+            # A rebuild began, or another writer held the lock, during the
+            # provider call: this file's summaries were not stored (#145).
+            refuse = (
+                _rebuild_in_progress_response
+                if getattr(summary_result, "write_fenced", False)
+                else _writer_busy_response
+            )
+            return refuse(
                 "summarize_sample",
                 _classify_ctx(repo_resolver, scope_arg),
                 files=file_results,
                 total_chunks=total_chunks,
-                note=_FENCED_WRITE_NOTE,
             )
 
     return [
