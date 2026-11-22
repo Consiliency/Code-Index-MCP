@@ -8,7 +8,8 @@ import sqlite3
 import time
 import warnings
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from contextvars import ContextVar
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import (
@@ -209,6 +210,31 @@ def _topological_order(chunks: List[Dict]) -> List[str]:
     return order
 
 
+@dataclass
+class _WriteTally:
+    """Writes made by one summarization call (Consiliency/Code-Index-MCP#145)."""
+
+    committed: int = 0
+    fenced: int = 0
+    busy: int = 0
+
+
+#: The innermost active call's tally. Each call opens its own, and asyncio
+#: tasks copy the context, so concurrent calls on one writer never see each
+#: other's writes (unlike a delta of the writer's cumulative counters).
+_CALL_TALLY: ContextVar[Optional[_WriteTally]] = ContextVar("summary_write_tally", default=None)
+
+
+@contextmanager
+def _call_tally() -> Iterator[_WriteTally]:
+    tally = _WriteTally()
+    token = _CALL_TALLY.set(tally)
+    try:
+        yield tally
+    finally:
+        _CALL_TALLY.reset(token)
+
+
 class ChunkWriter:
     """Base interface for semantic chunk summarization.
 
@@ -258,10 +284,15 @@ class ChunkWriter:
             return
         with fence() as decision:
             gate = WriteGate.of(decision)
+            tally = _CALL_TALLY.get()
             if gate is WriteGate.FENCED:
                 self.fenced_writes += 1
+                if tally is not None:
+                    tally.fenced += 1
             elif gate is WriteGate.BUSY:
                 self.busy_writes += 1
+                if tally is not None:
+                    tally.busy += 1
             yield gate
 
     def _get_sqlite_store(self) -> SQLiteStore:
@@ -377,6 +408,9 @@ class ChunkWriter:
         )
         if stored:
             self.committed_writes += 1
+            tally = _CALL_TALLY.get()
+            if tally is not None:
+                tally.committed += 1
         return stored
 
     def _has_sampling_capability(self) -> bool:
@@ -1128,6 +1162,42 @@ class FileBatchSummarizer(ChunkWriter):
         call_timeout_seconds: Optional[float] = None,
         cancel_check: Optional[Callable[[], bool]] = None,
     ) -> SummaryGenerationResult:
+        """Summarize all chunks of a file; see ``_summarize_file_chunks``.
+
+        The result's ``write_fenced``, ``write_busy`` and
+        ``summaries_committed`` come from this call's own write tally (#145).
+        """
+        with _call_tally() as tally:
+            result = await self._summarize_file_chunks(
+                file_id=file_id,
+                file_path=file_path,
+                file_content=file_content,
+                chunks=chunks,
+                symbol_map=symbol_map,
+                persist=persist,
+                max_chunks=max_chunks,
+                call_timeout_seconds=call_timeout_seconds,
+                cancel_check=cancel_check,
+            )
+        return replace(
+            result,
+            write_fenced=tally.fenced > 0,
+            write_busy=tally.busy > 0,
+            summaries_committed=tally.committed,
+        )
+
+    async def _summarize_file_chunks(
+        self,
+        file_id: int,
+        file_path: str,
+        file_content: str,
+        chunks: List[Dict],
+        symbol_map: Optional[Dict[int, str]] = None,
+        persist: bool = True,
+        max_chunks: Optional[int] = None,
+        call_timeout_seconds: Optional[float] = None,
+        cancel_check: Optional[Callable[[], bool]] = None,
+    ) -> SummaryGenerationResult:
         """Summarize all chunks of a file, preferring the batch API path.
 
         Filters already-authoritative chunks, calls ``_call_batch_api``, and
@@ -1140,9 +1210,6 @@ class FileBatchSummarizer(ChunkWriter):
         """
         if symbol_map is None:
             symbol_map = {}
-        fenced_before = self.fenced_writes
-        busy_before = self.busy_writes
-        committed_before = self.committed_writes
 
         # Filter already-authoritative chunks.
         with sqlite3.connect(self.db_path) as conn:
@@ -1322,9 +1389,6 @@ class FileBatchSummarizer(ChunkWriter):
             remaining_chunks=len(missing_chunk_ids),
             scope_drained=len(missing_chunk_ids) == 0,
             summaries=summaries,
-            write_fenced=self.fenced_writes > fenced_before,
-            write_busy=self.busy_writes > busy_before,
-            summaries_committed=self.committed_writes - committed_before,
         )
 
 
@@ -1456,7 +1520,7 @@ class ComprehensiveChunkWriter(FileBatchSummarizer):
             )
             return SummaryGenerationResult()
 
-        committed_before = self.committed_writes
+        total_committed = 0
         total_attempted = 0
         total_summaries_written = 0
         total_authoritative_chunks = 0
@@ -1474,7 +1538,7 @@ class ComprehensiveChunkWriter(FileBatchSummarizer):
                 return SummaryGenerationResult(
                     chunks_attempted=total_attempted,
                     summaries_written=total_summaries_written,
-                    summaries_committed=self.committed_writes - committed_before,
+                    summaries_committed=total_committed,
                     authoritative_chunks=total_authoritative_chunks,
                     missing_chunk_ids=tuple(missing_chunk_ids),
                     files_attempted=total_files_attempted,
@@ -1556,7 +1620,7 @@ class ComprehensiveChunkWriter(FileBatchSummarizer):
                     return SummaryGenerationResult(
                         chunks_attempted=total_attempted,
                         summaries_written=total_summaries_written,
-                        summaries_committed=self.committed_writes - committed_before,
+                        summaries_committed=total_committed,
                         authoritative_chunks=total_authoritative_chunks,
                         missing_chunk_ids=tuple(missing_chunk_ids),
                         files_attempted=total_files_attempted,
@@ -1589,6 +1653,7 @@ class ComprehensiveChunkWriter(FileBatchSummarizer):
                     )
                     pass_summaries_written += file_result.summaries_written
                     total_summaries_written += file_result.summaries_written
+                    total_committed += file_result.summaries_committed
                     total_authoritative_chunks += file_result.authoritative_chunks
                     total_files_summarized += file_result.files_summarized
                     missing_chunk_ids.extend(file_result.missing_chunk_ids)
@@ -1600,7 +1665,7 @@ class ComprehensiveChunkWriter(FileBatchSummarizer):
                         return SummaryGenerationResult(
                             chunks_attempted=total_attempted,
                             summaries_written=total_summaries_written,
-                            summaries_committed=self.committed_writes - committed_before,
+                            summaries_committed=total_committed,
                             authoritative_chunks=total_authoritative_chunks,
                             missing_chunk_ids=tuple(missing_chunk_ids),
                             files_attempted=total_files_attempted,
@@ -1616,7 +1681,7 @@ class ComprehensiveChunkWriter(FileBatchSummarizer):
                         return SummaryGenerationResult(
                             chunks_attempted=total_attempted,
                             summaries_written=total_summaries_written,
-                            summaries_committed=self.committed_writes - committed_before,
+                            summaries_committed=total_committed,
                             authoritative_chunks=total_authoritative_chunks,
                             missing_chunk_ids=tuple(missing_chunk_ids),
                             files_attempted=total_files_attempted,
@@ -1655,7 +1720,7 @@ class ComprehensiveChunkWriter(FileBatchSummarizer):
         return SummaryGenerationResult(
             chunks_attempted=total_attempted,
             summaries_written=total_summaries_written,
-            summaries_committed=self.committed_writes - committed_before,
+            summaries_committed=total_committed,
             authoritative_chunks=total_authoritative_chunks,
             missing_chunk_ids=tuple(missing_chunk_ids),
             files_attempted=total_files_attempted,
@@ -1765,9 +1830,9 @@ class LazyChunkWriter(ChunkWriter):
             if gate is WriteGate.BUSY:
                 self._requeue_busy(entry)
                 return None
-        busy_before = self.busy_writes
-        summary = await self.summarize_chunk(**entry.chunk, write_fence=entry.fence)
-        if summary is None and self.busy_writes > busy_before:
+        with _call_tally() as tally:
+            summary = await self.summarize_chunk(**entry.chunk, write_fence=entry.fence)
+        if summary is None and tally.busy:
             self._requeue_busy(entry)
         return summary
 

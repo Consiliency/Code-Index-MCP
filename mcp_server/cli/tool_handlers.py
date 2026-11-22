@@ -1966,7 +1966,6 @@ async def handle_summarize_sample(
                 "chunk_count": len(summaries),
                 "chunks_attempted": summary_result.chunks_attempted,
                 "summaries_written": summary_result.summaries_written,
-                "summaries_committed": committed,
                 "authoritative_chunks": summary_result.authoritative_chunks,
                 "missing_chunk_ids": list(summary_result.missing_chunk_ids),
                 "remaining_chunks": summary_result.remaining_chunks,

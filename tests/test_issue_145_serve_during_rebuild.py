@@ -941,6 +941,9 @@ def test_summarize_sample_write_is_fenced_after_the_provider_call(tmp_path, monk
         if how == "none":
             # Control: with no rebuild the same call persists its summary.
             assert response["persisted"] is True and response["total_chunks"] == 1, response
+            # Success responses are unchanged: no refusal-only fields.
+            assert "summaries_committed" not in response
+            assert all("summaries_committed" not in entry for entry in response["files"])
             assert _summary_rows(published) == 1
             _assert_matches_schema("summarize_sample", response)
             return
@@ -1482,3 +1485,66 @@ def test_lazy_writer_shutdown_logs_dropped_entries(tmp_path, caplog):
     asyncio.run(run())
     assert "3 pending entries dropped" in caplog.text
     assert "chunk_hash" not in caplog.text  # counts only, no content
+
+
+def test_overlapping_calls_on_one_writer_count_only_their_own_commits(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    seed = {**SEED, "beta.py": "def beta_token():\n    return 2\n"}
+    path, repo_id = build_temp_repo(tmp_path, "overlap", seed_files=seed)
+    with boot_test_server(tmp_path, [path]) as server:
+        published = Path(server.registry.get(repo_id).index_path)
+        alpha_file, alpha_chunk = _seed_chunk(published)
+        beta_file, beta_chunk = _seed_chunk(published, filename="beta.py", chunk_id="chunk-beta")
+        writer = FileBatchSummarizer(
+            db_path=str(published),
+            qdrant_client=None,
+            summarization_config={"profile_id": "synthetic-profile"},
+        )
+        monkeypatch.setattr(writer, "_get_model_name", lambda **kwargs: "fake-model")
+        order: list = []
+
+        async def provider(file_id, file_path, file_content, chunks, symbol_map):
+            if chunks[0]["chunk_id"] == alpha_chunk:
+                # Let the other call start and enter its provider first.
+                await asyncio.sleep(0.02)
+                order.append("alpha-returns")
+                return [SimpleNamespace(chunk_id=alpha_chunk, summary="Alpha summary.")]
+            order.append("beta-waits")
+            # Stay in flight until the alpha call has committed its row.
+            while writer.committed_writes < 1:
+                await asyncio.sleep(0.005)
+            order.append("beta-returns")
+            return []  # nothing to store for this call
+
+        monkeypatch.setattr(writer, "_call_batch_api", provider)
+
+        def chunk(file_id: int, chunk_id: str) -> dict:
+            return {
+                "chunk_id": chunk_id,
+                "file_id": file_id,
+                "line_start": 1,
+                "line_end": 2,
+                "content": "def token():",
+                "language": "python",
+            }
+
+        async def run():
+            return await asyncio.gather(
+                writer.summarize_file_chunks(
+                    alpha_file, "alpha.py", "def alpha_token():", [chunk(alpha_file, alpha_chunk)]
+                ),
+                writer.summarize_file_chunks(
+                    beta_file, "beta.py", "def beta_token():", [chunk(beta_file, beta_chunk)]
+                ),
+            )
+
+        alpha_result, beta_result = asyncio.run(run())
+        writer._get_sqlite_store().close()
+
+        assert order == ["beta-waits", "alpha-returns", "beta-returns"], order
+        assert alpha_result.summaries_committed == 1
+        # The beta call overlapped the alpha commit but stored nothing itself.
+        assert beta_result.summaries_committed == 0
+        assert writer.committed_writes == 1
+        assert _summary_rows(published) == 1
