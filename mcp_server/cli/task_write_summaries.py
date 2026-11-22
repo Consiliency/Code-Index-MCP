@@ -32,6 +32,7 @@ async def run_write_summaries_task(
     limit_arg: int,
     model_used: str | None,
     write_blocked: Callable[[], bool] | None = None,
+    write_fence: Callable[[], Any] | None = None,
 ) -> types.CallToolResult:
     if active_store is None:
         raise RuntimeError("Task-backed write_summaries requires an initialized sqlite store")
@@ -53,6 +54,7 @@ async def run_write_summaries_task(
             **settings.get_profile_summarization_config(profile_id),
             "profile_id": profile_id,
         },
+        write_fence=write_fence,
     )
 
     total_written = 0
@@ -60,6 +62,7 @@ async def run_write_summaries_task(
     total_missing = 0
     remaining_budget = limit_arg
     persisted_any = False
+    write_fenced = False
     per_pass_limit = min(64, limit_arg)
 
     async def cancel_observer() -> None:
@@ -82,6 +85,7 @@ async def run_write_summaries_task(
                 cancel_check=lambda: task.is_cancelled
                 or (write_blocked is not None and write_blocked()),
             )
+            write_fenced = write_fenced or bool(getattr(result, "write_fenced", False))
             total_written += result.summaries_written
             total_attempted += result.chunks_attempted
             total_missing = result.remaining_chunks
@@ -101,7 +105,7 @@ async def run_write_summaries_task(
                     "persisted": persisted_any,
                 },
             )
-            if result.cancelled or task.is_cancelled:
+            if result.cancelled or task.is_cancelled or write_fenced:
                 break
             if result.summaries_written == 0 or result.remaining_chunks == 0:
                 break
@@ -116,13 +120,13 @@ async def run_write_summaries_task(
         "summary_chunks_attempted": total_attempted,
         "summary_missing_chunks": total_missing,
     }
-    if write_blocked is not None and write_blocked():
+    if write_fenced or (write_blocked is not None and write_blocked()):
         payload.update(
             code="rebuild_in_progress",
             note=(
-                "A staged rebuild started during this task, which stopped at the next "
-                "batch. Summaries written before it may be lost when it publishes; "
-                "rerun afterwards (already summarized chunks are skipped)."
+                "A staged rebuild started during this task. Summaries already committed "
+                "were written before it began and are kept; the rest were not written. "
+                "Rerun after the rebuild publishes (already summarized chunks are skipped)."
             ),
         )
     if task.is_cancelled:

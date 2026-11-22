@@ -132,6 +132,16 @@ class RepositoryReadiness:
         }
 
 
+def readiness_queryable(readiness: Any) -> bool:
+    """``readiness.queryable``, falling back to ``ready`` for duck-typed readiness objects."""
+    return bool(getattr(readiness, "queryable", getattr(readiness, "ready", False)))
+
+
+def readiness_serving_stale(readiness: Any) -> bool:
+    """``readiness.serving_stale``, False for duck-typed readiness objects."""
+    return bool(getattr(readiness, "serving_stale", False))
+
+
 @dataclass(frozen=True)
 class SemanticReadiness:
     state: SemanticReadinessState

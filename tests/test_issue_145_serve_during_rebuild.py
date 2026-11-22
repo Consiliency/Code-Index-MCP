@@ -528,8 +528,8 @@ class _FakeSummarizer:
     def _get_model_name(self) -> str:
         return "fake-model"
 
-    def enqueue(self, chunk) -> None:
-        self.enqueued.append(chunk)
+    def enqueue(self, chunk, write_fence=None) -> None:
+        self.enqueued.append((chunk, write_fence))
 
 
 class _FakeStore:
@@ -627,7 +627,8 @@ def test_write_summaries_stops_when_a_rebuild_starts_mid_run(tmp_path, monkeypat
         assert len(calls) == 1
         assert response["code"] == "rebuild_in_progress"
         assert response["chunks_summarized"] == 1
-        assert "rerun" in response["note"]
+        assert "Rerun" in response["note"]
+        _assert_matches_schema("write_summaries", response)
 
 
 def test_summarize_sample_refuses_to_persist_during_a_rebuild(tmp_path, monkeypatch):
@@ -783,3 +784,285 @@ def test_post_query_recheck_catches_source_changes_during_the_query(tmp_path, mo
         monkeypatch.setattr(server.dispatcher, "lookup", lookup)
         symbol = _symbol(server, path, "AlphaSymbol")
         assert symbol["code"] == "index_unavailable", symbol
+
+
+# ---------------------------------------------------------------------------
+# Writes are fenced at the persistence point, after the provider call
+# ---------------------------------------------------------------------------
+
+
+import threading  # noqa: E402
+
+from mcp_server.indexing.summarization import (  # noqa: E402
+    FileBatchSummarizer,
+    LazyChunkWriter,
+)
+
+
+def _assert_matches_schema(tool: str, response: dict) -> None:
+    import jsonschema
+
+    from mcp_server.cli.stdio_runner import _build_tool_list
+
+    schema = next(t.output_schema for t in _build_tool_list() if t.name == tool)
+    jsonschema.validate(response, schema)
+
+
+class _RebuildStarter:
+    """Starts a staged rebuild the way a real one fences readers and writers."""
+
+    def __init__(self, server, repo_id: str, path: Path, how: str):
+        self.server, self.repo_id, self.path, self.how = server, repo_id, path, how
+        self._release = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        if self.how == "none":
+            return
+        if self.how == "fence_flag":
+            info = self.server.registry.get(self.repo_id)
+            self.server.registry.begin_generation_mutation(
+                self.repo_id,
+                expected_registration_id=info.registration_id,
+                expected_generation=info.index_generation,
+            )
+            return
+        acquired = threading.Event()
+
+        def hold():
+            with locks.lock_registry.acquire(self.repo_id, repo_path=self.path):
+                acquired.set()
+                self._release.wait(10)
+
+        self._thread = threading.Thread(target=hold, daemon=True)
+        self._thread.start()
+        assert acquired.wait(10)
+
+    def stop(self) -> None:
+        self._release.set()
+        if self._thread is not None:
+            self._thread.join(10)
+
+
+def _summary_rows(db_path: Path) -> int:
+    import sqlite3
+
+    with sqlite3.connect(db_path) as conn:
+        return conn.execute("SELECT COUNT(*) FROM chunk_summaries").fetchone()[0]
+
+
+def _seed_chunk(db_path: Path) -> tuple[int, str]:
+    """Store one chunk through the store API, which stamps the chunk scheme."""
+    from mcp_server.storage.sqlite_store import SQLiteStore
+
+    store = SQLiteStore(str(db_path))
+    try:
+        with store._get_connection() as conn:
+            file_id = conn.execute("SELECT id FROM files WHERE path LIKE '%alpha.py'").fetchone()[0]
+        store.store_chunk(
+            file_id=file_id,
+            content="def alpha_token():",
+            content_start=0,
+            content_end=18,
+            line_start=1,
+            line_end=2,
+            chunk_id="chunk-alpha",
+            node_id="n",
+            treesitter_file_id="t",
+            language="python",
+        )
+    finally:
+        store.close()
+    ReadinessClassifier.clear_index_inspection_cache()
+    return file_id, "chunk-alpha"
+
+
+@pytest.mark.parametrize("how", ["none", "fence_flag", "writer_lock"])
+def test_summarize_sample_write_is_fenced_after_the_provider_call(tmp_path, monkeypatch, how):
+    path, repo_id = build_temp_repo(tmp_path, f"fenced-sample-{how}", seed_files=SEED)
+    with boot_test_server(tmp_path, [path]) as server:
+        published = Path(server.registry.get(repo_id).index_path)
+        _seed_chunk(published)
+        starter = _RebuildStarter(server, repo_id, path, how)
+        provider_calls: list = []
+
+        async def provider(self, *args, **kwargs):
+            # The rebuild begins while the provider call is in flight.
+            provider_calls.append(1)
+            starter.start()
+            from types import SimpleNamespace
+
+            return [SimpleNamespace(chunk_id="chunk-alpha", summary="Synthetic summary.")]
+
+        monkeypatch.setattr(FileBatchSummarizer, "_call_batch_api", provider)
+        monkeypatch.setattr(FileBatchSummarizer, "_call_profile_batch_api", provider)
+        monkeypatch.setattr(
+            FileBatchSummarizer, "_get_model_name", lambda self, **kwargs: "fake-model"
+        )
+        try:
+            response = _run_tool(
+                "handle_summarize_sample",
+                arguments={"repository": str(path), "persist": True, "n": 1},
+                dispatcher=server.dispatcher,
+                repo_resolver=server.repo_resolver,
+                lazy_summarizer=_FakeSummarizer(),
+            )
+        finally:
+            starter.stop()
+
+        assert provider_calls == [1]
+        if how == "none":
+            # Control: with no rebuild the same call persists its summary.
+            assert response["persisted"] is True and response["total_chunks"] == 1, response
+            assert _summary_rows(published) == 1
+            _assert_matches_schema("summarize_sample", response)
+            return
+        assert response["code"] == "rebuild_in_progress", response
+        assert response["files"][0]["summaries_written"] == 0
+        assert response["total_chunks"] == 0
+        assert _summary_rows(published) == 0  # nothing reached the old generation
+        _assert_matches_schema("summarize_sample", response)
+
+
+@pytest.mark.parametrize("how", ["fence_flag", "writer_lock"])
+def test_lazy_queue_entry_is_dropped_when_a_rebuild_starts_mid_call(tmp_path, monkeypatch, how):
+    path, repo_id = build_temp_repo(tmp_path, f"fenced-lazy-{how}", seed_files=SEED)
+    with boot_test_server(tmp_path, [path]) as server:
+        info = server.registry.get(repo_id)
+        published = Path(info.index_path)
+        file_id, chunk_id = _seed_chunk(published)
+        fence = server.repo_resolver.generation_write_fence(repo_id, info, path)
+        starter = _RebuildStarter(server, repo_id, path, how)
+        monkeypatch.delenv("CEREBRAS_API_KEY", raising=False)
+        writer = LazyChunkWriter(
+            db_path=str(published),
+            qdrant_client=None,
+            summarization_config={"base_url": "http://synthetic.invalid/v1"},
+        )
+        provider_calls: list = []
+
+        async def direct(*args, **kwargs):
+            provider_calls.append(1)
+            starter.start()
+            return "Synthetic summary.", "fake-model"
+
+        monkeypatch.setattr(writer, "_has_sampling_capability", lambda: False)
+        monkeypatch.setattr(writer, "_call_direct_api", direct)
+        chunk = dict(
+            chunk_hash=chunk_id,
+            file_id=file_id,
+            chunk_start=1,
+            chunk_end=2,
+            symbol="alpha_token",
+            content="def alpha_token():",
+            language="python",
+            is_authoritative=False,
+        )
+        try:
+            stored = asyncio.run(writer._summarize_queued((chunk, fence)))
+        finally:
+            starter.stop()
+        assert provider_calls == [1]
+        assert stored is None
+        assert writer.fenced_writes == 1
+        assert _summary_rows(published) == 0
+
+        # An entry whose generation is already fenced is dropped before any
+        # provider call; with no rebuild the same entry is stored.
+        if how == "fence_flag":
+            provider_calls.clear()
+            assert asyncio.run(writer._summarize_queued((chunk, fence))) is None
+            assert provider_calls == []
+
+
+def test_lazy_queue_entry_is_stored_without_a_rebuild(tmp_path, monkeypatch):
+    path, repo_id = build_temp_repo(tmp_path, "lazy-stored", seed_files=SEED)
+    with boot_test_server(tmp_path, [path]) as server:
+        info = server.registry.get(repo_id)
+        published = Path(info.index_path)
+        file_id, chunk_id = _seed_chunk(published)
+        fence = server.repo_resolver.generation_write_fence(repo_id, info, path)
+        monkeypatch.delenv("CEREBRAS_API_KEY", raising=False)
+        writer = LazyChunkWriter(
+            db_path=str(published),
+            qdrant_client=None,
+            summarization_config={"base_url": "http://synthetic.invalid/v1"},
+        )
+
+        async def direct(*args, **kwargs):
+            return "Synthetic summary.", "fake-model"
+
+        monkeypatch.setattr(writer, "_has_sampling_capability", lambda: False)
+        monkeypatch.setattr(writer, "_call_direct_api", direct)
+        chunk = dict(
+            chunk_hash=chunk_id,
+            file_id=file_id,
+            chunk_start=1,
+            chunk_end=2,
+            symbol="alpha_token",
+            content="def alpha_token():",
+            language="python",
+        )
+        assert asyncio.run(writer._summarize_queued((chunk, fence))) == "Synthetic summary."
+        assert _summary_rows(published) == 1
+        writer_store = writer._sqlite_store
+        if writer_store is not None:
+            writer_store.close()
+
+
+def test_search_enqueues_lazy_entries_with_a_generation_fence(tmp_path):
+    path, repo_id = build_temp_repo(tmp_path, "lazy-fence", seed_files=SEED)
+    with boot_test_server(tmp_path, [path]) as server:
+        summarizer = _FakeSummarizer()
+        _run_tool(
+            "handle_search_code",
+            arguments={"query": "alpha_token", "repository": str(path)},
+            dispatcher=server.dispatcher,
+            repo_resolver=server.repo_resolver,
+            sqlite_store=_FakeStore(),
+            lazy_summarizer=summarizer,
+        )
+        assert summarizer.enqueued
+        _chunk, fence = summarizer.enqueued[0]
+        with fence() as allowed:
+            assert allowed is True
+        info = server.registry.get(repo_id)
+        server.registry.begin_generation_mutation(
+            repo_id,
+            expected_registration_id=info.registration_id,
+            expected_generation=info.index_generation,
+        )
+        with fence() as allowed:
+            assert allowed is False
+
+
+def test_rebuild_in_progress_responses_match_the_advertised_schemas(tmp_path, monkeypatch):
+    path, repo_id = build_temp_repo(tmp_path, "schemas", seed_files=SEED)
+    with boot_test_server(tmp_path, [path]) as server:
+        resolver = server.repo_resolver
+        _install_fake_writer(monkeypatch)
+        observed: dict = {}
+
+        def operation(stage):
+            observed["write"] = _run_tool(
+                "handle_write_summaries",
+                arguments={"repository": str(path)},
+                dispatcher=server.dispatcher,
+                repo_resolver=resolver,
+                lazy_summarizer=_FakeSummarizer(),
+            )
+            observed["sample"] = _run_tool(
+                "handle_summarize_sample",
+                arguments={"repository": str(path), "persist": True, "n": 1},
+                dispatcher=server.dispatcher,
+                repo_resolver=resolver,
+                lazy_summarizer=_FakeSummarizer(),
+            )
+            return {"failed_files": 0}
+
+        run_repository_mutation(resolver, resolver.resolve_ready(path), operation)
+
+        assert observed["write"]["code"] == "rebuild_in_progress"
+        assert observed["sample"]["code"] == "rebuild_in_progress"
+        _assert_matches_schema("write_summaries", observed["write"])
+        _assert_matches_schema("summarize_sample", observed["sample"])

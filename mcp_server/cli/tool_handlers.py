@@ -35,6 +35,8 @@ from mcp_server.health.repository_readiness import (
     RepositoryReadiness,
     RepositoryReadinessState,
     fresh_readiness,
+    readiness_queryable,
+    readiness_serving_stale,
     readiness_snapshot,
     readiness_snapshot_context,
 )
@@ -180,7 +182,7 @@ def _resolve_ctx(
     callers also accept a published generation served during a rebuild (#145).
     """
     readiness = _classify_ctx(repo_resolver, path_arg)
-    if readiness is not None and not readiness.queryable:
+    if readiness is not None and not readiness_queryable(readiness):
         return None
 
     if path_arg:
@@ -283,6 +285,40 @@ def _rebuild_in_progress_response(
             **extra,
         }
     )
+
+
+_FENCED_WRITE_NOTE = (
+    "A staged rebuild started during this run. Summaries already committed were "
+    "written before it began and are kept; the rest were not written. Rerun after "
+    "the rebuild publishes (already summarized chunks are skipped)."
+)
+
+
+def _write_fence(repo_resolver: Any, ctx: Optional[RepoContext]) -> Any:
+    """The persistence-point fence for ctx's published generation, if available (#145)."""
+    if isinstance(repo_resolver, RepoResolver) and ctx is not None:
+        return repo_resolver.write_fence(ctx)
+    return None
+
+
+def _lazy_write_fence(repo_resolver: Any, readiness: Any) -> tuple[bool, Any]:
+    """Return ``(enqueue_allowed, fence)`` for lazy summaries of a served query.
+
+    The fence binds each queued entry to the registration and generation the
+    query read, so a staged rebuild that begins before the summary is stored
+    drops it (#145). With a resolver but no resolvable generation, nothing is
+    enqueued.
+    """
+    if not isinstance(repo_resolver, RepoResolver):
+        return True, None
+    repo_id = readiness.get("repository_id") if isinstance(readiness, dict) else None
+    try:
+        info = repo_resolver._registry.get(repo_id) if repo_id else None
+    except Exception:
+        info = None
+    if info is None:
+        return False, None
+    return True, repo_resolver.generation_write_fence(repo_id, info, Path(info.path))
 
 
 def _write_blocked(repo_resolver: Any, ctx: Optional[RepoContext]) -> bool:
@@ -429,7 +465,7 @@ async def handle_symbol_lookup(
                 }
             )
 
-    if readiness is not None and not readiness.queryable:
+    if readiness is not None and not readiness_queryable(readiness):
         return _index_unavailable_response(readiness, "symbol_lookup", symbol=symbol)
 
     ctx = _resolve_ctx(repo_resolver, repository)
@@ -489,7 +525,7 @@ async def handle_symbol_lookup(
             response_data["_usage_hint"] = (
                 f"To view definition: Read(file_path='{translated_path}', offset={offset}, limit=20)"
             )
-        if readiness is not None and readiness.serving_stale:
+        if readiness is not None and readiness_serving_stale(readiness):
             response_data["readiness"] = readiness.to_dict()
             response_data["note"] = _stale_note(readiness.to_dict())
         return [types.TextContent(type="text", text=_ensure_response(response_data))]
@@ -501,7 +537,7 @@ async def handle_symbol_lookup(
         }
         if readiness is not None:
             response_data["readiness"] = readiness.to_dict()
-            if readiness.serving_stale:
+            if readiness_serving_stale(readiness):
                 response_data["note"] = _stale_note(readiness.to_dict())
             if readiness.coverage_degraded:
                 # The symbol may live in a language this generation left out
@@ -751,7 +787,14 @@ async def handle_search_code(
         # Lazy summarization enqueue. Skipped while a staged rebuild runs: the
         # summaries would land in the generation it is about to replace (#145).
         rebuilding = isinstance(readiness, dict) and bool(readiness.get("rebuild"))
-        if lazy_summarizer and lazy_summarizer.can_summarize() and sqlite_store and not rebuilding:
+        lazy_allowed, lazy_fence = _lazy_write_fence(repo_resolver, readiness)
+        if (
+            lazy_summarizer
+            and lazy_summarizer.can_summarize()
+            and sqlite_store
+            and not rebuilding
+            and lazy_allowed
+        ):
             # CHUNKERSAFE Lane A: find_chunk_at_line is a scheme-dependent
             # code_chunks read; fail closed and skip summarization over an
             # incompatible/rebuilding index rather than enqueue stale-scheme rows.
@@ -772,7 +815,10 @@ async def handle_search_code(
                     if raw_file and raw_line:
                         chunk_info = sqlite_store.find_chunk_at_line(raw_file, int(raw_line))
                         if chunk_info:
-                            lazy_summarizer.enqueue(chunk_info)
+                            if lazy_fence is None:
+                                lazy_summarizer.enqueue(chunk_info)
+                            else:
+                                lazy_summarizer.enqueue(chunk_info, write_fence=lazy_fence)
 
         filtered_or_enriched = bool(
             source_type
@@ -1533,7 +1579,7 @@ async def handle_write_summaries(
 
     if readiness is not None and not readiness.ready:
         return _secondary_readiness_refusal_response(readiness, "write_summaries")
-    if readiness is not None and readiness.rebuild:
+    if readiness is not None and getattr(readiness, "rebuild", None):
         return _rebuild_in_progress_response("write_summaries", readiness)
 
     ctx = _resolve_ctx(repo_resolver, repository)
@@ -1580,6 +1626,11 @@ async def handle_write_summaries(
     def write_blocked() -> bool:
         return _write_blocked(repo_resolver, ctx)
 
+    # Checked at each write transaction, after the provider call returns: a
+    # fenced batch stores nothing, and every committed batch precedes any
+    # rebuild's snapshot because the fence holds the writer lock (#145).
+    write_fence = _write_fence(repo_resolver, ctx)
+
     if request_experimental is not None and request_experimental.is_task:
         return await request_experimental.run_task(
             lambda task: run_write_summaries_task(
@@ -1591,6 +1642,7 @@ async def handle_write_summaries(
                 limit_arg=limit_arg,
                 model_used=model_used,
                 write_blocked=write_blocked,
+                write_fence=write_fence,
             ),
             model_immediate_response=(
                 "Summary task created; use tasks/get and tasks/result to observe bounded progress."
@@ -1608,18 +1660,15 @@ async def handle_write_summaries(
             **_settings.get_profile_summarization_config(profile_id),
             "profile_id": profile_id,
         },
+        write_fence=write_fence,
     )
     summary_result = await writer.process_scope(limit=limit_arg, cancel_check=write_blocked)
-    if write_blocked():
+    if getattr(summary_result, "write_fenced", False) or write_blocked():
         return _rebuild_in_progress_response(
             "write_summaries",
             _classify_ctx(repo_resolver, repository),
             chunks_summarized=summary_result.summaries_written,
-            note=(
-                "A rebuild started during this run, which stopped at the next batch. "
-                "Summaries written before it may be lost when it publishes; rerun "
-                "afterwards (already summarized chunks are skipped)."
-            ),
+            note=_FENCED_WRITE_NOTE,
         )
 
     return [
@@ -1725,7 +1774,7 @@ async def handle_summarize_sample(
                     ]
                 if not path_readiness.ready:
                     return _secondary_readiness_refusal_response(path_readiness, "summarize_sample")
-                if persist_flag and path_readiness.rebuild:
+                if persist_flag and getattr(path_readiness, "rebuild", None):
                     return _rebuild_in_progress_response("summarize_sample", path_readiness)
                 repo_key = path_readiness.repository_id or ""
                 path_readiness_by_repo[repo_key] = path_readiness
@@ -1747,7 +1796,11 @@ async def handle_summarize_sample(
 
     if repository_readiness is not None and not repository_readiness.ready:
         return _secondary_readiness_refusal_response(repository_readiness, "summarize_sample")
-    if persist_flag and repository_readiness is not None and repository_readiness.rebuild:
+    if (
+        persist_flag
+        and repository_readiness is not None
+        and getattr(repository_readiness, "rebuild", None)
+    ):
         return _rebuild_in_progress_response("summarize_sample", repository_readiness)
 
     scope_arg = repository
@@ -1855,6 +1908,8 @@ async def handle_summarize_sample(
                 **settings.get_profile_summarization_config(profile_id),
                 "profile_id": profile_id,
             },
+            # Checked at the write itself, after the provider call (#145).
+            write_fence=_write_fence(repo_resolver, ctx) if persist_flag else None,
         )
 
         try:
@@ -1899,6 +1954,16 @@ async def handle_summarize_sample(
                 "summaries": summary_list,
             }
         )
+        if persist_flag and getattr(summary_result, "write_fenced", False):
+            # A rebuild began during the provider call: this file's summaries
+            # were not stored (#145).
+            return _rebuild_in_progress_response(
+                "summarize_sample",
+                _classify_ctx(repo_resolver, scope_arg),
+                files=file_results,
+                total_chunks=total_chunks,
+                note=_FENCED_WRITE_NOTE,
+            )
 
     return [
         types.TextContent(

@@ -55,9 +55,14 @@ recheck, so the caller retries against the new generation. Mutating tools
 while `rebuild` is set the summary writers (`write_summaries`, including task
 mode, and `summarize_sample` with `persist: true`) return `code:
 "rebuild_in_progress"` instead of writing into the generation about to be
-replaced (retry after it publishes); a rebuild that starts mid-run stops them
-at the next batch. Lazy summary enqueue from `search_code` is skipped during a
-rebuild. Each served query observes `git status` once for admission and once
+replaced (retry after it publishes). Every summary write is also fenced at the
+write itself, after the provider call: the writer takes the repository writer
+lock without waiting and stores nothing if a build holds it or the generation
+was fenced or replaced, so a rebuild that begins mid-call loses no committed
+work and the caller gets `rebuild_in_progress` with partial counts. Lazy
+summary entries from `search_code` carry the generation they were found in and
+are dropped, before the provider call or at the write, once a rebuild fences
+it; no new entries are enqueued during a rebuild. Each served query observes `git status` once for admission and once
 more, fresh, after the query; a HEAD move or newly dirty tree during the query
 returns `index_unavailable` so the caller retries.
 

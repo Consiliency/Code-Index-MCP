@@ -12,6 +12,7 @@ from mcp_server.dispatcher.protocol import DispatcherProtocol
 from mcp_server.health.repository_readiness import (
     ReadinessClassifier,
     fresh_readiness,
+    readiness_queryable,
     readiness_snapshot,
 )
 from mcp_server.storage.store_registry import StoreRegistry
@@ -271,7 +272,7 @@ def _execute_search_service(
     )
     # ``queryable`` also admits stale_commit while a live rebuild indexes a
     # newer commit; the result then carries that stale readiness (#145).
-    if readiness is not None and not readiness.queryable:
+    if readiness is not None and not readiness_queryable(readiness):
         unavailable: IndexUnavailable | None = _index_unavailable(readiness)
         return _unavailable_search(options, unavailable)
 
@@ -476,7 +477,7 @@ class IndexItClient:
             str(repository) if repository is not None else None,
             workspace_root=self.workspace_root,
         )
-        if readiness is not None and not readiness.queryable:
+        if readiness is not None and not readiness_queryable(readiness):
             return ClientSymbolResult(
                 symbol=symbol,
                 found=False,

@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import logging
+from contextlib import contextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, Optional, TypeVar
+from typing import TYPE_CHECKING, Any, Callable, ContextManager, Iterator, Optional, TypeVar
 
 from mcp_server.core.repo_context import RepoContext
 from mcp_server.health.repository_readiness import (
@@ -120,16 +121,48 @@ class RepoResolver:
         """
         if ctx is None:
             return False
+        return self._accepts_writes_for(ctx.repo_id, ctx.registry_entry)
+
+    def _accepts_writes_for(self, repo_id: str, expected: Any) -> bool:
         try:
-            info = self._registry.get(ctx.repo_id)
+            info = self._registry.get(repo_id)
             return (
                 info is not None
                 and not info.staleness_reason
-                and self._store_registry.binding(info)
-                == self._store_registry.binding(ctx.registry_entry)
+                and self._store_registry.binding(info) == self._store_registry.binding(expected)
             )
         except Exception:
             return False
+
+    def write_fence(self, ctx: RepoContext) -> Callable[[], ContextManager[bool]]:
+        """Return a write fence bound to ctx's registration and published generation."""
+        return self.generation_write_fence(ctx.repo_id, ctx.registry_entry, ctx.workspace_root)
+
+    def generation_write_fence(
+        self, repo_id: str, expected: Any, repo_path: Path
+    ) -> Callable[[], ContextManager[bool]]:
+        """Return a fence that persistent writers enter around each write (#145).
+
+        Entering it takes the repository writer lock without waiting, so no
+        staged build can begin until the write commits; a build that already
+        holds the lock, a fenced registry entry, or a replaced generation
+        yields False and the writer stores nothing.
+        """
+
+        @contextmanager
+        def fence() -> Iterator[bool]:
+            held = lock_registry.acquire(repo_id, repo_path=repo_path, timeout=0)
+            try:
+                held.__enter__()
+            except TimeoutError:
+                yield False
+                return
+            try:
+                yield self._accepts_writes_for(repo_id, expected)
+            finally:
+                held.__exit__(None, None, None)
+
+        return fence
 
     def mutate(
         self, ctx: RepoContext, operation: Callable[[RepoContext], _MutationResult]

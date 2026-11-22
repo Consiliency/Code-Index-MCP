@@ -6,10 +6,22 @@ import os
 import re
 import sqlite3
 import warnings
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, cast
+from typing import (
+    Any,
+    Callable,
+    ContextManager,
+    Dict,
+    Iterator,
+    List,
+    Optional,
+    Sequence,
+    Tuple,
+    cast,
+)
 
 import mcp.types as types
 from mcp.shared.exceptions import MCPDeprecationWarning
@@ -118,6 +130,10 @@ class SummaryGenerationResult:
     blocked_call_timeout_seconds: Optional[float] = None
     cancelled: bool = False
     summaries: Tuple[GeneratedSummary, ...] = field(default_factory=tuple)
+    #: A write fence refused at least one write: the target generation was
+    #: fenced or replaced by a staged rebuild, so those summaries were not
+    #: stored (Consiliency/Code-Index-MCP#145).
+    write_fenced: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "missing_chunk_ids", tuple(self.missing_chunk_ids))
@@ -140,6 +156,7 @@ class SummaryGenerationResult:
             "blocked_call_chunk_ids": list(self.blocked_call_chunk_ids),
             "blocked_call_timeout_seconds": self.blocked_call_timeout_seconds,
             "cancelled": self.cancelled,
+            "write_fenced": self.write_fenced,
             "summaries": [
                 {"chunk_id": item.chunk_id, "summary": item.summary} for item in self.summaries
             ],
@@ -198,6 +215,7 @@ class ChunkWriter:
         session: Any = None,
         client_name: Optional[str] = None,
         summarization_config: Optional[Dict[str, Any]] = None,
+        write_fence: Optional[Callable[[], ContextManager[bool]]] = None,
     ):
         self.db_path = db_path
         self.qdrant_client = qdrant_client
@@ -206,6 +224,26 @@ class ChunkWriter:
         self.summarization_config = summarization_config or {}
         self._sqlite_store: Optional[SQLiteStore] = None
         self._profile_model_resolution: Optional[EnrichmentModelResolution] = None
+        #: Entered around every summary write, after the provider call
+        #: returns: it yields False when the target generation no longer
+        #: accepts writes (a staged rebuild fenced or replaced it), and the
+        #: write is then skipped (Consiliency/Code-Index-MCP#145).
+        self.write_fence = write_fence
+        self.fenced_writes = 0
+
+    @contextmanager
+    def _fenced_write(
+        self, fence: Optional[Callable[[], ContextManager[bool]]] = None
+    ) -> Iterator[bool]:
+        """Yield whether a write may proceed; counts refusals in ``fenced_writes``."""
+        fence = fence if fence is not None else self.write_fence
+        if fence is None:
+            yield True
+            return
+        with fence() as allowed:
+            if not allowed:
+                self.fenced_writes += 1
+            yield bool(allowed)
 
     def _get_sqlite_store(self) -> SQLiteStore:
         if self._sqlite_store is None:
@@ -557,6 +595,7 @@ class ChunkWriter:
         file_content: str = "",
         is_authoritative: bool = False,
         cancel_check: Optional[Callable[[], bool]] = None,
+        write_fence: Optional[Callable[[], ContextManager[bool]]] = None,
     ) -> Optional[str]:
         """Generate a summary for a code chunk and persist it to SQLite.
 
@@ -704,17 +743,23 @@ class ChunkWriter:
         if summary_text is None:
             return None
 
-        self._persist_summary(
-            chunk_hash=chunk_hash,
-            file_id=file_id,
-            chunk_start=chunk_start,
-            chunk_end=chunk_end,
-            symbol=symbol,
-            summary_text=summary_text,
-            model_name=model_name or "unknown",
-            is_authoritative=is_authoritative,
-            **_stop_kwargs(cancel_check),
-        )
+        # The provider call may have taken long enough for a staged rebuild to
+        # begin; check at the write itself (#145).
+        with self._fenced_write(write_fence) as allowed:
+            if not allowed:
+                logger.info("Chunk summary dropped: its index generation is being rebuilt")
+                return None
+            self._persist_summary(
+                chunk_hash=chunk_hash,
+                file_id=file_id,
+                chunk_start=chunk_start,
+                chunk_end=chunk_end,
+                symbol=symbol,
+                summary_text=summary_text,
+                model_name=model_name or "unknown",
+                is_authoritative=is_authoritative,
+                **_stop_kwargs(cancel_check),
+            )
         logger.info("Stored chunk summary via %s", model_name)
         return summary_text
 
@@ -1073,6 +1118,7 @@ class FileBatchSummarizer(ChunkWriter):
         """
         if symbol_map is None:
             symbol_map = {}
+        fenced_before = self.fenced_writes
 
         # Filter already-authoritative chunks.
         with sqlite3.connect(self.db_path) as conn:
@@ -1180,6 +1226,7 @@ class FileBatchSummarizer(ChunkWriter):
             )
             summaries = recovery
 
+        batch_fenced = False
         if persist and summaries:
             chunk_lookup = {c["chunk_id"]: c for c in active_chunks}
             # Resolve the model before the write transaction opens: the first
@@ -1191,55 +1238,67 @@ class FileBatchSummarizer(ChunkWriter):
             )
             persisted_count = 0
             # One transaction per provider batch: a failure or interrupt while
-            # storing leaves none of the batch rather than part of it.
-            with self._get_sqlite_store()._get_connection() as conn:
-                conn.execute("BEGIN IMMEDIATE")
-                persisted_hashes = {
-                    row[0]
-                    for row in conn.execute(
-                        "SELECT chunk_hash FROM chunk_summaries WHERE is_authoritative=1 "
-                        "AND profile_id=? AND prompt_fingerprint=?",
-                        (self.summarization_config.get("profile_id"), self._prompt_fingerprint()),
-                    ).fetchall()
-                }
-                for s in summaries:
-                    c = chunk_lookup.get(s.chunk_id)
-                    if c is None or s.chunk_id in persisted_hashes:
-                        continue
-                    sym = _symbol_name(symbol_map, c)
-                    self._persist_summary(
-                        chunk_hash=s.chunk_id,
-                        file_id=file_id,
-                        chunk_start=c.get("line_start") or 1,
-                        chunk_end=c.get("line_end") or 1,
-                        symbol=sym,
-                        summary_text=s.summary,
-                        model_name=model_name or "unknown",
-                        is_authoritative=True,
-                        **_stop_kwargs(cancel_check),
-                    )
-                    persisted_hashes.add(s.chunk_id)
-                    persisted_count += 1
+            # storing leaves none of the batch rather than part of it. The write
+            # fence wraps the whole transaction, so a staged rebuild cannot
+            # begin between its check and the commit; if the generation is
+            # already fenced, none of the batch is written (#145).
+            with self._fenced_write() as allowed:
+                if not allowed:
+                    batch_fenced = True
+                else:
+                    with self._get_sqlite_store()._get_connection() as conn:
+                        conn.execute("BEGIN IMMEDIATE")
+                        persisted_hashes = {
+                            row[0]
+                            for row in conn.execute(
+                                "SELECT chunk_hash FROM chunk_summaries WHERE is_authoritative=1 "
+                                "AND profile_id=? AND prompt_fingerprint=?",
+                                (
+                                    self.summarization_config.get("profile_id"),
+                                    self._prompt_fingerprint(),
+                                ),
+                            ).fetchall()
+                        }
+                        for s in summaries:
+                            c = chunk_lookup.get(s.chunk_id)
+                            if c is None or s.chunk_id in persisted_hashes:
+                                continue
+                            sym = _symbol_name(symbol_map, c)
+                            self._persist_summary(
+                                chunk_hash=s.chunk_id,
+                                file_id=file_id,
+                                chunk_start=c.get("line_start") or 1,
+                                chunk_end=c.get("line_end") or 1,
+                                symbol=sym,
+                                summary_text=s.summary,
+                                model_name=model_name or "unknown",
+                                is_authoritative=True,
+                                **_stop_kwargs(cancel_check),
+                            )
+                            persisted_hashes.add(s.chunk_id)
+                            persisted_count += 1
             logger.info(
                 "FileBatchSummarizer: persisted %d summaries for %s",
                 persisted_count,
                 file_path,
             )
 
-        summarized_chunk_ids = {s.chunk_id for s in summaries}
+        written = () if batch_fenced else summaries
+        summarized_chunk_ids = {s.chunk_id for s in written}
         missing_chunk_ids = [
             c["chunk_id"] for c in to_summarize if c["chunk_id"] not in summarized_chunk_ids
         ]
         return SummaryGenerationResult(
             chunks_attempted=len(active_chunks),
-            summaries_written=len(summaries),
-            authoritative_chunks=existing_authoritative + len(summaries),
+            summaries_written=len(written),
+            authoritative_chunks=existing_authoritative + len(written),
             missing_chunk_ids=tuple(missing_chunk_ids),
             files_attempted=1,
-            files_summarized=1 if summaries else 0,
+            files_summarized=1 if written else 0,
             remaining_chunks=len(missing_chunk_ids),
             scope_drained=len(missing_chunk_ids) == 0,
             summaries=summaries,
+            write_fenced=self.fenced_writes > fenced_before,
         )
 
 
@@ -1504,6 +1563,22 @@ class ComprehensiveChunkWriter(FileBatchSummarizer):
                     total_authoritative_chunks += file_result.authoritative_chunks
                     total_files_summarized += file_result.files_summarized
                     missing_chunk_ids.extend(file_result.missing_chunk_ids)
+                    if file_result.write_fenced:
+                        # A staged rebuild fenced the target generation: stop
+                        # rather than spend provider calls on unwritable work.
+                        remaining_chunks = self._count_unsummarized_rows(target_paths=target_paths)
+                        return SummaryGenerationResult(
+                            chunks_attempted=total_attempted,
+                            summaries_written=total_summaries_written,
+                            authoritative_chunks=total_authoritative_chunks,
+                            missing_chunk_ids=tuple(missing_chunk_ids),
+                            files_attempted=total_files_attempted,
+                            files_summarized=total_files_summarized,
+                            batches_processed=batches_processed,
+                            remaining_chunks=remaining_chunks,
+                            scope_drained=False,
+                            write_fenced=True,
+                        )
                     if file_result.blocked_call_reason is not None:
                         remaining_chunks = self._count_unsummarized_rows(target_paths=target_paths)
                         return SummaryGenerationResult(
@@ -1610,14 +1685,37 @@ class LazyChunkWriter(ChunkWriter):
 
     async def _worker(self) -> None:
         while True:
-            chunk = await self.queue.get()
+            item = await self.queue.get()
             try:
-                await self.summarize_chunk(**chunk)
+                await self._summarize_queued(item)
             except Exception as exc:
                 logger.error("Error summarizing chunk (%s)", type(exc).__name__)
             finally:
                 self.queue.task_done()
 
-    def enqueue(self, chunk_data: Dict[str, Any]) -> None:
-        """Add a chunk to the background summarization queue (non-blocking)."""
-        self.queue.put_nowait(chunk_data)
+    async def _summarize_queued(self, item: Any) -> Optional[str]:
+        """Summarize one queued entry unless its index generation was fenced (#145).
+
+        An entry carries the write fence of the generation it was enqueued
+        for. It is dropped before the provider call when that generation is
+        already fenced or replaced, and the fence is checked again at the write.
+        """
+        chunk, fence = item if isinstance(item, tuple) else (item, None)
+        if fence is not None:
+            with self._fenced_write(fence) as allowed:
+                if not allowed:
+                    logger.info("Queued chunk summary dropped: its generation is being rebuilt")
+                    return None
+        return await self.summarize_chunk(**chunk, write_fence=fence)
+
+    def enqueue(
+        self,
+        chunk_data: Dict[str, Any],
+        write_fence: Optional[Callable[[], ContextManager[bool]]] = None,
+    ) -> None:
+        """Add a chunk to the background summarization queue (non-blocking).
+
+        ``write_fence`` binds the entry to the generation it was found in, so a
+        staged rebuild that begins before it is stored drops it (#145).
+        """
+        self.queue.put_nowait((chunk_data, write_fence))
