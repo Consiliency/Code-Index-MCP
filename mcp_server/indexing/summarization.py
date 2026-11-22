@@ -423,6 +423,21 @@ class ChunkWriter:
         )
         return str(response.choices[0].message.content or "")
 
+    def _profile_stop_after_resolution(self, cancel_check: Optional[Callable[[], bool]]) -> bool:
+        """Resolve the profile model first, then report whether a stop is set.
+
+        ``_call_profile_api`` resolves the model before its completion call. Doing
+        that resolution here (it is cached once it succeeds) means a stop that
+        arrives during an uncached ``GET /models`` probe is seen before the
+        completion starts. Without ``cancel_check`` nothing changes.
+        """
+        if cancel_check is None:
+            return False
+        if _stop_requested(cancel_check):
+            return True
+        self._resolve_effective_profile_model(cancel_check=cancel_check)
+        return _stop_requested(cancel_check)
+
     async def _call_profile_api(
         self, system: str, prompt: str, *, max_tokens: int = 150
     ) -> tuple[str, str]:
@@ -475,6 +490,10 @@ class ChunkWriter:
             if _stop_requested(cancel_check):
                 return None, None
             try:
+                # Resolve inside the try: a failed probe is handled like a failed
+                # call, as it was when only _call_profile_api resolved the model.
+                if self._profile_stop_after_resolution(cancel_check):
+                    return None, None
                 return await self._call_profile_api(system, prompt)
             except Exception as exc:
                 logger.warning(
@@ -886,7 +905,7 @@ class FileBatchSummarizer(ChunkWriter):
         summaries: List[SimpleNamespace] = []
 
         for offset in range(0, len(chunks), _PROFILE_BATCH_CHUNK_COUNT):
-            if _stop_requested(cancel_check):
+            if self._profile_stop_after_resolution(cancel_check):
                 break
             batch = chunks[offset : offset + _PROFILE_BATCH_CHUNK_COUNT]
             chunk_blocks = []

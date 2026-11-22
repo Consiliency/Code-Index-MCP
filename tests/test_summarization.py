@@ -2306,3 +2306,64 @@ async def test_stop_before_model_resolution_never_starts_the_models_probe(
         assert llm_model == "served-model"
         assert audit["effective_model_name"] == "served-model"
         assert audit["model_resolution_strategy"] == "single_served_model"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["direct", "batch"])
+async def test_stop_during_the_models_probe_starts_no_completion(tmp_path, monkeypatch, path):
+    """A stop that arrives while /models is probed must not start the completion."""
+    import openai
+
+    from mcp_server.indexing import summarization
+
+    monkeypatch.delenv("MCP_DEPLOYMENT_PROFILE", raising=False)
+    stop = {"requested": False}
+    completions: list[str] = []
+
+    def resolve_then_stop(**kwargs):
+        stop["requested"] = True  # the stop arrives during the probe
+        return EnrichmentModelResolution(
+            configured_model=kwargs["configured_model"],
+            effective_model="served-model",
+            resolution_strategy="single_served_model",
+            available_models=["served-model"],
+        )
+
+    class _Completions:
+        async def create(self, **kwargs):
+            completions.append(kwargs["model"])
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="{}"))])
+
+    class _Client:
+        def __init__(self, *args, **kwargs):
+            self.chat = SimpleNamespace(completions=_Completions())
+
+        async def close(self):
+            return None
+
+    monkeypatch.setattr(summarization, "resolve_enrichment_model", resolve_then_stop)
+    monkeypatch.setattr(openai, "AsyncOpenAI", _Client)
+    writer = FileBatchSummarizer(
+        db_path=str(tmp_path / "probe-stop.db"),
+        qdrant_client=None,
+        summarization_config={
+            "base_url": "http://127.0.0.1:9/v1",
+            "model_name": "chat",
+            "profile_id": "fixture",
+        },
+    )
+
+    def cancel_check():
+        return stop["requested"]
+
+    if path == "direct":
+        text, model = await writer._call_direct_api("system", "prompt", cancel_check=cancel_check)
+        assert (text, model) == (None, None)
+    else:
+        chunks = [{"chunk_id": "c1", "language": "python", "content": "x = 1"}]
+        result = await writer._call_profile_batch_api(
+            1, "a.py", "x = 1", chunks, {}, cancel_check=cancel_check
+        )
+        assert result == []
+    assert stop["requested"] is True
+    assert completions == []
