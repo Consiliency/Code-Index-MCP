@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
-from watchdog.events import FileCreatedEvent, FileDeletedEvent, FileMovedEvent
+from watchdog.events import FileCreatedEvent, FileDeletedEvent, FileModifiedEvent, FileMovedEvent
 from watchdog.observers import Observer
 
 from mcp_server.core.repo_context import RepoContext
@@ -212,6 +212,86 @@ def test_watcher_uses_current_generation_and_external_registry_membership(tmp_pa
             assert set(watcher.watchers) == {second_id}
             assert external.get(first_id) is None
             assert external.get(second_id) is not None
+        finally:
+            watcher.stop_watching_all()
+            watcher.executor.shutdown(wait=True)
+
+
+def test_index_and_git_writes_never_reach_reconciliation(tmp_path, monkeypatch):
+    """Staged-build writes inside the repository are dropped before readiness work (#145).
+
+    The index lives in ``<repo>/.mcp-index``, so every SQLite page write and
+    snapshot copy of a rebuild is an inotify event in the watched tree. When
+    each one paid for a readiness classification on the single watchdog
+    thread, millions queued up and server RSS grew by gigabytes.
+    """
+    repo, repo_id = build_temp_repo(tmp_path, "repo", seed_files={"seed.py": "x = 1\n"})
+    with boot_test_server(tmp_path, [repo]) as server:
+        sync = Mock(return_value=Mock(action="up_to_date"))
+        watcher = MultiRepositoryWatcher(
+            server.registry,
+            _make_dispatcher(),
+            Mock(store_registry=server.store_registry, sync_repository_index=sync),
+            repo_resolver=server.repo_resolver,
+            store_registry=server.store_registry,
+            sweeper=Mock(),
+        )
+        monkeypatch.setattr("mcp_server.watcher_multi_repo.Observer", Mock())
+        watcher.running = True
+        try:
+            watcher._reconcile_registry(server.registry.get_all_repositories())
+            handler = watcher.watchers[repo_id]
+            classify = Mock(wraps=server.repo_resolver.classify)
+            monkeypatch.setattr(server.repo_resolver, "classify", classify)
+            # The early drop must stop excluded events before reconciliation,
+            # not merely before the readiness refresh: ignore-file parsing per
+            # event is what let the queue fall behind.
+            reconcile = Mock(wraps=handler._reconcile_committed_event)
+            monkeypatch.setattr(handler, "_reconcile_committed_event", reconcile)
+            import mcp_server.watcher_multi_repo as watcher_module
+
+            walker = Mock(wraps=watcher_module.build_walker_filter)
+            monkeypatch.setattr(watcher_module, "build_walker_filter", walker)
+            index_dir = repo / ".mcp-index"
+            excluded = [
+                index_dir / "generations" / f"{'a' * 32}.db",
+                index_dir / "generations" / f"{'a' * 32}.db-journal",
+                index_dir / ".current.db.staging-x" / "source" / "seed.py",
+                repo / ".git" / "index",
+            ]
+            for _ in range(50):
+                for path in excluded:
+                    handler.on_any_event(FileModifiedEvent(str(path)))
+                    handler.on_any_event(FileCreatedEvent(str(path)))
+                    handler.on_any_event(FileDeletedEvent(str(path)))
+            # Excluded -> excluded: dropped like any other excluded event.
+            handler.on_any_event(FileMovedEvent(str(excluded[1]), str(excluded[0])))
+
+            reconcile.assert_not_called()
+            walker.assert_not_called()
+            classify.assert_not_called()
+            sync.assert_not_called()
+
+            # Excluded -> included: the destination is source, so it reconciles.
+            moved_in = repo / "moved_in.py"
+            handler.on_any_event(FileMovedEvent(str(excluded[2]), str(moved_in)))
+            reconcile.assert_called_once_with(moved_in)
+            assert sync.call_count == 1
+
+            # Included -> excluded: not dropped early (the source side is
+            # indexed); reconciliation sees the excluded destination and the
+            # ignore rules reject it there, before any sync.
+            reconcile.reset_mock()
+            handler.on_any_event(FileMovedEvent(str(repo / "seed.py"), str(excluded[0])))
+            reconcile.assert_called_once_with(excluded[0])
+            assert sync.call_count == 1
+
+            # A source edit still reconciles.
+            reconcile.reset_mock()
+            handler.on_any_event(FileModifiedEvent(str(repo / "seed.py")))
+            reconcile.assert_called_once_with(repo / "seed.py")
+            assert classify.called
+            assert sync.call_count == 2
         finally:
             watcher.stop_watching_all()
             watcher.executor.shutdown(wait=True)
