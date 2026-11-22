@@ -671,11 +671,11 @@ class GitAwareIndexManager:
             stale.append(
                 f"HEAD moved from {observed_commit[:12]} to {(current_commit or '?')[:12]}"
             )
-        if observed_commit is not None and observed_commit != last_indexed_commit:
-            stale.append(
-                f"indexed commit is {(last_indexed_commit or 'none')[:12]}, "
-                f"not the swept {observed_commit[:12]}"
-            )
+        # A swept commit that is the current HEAD but not the indexed commit
+        # is not stale: the sweep found a committed change that nothing has
+        # indexed yet. The drift paths are not applied to the older
+        # generation; the ordinary incremental sync below computes the change
+        # set from the indexed commit to HEAD (#163).
         if observed_index_path is not None and (
             not repo_info.index_path
             or Path(repo_info.index_path).resolve(strict=False)
