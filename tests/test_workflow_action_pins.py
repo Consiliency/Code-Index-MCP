@@ -14,7 +14,8 @@ USES_LINE = re.compile(
     r"^\s*(?:-\s*)?uses:\s*(?P<action>[^\s@]+)@(?P<ref>[^\s#]+)\s+#\s+(?P<version>\S+)\s*$"
 )
 WORKFLOW_CENSUS = {
-    "ci-cd-pipeline.yml": ({"pull_request", "push", "workflow_dispatch"}, 7),
+    # 8: semantic-canary-tier-a (Consiliency/Code-Index-MCP#113) added the eighth job.
+    "ci-cd-pipeline.yml": ({"pull_request", "push", "workflow_dispatch"}, 8),
     "container-registry.yml": ({"pull_request", "push", "workflow_dispatch"}, 4),
     "index-artifact-management.yml": ({"workflow_call", "workflow_dispatch"}, 2),
     "index-management.yml": ({"workflow_dispatch"}, 1),

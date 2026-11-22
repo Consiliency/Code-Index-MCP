@@ -37,6 +37,9 @@ These are all Qdrant client constructions in supported code. Each one now uses
   servers with a random key for each run. Docker receives the key by name only, so it
   never appears in argv. The pilot writes the key into its private fixture `.mcp.json`
   next to its existing per-run guard token.
+  `scripts/semantic_canary.py` (#113) reads `QDRANT_API_KEY` from its environment, sends it
+  in in-process headers and passes it to its stdio server child by environment only; see
+  `docs/operations/semantic-canary.md`.
 
 Not migrated:
 
