@@ -862,8 +862,8 @@ def test_write_summaries_remains_summary_only(tmp_path, monkeypatch):
         def __init__(self, *args, **kwargs):
             seen_config.update(kwargs["summarization_config"])
 
-        async def process_scope(self, limit=500):
-            del limit
+        async def process_scope(self, limit=500, cancel_check=None):
+            del limit, cancel_check
             return SimpleNamespace(
                 summaries_written=3, chunks_attempted=4, missing_chunk_ids=["c4"]
             )

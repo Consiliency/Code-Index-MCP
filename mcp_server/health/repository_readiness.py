@@ -8,7 +8,9 @@ import sqlite3
 import subprocess
 import threading
 from collections import OrderedDict
-from contextlib import closing
+import contextvars
+from contextlib import closing, contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -848,7 +850,66 @@ def _find_git_root(start: Path) -> Optional[Path]:
         current = current.parent
 
 
+#: Per-request git observations (Consiliency/Code-Index-MCP#145). A query
+#: classifies readiness several times on its way through admission and context
+#: creation; inside ``readiness_snapshot()`` each checkout's ``git status`` runs
+#: once and is reused, and ``fresh_readiness()`` observes it again for the one
+#: recheck after the query.
+_GIT_STATE_SNAPSHOT: ContextVar[Optional[dict[str, tuple[Optional[str], Optional[str], bool]]]] = (
+    ContextVar("mcp_readiness_git_snapshot", default=None)
+)
+
+
+@contextmanager
+def readiness_snapshot():
+    """Reuse one git observation per checkout for the rest of this request.
+
+    Re-entering inside an active snapshot reuses it. Copy the context
+    (``contextvars.copy_context().run``) to carry it into an executor thread.
+    """
+    if _GIT_STATE_SNAPSHOT.get() is not None:
+        yield
+        return
+    token = _GIT_STATE_SNAPSHOT.set({})
+    try:
+        yield
+    finally:
+        _GIT_STATE_SNAPSHOT.reset(token)
+
+
+@contextmanager
+def fresh_readiness():
+    """Observe git again, bypassing any active request snapshot."""
+    token = _GIT_STATE_SNAPSHOT.set(None)
+    try:
+        yield
+    finally:
+        _GIT_STATE_SNAPSHOT.reset(token)
+
+
+def readiness_snapshot_context() -> contextvars.Context:
+    """Return a copied context holding a new request snapshot.
+
+    For request handlers that hop to an executor thread: run each step with
+    ``context.run(...)`` so every classification shares one observation.
+    """
+    context = contextvars.copy_context()
+    context.run(_GIT_STATE_SNAPSHOT.set, {})
+    return context
+
+
 def _git_state(path: Path) -> tuple[Optional[str], Optional[str], bool]:
+    """Return HEAD, branch and tracked state, reusing the request snapshot if any."""
+    snapshot = _GIT_STATE_SNAPSHOT.get()
+    if snapshot is None:
+        return _observe_git_state(path)
+    key = str(path)
+    if key not in snapshot:
+        snapshot[key] = _observe_git_state(path)
+    return snapshot[key]
+
+
+def _observe_git_state(path: Path) -> tuple[Optional[str], Optional[str], bool]:
     """Read fresh HEAD, branch and tracked state without refreshing Git's index."""
     try:
         result = subprocess.run(

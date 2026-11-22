@@ -51,7 +51,15 @@ serve during a same-commit rebuild but keep refusing `stale_commit`. A query
 whose generation is published mid-flight finishes on its open connection to
 the old file (retention keeps that file) and is then refused by the generation
 recheck, so the caller retries against the new generation. Mutating tools
-(`reindex`, `write_summaries`, `summarize_sample`) still require `ready`.
+(`reindex`, `write_summaries`, `summarize_sample`) still require `ready`, and
+while `rebuild` is set the summary writers (`write_summaries`, including task
+mode, and `summarize_sample` with `persist: true`) return `code:
+"rebuild_in_progress"` instead of writing into the generation about to be
+replaced (retry after it publishes); a rebuild that starts mid-run stops them
+at the next batch. Lazy summary enqueue from `search_code` is skipped during a
+rebuild. Each served query observes `git status` once for admission and once
+more, fresh, after the query; a HEAD move or newly dirty tree during the query
+returns `index_unavailable` so the caller retries.
 
 Runtime facts are grounded in `mcp_server/plugins/language_registry.py`,
 `mcp_server/plugins/plugin_factory.py`, `mcp_server/plugins/plugin_set_registry.py`,

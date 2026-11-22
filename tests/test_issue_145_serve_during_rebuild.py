@@ -9,6 +9,7 @@ generation. A dead owner keeps today's fail-closed ``missing_provenance``.
 
 from __future__ import annotations
 
+import asyncio
 import importlib
 import json
 import os
@@ -22,6 +23,8 @@ import pytest
 from mcp_server.core.repo_resolver import run_repository_mutation
 from mcp_server.health.repository_readiness import ReadinessClassifier, RepositoryReadinessState
 from tests.fixtures.multi_repo import boot_test_server, build_temp_repo, git, git_head
+
+readiness_module = importlib.import_module("mcp_server.health.repository_readiness")
 
 # ``mcp_server.indexing`` re-exports the ``lock_registry`` singleton under the
 # module's own name, so import the module explicitly.
@@ -506,3 +509,277 @@ def test_publish_swap_mid_query_finishes_on_the_old_file_then_fails_closed(tmp_p
         monkeypatch.setattr(server.dispatcher, "search", original_search)
         retry = _search(server, path, "alpha_token")
         assert "alpha.py" in _result_files(retry)
+
+
+# ---------------------------------------------------------------------------
+# Persistent index writes refuse while a rebuild runs
+# ---------------------------------------------------------------------------
+
+
+class _FakeSummarizer:
+    """Stands in for the lazy summarizer: summarization available, enqueue recorded."""
+
+    def __init__(self):
+        self.enqueued: list = []
+
+    def can_summarize(self) -> bool:
+        return True
+
+    def _get_model_name(self) -> str:
+        return "fake-model"
+
+    def enqueue(self, chunk) -> None:
+        self.enqueued.append(chunk)
+
+
+class _FakeStore:
+    """The handler's global store, only consulted for lazy enqueue."""
+
+    def get_chunk_scheme_status(self):
+        return ("compatible", None, None)
+
+    def find_chunk_at_line(self, path, line):
+        return {"chunk_id": f"{path}:{line}"}
+
+
+def _run_tool(handler, **kwargs) -> dict:
+    from mcp_server.cli import tool_handlers
+
+    result = asyncio.run(getattr(tool_handlers, handler)(**kwargs))
+    return json.loads(result[0].text)
+
+
+def _install_fake_writer(monkeypatch, on_process=None):
+    from mcp_server.indexing import summarization
+    from mcp_server.indexing.summarization import SummaryGenerationResult
+
+    calls: list = []
+
+    class FakeWriter:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        async def process_scope(self, limit=500, cancel_check=None, **kwargs):
+            calls.append(self.kwargs["db_path"])
+            if on_process is not None:
+                on_process()
+            cancelled = bool(cancel_check and cancel_check())
+            return SummaryGenerationResult(
+                chunks_attempted=1, summaries_written=1, cancelled=cancelled
+            )
+
+    monkeypatch.setattr(summarization, "ComprehensiveChunkWriter", FakeWriter)
+    return calls
+
+
+def test_write_summaries_refuses_during_a_rebuild_and_writes_after(tmp_path, monkeypatch):
+    path, repo_id = build_temp_repo(tmp_path, "summaries", seed_files=SEED)
+    with boot_test_server(tmp_path, [path]) as server:
+        resolver = server.repo_resolver
+        calls = _install_fake_writer(monkeypatch)
+        common = dict(
+            arguments={"repository": str(path)},
+            dispatcher=server.dispatcher,
+            repo_resolver=resolver,
+            lazy_summarizer=_FakeSummarizer(),
+        )
+        observed: dict = {}
+
+        def operation(stage):
+            observed["readiness"] = resolver.classify(path)
+            observed["write"] = _run_tool("handle_write_summaries", **common)
+            return {"failed_files": 0}
+
+        run_repository_mutation(resolver, resolver.resolve_ready(path), operation)
+
+        assert observed["readiness"].ready and observed["readiness"].rebuild
+        refused = observed["write"]
+        assert refused["code"] == "rebuild_in_progress"
+        assert refused["mutation_performed"] is False
+        assert refused["readiness"]["rebuild"]["in_progress"] is True
+        assert calls == []  # nothing reached the published generation
+
+        written = _run_tool("handle_write_summaries", **common)
+        assert written["persisted"] is True and written["chunks_summarized"] == 1
+        assert len(calls) == 1
+
+
+def test_write_summaries_stops_when_a_rebuild_starts_mid_run(tmp_path, monkeypatch):
+    path, repo_id = build_temp_repo(tmp_path, "midrun", seed_files=SEED)
+    with boot_test_server(tmp_path, [path]) as server:
+        info = server.registry.get(repo_id)
+
+        def rebuild_starts():
+            server.registry.begin_generation_mutation(
+                repo_id,
+                expected_registration_id=info.registration_id,
+                expected_generation=info.index_generation,
+            )
+
+        calls = _install_fake_writer(monkeypatch, on_process=rebuild_starts)
+        response = _run_tool(
+            "handle_write_summaries",
+            arguments={"repository": str(path)},
+            dispatcher=server.dispatcher,
+            repo_resolver=server.repo_resolver,
+            lazy_summarizer=_FakeSummarizer(),
+        )
+        assert len(calls) == 1
+        assert response["code"] == "rebuild_in_progress"
+        assert response["chunks_summarized"] == 1
+        assert "rerun" in response["note"]
+
+
+def test_summarize_sample_refuses_to_persist_during_a_rebuild(tmp_path, monkeypatch):
+    path, repo_id = build_temp_repo(tmp_path, "sample", seed_files=SEED)
+    with boot_test_server(tmp_path, [path]) as server:
+        resolver = server.repo_resolver
+        observed: dict = {}
+
+        def sample(persist: bool) -> dict:
+            return _run_tool(
+                "handle_summarize_sample",
+                arguments={"repository": str(path), "persist": persist, "n": 1},
+                dispatcher=server.dispatcher,
+                repo_resolver=resolver,
+                lazy_summarizer=None,
+            )
+
+        def operation(stage):
+            observed["persist"] = sample(True)
+            observed["preview"] = sample(False)
+            return {"failed_files": 0}
+
+        run_repository_mutation(resolver, resolver.resolve_ready(path), operation)
+
+        assert observed["persist"]["code"] == "rebuild_in_progress"
+        assert observed["persist"]["mutation_performed"] is False
+        # A non-persisting sample only reads; it passes the rebuild gate and
+        # stops at the (absent) summarizer instead.
+        assert observed["preview"].get("code") != "rebuild_in_progress"
+        assert observed["preview"]["error"] == "Summarization not available"
+
+
+def test_lazy_summary_enqueue_is_skipped_during_a_rebuild(tmp_path):
+    path, repo_id = build_temp_repo(tmp_path, "lazy", seed_files=SEED)
+    with boot_test_server(tmp_path, [path]) as server:
+        resolver = server.repo_resolver
+        summarizer = _FakeSummarizer()
+
+        def search() -> object:
+            return _run_tool(
+                "handle_search_code",
+                arguments={"query": "alpha_token", "repository": str(path)},
+                dispatcher=server.dispatcher,
+                repo_resolver=resolver,
+                sqlite_store=_FakeStore(),
+                lazy_summarizer=summarizer,
+            )
+
+        observed: dict = {}
+
+        def operation(stage):
+            observed["search"] = search()
+            return {"failed_files": 0}
+
+        run_repository_mutation(resolver, resolver.resolve_ready(path), operation)
+
+        assert "alpha.py" in _result_files(observed["search"])
+        assert summarizer.enqueued == []
+        # Control: once the rebuild published, the same search enqueues.
+        assert "alpha.py" in _result_files(search())
+        assert summarizer.enqueued
+
+
+# ---------------------------------------------------------------------------
+# One readiness observation per served query
+# ---------------------------------------------------------------------------
+
+
+def _count_git_status(monkeypatch) -> list:
+    calls: list = []
+    original = readiness_module._observe_git_state
+
+    def counting(path):
+        calls.append(str(path))
+        return original(path)
+
+    monkeypatch.setattr(readiness_module, "_observe_git_state", counting)
+    return calls
+
+
+def test_served_queries_observe_git_at_most_twice(tmp_path, monkeypatch):
+    path, repo_id = build_temp_repo(tmp_path, "count", seed_files=SEED)
+    with boot_test_server(tmp_path, [path]) as server:
+        resolver = server.repo_resolver
+        manager = resolver._index_manager
+        (path / "beta.py").write_text("def beta_token():\n    return 2\n")
+        git(path, "add", "beta.py")
+        git(path, "commit", "-m", "add beta")
+        calls = _count_git_status(monkeypatch)
+        observed: dict = {}
+        original = manager._rebuild_checkpoint
+
+        def checkpoint(stage):
+            if stage == "before_publish" and "search" not in observed:
+                calls.clear()
+                observed["search"] = _search(server, path, "alpha_token")
+                observed["search_calls"] = len(calls)
+                calls.clear()
+                observed["symbol"] = _symbol(server, path, "AlphaSymbol")
+                observed["symbol_calls"] = len(calls)
+            return original(stage)
+
+        monkeypatch.setattr(manager, "_rebuild_checkpoint", checkpoint)
+        manager.sync_repository_index(repo_id)
+
+        # Served stale during the rebuild, with at most admission + recheck.
+        assert observed["search"]["readiness"]["state"] == "stale_commit"
+        assert observed["symbol"]["readiness"]["state"] == "stale_commit"
+        assert observed["search_calls"] <= 2, observed
+        assert observed["symbol_calls"] <= 2, observed
+
+        calls.clear()
+        assert "alpha.py" in _result_files(_search(server, path, "alpha_token"))
+        assert len(calls) <= 2, calls
+        calls.clear()
+        assert _symbol(server, path, "AlphaSymbol")["symbol"] == "AlphaSymbol"
+        assert len(calls) <= 2, calls
+
+
+@pytest.mark.parametrize("change", ["head_moved", "tree_dirtied"])
+def test_post_query_recheck_catches_source_changes_during_the_query(tmp_path, monkeypatch, change):
+    path, repo_id = build_temp_repo(tmp_path, f"recheck-{change}", seed_files=SEED)
+    with boot_test_server(tmp_path, [path]) as server:
+        original_search = server.dispatcher.search
+        original_lookup = server.dispatcher.lookup
+
+        def change_source():
+            if change == "head_moved":
+                (path / f"gamma{len(list(path.glob('gamma*.py')))}.py").write_text("g = 1\n")
+                git(path, "add", ".")
+                git(path, "commit", "-m", "move head")
+            else:
+                (path / "alpha.py").write_text("def alpha_token():\n    return 7\n")
+
+        def search(ctx, query, **kwargs):
+            results = list(original_search(ctx, query, **kwargs))
+            change_source()
+            return results
+
+        def lookup(ctx, symbol):
+            result = original_lookup(ctx, symbol)
+            change_source()
+            return result
+
+        monkeypatch.setattr(server.dispatcher, "search", search)
+        response = _search(server, path, "alpha_token")
+        assert response["code"] == "index_unavailable", response
+
+        if change == "tree_dirtied":
+            git(path, "checkout", "--", "alpha.py")
+        else:
+            server.seed_repo_index(repo_id, path)
+        monkeypatch.setattr(server.dispatcher, "lookup", lookup)
+        symbol = _symbol(server, path, "AlphaSymbol")
+        assert symbol["code"] == "index_unavailable", symbol

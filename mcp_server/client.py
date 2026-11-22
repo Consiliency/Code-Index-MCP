@@ -9,7 +9,11 @@ from mcp_server.cli.bootstrap import initialize_stateless_services
 from mcp_server.core.repo_context import RepoContext
 from mcp_server.core.repo_resolver import RepoResolver, run_repository_mutation
 from mcp_server.dispatcher.protocol import DispatcherProtocol
-from mcp_server.health.repository_readiness import ReadinessClassifier
+from mcp_server.health.repository_readiness import (
+    ReadinessClassifier,
+    fresh_readiness,
+    readiness_snapshot,
+)
 from mcp_server.storage.store_registry import StoreRegistry
 
 from .client_types import (
@@ -105,6 +109,16 @@ def _generation_unavailable(repo_resolver, ctx) -> IndexUnavailable | None:
             remediation="Re-check readiness and retry against the current generation.",
         )
     return None
+
+
+def _fresh_generation_unavailable(repo_resolver, ctx) -> IndexUnavailable | None:
+    """The one post-query recheck: observe git again, outside the request snapshot.
+
+    Catches a HEAD that moved or a tracked tree that became dirty while the
+    query ran, as well as a publish swap, so the caller retries (#145).
+    """
+    with fresh_readiness():
+        return _generation_unavailable(repo_resolver, ctx)
 
 
 def _unavailable_search(
@@ -230,6 +244,26 @@ def execute_search_service(
     workspace_root: Path | None = None,
     ctx: RepoContext | None = None,
 ) -> ClientSearchResult:
+    # One git observation per checkout admits the query and builds its
+    # context; only the post-query recheck observes git again (#145).
+    with readiness_snapshot():
+        return _execute_search_service(
+            dispatcher=dispatcher,
+            repo_resolver=repo_resolver,
+            options=options,
+            workspace_root=workspace_root,
+            ctx=ctx,
+        )
+
+
+def _execute_search_service(
+    *,
+    dispatcher: DispatcherProtocol,
+    repo_resolver: RepoResolver | None,
+    options: ClientSearchOptions,
+    workspace_root: Path | None,
+    ctx: RepoContext | None,
+) -> ClientSearchResult:
     readiness = (
         _resolve_readiness(repo_resolver, options.repository, workspace_root=workspace_root)
         if repo_resolver is not None
@@ -277,7 +311,7 @@ def execute_search_service(
     try:
         raw_results = list(dispatcher.search(ctx, options.query, **_search_kwargs(options)))
     except Exception:
-        unavailable = _generation_unavailable(repo_resolver, ctx)
+        unavailable = _fresh_generation_unavailable(repo_resolver, ctx)
         if unavailable is not None:
             return _unavailable_search(options, unavailable)
         if options.semantic:
@@ -302,7 +336,7 @@ def execute_search_service(
             )
         raise
 
-    unavailable = _generation_unavailable(repo_resolver, ctx)
+    unavailable = _fresh_generation_unavailable(repo_resolver, ctx)
     if unavailable is not None:
         return _unavailable_search(options, unavailable)
     return ClientSearchResult(
@@ -427,6 +461,16 @@ class IndexItClient:
         *,
         repository: str | Path | None = None,
     ) -> ClientSymbolResult:
+        # Same single-observation admission as search (#145).
+        with readiness_snapshot():
+            return self._symbol_lookup(symbol, repository=repository)
+
+    def _symbol_lookup(
+        self,
+        symbol: str,
+        *,
+        repository: str | Path | None = None,
+    ) -> ClientSymbolResult:
         readiness = _resolve_readiness(
             self.repo_resolver,
             str(repository) if repository is not None else None,
@@ -460,7 +504,7 @@ class IndexItClient:
         try:
             result = self.dispatcher.lookup(ctx, symbol)
         except Exception:
-            unavailable = _generation_unavailable(self.repo_resolver, ctx)
+            unavailable = _fresh_generation_unavailable(self.repo_resolver, ctx)
             if unavailable is None:
                 raise
             return ClientSymbolResult(
@@ -469,7 +513,7 @@ class IndexItClient:
                 index_unavailable=unavailable,
                 message=unavailable.message,
             )
-        unavailable = _generation_unavailable(self.repo_resolver, ctx)
+        unavailable = _fresh_generation_unavailable(self.repo_resolver, ctx)
         if unavailable is not None:
             return ClientSymbolResult(
                 symbol=symbol,

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, Callable
 
 import anyio
 import mcp.types as types
@@ -31,6 +31,7 @@ async def run_write_summaries_task(
     client_name: str | None,
     limit_arg: int,
     model_used: str | None,
+    write_blocked: Callable[[], bool] | None = None,
 ) -> types.CallToolResult:
     if active_store is None:
         raise RuntimeError("Task-backed write_summaries requires an initialized sqlite store")
@@ -77,7 +78,9 @@ async def run_write_summaries_task(
             result = await writer.process_scope(
                 limit=min(per_pass_limit, remaining_budget),
                 max_batches=1,
-                cancel_check=lambda: task.is_cancelled,
+                # A staged rebuild that starts mid-task stops it too (#145).
+                cancel_check=lambda: task.is_cancelled
+                or (write_blocked is not None and write_blocked()),
             )
             total_written += result.summaries_written
             total_attempted += result.chunks_attempted
@@ -113,6 +116,15 @@ async def run_write_summaries_task(
         "summary_chunks_attempted": total_attempted,
         "summary_missing_chunks": total_missing,
     }
+    if write_blocked is not None and write_blocked():
+        payload.update(
+            code="rebuild_in_progress",
+            note=(
+                "A staged rebuild started during this task, which stopped at the next "
+                "batch. Summaries written before it may be lost when it publishes; "
+                "rerun afterwards (already summarized chunks are skipped)."
+            ),
+        )
     if task.is_cancelled:
         payload["cancelled"] = True
         result = _call_tool_result(payload)

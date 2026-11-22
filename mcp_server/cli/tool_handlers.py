@@ -7,6 +7,7 @@ argument or the MCP_WORKSPACE_ROOT default, then delegates to the dispatcher.
 from __future__ import annotations
 
 import asyncio
+import functools
 import json
 import logging
 import os
@@ -33,6 +34,9 @@ from mcp_server.health.repository_readiness import (
     ReadinessClassifier,
     RepositoryReadiness,
     RepositoryReadinessState,
+    fresh_readiness,
+    readiness_snapshot,
+    readiness_snapshot_context,
 )
 from mcp_server.indexing.source_metadata import normalize_friction_category
 
@@ -256,6 +260,36 @@ def _index_unavailable_response(
     return _json_text_response(response)
 
 
+def _rebuild_in_progress_response(
+    tool: str, readiness: Optional[RepositoryReadiness] = None, **extra: Any
+) -> list[types.TextContent]:
+    """Refuse a persistent index write while a staged rebuild runs (#145).
+
+    Reads keep being served from the published generation, but anything
+    written to it now would vanish when the rebuild publishes.
+    """
+    return _json_text_response(
+        {
+            "error": "Rebuild in progress",
+            "code": "rebuild_in_progress",
+            "tool": tool,
+            "mutation_performed": False,
+            "readiness": readiness.to_dict() if readiness is not None else None,
+            "message": (
+                "A staged index rebuild is in progress; writes to the published "
+                "generation would be lost when it publishes."
+            ),
+            "remediation": "Retry after the rebuild publishes (readiness.rebuild becomes null).",
+            **extra,
+        }
+    )
+
+
+def _write_blocked(repo_resolver: Any, ctx: Optional[RepoContext]) -> bool:
+    """True when a staged build fenced, or replaced, ctx's published generation."""
+    return isinstance(repo_resolver, RepoResolver) and not repo_resolver.accepts_writes(ctx)
+
+
 def _resolution_transition_response(tool: str) -> list[types.TextContent]:
     return _json_text_response(
         {
@@ -339,6 +373,28 @@ def _semantic_failure_response(
     return _json_text_response(response)
 
 
+def _with_readiness_snapshot(handler):
+    """Run a query handler inside one request readiness snapshot (#145).
+
+    One git observation per checkout admits the query and builds its context;
+    only the post-query recheck (``_fresh_is_current``) observes git again.
+    """
+
+    @functools.wraps(handler)
+    async def wrapper(**kwargs):
+        with readiness_snapshot():
+            return await handler(**kwargs)
+
+    return wrapper
+
+
+def _fresh_is_current(repo_resolver: RepoResolver, ctx: Optional[RepoContext]) -> bool:
+    """Post-query recheck outside the request snapshot (#145)."""
+    with fresh_readiness():
+        return repo_resolver.is_current(ctx)
+
+
+@_with_readiness_snapshot
 async def handle_symbol_lookup(
     *,
     arguments: dict,
@@ -387,11 +443,11 @@ async def handle_symbol_lookup(
             # Fallback: call without ctx for pre-SL-1 compatibility
             result = dispatcher.lookup(symbol)  # type: ignore[call-arg]
     except Exception:
-        if isinstance(repo_resolver, RepoResolver) and not repo_resolver.is_current(ctx):
+        if isinstance(repo_resolver, RepoResolver) and not _fresh_is_current(repo_resolver, ctx):
             return _resolution_transition_response("symbol_lookup")
         raise
 
-    if isinstance(repo_resolver, RepoResolver) and not repo_resolver.is_current(ctx):
+    if isinstance(repo_resolver, RepoResolver) and not _fresh_is_current(repo_resolver, ctx):
         return _resolution_transition_response("symbol_lookup")
 
     if result:
@@ -499,7 +555,11 @@ async def handle_search_code(
         ]
 
     repository = (arguments or {}).get("repository")
-    selector_readiness = _classify_ctx(repo_resolver, repository)
+    # One git observation per checkout for admission and context creation,
+    # carried into the executor thread; the service rechecks once, fresh,
+    # after the query (#145).
+    request_context = readiness_snapshot_context()
+    selector_readiness = request_context.run(_classify_ctx, repo_resolver, repository)
 
     repository_path = _repository_selector_path(repository, selector_readiness)
     if repository_path is not None:
@@ -545,7 +605,8 @@ async def handle_search_code(
         result = await asyncio.wait_for(
             asyncio.get_event_loop().run_in_executor(
                 None,
-                lambda: execute_search_service(
+                lambda: request_context.run(
+                    execute_search_service,
                     dispatcher=dispatcher,
                     repo_resolver=repo_resolver,
                     options=options,
@@ -687,8 +748,10 @@ async def handle_search_code(
                 )
             results_data.append(result_item)
 
-        # Lazy summarization enqueue
-        if lazy_summarizer and lazy_summarizer.can_summarize() and sqlite_store:
+        # Lazy summarization enqueue. Skipped while a staged rebuild runs: the
+        # summaries would land in the generation it is about to replace (#145).
+        rebuilding = isinstance(readiness, dict) and bool(readiness.get("rebuild"))
+        if lazy_summarizer and lazy_summarizer.can_summarize() and sqlite_store and not rebuilding:
             # CHUNKERSAFE Lane A: find_chunk_at_line is a scheme-dependent
             # code_chunks read; fail closed and skip summarization over an
             # incompatible/rebuilding index rather than enqueue stale-scheme rows.
@@ -1470,6 +1533,8 @@ async def handle_write_summaries(
 
     if readiness is not None and not readiness.ready:
         return _secondary_readiness_refusal_response(readiness, "write_summaries")
+    if readiness is not None and readiness.rebuild:
+        return _rebuild_in_progress_response("write_summaries", readiness)
 
     ctx = _resolve_ctx(repo_resolver, repository)
     if ctx is None and isinstance(repo_resolver, RepoResolver):
@@ -1505,6 +1570,16 @@ async def handle_write_summaries(
     limit_arg = int((arguments or {}).get("limit", 500))
     model_used = lazy_summarizer._get_model_name()
 
+    # Recheck right before writing: a rebuild that started since admission
+    # refuses now, and one that starts mid-run stops it at the next batch.
+    if _write_blocked(repo_resolver, ctx):
+        return _rebuild_in_progress_response(
+            "write_summaries", _classify_ctx(repo_resolver, repository)
+        )
+
+    def write_blocked() -> bool:
+        return _write_blocked(repo_resolver, ctx)
+
     if request_experimental is not None and request_experimental.is_task:
         return await request_experimental.run_task(
             lambda task: run_write_summaries_task(
@@ -1515,6 +1590,7 @@ async def handle_write_summaries(
                 client_name=client_name,
                 limit_arg=limit_arg,
                 model_used=model_used,
+                write_blocked=write_blocked,
             ),
             model_immediate_response=(
                 "Summary task created; use tasks/get and tasks/result to observe bounded progress."
@@ -1533,7 +1609,18 @@ async def handle_write_summaries(
             "profile_id": profile_id,
         },
     )
-    summary_result = await writer.process_scope(limit=limit_arg)
+    summary_result = await writer.process_scope(limit=limit_arg, cancel_check=write_blocked)
+    if write_blocked():
+        return _rebuild_in_progress_response(
+            "write_summaries",
+            _classify_ctx(repo_resolver, repository),
+            chunks_summarized=summary_result.summaries_written,
+            note=(
+                "A rebuild started during this run, which stopped at the next batch. "
+                "Summaries written before it may be lost when it publishes; rerun "
+                "afterwards (already summarized chunks are skipped)."
+            ),
+        )
 
     return [
         types.TextContent(
@@ -1638,6 +1725,8 @@ async def handle_summarize_sample(
                     ]
                 if not path_readiness.ready:
                     return _secondary_readiness_refusal_response(path_readiness, "summarize_sample")
+                if persist_flag and path_readiness.rebuild:
+                    return _rebuild_in_progress_response("summarize_sample", path_readiness)
                 repo_key = path_readiness.repository_id or ""
                 path_readiness_by_repo[repo_key] = path_readiness
 
@@ -1658,6 +1747,8 @@ async def handle_summarize_sample(
 
     if repository_readiness is not None and not repository_readiness.ready:
         return _secondary_readiness_refusal_response(repository_readiness, "summarize_sample")
+    if persist_flag and repository_readiness is not None and repository_readiness.rebuild:
+        return _rebuild_in_progress_response("summarize_sample", repository_readiness)
 
     scope_arg = repository
     if not scope_arg and paths_arg:
@@ -1708,6 +1799,14 @@ async def handle_summarize_sample(
     total_chunks = 0
 
     for file_id, file_path, language in file_rows:
+        if persist_flag and _write_blocked(repo_resolver, ctx):
+            # Recheck right before each persisted file (#145).
+            return _rebuild_in_progress_response(
+                "summarize_sample",
+                _classify_ctx(repo_resolver, scope_arg),
+                files=file_results,
+                total_chunks=total_chunks,
+            )
         try:
             with open(file_path, encoding="utf-8", errors="replace") as _fh:
                 file_content = _fh.read()

@@ -109,6 +109,28 @@ class RepoResolver:
         except Exception:
             return False
 
+    def accepts_writes(self, ctx: Optional[RepoContext]) -> bool:
+        """True while ``ctx`` may persist into its published generation (#145).
+
+        A staged build fences the registry entry before it snapshots the live
+        file, so any write after that could vanish when it publishes. Reads keep
+        being served during a live rebuild, but persistent writers (summaries)
+        check this before they start and between batches. Registry and file
+        identity only; no git.
+        """
+        if ctx is None:
+            return False
+        try:
+            info = self._registry.get(ctx.repo_id)
+            return (
+                info is not None
+                and not info.staleness_reason
+                and self._store_registry.binding(info)
+                == self._store_registry.binding(ctx.registry_entry)
+            )
+        except Exception:
+            return False
+
     def mutate(
         self, ctx: RepoContext, operation: Callable[[RepoContext], _MutationResult]
     ) -> _MutationResult:
