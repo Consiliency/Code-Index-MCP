@@ -81,7 +81,7 @@ class _LoopbackSummarizer:
         # Which chunk IDs the "provider" answers for; default: all requested.
         self.answer = None
 
-    async def __call__(self, writer, system, prompt, *, max_tokens=150):
+    async def __call__(self, writer, system, prompt, *, max_tokens=150, cancel_check=None):
         chunk_ids = re.findall(r"^chunk_id: (.+)$", prompt, flags=re.MULTILINE)
         self.calls.append(chunk_ids)
         if self.on_call is not None:

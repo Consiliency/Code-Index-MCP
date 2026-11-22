@@ -2119,3 +2119,218 @@ async def test_permitted_commercial_summary_fallback_remains_available(
     monkeypatch.setattr(writer, "_call_cerebras_api", allowed)
     assert await writer._call_direct_api("synthetic", "synthetic") == ("Synthetic summary", None)
     assert calls == [True]
+
+
+# --- Stop checks before every outbound summary call (#121, PR #157) ---
+
+
+@pytest.mark.parametrize("stop_set", [True, False])
+@pytest.mark.asyncio
+async def test_stop_during_a_sampling_failure_starts_no_baml_or_direct_call(
+    tmp_path, monkeypatch, stop_set
+):
+    store, file_id = _seed_chunk_summary_tables(tmp_path / "stop.db", tmp_path)
+    store.close()
+    monkeypatch.delenv("MCP_DEPLOYMENT_PROFILE", raising=False)
+    monkeypatch.setenv("CEREBRAS_API_KEY", "dummy-offline")
+    stop = {"requested": False}
+    calls: list[str] = []
+
+    class FailingSamplingSession:
+        def create_message(self, **_kwargs):
+            async def fail():
+                calls.append("sampling")
+                stop["requested"] = True
+                raise RuntimeError("sampling failed")
+
+            return fail()
+
+    async def fake_baml(**_kwargs):
+        calls.append("baml")
+        return SimpleNamespace(summary="Summary from BAML. It is synthetic.")
+
+    async def fake_direct(*_args, **_kwargs):
+        calls.append("direct")
+        return "Summary from the direct API. It is synthetic.", None
+
+    writer = ChunkWriter(
+        db_path=str(tmp_path / "stop.db"),
+        qdrant_client=None,
+        session=FailingSamplingSession(),
+    )
+    monkeypatch.setattr(writer, "_has_sampling_capability", lambda: True)
+    monkeypatch.setattr("baml_sdk.SummarizeChunkAlone_async", fake_baml)
+    monkeypatch.setattr(writer, "_call_direct_api", fake_direct)
+
+    summary = await writer.summarize_chunk(
+        chunk_hash="chunk-stop",
+        file_id=file_id,
+        chunk_start=1,
+        chunk_end=2,
+        symbol="alpha",
+        content="def alpha():\n    return 1\n",
+        language="python",
+        is_authoritative=True,
+        cancel_check=(lambda: stop["requested"]) if stop_set else None,
+    )
+
+    if stop_set:
+        assert summary is None
+        assert calls == ["sampling"]  # neither BAML nor the direct API started
+    else:
+        # Default (no stop check): the chain falls through exactly as before.
+        assert summary == "Summary from BAML. It is synthetic."
+        assert calls == ["sampling", "baml"]
+
+
+@pytest.mark.parametrize("stop_set", [True, False])
+@pytest.mark.asyncio
+async def test_stop_during_profile_recovery_starts_no_next_batch(tmp_path, monkeypatch, stop_set):
+    from mcp_server.indexing.summarization import FileTooLargeError
+
+    summarizer = FileBatchSummarizer(
+        db_path=str(tmp_path / "unused.db"),
+        qdrant_client=None,
+        summarization_config={
+            "base_url": "http://127.0.0.1:9/v1",
+            "model_name": "chat",
+            "profile_id": "fixture",
+        },
+    )
+    chunks = [
+        {"chunk_id": f"chunk-{i}", "content": f"x = {i}", "line_start": i, "line_end": i}
+        for i in range(130)
+    ]
+    stop = {"requested": False}
+    calls: list[list[str]] = []
+
+    async def fake_profile_api(system, prompt, *, max_tokens=150, cancel_check=None):
+        del system, max_tokens
+        ids = re.findall(r"^chunk_id: (.+)$", prompt, flags=re.MULTILINE)
+        calls.append(ids)
+        stop["requested"] = True
+        payload = {"summaries": [{"chunk_id": cid, "summary": "Synthetic."} for cid in ids]}
+        return json.dumps(payload), "chat"
+
+    monkeypatch.setattr(summarizer, "_call_profile_api", fake_profile_api)
+
+    recovered = await summarizer._recover_with_profile_or_topological(
+        file_id=1,
+        file_path="big.py",
+        file_content="",
+        chunks=chunks,
+        symbol_map={},
+        warning_prefix="Large-file fallback",
+        error=FileTooLargeError("big.py"),
+        retry_profile_batch=True,
+        cancel_check=(lambda: stop["requested"]) if stop_set else None,
+    )
+
+    if stop_set:
+        assert [len(batch) for batch in calls] == [64]  # no second batch started
+        assert {summary.chunk_id for summary in recovered} == set(calls[0])
+    else:
+        assert [len(batch) for batch in calls] == [64, 64, 2]
+        assert len(recovered) == 130
+
+
+def _fake_openai_client(monkeypatch, outcomes):
+    """Patch AsyncOpenAI with a client whose create() plays ``outcomes`` in order."""
+    record = {"init": [], "creates": 0}
+
+    class FakeCompletions:
+        async def create(self, **_kwargs):
+            outcome = outcomes[record["creates"]]
+            record["creates"] += 1
+            if isinstance(outcome, BaseException):
+                raise outcome
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content=outcome))]
+            )
+
+    class FakeAsyncOpenAI:
+        def __init__(self, **kwargs):
+            record["init"].append(kwargs)
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+
+        async def close(self):
+            return None
+
+    monkeypatch.setattr("openai.AsyncOpenAI", FakeAsyncOpenAI)
+    return record
+
+
+def _profile_writer(monkeypatch):
+    writer = ChunkWriter(
+        db_path="/tmp/unused.db",
+        qdrant_client=None,
+        summarization_config={"base_url": "http://127.0.0.1:9/v1", "model_name": "chat"},
+    )
+    monkeypatch.setattr(
+        writer,
+        "_resolve_effective_profile_model",
+        lambda: EnrichmentModelResolution(
+            configured_model="chat", effective_model="chat", resolution_strategy="configured"
+        ),
+    )
+    return writer
+
+
+def _connection_error():
+    import httpx
+    import openai
+
+    return openai.APIConnectionError(request=httpx.Request("POST", "http://127.0.0.1:9/v1"))
+
+
+@pytest.mark.asyncio
+async def test_profile_call_with_a_stop_check_disables_sdk_retries_and_stops_in_backoff(
+    monkeypatch,
+):
+    from mcp_server.indexing import summarization
+    from mcp_server.indexing.summarization import SummaryStopRequested
+
+    monkeypatch.delenv("MCP_DEPLOYMENT_PROFILE", raising=False)
+    record = _fake_openai_client(monkeypatch, [_connection_error(), "never reached"])
+    monkeypatch.setattr(summarization, "_STOP_AWARE_RETRY_DELAYS_SECONDS", (30.0, 30.0))
+    writer = _profile_writer(monkeypatch)
+    stop = {"requested": False}
+
+    async def request_stop_soon():
+        await asyncio.sleep(0.2)
+        stop["requested"] = True
+
+    started = time.monotonic()
+    stopper = asyncio.create_task(request_stop_soon())
+    with pytest.raises(SummaryStopRequested):
+        await writer._call_profile_api("system", "prompt", cancel_check=lambda: stop["requested"])
+    await stopper
+
+    assert record["init"][0]["max_retries"] == 0  # the SDK does not retry on its own
+    assert record["creates"] == 1  # the stop arrived during backoff; no retry started
+    assert time.monotonic() - started < 5  # not stuck behind the 30 s backoff
+
+
+@pytest.mark.asyncio
+async def test_profile_call_with_a_stop_check_still_retries_transient_failures(monkeypatch):
+    from mcp_server.indexing import summarization
+
+    monkeypatch.delenv("MCP_DEPLOYMENT_PROFILE", raising=False)
+    record = _fake_openai_client(monkeypatch, [_connection_error(), "Recovered summary."])
+    monkeypatch.setattr(summarization, "_STOP_AWARE_RETRY_DELAYS_SECONDS", (0.0, 0.0))
+    writer = _profile_writer(monkeypatch)
+
+    text, model = await writer._call_profile_api("system", "prompt", cancel_check=lambda: False)
+
+    assert (text, model) == ("Recovered summary.", "chat")
+    assert record["creates"] == 2
+
+
+@pytest.mark.asyncio
+async def test_profile_call_without_a_stop_check_keeps_sdk_retry_defaults(monkeypatch):
+    monkeypatch.delenv("MCP_DEPLOYMENT_PROFILE", raising=False)
+    record = _fake_openai_client(monkeypatch, ["Summary."])
+    writer = _profile_writer(monkeypatch)
+
+    assert await writer._call_profile_api("system", "prompt") == ("Summary.", "chat")
+    assert "max_retries" not in record["init"][0]

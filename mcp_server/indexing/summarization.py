@@ -5,6 +5,7 @@ import logging
 import os
 import re
 import sqlite3
+import time
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -56,6 +57,64 @@ _PROFILE_BATCH_CHUNK_COUNT = 64
 
 class FileTooLargeError(Exception):
     """Raised when a file exceeds the batch summarization size limit."""
+
+
+class SummaryStopRequested(Exception):
+    """A caller's stop check asked that no further provider call start."""
+
+
+# With a stop check, SDK-level retries are off and retried here instead, so a
+# stop is never stuck behind an SDK backoff. Two retries mirror the SDK default.
+_STOP_AWARE_RETRY_DELAYS_SECONDS = (0.5, 2.0)
+_STOP_POLL_SECONDS = 0.1
+
+
+def _stop_requested(cancel_check: Optional[Callable[[], bool]]) -> bool:
+    return cancel_check is not None and bool(cancel_check())
+
+
+def _stop_kwargs(cancel_check: Optional[Callable[[], bool]]) -> Dict[str, Any]:
+    """Forward a stop check only when one is set, so default calls stay unchanged."""
+    return {} if cancel_check is None else {"cancel_check": cancel_check}
+
+
+def _sdk_retry_kwargs(cancel_check: Optional[Callable[[], bool]]) -> Dict[str, Any]:
+    """Turn SDK retries off when a stop check is set; otherwise pass nothing."""
+    return {} if cancel_check is None else {"max_retries": 0}
+
+
+def _is_retryable_provider_error(exc: BaseException) -> bool:
+    """The transient failures the OpenAI SDK itself would retry."""
+    try:
+        import openai
+    except ImportError:
+        return False
+    if isinstance(
+        exc, (openai.APIConnectionError, openai.RateLimitError, openai.InternalServerError)
+    ):
+        return True
+    return isinstance(exc, openai.APIStatusError) and exc.status_code in {408, 409}
+
+
+async def _call_with_stop_aware_retries(
+    make_call: Callable[[], Any], cancel_check: Callable[[], bool]
+) -> Any:
+    """Run an SDK call whose own retries are off, retrying between stop checks."""
+    attempts = len(_STOP_AWARE_RETRY_DELAYS_SECONDS) + 1
+    for attempt in range(attempts):
+        if cancel_check():
+            raise SummaryStopRequested("stop requested before a provider call")
+        try:
+            return await make_call()
+        except Exception as exc:
+            if attempt + 1 >= attempts or not _is_retryable_provider_error(exc):
+                raise
+        deadline = time.monotonic() + _STOP_AWARE_RETRY_DELAYS_SECONDS[attempt]
+        while (left := deadline - time.monotonic()) > 0:
+            if cancel_check():
+                raise SummaryStopRequested("stop requested during a retry backoff")
+            await asyncio.sleep(min(_STOP_POLL_SECONDS, left))
+    raise AssertionError("unreachable")
 
 
 @dataclass(frozen=True)
@@ -331,7 +390,9 @@ class ChunkWriter:
         """Return True if any summarization path is available."""
         return self._has_sampling_capability() or self._has_direct_api()
 
-    async def _call_cerebras_api(self, system: str, prompt: str) -> str:
+    async def _call_cerebras_api(
+        self, system: str, prompt: str, *, cancel_check: Optional[Callable[[], bool]] = None
+    ) -> str:
         """Call Cerebras inference API via the openai SDK (OpenAI-compatible)."""
         from openai import AsyncOpenAI
 
@@ -339,15 +400,23 @@ class ChunkWriter:
         client = AsyncOpenAI(
             api_key=os.environ["CEREBRAS_API_KEY"],
             base_url="https://api.cerebras.ai/v1",
+            **_sdk_retry_kwargs(cancel_check),
         )
-        response = await client.chat.completions.create(
-            model=model,
-            max_tokens=150,
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": prompt},
-            ],
-        )
+
+        async def create() -> Any:
+            return await client.chat.completions.create(
+                model=model,
+                max_tokens=150,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": prompt},
+                ],
+            )
+
+        if cancel_check is None:
+            response = await create()
+        else:
+            response = await _call_with_stop_aware_retries(create, cancel_check)
         return str(response.choices[0].message.content or "")
 
     async def _call_anthropic_api(self, system: str, prompt: str) -> str:
@@ -377,23 +446,40 @@ class ChunkWriter:
             data = resp.json()
             return str(data["content"][0]["text"])
 
-    async def _call_openai_api(self, system: str, prompt: str) -> str:
+    async def _call_openai_api(
+        self, system: str, prompt: str, *, cancel_check: Optional[Callable[[], bool]] = None
+    ) -> str:
         """Call OpenAI API via the openai SDK."""
         from openai import AsyncOpenAI
 
-        client = AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
-        response = await client.chat.completions.create(
-            model=self.summarization_config.get("openai_model", "gpt-5.4-nano"),
-            max_tokens=150,
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": prompt},
-            ],
+        client = AsyncOpenAI(
+            api_key=os.environ["OPENAI_API_KEY"],
+            **_sdk_retry_kwargs(cancel_check),
         )
+
+        async def create() -> Any:
+            return await client.chat.completions.create(
+                model=self.summarization_config.get("openai_model", "gpt-5.4-nano"),
+                max_tokens=150,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": prompt},
+                ],
+            )
+
+        if cancel_check is None:
+            response = await create()
+        else:
+            response = await _call_with_stop_aware_retries(create, cancel_check)
         return str(response.choices[0].message.content or "")
 
     async def _call_profile_api(
-        self, system: str, prompt: str, *, max_tokens: int = 150
+        self,
+        system: str,
+        prompt: str,
+        *,
+        max_tokens: int = 150,
+        cancel_check: Optional[Callable[[], bool]] = None,
     ) -> tuple[str, str]:
         """Call the profile-configured OpenAI-compatible endpoint."""
         if not learned_models_allowed():
@@ -411,9 +497,15 @@ class ChunkWriter:
         api_key_env = cfg.get("api_key_env", "OPENAI_API_KEY")
         api_key = os.environ.get(api_key_env) or "vllm-local"
         request_timeout = max(10.0, float(cfg.get("timeout_s", 10.0)) * 3)
-        client = AsyncOpenAI(api_key=api_key, base_url=base_url, timeout=request_timeout)
-        try:
-            response = await client.chat.completions.create(
+        client = AsyncOpenAI(
+            api_key=api_key,
+            base_url=base_url,
+            timeout=request_timeout,
+            **_sdk_retry_kwargs(cancel_check),
+        )
+
+        async def create() -> Any:
+            return await client.chat.completions.create(
                 model=model,
                 max_tokens=max_tokens,
                 messages=[
@@ -421,32 +513,53 @@ class ChunkWriter:
                     {"role": "user", "content": prompt},
                 ],
             )
+
+        try:
+            if cancel_check is None:
+                response = await create()
+            else:
+                response = await _call_with_stop_aware_retries(create, cancel_check)
             return str(response.choices[0].message.content or ""), model
         finally:
             await client.close()
 
     async def _call_direct_api(
-        self, system: str, prompt: str
+        self,
+        system: str,
+        prompt: str,
+        *,
+        cancel_check: Optional[Callable[[], bool]] = None,
     ) -> tuple[Optional[str], Optional[str]]:
-        """Try profile endpoint first, then Cerebras, Anthropic, OpenAI."""
+        """Try profile endpoint first, then Cerebras, Anthropic, OpenAI.
+
+        With ``cancel_check``, no provider call starts once it returns true.
+        """
         if not learned_models_allowed():
             return None, None
+        stop = _stop_kwargs(cancel_check)
         if self.summarization_config.get("base_url"):
+            if _stop_requested(cancel_check):
+                return None, None
             try:
-                return await self._call_profile_api(system, prompt)
+                return await self._call_profile_api(system, prompt, **stop)
+            except SummaryStopRequested:
+                return None, None
             except Exception as exc:
                 logger.warning(
                     "Profile summarization endpoint failed (%s)",
                     type(exc).__name__,
                 )
-        if not commercial_egress_allowed():
+        if not commercial_egress_allowed() or _stop_requested(cancel_check):
             return None, None
-        if os.environ.get("CEREBRAS_API_KEY"):
-            return await self._call_cerebras_api(system, prompt), None
-        elif os.environ.get("ANTHROPIC_API_KEY"):
-            return await self._call_anthropic_api(system, prompt), None
-        elif os.environ.get("OPENAI_API_KEY"):
-            return await self._call_openai_api(system, prompt), None
+        try:
+            if os.environ.get("CEREBRAS_API_KEY"):
+                return await self._call_cerebras_api(system, prompt, **stop), None
+            elif os.environ.get("ANTHROPIC_API_KEY"):
+                return await self._call_anthropic_api(system, prompt), None
+            elif os.environ.get("OPENAI_API_KEY"):
+                return await self._call_openai_api(system, prompt, **stop), None
+        except SummaryStopRequested:
+            return None, None
         return None, None
 
     def _get_model_name(self) -> str:
@@ -495,6 +608,7 @@ class ChunkWriter:
         parent_context: str = "",
         file_content: str = "",
         is_authoritative: bool = False,
+        cancel_check: Optional[Callable[[], bool]] = None,
     ) -> Optional[str]:
         """Generate a summary for a code chunk and persist it to SQLite.
 
@@ -508,6 +622,10 @@ class ChunkWriter:
         injected into the prompt so the model understands the chunk in its
         broader file context — especially valuable for cross-reference and
         import analysis.
+
+        *cancel_check*: when set, it is consulted before every provider call
+        in the sampling → BAML → direct-API chain; once it returns true no
+        further call starts and ``None`` is returned.
 
         Returns the summary text on success, ``None`` otherwise.
         """
@@ -566,7 +684,7 @@ class ChunkWriter:
         model_name: Optional[str] = None
 
         # Path 1: MCP sampling (client performs the inference, no file context)
-        if self._has_sampling_capability():
+        if self._has_sampling_capability() and not _stop_requested(cancel_check):
             try:
                 # mcp 2.x marks sampling deprecated (SEP-2577) but it still works
                 # on handshake-era connections; the warning is emitted when the
@@ -601,6 +719,7 @@ class ChunkWriter:
             summary_text is None
             and commercial_egress_allowed()
             and os.environ.get("CEREBRAS_API_KEY")
+            and not _stop_requested(cancel_check)
         ):
             try:
                 from baml_sdk import SummarizeChunkAlone_async
@@ -623,10 +742,10 @@ class ChunkWriter:
                 )
 
         # Path 3: Direct API fallback (Anthropic / OpenAI raw call, or Cerebras raw)
-        if summary_text is None and self._has_direct_api():
+        if summary_text is None and self._has_direct_api() and not _stop_requested(cancel_check):
             try:
                 summary_text, resolved_model_name = await self._call_direct_api(
-                    _SYSTEM_PROMPT, api_prompt
+                    _SYSTEM_PROMPT, api_prompt, **_stop_kwargs(cancel_check)
                 )
                 model_name = resolved_model_name or self._get_model_name()
             except Exception as exc:
@@ -744,7 +863,12 @@ class FileBatchSummarizer(ChunkWriter):
             try:
                 return _normalize_generated_summaries(
                     await self._call_profile_batch_api(
-                        file_id, file_path, file_content, chunks, symbol_map
+                        file_id,
+                        file_path,
+                        file_content,
+                        chunks,
+                        symbol_map,
+                        **_stop_kwargs(cancel_check),
                     )
                 )
             except Exception as profile_exc:
@@ -818,12 +942,20 @@ class FileBatchSummarizer(ChunkWriter):
         file_content: str,
         chunks: List[Dict],
         symbol_map: Dict[int, str],
+        cancel_check: Optional[Callable[[], bool]] = None,
     ) -> List[Any]:
+        """Summarize ``chunks`` in profile batches of ``_PROFILE_BATCH_CHUNK_COUNT``.
+
+        With ``cancel_check``, no batch (or retry) starts once it returns true,
+        and the summaries of batches that already completed are returned.
+        """
         del file_id, file_content
         language = (chunks[0].get("language") or "unknown") if chunks else "unknown"
         summaries: List[SimpleNamespace] = []
 
         for offset in range(0, len(chunks), _PROFILE_BATCH_CHUNK_COUNT):
+            if _stop_requested(cancel_check):
+                break
             batch = chunks[offset : offset + _PROFILE_BATCH_CHUNK_COUNT]
             chunk_blocks = []
             for chunk in batch:
@@ -851,11 +983,15 @@ class FileBatchSummarizer(ChunkWriter):
                 f"Summarize each chunk below and include every chunk_id exactly once.\n\n"
                 + "\n\n".join(chunk_blocks)
             )
-            response_text, _model_name = await self._call_profile_api(
-                system,
-                prompt,
-                max_tokens=min(8000, max(600, len(batch) * 80)),
-            )
+            try:
+                response_text, _model_name = await self._call_profile_api(
+                    system,
+                    prompt,
+                    max_tokens=min(8000, max(600, len(batch) * 80)),
+                    **_stop_kwargs(cancel_check),
+                )
+            except SummaryStopRequested:
+                break
             summaries.extend(self._parse_profile_batch_response(response_text))
 
         return summaries
@@ -956,6 +1092,7 @@ class FileBatchSummarizer(ChunkWriter):
                     parent_context=parent_context,
                     file_content=file_content,
                     is_authoritative=True,
+                    **_stop_kwargs(cancel_check),
                 )
                 if summary_text:
                     stored_summaries[chunk_id] = summary_text
@@ -1025,11 +1162,28 @@ class FileBatchSummarizer(ChunkWriter):
                 existing_authoritative=existing_authoritative,
             )
 
+        if _stop_requested(cancel_check):
+            return SummaryGenerationResult(
+                chunks_attempted=0,
+                summaries_written=0,
+                authoritative_chunks=existing_authoritative,
+                missing_chunk_ids=tuple(chunk["chunk_id"] for chunk in to_summarize),
+                files_attempted=1,
+                files_summarized=0,
+                remaining_chunks=len(to_summarize),
+                scope_drained=False,
+            )
+
         try:
             summary_call: Any
             if self.summarization_config.get("base_url"):
                 summary_call = self._call_profile_batch_api(
-                    file_id, file_path, file_content, active_chunks, symbol_map
+                    file_id,
+                    file_path,
+                    file_content,
+                    active_chunks,
+                    symbol_map,
+                    **_stop_kwargs(cancel_check),
                 )
             else:
                 summary_call = self._call_batch_api(
