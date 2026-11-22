@@ -94,6 +94,7 @@ class RepositoryReadiness:
             and self.current_commit
             and self.last_indexed_commit
             and self.current_commit != self.last_indexed_commit
+            and self.rebuild.get("target_commit") == self.current_commit
         )
 
     @property
@@ -424,14 +425,22 @@ class ReadinessClassifier:
         rebuild = None
         if staleness_reason == "index_publication_pending":
             # The published generation is untouched until the publish swap, so
-            # it may keep serving while the build's owner is alive (#145). A
-            # dead owner leaves the fail-closed missing_provenance below.
+            # it may keep serving while the build's owner is alive (#145) and
+            # that build targets the checkout as it is now: HEAD is the build's
+            # commit and the tracked tree is clean. A dead owner, a HEAD that
+            # moved away from the target, or tracked edits leave the
+            # fail-closed missing_provenance below.
             owner = live_rebuild_owner(
                 registered_path,
                 registration_id=getattr(repo_info, "registration_id", None),
                 published_generation=getattr(repo_info, "index_generation", None),
             )
-            if owner is not None:
+            if (
+                owner is not None
+                and current_commit
+                and owner.get("target_commit") == current_commit
+                and tracked_tree_clean
+            ):
                 staleness_reason = None
                 rebuild = {
                     "in_progress": True,

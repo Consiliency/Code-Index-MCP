@@ -119,6 +119,45 @@ def test_owner_that_is_not_provably_alive_is_dead(tmp_path, tamper):
         )
 
 
+@pytest.mark.parametrize("unavailable", ["when_recorded", "when_checked"])
+def test_owner_without_a_provable_start_time_is_dead(tmp_path, monkeypatch, unavailable):
+    # A host without /proc (or a psutil failure) cannot rule out a reused pid,
+    # so the owner is not provably alive even while a writer holds the lock.
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    if unavailable == "when_recorded":
+        monkeypatch.setattr(locks, "_process_start_time", lambda pid: None)
+    owner = locks.record_rebuild_owner(
+        repo, registration_id="reg", published_generation="gen", target_commit="c" * 40
+    )
+    assert owner is not None
+    if unavailable == "when_recorded":
+        assert owner["process_start"] is None
+    else:
+        monkeypatch.setattr(locks, "_process_start_time", lambda pid: None)
+    with locks.lock_registry.acquire("repo", repo_path=repo):
+        assert (
+            locks.live_rebuild_owner(repo, registration_id="reg", published_generation="gen")
+            is None
+        )
+
+
+def test_start_time_falls_back_to_psutil_without_proc(tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    monkeypatch.setattr(locks, "_proc_start_time", lambda pid: None)
+    owner = locks.record_rebuild_owner(
+        repo, registration_id="reg", published_generation="gen", target_commit="c" * 40
+    )
+    assert owner["process_start"].startswith("psutil:")
+    identity = {"registration_id": "reg", "published_generation": "gen"}
+    with locks.lock_registry.acquire("repo", repo_path=repo):
+        assert locks.live_rebuild_owner(repo, **identity) is not None
+        # Without any start-time source the same record is no longer provable.
+        monkeypatch.setattr(locks, "_psutil_start_time", lambda pid: None)
+        assert locks.live_rebuild_owner(repo, **identity) is None
+
+
 # ---------------------------------------------------------------------------
 # Same-commit rebuild with a live owner
 # ---------------------------------------------------------------------------
@@ -225,6 +264,107 @@ def test_newer_commit_rebuild_reports_stale_and_serves_with_stale_metadata(tmp_p
         after = resolver.classify(path)
         assert after.ready and after.rebuild is None
         assert after.last_indexed_commit == target
+
+
+def test_head_moving_away_from_the_rebuild_target_fails_closed(tmp_path, monkeypatch):
+    path, repo_id = build_temp_repo(tmp_path, "moved", seed_files=SEED)
+    with boot_test_server(tmp_path, [path]) as server:
+        resolver = server.repo_resolver
+        manager = resolver._index_manager
+        (path / "beta.py").write_text("def beta_token():\n    return 2\n")
+        git(path, "add", "beta.py")
+        git(path, "commit", "-m", "add beta")
+        target = git_head(path)
+        observed: dict = {}
+        original = manager._rebuild_checkpoint
+
+        def checkpoint(stage):
+            if stage == "before_provenance" and "readiness" not in observed:
+                # HEAD moves past the commit the live build is indexing.
+                (path / "gamma.py").write_text("gamma = 3\n")
+                git(path, "add", "gamma.py")
+                git(path, "commit", "-m", "add gamma")
+                observed["readiness"] = resolver.classify(path)
+                observed["search"] = _search(server, path, "alpha_token")
+                observed["symbol"] = _symbol(server, path, "AlphaSymbol")
+            return original(stage)
+
+        monkeypatch.setattr(manager, "_rebuild_checkpoint", checkpoint)
+        result = manager.sync_repository_index(repo_id)
+
+        readiness = observed["readiness"]
+        assert readiness.current_commit != target
+        assert readiness.state == RepositoryReadinessState.MISSING_PROVENANCE
+        assert readiness.rebuild is None
+        assert not readiness.queryable and not readiness.serving_stale
+        assert observed["search"]["code"] == "index_unavailable"
+        assert observed["symbol"]["code"] == "index_unavailable"
+        # The build itself refuses to publish the moved source.
+        assert result.action == "failed"
+        assert "changed" in (result.error or "")
+        assert not _owner_file(path).exists()
+
+
+@pytest.mark.parametrize("scenario", ["same_commit", "newer_commit"])
+def test_dirty_tracked_tree_during_a_rebuild_fails_closed(tmp_path, monkeypatch, scenario):
+    path, repo_id = build_temp_repo(tmp_path, f"dirty-{scenario}", seed_files=SEED)
+    with boot_test_server(tmp_path, [path]) as server:
+        resolver = server.repo_resolver
+        manager = resolver._index_manager
+        if scenario == "newer_commit":
+            (path / "beta.py").write_text("def beta_token():\n    return 2\n")
+            git(path, "add", "beta.py")
+            git(path, "commit", "-m", "add beta")
+        target = git_head(path)
+        observed: dict = {}
+        original = manager._rebuild_checkpoint
+
+        def checkpoint(stage):
+            if stage == "stage_created" and "dirty" not in observed:
+                observed["clean"] = resolver.classify(path)
+                (path / "alpha.py").write_text("def alpha_token():\n    return 99\n")
+                observed["dirty"] = resolver.classify(path)
+                observed["search"] = _search(server, path, "alpha_token")
+                observed["symbol"] = _symbol(server, path, "AlphaSymbol")
+                # Restore the tracked file so the build itself can publish.
+                git(path, "checkout", "--", "alpha.py")
+            return original(stage)
+
+        monkeypatch.setattr(manager, "_rebuild_checkpoint", checkpoint)
+        if scenario == "same_commit":
+            result = manager.rebuild_repository_index(repo_id)
+        else:
+            result = manager.sync_repository_index(repo_id)
+
+        clean = observed["clean"]
+        assert clean.rebuild is not None and clean.rebuild["target_commit"] == target
+        assert clean.queryable
+        dirty = observed["dirty"]
+        assert dirty.state == RepositoryReadinessState.MISSING_PROVENANCE
+        assert dirty.rebuild is None and not dirty.queryable
+        assert observed["search"]["code"] == "index_unavailable"
+        assert observed["symbol"]["code"] == "index_unavailable"
+        assert result.action in {"full_index", "incremental_update"}, result
+        assert resolver.classify(path).ready
+
+
+def test_serving_stale_requires_the_rebuild_to_target_the_current_commit():
+    from mcp_server.health.repository_readiness import RepositoryReadiness
+
+    base = dict(
+        state=RepositoryReadinessState.STALE_COMMIT,
+        current_commit="b" * 40,
+        last_indexed_commit="a" * 40,
+    )
+    targeted = RepositoryReadiness(
+        **base, rebuild={"in_progress": True, "target_commit": "b" * 40, "started_at": "t"}
+    )
+    elsewhere = RepositoryReadiness(
+        **base, rebuild={"in_progress": True, "target_commit": "c" * 40, "started_at": "t"}
+    )
+    assert targeted.serving_stale and targeted.queryable
+    assert not elsewhere.serving_stale and not elsewhere.queryable
+    assert not RepositoryReadiness(**base).queryable
 
 
 def test_stale_commit_without_a_rebuild_stays_fail_closed(tmp_path):

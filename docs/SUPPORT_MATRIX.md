@@ -27,16 +27,20 @@ the build's owner is alive. The owner is recorded next to the repository's
 `writer.lock` (`.mcp-index/rebuild-owner.json`: pid, process start time, host,
 registration and published generation); it counts as alive only while that
 process still exists with the same start time on this host and holds the
-writer lock. Readiness then classifies the published generation and adds a
-`rebuild` object, `{"in_progress": true, "target_commit": "...",
-"started_at": "..."}` (`null` when no live build runs; also on `get_status`
-repository rows):
+writer lock. A start time that cannot be read (Linux `/proc`, otherwise
+psutil) means the owner is not provably alive. While the live build targets
+the checkout as it is now (HEAD equals the build's `target_commit` and the
+tracked tree is clean), readiness classifies the published generation and adds
+a `rebuild` object, `{"in_progress": true, "target_commit": "...",
+"started_at": "..."}` (`null` otherwise; also on `get_status` repository
+rows):
 
 | Situation during a staged build | Readiness before | Readiness now | `search_code` / `symbol_lookup` |
 |---|---|---|---|
 | Live owner, rebuild of the published commit (forced or repair) | `missing_provenance` | `ready` + `rebuild` | Served from the published generation, unchanged response shape |
 | Live owner, indexing a newer commit | `missing_provenance` | `stale_commit` + `rebuild` | Served from the published generation; the response carries `readiness` (`state: "stale_commit"`, `last_indexed_commit`, `current_commit`, `rebuild`) and a `note`, and `search_code` returns its envelope instead of the bare list |
-| Owner dead (crash mid-build) or unprovable (no record, other host, lock not held) | `missing_provenance` | `missing_provenance` | `index_unavailable`, `safe_fallback: "native_search"` until recovery rebuilds |
+| Owner dead (crash mid-build) or unprovable (no record, other host, lock not held, no readable start time) | `missing_provenance` | `missing_provenance` | `index_unavailable`, `safe_fallback: "native_search"` until recovery rebuilds |
+| Live owner, but HEAD moved away from the build's target or tracked files are edited | `missing_provenance` | `missing_provenance` | `index_unavailable` |
 | Build failed (`partial_index_failure`) | `missing_provenance` | `missing_provenance` | `index_unavailable` |
 
 `stale_commit` without a live rebuild, and every other non-ready state, stay

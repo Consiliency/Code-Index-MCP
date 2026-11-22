@@ -97,8 +97,8 @@ def _index_lock_dir(repo_path: Path) -> Path:
     return Path(repo_path).resolve() / ".mcp-index"
 
 
-def _process_start_time(pid: int) -> Optional[str]:
-    """Return the kernel start time of ``pid`` (Linux ``/proc``), else None."""
+def _proc_start_time(pid: int) -> Optional[str]:
+    """Return the kernel start time of ``pid`` from Linux ``/proc``, else None."""
     try:
         stat = Path(f"/proc/{pid}/stat").read_text()
     except OSError:
@@ -106,7 +106,26 @@ def _process_start_time(pid: int) -> Optional[str]:
     # The command name may contain spaces or parentheses; fields follow the last ")".
     fields = stat.rsplit(")", 1)[-1].split()
     # Field 22 (starttime) is the 20th field after "pid (comm)".
-    return fields[19] if len(fields) > 19 else None
+    return f"proc:{fields[19]}" if len(fields) > 19 else None
+
+
+def _psutil_start_time(pid: int) -> Optional[str]:
+    """Return the process creation time from psutil (macOS and others), else None."""
+    try:
+        import psutil
+
+        return f"psutil:{psutil.Process(pid).create_time()!r}"
+    except Exception:  # noqa: BLE001 - no identity means not provably alive
+        return None
+
+
+def _process_start_time(pid: int) -> Optional[str]:
+    """Return a stable start-time identity for ``pid``, or None when unavailable.
+
+    None means the owner's identity cannot be proven, and callers treat that
+    as a dead owner (fail closed).
+    """
+    return _proc_start_time(pid) or _psutil_start_time(pid)
 
 
 def _pid_alive(pid: int) -> bool:
@@ -202,7 +221,8 @@ def live_rebuild_owner(
     Alive means: the record names this registration and the generation that is
     still published, it was written on this host, its pid exists with the same
     start time, and the writer lock is held. Any doubt returns None, which
-    keeps the caller fail-closed.
+    keeps the caller fail-closed; that includes a start time that was not
+    recorded or cannot be read now, since a reused pid would otherwise pass.
     """
     try:
         owner = json.loads((_index_lock_dir(repo_path) / _OWNER_FILE).read_text())
@@ -221,7 +241,11 @@ def live_rebuild_owner(
     ):
         return None
     recorded_start = owner.get("process_start")
-    if recorded_start is not None and _process_start_time(pid) != recorded_start:
+    if (
+        not isinstance(recorded_start, str)
+        or not recorded_start
+        or _process_start_time(pid) != recorded_start
+    ):
         return None
     if not writer_lock_held(repo_path):
         return None
