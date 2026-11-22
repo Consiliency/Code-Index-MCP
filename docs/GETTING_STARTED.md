@@ -308,6 +308,7 @@ mcp-index artifact push             # Publish a refreshed index baseline
 
 # Repository
 mcp-index repository status     # Show repository info
+mcp-index repository summarize REPO --max-seconds 7200  # Prefill semantic summaries in a window
 ```
 
 ## Troubleshooting

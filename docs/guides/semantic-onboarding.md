@@ -254,6 +254,111 @@ Manual summary tools stay separate from the full-sync contract:
 - `summarize_sample` is a diagnostic/sample tool for inspecting summary output
   and does not satisfy the full-sync semantic build contract by itself.
 
+## Large First Semantic Build
+
+A full semantic build summarizes every chunk before it writes any vector, and
+it does that inside a staged generation. If the build stops first (the
+`SEMANTIC_SUMMARY_PASS_BUDGET` runs out, the endpoint fails, the process is
+stopped), the staged generation is discarded with every summary written in
+it, and the next `--force-full` starts again from the published index. On a
+large repository the first build may never finish that way.
+
+`mcp-index repository summarize` makes that work durable. It writes
+authoritative chunk summaries straight into the repository's ready, published
+index, in bounded windows, so each window keeps what it wrote:
+
+```bash
+mcp-index repository summarize REPO [--limit N] [--max-seconds S] [--json]
+```
+
+- `REPO` is a repository ID, name or registered path.
+- `--limit N` stops after `N` chunk summaries; `--max-seconds S` stops
+  starting new summary calls after `S` seconds of summarizing. `0` (the
+  default) leaves that dimension unbounded. A summary call already in flight
+  when the window closes finishes and is kept.
+- Progress lines report summaries written, chunks remaining and elapsed time.
+  `written` counts summaries actually stored (the drop in chunks still
+  missing a current summary), not what the provider returned. `--json`
+  prints a final JSON summary on stdout (progress goes to stderr): `status`
+  (`complete`, `partial`, `interrupted`, `stalled` or `aborted`),
+  `stop_reason`, `written`, `remaining_at_start`, `remaining`,
+  `elapsed_seconds`, plus the `profile_id`, `prompt_fingerprint` and
+  generation it wrote under.
+- A rerun continues with only the chunks still missing a current summary.
+- Each provider batch (one file's chunks in a call) is stored in one
+  transaction, so a batch is either stored whole or not at all.
+- Ctrl-C (or SIGTERM) stops after the current summary call; what was stored
+  stays stored. Stops are checked between provider calls: a call already in
+  flight, including the provider SDK's own short retries, finishes first, and
+  no further call (fallback step, batch or model probe) starts after it. A second Ctrl-C abandons the call in flight, including a batch
+  that is being stored, without keeping any of that batch.
+- Exit codes: `0` complete or partial, `1` refused, stalled (a whole pass
+  stored nothing: an unreachable endpoint, or output with only unknown chunk
+  IDs) or aborted (during the window the repository was unregistered or
+  re-registered, or its published generation or commit changed; checked after
+  every pass, before any success is reported), `130` interrupted.
+
+Summaries are built only from the published index: chunk text comes from
+the index and the surrounding file context from the published commit (read
+with `git cat-file blob`, as the staged build reads its inputs), never from
+the working tree. Editing, committing or switching branches during a window
+therefore cannot leak into a stored summary. A later commit only makes the
+summaries of files whose content changed stale; the next staged rebuild drops
+those and keeps the rest.
+
+It writes the same rows a staged build writes: `is_authoritative=1`, the
+active profile ID, and the prompt fingerprint derived from that profile's
+summarization endpoint and model. The next staged rebuild keeps those rows
+(`prepare_generation` retains summaries whose profile, fingerprint and file
+content still match) and skips summarizing them. Changing the profile's
+summarization endpoint or model changes the fingerprint, which makes the
+prefilled summaries stale.
+
+The command refuses, with exit code `1`, a described reason and nothing
+written, when:
+
+- the repository is not registered (`repository_not_registered`);
+- its lexical readiness is not `ready`, for example `stale_commit`
+  (`repository_not_ready`): sync it first;
+- no semantic profile or summarization endpoint is configured
+  (`summarization_unconfigured`);
+- another writer holds the repository writer lock (`writer_lock_held`);
+- a staged rebuild is running or left a publication marker
+  (`staged_rebuild_in_progress`). It never writes to a staged generation.
+
+The command holds the repository writer lock for the whole window, so a sync
+or watcher update for that repository waits (and may time out and retry
+later) until the window ends. Keep windows bounded with `--max-seconds`.
+
+Procedure for a large first build (for example `oss_high` with self-hosted
+inference):
+
+1. Bring the repository to lexical `ready` with
+   `mcp-index repository sync`, then check `mcp-index repository status`.
+2. Export the same semantic settings the final build will use
+   (`SEMANTIC_DEFAULT_PROFILE`, the summarization endpoint and model).
+3. Prefill in windows until nothing remains, for example two-hour windows:
+
+   ```bash
+   mcp-index repository summarize REPO --max-seconds 7200 --json
+   ```
+
+   Repeat (or schedule) the command until it reports `"remaining": 0`. Each
+   window resumes where the last one stopped.
+4. Run the build with semantic search enabled:
+
+   ```bash
+   SEMANTIC_SEARCH_ENABLED=true mcp-index repository sync --force-full
+   ```
+
+   It reuses the prefilled summaries and only embeds. If the repository moved
+   to a new commit in between, only chunks of changed files need new
+   summaries; to drain those too, sync, prefill again and rebuild.
+5. Confirm `Semantic readiness: ready` in `mcp-index repository status`.
+
+`SEMANTIC_SUMMARY_PASS_BUDGET=0` is the alternative when one uninterrupted
+build is acceptable; the prefill is the resumable option.
+
 ## Incremental Mutation Contract
 
 Incremental mutation follows the same ordered semantic contract as full sync:

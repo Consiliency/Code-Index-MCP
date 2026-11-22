@@ -2119,3 +2119,251 @@ async def test_permitted_commercial_summary_fallback_remains_available(
     monkeypatch.setattr(writer, "_call_cerebras_api", allowed)
     assert await writer._call_direct_api("synthetic", "synthetic") == ("Synthetic summary", None)
     assert calls == [True]
+
+
+# --- Stop checks before every outbound summary call (#121, PR #157) ---
+
+
+@pytest.mark.parametrize("stop_set", [True, False])
+@pytest.mark.asyncio
+async def test_stop_during_a_sampling_failure_starts_no_baml_or_direct_call(
+    tmp_path, monkeypatch, stop_set
+):
+    store, file_id = _seed_chunk_summary_tables(tmp_path / "stop.db", tmp_path)
+    store.close()
+    monkeypatch.delenv("MCP_DEPLOYMENT_PROFILE", raising=False)
+    monkeypatch.setenv("CEREBRAS_API_KEY", "dummy-offline")
+    stop = {"requested": False}
+    calls: list[str] = []
+
+    class FailingSamplingSession:
+        def create_message(self, **_kwargs):
+            async def fail():
+                calls.append("sampling")
+                stop["requested"] = True
+                raise RuntimeError("sampling failed")
+
+            return fail()
+
+    async def fake_baml(**_kwargs):
+        calls.append("baml")
+        return SimpleNamespace(summary="Summary from BAML. It is synthetic.")
+
+    async def fake_direct(*_args, **_kwargs):
+        calls.append("direct")
+        return "Summary from the direct API. It is synthetic.", None
+
+    writer = ChunkWriter(
+        db_path=str(tmp_path / "stop.db"),
+        qdrant_client=None,
+        session=FailingSamplingSession(),
+    )
+    monkeypatch.setattr(writer, "_has_sampling_capability", lambda: True)
+    monkeypatch.setattr("baml_sdk.SummarizeChunkAlone_async", fake_baml)
+    monkeypatch.setattr(writer, "_call_direct_api", fake_direct)
+
+    summary = await writer.summarize_chunk(
+        chunk_hash="chunk-stop",
+        file_id=file_id,
+        chunk_start=1,
+        chunk_end=2,
+        symbol="alpha",
+        content="def alpha():\n    return 1\n",
+        language="python",
+        is_authoritative=True,
+        cancel_check=(lambda: stop["requested"]) if stop_set else None,
+    )
+
+    if stop_set:
+        assert summary is None
+        assert calls == ["sampling"]  # neither BAML nor the direct API started
+    else:
+        # Default (no stop check): the chain falls through exactly as before.
+        assert summary == "Summary from BAML. It is synthetic."
+        assert calls == ["sampling", "baml"]
+
+
+@pytest.mark.parametrize("stop_set", [True, False])
+@pytest.mark.asyncio
+async def test_stop_during_profile_recovery_starts_no_next_batch(tmp_path, monkeypatch, stop_set):
+    from mcp_server.indexing.summarization import FileTooLargeError
+
+    summarizer = FileBatchSummarizer(
+        db_path=str(tmp_path / "unused.db"),
+        qdrant_client=None,
+        summarization_config={
+            "base_url": "http://127.0.0.1:9/v1",
+            "model_name": "chat",
+            "profile_id": "fixture",
+        },
+    )
+    chunks = [
+        {"chunk_id": f"chunk-{i}", "content": f"x = {i}", "line_start": i, "line_end": i}
+        for i in range(130)
+    ]
+    stop = {"requested": False}
+    calls: list[list[str]] = []
+
+    async def fake_profile_api(system, prompt, *, max_tokens=150, cancel_check=None):
+        del system, max_tokens
+        ids = re.findall(r"^chunk_id: (.+)$", prompt, flags=re.MULTILINE)
+        calls.append(ids)
+        stop["requested"] = True
+        payload = {"summaries": [{"chunk_id": cid, "summary": "Synthetic."} for cid in ids]}
+        return json.dumps(payload), "chat"
+
+    monkeypatch.setattr(summarizer, "_call_profile_api", fake_profile_api)
+
+    recovered = await summarizer._recover_with_profile_or_topological(
+        file_id=1,
+        file_path="big.py",
+        file_content="",
+        chunks=chunks,
+        symbol_map={},
+        warning_prefix="Large-file fallback",
+        error=FileTooLargeError("big.py"),
+        retry_profile_batch=True,
+        cancel_check=(lambda: stop["requested"]) if stop_set else None,
+    )
+
+    if stop_set:
+        assert [len(batch) for batch in calls] == [64]  # no second batch started
+        assert {summary.chunk_id for summary in recovered} == set(calls[0])
+    else:
+        assert [len(batch) for batch in calls] == [64, 64, 2]
+        assert len(recovered) == 130
+
+
+@pytest.mark.parametrize("stop_set", [True, False])
+@pytest.mark.asyncio
+async def test_stop_before_model_resolution_never_starts_the_models_probe(
+    tmp_path, monkeypatch, stop_set
+):
+    """A call that succeeds after a stop records the model without probing /models."""
+    from mcp_server.indexing import summarization
+
+    store, file_id = _seed_chunk_summary_tables(tmp_path / "probe.db", tmp_path)
+    store.close()
+    monkeypatch.delenv("MCP_DEPLOYMENT_PROFILE", raising=False)
+    monkeypatch.setenv("CEREBRAS_API_KEY", "dummy-offline")
+    stop = {"requested": False}
+    probes: list[str] = []
+
+    def fake_resolve(**kwargs):
+        probes.append(kwargs["base_url"])
+        return EnrichmentModelResolution(
+            configured_model=kwargs["configured_model"],
+            effective_model="served-model",
+            resolution_strategy="single_served_model",
+            available_models=["served-model"],
+        )
+
+    async def baml_succeeds_after_stop(**_kwargs):
+        stop["requested"] = True  # the stop arrives while BAML is in flight
+        return SimpleNamespace(summary="Summary from BAML. It is synthetic.")
+
+    monkeypatch.setattr(summarization, "resolve_enrichment_model", fake_resolve)
+    monkeypatch.setattr("baml_sdk.SummarizeChunkAlone_async", baml_succeeds_after_stop)
+    writer = ChunkWriter(
+        db_path=str(tmp_path / "probe.db"),
+        qdrant_client=None,
+        summarization_config={
+            "base_url": "http://127.0.0.1:9/v1",
+            "model_name": "chat",
+            "profile_id": "fixture",
+        },
+    )
+    monkeypatch.setattr(writer, "_has_sampling_capability", lambda: False)
+
+    summary = await writer.summarize_chunk(
+        chunk_hash="chunk-probe",
+        file_id=file_id,
+        chunk_start=1,
+        chunk_end=2,
+        symbol="alpha",
+        content="def alpha():\n    return 1\n",
+        language="python",
+        is_authoritative=True,
+        cancel_check=(lambda: stop["requested"]) if stop_set else None,
+    )
+
+    assert summary == "Summary from BAML. It is synthetic."
+    with sqlite3.connect(tmp_path / "probe.db") as conn:
+        llm_model, audit = conn.execute(
+            "SELECT llm_model, audit_metadata FROM chunk_summaries WHERE chunk_hash = ?",
+            ("chunk-probe",),
+        ).fetchone()
+    audit = json.loads(audit)
+    if stop_set:
+        assert probes == []  # no uncached GET /models after the stop
+        assert llm_model == "chat"
+        assert audit["configured_model_name"] == "chat"
+        assert audit["model_resolution_strategy"] == "unresolved_stop_requested"
+        assert "effective_model_name" not in audit
+    else:
+        # Default (no stop check): resolved once, then cached, as before.
+        assert probes == ["http://127.0.0.1:9/v1"]
+        assert llm_model == "served-model"
+        assert audit["effective_model_name"] == "served-model"
+        assert audit["model_resolution_strategy"] == "single_served_model"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["direct", "batch"])
+async def test_stop_during_the_models_probe_starts_no_completion(tmp_path, monkeypatch, path):
+    """A stop that arrives while /models is probed must not start the completion."""
+    import openai
+
+    from mcp_server.indexing import summarization
+
+    monkeypatch.delenv("MCP_DEPLOYMENT_PROFILE", raising=False)
+    stop = {"requested": False}
+    completions: list[str] = []
+
+    def resolve_then_stop(**kwargs):
+        stop["requested"] = True  # the stop arrives during the probe
+        return EnrichmentModelResolution(
+            configured_model=kwargs["configured_model"],
+            effective_model="served-model",
+            resolution_strategy="single_served_model",
+            available_models=["served-model"],
+        )
+
+    class _Completions:
+        async def create(self, **kwargs):
+            completions.append(kwargs["model"])
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="{}"))])
+
+    class _Client:
+        def __init__(self, *args, **kwargs):
+            self.chat = SimpleNamespace(completions=_Completions())
+
+        async def close(self):
+            return None
+
+    monkeypatch.setattr(summarization, "resolve_enrichment_model", resolve_then_stop)
+    monkeypatch.setattr(openai, "AsyncOpenAI", _Client)
+    writer = FileBatchSummarizer(
+        db_path=str(tmp_path / "probe-stop.db"),
+        qdrant_client=None,
+        summarization_config={
+            "base_url": "http://127.0.0.1:9/v1",
+            "model_name": "chat",
+            "profile_id": "fixture",
+        },
+    )
+
+    def cancel_check():
+        return stop["requested"]
+
+    if path == "direct":
+        text, model = await writer._call_direct_api("system", "prompt", cancel_check=cancel_check)
+        assert (text, model) == (None, None)
+    else:
+        chunks = [{"chunk_id": "c1", "language": "python", "content": "x = 1"}]
+        result = await writer._call_profile_batch_api(
+            1, "a.py", "x = 1", chunks, {}, cancel_check=cancel_check
+        )
+        assert result == []
+    assert stop["requested"] is True
+    assert completions == []

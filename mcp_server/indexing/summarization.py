@@ -58,6 +58,15 @@ class FileTooLargeError(Exception):
     """Raised when a file exceeds the batch summarization size limit."""
 
 
+def _stop_requested(cancel_check: Optional[Callable[[], bool]]) -> bool:
+    return cancel_check is not None and bool(cancel_check())
+
+
+def _stop_kwargs(cancel_check: Optional[Callable[[], bool]]) -> Dict[str, Any]:
+    """Forward a stop check only when one is set, so default calls stay unchanged."""
+    return {} if cancel_check is None else {"cancel_check": cancel_check}
+
+
 @dataclass(frozen=True)
 class GeneratedSummary:
     """Immutable normalized summary generated for one chunk."""
@@ -215,10 +224,20 @@ class ChunkWriter:
         )
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
-    def _resolve_effective_profile_model(self) -> Optional[EnrichmentModelResolution]:
+    def _resolve_effective_profile_model(
+        self, *, cancel_check: Optional[Callable[[], bool]] = None
+    ) -> Optional[EnrichmentModelResolution]:
+        """Resolve (once) which served model the profile endpoint runs.
+
+        The first resolution probes ``GET /models``. Once ``cancel_check``
+        reports a stop, no uncached probe starts: ``None`` is returned (and not
+        cached), so callers fall back to the configured model name.
+        """
         if not self.summarization_config.get("base_url"):
             return None
         if self._profile_model_resolution is None:
+            if _stop_requested(cancel_check):
+                return None
             cfg = self.summarization_config
             self._profile_model_resolution = resolve_enrichment_model(
                 base_url=str(cfg["base_url"]),
@@ -228,7 +247,9 @@ class ChunkWriter:
             )
         return self._profile_model_resolution
 
-    def _build_summary_audit_metadata(self, *, model_name: str) -> Dict[str, Any]:
+    def _build_summary_audit_metadata(
+        self, *, model_name: str, cancel_check: Optional[Callable[[], bool]] = None
+    ) -> Dict[str, Any]:
         base_url = self.summarization_config.get("base_url")
         if base_url:
             provider_name = "openai_compatible"
@@ -248,12 +269,19 @@ class ChunkWriter:
             "base_url": base_url,
             "prompt_fingerprint": self._prompt_fingerprint(),
         }
-        resolution = self._resolve_effective_profile_model()
+        resolution = self._resolve_effective_profile_model(**_stop_kwargs(cancel_check))
         if resolution is not None:
             audit_metadata["configured_model_name"] = resolution.configured_model
             audit_metadata["effective_model_name"] = resolution.effective_model
             audit_metadata["model_resolution_strategy"] = resolution.resolution_strategy
             audit_metadata["considered_model_ids"] = list(resolution.available_models)
+        elif base_url:
+            # A stop arrived before the endpoint's model was ever resolved; the
+            # /models probe is not started, so record the model as unresolved.
+            audit_metadata["configured_model_name"] = str(
+                self.summarization_config.get("model_name", "gpt-4o-mini")
+            )
+            audit_metadata["model_resolution_strategy"] = "unresolved_stop_requested"
         return audit_metadata
 
     def _persist_summary(
@@ -267,8 +295,11 @@ class ChunkWriter:
         summary_text: str,
         model_name: str,
         is_authoritative: bool,
+        cancel_check: Optional[Callable[[], bool]] = None,
     ) -> bool:
-        audit_metadata = self._build_summary_audit_metadata(model_name=model_name)
+        audit_metadata = self._build_summary_audit_metadata(
+            model_name=model_name, **_stop_kwargs(cancel_check)
+        )
         return bool(
             self._get_sqlite_store().store_chunk_summary(
                 chunk_hash=chunk_hash,
@@ -392,6 +423,21 @@ class ChunkWriter:
         )
         return str(response.choices[0].message.content or "")
 
+    def _profile_stop_after_resolution(self, cancel_check: Optional[Callable[[], bool]]) -> bool:
+        """Resolve the profile model first, then report whether a stop is set.
+
+        ``_call_profile_api`` resolves the model before its completion call. Doing
+        that resolution here (it is cached once it succeeds) means a stop that
+        arrives during an uncached ``GET /models`` probe is seen before the
+        completion starts. Without ``cancel_check`` nothing changes.
+        """
+        if cancel_check is None:
+            return False
+        if _stop_requested(cancel_check):
+            return True
+        self._resolve_effective_profile_model(cancel_check=cancel_check)
+        return _stop_requested(cancel_check)
+
     async def _call_profile_api(
         self, system: str, prompt: str, *, max_tokens: int = 150
     ) -> tuple[str, str]:
@@ -426,20 +472,35 @@ class ChunkWriter:
             await client.close()
 
     async def _call_direct_api(
-        self, system: str, prompt: str
+        self,
+        system: str,
+        prompt: str,
+        *,
+        cancel_check: Optional[Callable[[], bool]] = None,
     ) -> tuple[Optional[str], Optional[str]]:
-        """Try profile endpoint first, then Cerebras, Anthropic, OpenAI."""
+        """Try profile endpoint first, then Cerebras, Anthropic, OpenAI.
+
+        With ``cancel_check``, no provider call starts once it returns true. A
+        call already started runs to completion, including the SDK's own
+        short retries.
+        """
         if not learned_models_allowed():
             return None, None
         if self.summarization_config.get("base_url"):
+            if _stop_requested(cancel_check):
+                return None, None
             try:
+                # Resolve inside the try: a failed probe is handled like a failed
+                # call, as it was when only _call_profile_api resolved the model.
+                if self._profile_stop_after_resolution(cancel_check):
+                    return None, None
                 return await self._call_profile_api(system, prompt)
             except Exception as exc:
                 logger.warning(
                     "Profile summarization endpoint failed (%s)",
                     type(exc).__name__,
                 )
-        if not commercial_egress_allowed():
+        if not commercial_egress_allowed() or _stop_requested(cancel_check):
             return None, None
         if os.environ.get("CEREBRAS_API_KEY"):
             return await self._call_cerebras_api(system, prompt), None
@@ -449,9 +510,9 @@ class ChunkWriter:
             return await self._call_openai_api(system, prompt), None
         return None, None
 
-    def _get_model_name(self) -> str:
+    def _get_model_name(self, *, cancel_check: Optional[Callable[[], bool]] = None) -> str:
         if self.summarization_config.get("model_name"):
-            resolution = self._resolve_effective_profile_model()
+            resolution = self._resolve_effective_profile_model(**_stop_kwargs(cancel_check))
             if resolution is not None:
                 return str(resolution.effective_model)
             return str(self.summarization_config["model_name"])
@@ -495,6 +556,7 @@ class ChunkWriter:
         parent_context: str = "",
         file_content: str = "",
         is_authoritative: bool = False,
+        cancel_check: Optional[Callable[[], bool]] = None,
     ) -> Optional[str]:
         """Generate a summary for a code chunk and persist it to SQLite.
 
@@ -508,6 +570,10 @@ class ChunkWriter:
         injected into the prompt so the model understands the chunk in its
         broader file context — especially valuable for cross-reference and
         import analysis.
+
+        *cancel_check*: when set, it is consulted before every provider call
+        in the sampling → BAML → direct-API chain; once it returns true no
+        further call starts and ``None`` is returned.
 
         Returns the summary text on success, ``None`` otherwise.
         """
@@ -566,7 +632,7 @@ class ChunkWriter:
         model_name: Optional[str] = None
 
         # Path 1: MCP sampling (client performs the inference, no file context)
-        if self._has_sampling_capability():
+        if self._has_sampling_capability() and not _stop_requested(cancel_check):
             try:
                 # mcp 2.x marks sampling deprecated (SEP-2577) but it still works
                 # on handshake-era connections; the warning is emitted when the
@@ -601,6 +667,7 @@ class ChunkWriter:
             summary_text is None
             and commercial_egress_allowed()
             and os.environ.get("CEREBRAS_API_KEY")
+            and not _stop_requested(cancel_check)
         ):
             try:
                 from baml_sdk import SummarizeChunkAlone_async
@@ -615,7 +682,7 @@ class ChunkWriter:
                     file_context=api_file_context,
                 )
                 summary_text = result.summary
-                model_name = self._get_model_name()
+                model_name = self._get_model_name(**_stop_kwargs(cancel_check))
             except Exception as exc:
                 logger.warning(
                     "BAML SummarizeChunkAlone failed (%s), falling back to direct API",
@@ -623,12 +690,14 @@ class ChunkWriter:
                 )
 
         # Path 3: Direct API fallback (Anthropic / OpenAI raw call, or Cerebras raw)
-        if summary_text is None and self._has_direct_api():
+        if summary_text is None and self._has_direct_api() and not _stop_requested(cancel_check):
             try:
                 summary_text, resolved_model_name = await self._call_direct_api(
-                    _SYSTEM_PROMPT, api_prompt
+                    _SYSTEM_PROMPT, api_prompt, **_stop_kwargs(cancel_check)
                 )
-                model_name = resolved_model_name or self._get_model_name()
+                model_name = resolved_model_name or self._get_model_name(
+                    **_stop_kwargs(cancel_check)
+                )
             except Exception as exc:
                 logger.warning("Direct API summarization failed (%s)", type(exc).__name__)
 
@@ -644,6 +713,7 @@ class ChunkWriter:
             summary_text=summary_text,
             model_name=model_name or "unknown",
             is_authoritative=is_authoritative,
+            **_stop_kwargs(cancel_check),
         )
         logger.info("Stored chunk summary via %s", model_name)
         return summary_text
@@ -730,6 +800,7 @@ class FileBatchSummarizer(ChunkWriter):
         warning_prefix: str,
         error: Exception,
         retry_profile_batch: bool = True,
+        cancel_check: Optional[Callable[[], bool]] = None,
     ) -> Tuple[GeneratedSummary, ...]:
         logger.warning(
             "%s for %s (%s), falling back to per-chunk path",
@@ -737,11 +808,18 @@ class FileBatchSummarizer(ChunkWriter):
             file_path,
             type(error).__name__,
         )
+        if cancel_check is not None and cancel_check():
+            return ()
         if retry_profile_batch and self.summarization_config.get("base_url"):
             try:
                 return _normalize_generated_summaries(
                     await self._call_profile_batch_api(
-                        file_id, file_path, file_content, chunks, symbol_map
+                        file_id,
+                        file_path,
+                        file_content,
+                        chunks,
+                        symbol_map,
+                        **_stop_kwargs(cancel_check),
                     )
                 )
             except Exception as profile_exc:
@@ -759,6 +837,7 @@ class FileBatchSummarizer(ChunkWriter):
             max_chunks=self._topological_recovery_chunk_limit(
                 (chunks[0].get("language") or "unknown") if chunks else "unknown"
             ),
+            cancel_check=cancel_check,
         )
 
     def _topological_recovery_chunk_limit(self, language: str) -> Optional[int]:
@@ -814,12 +893,20 @@ class FileBatchSummarizer(ChunkWriter):
         file_content: str,
         chunks: List[Dict],
         symbol_map: Dict[int, str],
+        cancel_check: Optional[Callable[[], bool]] = None,
     ) -> List[Any]:
+        """Summarize ``chunks`` in profile batches of ``_PROFILE_BATCH_CHUNK_COUNT``.
+
+        With ``cancel_check``, no batch starts once it returns true, and the
+        summaries of batches that already completed are returned.
+        """
         del file_id, file_content
         language = (chunks[0].get("language") or "unknown") if chunks else "unknown"
         summaries: List[SimpleNamespace] = []
 
         for offset in range(0, len(chunks), _PROFILE_BATCH_CHUNK_COUNT):
+            if self._profile_stop_after_resolution(cancel_check):
+                break
             batch = chunks[offset : offset + _PROFILE_BATCH_CHUNK_COUNT]
             chunk_blocks = []
             for chunk in batch:
@@ -908,8 +995,14 @@ class FileBatchSummarizer(ChunkWriter):
         chunks: List[Dict],
         symbol_map: Dict[int, str],
         max_chunks: Optional[int] = None,
+        cancel_check: Optional[Callable[[], bool]] = None,
     ) -> Tuple[GeneratedSummary, ...]:
-        """Per-chunk fallback: summarize in topological order (leaves first)."""
+        """Per-chunk fallback: summarize in topological order (leaves first).
+
+        ``cancel_check`` is consulted before each per-chunk provider call; once
+        it returns true no further call starts, and the summaries of calls that
+        already completed (each stored by ``summarize_chunk``) are returned.
+        """
         order = _topological_order(chunks)
         if max_chunks is not None:
             order = order[:max_chunks]
@@ -918,6 +1011,8 @@ class FileBatchSummarizer(ChunkWriter):
         results: List[GeneratedSummary] = []
 
         for chunk_id in order:
+            if cancel_check is not None and cancel_check():
+                break
             c = chunk_map[chunk_id]
             symbol = _symbol_name(symbol_map, c)
 
@@ -944,6 +1039,7 @@ class FileBatchSummarizer(ChunkWriter):
                     parent_context=parent_context,
                     file_content=file_content,
                     is_authoritative=True,
+                    **_stop_kwargs(cancel_check),
                 )
                 if summary_text:
                     stored_summaries[chunk_id] = summary_text
@@ -963,6 +1059,7 @@ class FileBatchSummarizer(ChunkWriter):
         persist: bool = True,
         max_chunks: Optional[int] = None,
         call_timeout_seconds: Optional[float] = None,
+        cancel_check: Optional[Callable[[], bool]] = None,
     ) -> SummaryGenerationResult:
         """Summarize all chunks of a file, preferring the batch API path.
 
@@ -1012,11 +1109,28 @@ class FileBatchSummarizer(ChunkWriter):
                 existing_authoritative=existing_authoritative,
             )
 
+        if _stop_requested(cancel_check):
+            return SummaryGenerationResult(
+                chunks_attempted=0,
+                summaries_written=0,
+                authoritative_chunks=existing_authoritative,
+                missing_chunk_ids=tuple(chunk["chunk_id"] for chunk in to_summarize),
+                files_attempted=1,
+                files_summarized=0,
+                remaining_chunks=len(to_summarize),
+                scope_drained=False,
+            )
+
         try:
             summary_call: Any
             if self.summarization_config.get("base_url"):
                 summary_call = self._call_profile_batch_api(
-                    file_id, file_path, file_content, active_chunks, symbol_map
+                    file_id,
+                    file_path,
+                    file_content,
+                    active_chunks,
+                    symbol_map,
+                    **_stop_kwargs(cancel_check),
                 )
             else:
                 summary_call = self._call_batch_api(
@@ -1049,6 +1163,7 @@ class FileBatchSummarizer(ChunkWriter):
                 warning_prefix="Large-file fallback",
                 error=exc,
                 retry_profile_batch=True,
+                cancel_check=cancel_check,
             )
             summaries = recovery
         except Exception as exc:
@@ -1061,11 +1176,24 @@ class FileBatchSummarizer(ChunkWriter):
                 warning_prefix="Batch API failed",
                 error=exc,
                 retry_profile_batch=not self.summarization_config.get("base_url"),
+                cancel_check=cancel_check,
             )
             summaries = recovery
 
         if persist and summaries:
-            with sqlite3.connect(self.db_path) as conn:
+            chunk_lookup = {c["chunk_id"]: c for c in active_chunks}
+            # Resolve the model before the write transaction opens: the first
+            # resolution may probe the profile endpoint.
+            model_name = (
+                self._get_model_name(**_stop_kwargs(cancel_check))
+                if any(summary.chunk_id in chunk_lookup for summary in summaries)
+                else None
+            )
+            persisted_count = 0
+            # One transaction per provider batch: a failure or interrupt while
+            # storing leaves none of the batch rather than part of it.
+            with self._get_sqlite_store()._get_connection() as conn:
+                conn.execute("BEGIN IMMEDIATE")
                 persisted_hashes = {
                     row[0]
                     for row in conn.execute(
@@ -1074,29 +1202,27 @@ class FileBatchSummarizer(ChunkWriter):
                         (self.summarization_config.get("profile_id"), self._prompt_fingerprint()),
                     ).fetchall()
                 }
-            summaries_to_persist = [
-                summary for summary in summaries if summary.chunk_id not in persisted_hashes
-            ]
-            chunk_lookup = {c["chunk_id"]: c for c in active_chunks}
-            model_name = self._get_model_name() if summaries_to_persist else None
-            for s in summaries_to_persist:
-                c = chunk_lookup.get(s.chunk_id)
-                if c is None:
-                    continue
-                sym = _symbol_name(symbol_map, c)
-                self._persist_summary(
-                    chunk_hash=s.chunk_id,
-                    file_id=file_id,
-                    chunk_start=c.get("line_start") or 1,
-                    chunk_end=c.get("line_end") or 1,
-                    symbol=sym,
-                    summary_text=s.summary,
-                    model_name=model_name or "unknown",
-                    is_authoritative=True,
-                )
+                for s in summaries:
+                    c = chunk_lookup.get(s.chunk_id)
+                    if c is None or s.chunk_id in persisted_hashes:
+                        continue
+                    sym = _symbol_name(symbol_map, c)
+                    self._persist_summary(
+                        chunk_hash=s.chunk_id,
+                        file_id=file_id,
+                        chunk_start=c.get("line_start") or 1,
+                        chunk_end=c.get("line_end") or 1,
+                        symbol=sym,
+                        summary_text=s.summary,
+                        model_name=model_name or "unknown",
+                        is_authoritative=True,
+                        **_stop_kwargs(cancel_check),
+                    )
+                    persisted_hashes.add(s.chunk_id)
+                    persisted_count += 1
             logger.info(
                 "FileBatchSummarizer: persisted %d summaries for %s",
-                len(summaries_to_persist),
+                persisted_count,
                 file_path,
             )
 
@@ -1216,6 +1342,18 @@ class ComprehensiveChunkWriter(FileBatchSummarizer):
         if repo_scope and normalized_language in _DOC_CONTEXT_LANGUAGES:
             return _REPO_SCOPE_DOC_FILE_CHUNK_WINDOW
         return None
+
+    def _read_scope_file_content(self, file_path: str) -> str:
+        """Return the file text given to the summarizer as context for its chunks.
+
+        The default reads the checkout. A caller summarizing a published index
+        outside a staged build overrides this to read the published commit.
+        """
+        try:
+            with open(file_path, encoding="utf-8", errors="replace") as fh:
+                return fh.read()
+        except Exception:
+            return ""
 
     async def process_scope(
         self,
@@ -1347,11 +1485,7 @@ class ComprehensiveChunkWriter(FileBatchSummarizer):
                     file_language,
                     repo_scope=repo_scope,
                 )
-                try:
-                    with open(file_path, encoding="utf-8", errors="replace") as fh:
-                        file_content = fh.read()
-                except Exception:
-                    file_content = ""
+                file_content = self._read_scope_file_content(file_path)
 
                 try:
                     file_result = await self.summarize_file_chunks(
@@ -1363,6 +1497,7 @@ class ComprehensiveChunkWriter(FileBatchSummarizer):
                         persist=True,
                         max_chunks=file_chunk_window,
                         call_timeout_seconds=call_timeout_seconds,
+                        cancel_check=cancel_check,
                     )
                     pass_summaries_written += file_result.summaries_written
                     total_summaries_written += file_result.summaries_written
