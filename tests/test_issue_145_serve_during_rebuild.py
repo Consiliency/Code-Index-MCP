@@ -1139,6 +1139,34 @@ def _lazy_chunk(file_id: int, chunk_id: str) -> dict:
     )
 
 
+def test_lazy_entry_preflight_never_records_into_an_outer_tally(tmp_path, monkeypatch):
+    """A lazy entry's preflight BUSY outcome stays in the entry's own tally."""
+    from mcp_server.indexing import summarization
+
+    path, repo_id = build_temp_repo(tmp_path, "lazy-outer-tally", seed_files=SEED)
+    with boot_test_server(tmp_path, [path]) as server:
+        info = server.registry.get(repo_id)
+        published = Path(info.index_path)
+        file_id, chunk_id = _seed_chunk(published)
+        fence = server.repo_resolver.generation_write_fence(repo_id, info, path)
+        writer, calls = _lazy_writer(published, monkeypatch)
+        writer.enqueue(_lazy_chunk(file_id, chunk_id), write_fence=fence)
+        busy = _RebuildStarter(server, repo_id, path, "busy_lock")
+        busy.start()
+        try:
+            # The worker runs inside a context that already has an unrelated
+            # caller's tally active; the entry's preflight sees a busy writer.
+            with summarization._call_tally() as outer:
+                assert asyncio.run(writer._summarize_queued(writer.queue.get_nowait())) is None
+            assert calls == []
+            assert outer.busy == 0 and outer.fenced == 0
+            assert writer.queue.get_nowait().attempts == 1
+        finally:
+            busy.stop()
+        if writer._sqlite_store is not None:
+            writer._sqlite_store.close()
+
+
 def test_lazy_entry_is_requeued_while_a_non_rebuild_writer_holds_the_lock(tmp_path, monkeypatch):
     path, repo_id = build_temp_repo(tmp_path, "lazy-busy", seed_files=SEED)
     with boot_test_server(tmp_path, [path]) as server:

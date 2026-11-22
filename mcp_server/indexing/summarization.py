@@ -1821,16 +1821,19 @@ class LazyChunkWriter(ChunkWriter):
             entry = _QueuedSummary(chunk=item[0], fence=item[1])
         else:
             entry = _QueuedSummary(chunk=item, fence=None)
-        if entry.fence is not None:
-            with self._fenced_write(entry.fence) as gate:
-                pass
-            if gate is WriteGate.FENCED:
-                logger.info("Queued chunk summary dropped: its generation is being rebuilt")
-                return None
-            if gate is WriteGate.BUSY:
-                self._requeue_busy(entry)
-                return None
+        # The entry's own tally covers its preflight fence too, so a worker that
+        # inherited an active context (or a nested call) never records this
+        # entry's BUSY/FENCED outcome into an unrelated caller's tally.
         with _call_tally() as tally:
+            if entry.fence is not None:
+                with self._fenced_write(entry.fence) as gate:
+                    pass
+                if gate is WriteGate.FENCED:
+                    logger.info("Queued chunk summary dropped: its generation is being rebuilt")
+                    return None
+                if gate is WriteGate.BUSY:
+                    self._requeue_busy(entry)
+                    return None
             summary = await self.summarize_chunk(**entry.chunk, write_fence=entry.fence)
         if summary is None and tally.busy:
             self._requeue_busy(entry)
