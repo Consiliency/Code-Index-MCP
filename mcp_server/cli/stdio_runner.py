@@ -238,6 +238,7 @@ _REBUILD_IN_PROGRESS_SCHEMA: dict[str, Any] = {
         "message": {"type": "string"},
         "remediation": {"type": ["string", "array", "object", "null"]},
         "retryable": {"type": "boolean"},
+        "summaries_committed": {"type": "integer"},
         "chunks_summarized": {"type": "integer"},
         "files": {"type": "array"},
         "total_chunks": {"type": "integer"},

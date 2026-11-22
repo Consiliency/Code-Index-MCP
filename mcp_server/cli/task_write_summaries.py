@@ -38,23 +38,27 @@ def summary_write_refusal(
     tool: str,
     *,
     readiness: dict[str, Any] | None = None,
+    committed: int = 0,
     **extra: Any,
 ) -> dict[str, Any]:
     """The shared envelope for a summary write that could not be stored (#145).
 
     ``code`` is ``rebuild_in_progress`` (the generation is being replaced) or
-    ``writer_busy`` (another writer holds the lock; retry shortly). Partial
-    counters in ``extra`` (``chunks_summarized``, ``total_chunks``, ...) say
-    what was already committed; committed work always precedes any rebuild's
-    snapshot, so it is kept.
+    ``writer_busy`` (another writer holds the lock; retry shortly).
+    ``committed`` is the number of summaries this request itself stored before
+    the refusal (not those it generated, which another writer may have stored
+    meanwhile); it alone decides ``mutation_performed``. Committed work always
+    precedes any rebuild's snapshot, so it is kept. ``extra`` carries the
+    tool's partial counters.
     """
     error, message, remediation = _REFUSALS[code]
-    written = int(extra.get("chunks_summarized") or extra.get("total_chunks") or 0)
+    written = int(committed)
     payload: dict[str, Any] = {
         "error": error,
         "code": code,
         "tool": tool,
         "mutation_performed": written > 0,
+        "summaries_committed": written,
         "retryable": True,
         "readiness": readiness,
         "message": message,
@@ -113,6 +117,7 @@ async def run_write_summaries_task(
     )
 
     total_written = 0
+    total_committed = 0
     total_attempted = 0
     total_missing = 0
     remaining_budget = limit_arg
@@ -144,6 +149,7 @@ async def run_write_summaries_task(
             write_fenced = write_fenced or bool(getattr(result, "write_fenced", False))
             write_busy = write_busy or bool(getattr(result, "write_busy", False))
             total_written += result.summaries_written
+            total_committed += int(getattr(result, "summaries_committed", 0) or 0)
             total_attempted += result.chunks_attempted
             total_missing = result.remaining_chunks
             persisted_any = persisted_any or result.summaries_written > 0
@@ -185,7 +191,10 @@ async def run_write_summaries_task(
     if refusal is not None and not task.is_cancelled:
         # Same envelope as the synchronous tool, with the task's counters (#145).
         counters = {key: value for key, value in payload.items() if key != "persisted"}
-        return _call_tool_result(summary_write_refusal(refusal, "write_summaries", **counters))
+        counters["chunks_summarized"] = total_committed
+        return _call_tool_result(
+            summary_write_refusal(refusal, "write_summaries", committed=total_committed, **counters)
+        )
     if task.is_cancelled:
         payload["cancelled"] = True
         result = _call_tool_result(payload)

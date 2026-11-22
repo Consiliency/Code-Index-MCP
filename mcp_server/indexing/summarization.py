@@ -140,6 +140,10 @@ class SummaryGenerationResult:
     #: generation was unchanged; those summaries were not stored and the call
     #: is retryable (#145).
     write_busy: bool = False
+    #: Summaries this call itself stored. ``summaries_written`` counts what it
+    #: generated or found complete; another writer may have stored the same
+    #: rows during the provider call (#145).
+    summaries_committed: int = 0
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "missing_chunk_ids", tuple(self.missing_chunk_ids))
@@ -164,6 +168,7 @@ class SummaryGenerationResult:
             "cancelled": self.cancelled,
             "write_fenced": self.write_fenced,
             "write_busy": self.write_busy,
+            "summaries_committed": self.summaries_committed,
             "summaries": [
                 {"chunk_id": item.chunk_id, "summary": item.summary} for item in self.summaries
             ],
@@ -239,6 +244,8 @@ class ChunkWriter:
         self.write_fence = write_fence
         self.fenced_writes = 0
         self.busy_writes = 0
+        #: Rows this writer actually stored (``_persist_summary`` returned True).
+        self.committed_writes = 0
 
     @contextmanager
     def _fenced_write(
@@ -350,7 +357,7 @@ class ChunkWriter:
         audit_metadata = self._build_summary_audit_metadata(
             model_name=model_name, **_stop_kwargs(cancel_check)
         )
-        return bool(
+        stored = bool(
             self._get_sqlite_store().store_chunk_summary(
                 chunk_hash=chunk_hash,
                 file_id=file_id,
@@ -368,6 +375,9 @@ class ChunkWriter:
                 audit_metadata=audit_metadata,
             )
         )
+        if stored:
+            self.committed_writes += 1
+        return stored
 
     def _has_sampling_capability(self) -> bool:
         """Return True if the connected MCP client supports sampling/createMessage."""
@@ -1132,6 +1142,7 @@ class FileBatchSummarizer(ChunkWriter):
             symbol_map = {}
         fenced_before = self.fenced_writes
         busy_before = self.busy_writes
+        committed_before = self.committed_writes
 
         # Filter already-authoritative chunks.
         with sqlite3.connect(self.db_path) as conn:
@@ -1313,6 +1324,7 @@ class FileBatchSummarizer(ChunkWriter):
             summaries=summaries,
             write_fenced=self.fenced_writes > fenced_before,
             write_busy=self.busy_writes > busy_before,
+            summaries_committed=self.committed_writes - committed_before,
         )
 
 
@@ -1444,6 +1456,7 @@ class ComprehensiveChunkWriter(FileBatchSummarizer):
             )
             return SummaryGenerationResult()
 
+        committed_before = self.committed_writes
         total_attempted = 0
         total_summaries_written = 0
         total_authoritative_chunks = 0
@@ -1461,6 +1474,7 @@ class ComprehensiveChunkWriter(FileBatchSummarizer):
                 return SummaryGenerationResult(
                     chunks_attempted=total_attempted,
                     summaries_written=total_summaries_written,
+                    summaries_committed=self.committed_writes - committed_before,
                     authoritative_chunks=total_authoritative_chunks,
                     missing_chunk_ids=tuple(missing_chunk_ids),
                     files_attempted=total_files_attempted,
@@ -1542,6 +1556,7 @@ class ComprehensiveChunkWriter(FileBatchSummarizer):
                     return SummaryGenerationResult(
                         chunks_attempted=total_attempted,
                         summaries_written=total_summaries_written,
+                        summaries_committed=self.committed_writes - committed_before,
                         authoritative_chunks=total_authoritative_chunks,
                         missing_chunk_ids=tuple(missing_chunk_ids),
                         files_attempted=total_files_attempted,
@@ -1585,6 +1600,7 @@ class ComprehensiveChunkWriter(FileBatchSummarizer):
                         return SummaryGenerationResult(
                             chunks_attempted=total_attempted,
                             summaries_written=total_summaries_written,
+                            summaries_committed=self.committed_writes - committed_before,
                             authoritative_chunks=total_authoritative_chunks,
                             missing_chunk_ids=tuple(missing_chunk_ids),
                             files_attempted=total_files_attempted,
@@ -1600,6 +1616,7 @@ class ComprehensiveChunkWriter(FileBatchSummarizer):
                         return SummaryGenerationResult(
                             chunks_attempted=total_attempted,
                             summaries_written=total_summaries_written,
+                            summaries_committed=self.committed_writes - committed_before,
                             authoritative_chunks=total_authoritative_chunks,
                             missing_chunk_ids=tuple(missing_chunk_ids),
                             files_attempted=total_files_attempted,
@@ -1638,6 +1655,7 @@ class ComprehensiveChunkWriter(FileBatchSummarizer):
         return SummaryGenerationResult(
             chunks_attempted=total_attempted,
             summaries_written=total_summaries_written,
+            summaries_committed=self.committed_writes - committed_before,
             authoritative_chunks=total_authoritative_chunks,
             missing_chunk_ids=tuple(missing_chunk_ids),
             files_attempted=total_files_attempted,
@@ -1675,6 +1693,7 @@ class LazyChunkWriter(ChunkWriter):
         super().__init__(db_path, qdrant_client, session, client_name, summarization_config)
         self.queue: asyncio.Queue = asyncio.Queue()
         self._task: Optional[asyncio.Task] = None
+        self._in_flight: Any = None
 
     def start(self) -> None:
         """Start the background worker task (idempotent)."""
@@ -1682,11 +1701,18 @@ class LazyChunkWriter(ChunkWriter):
             self._task = asyncio.create_task(self._worker())
 
     async def stop(self) -> None:
-        """Cancel and await the owned background task before closing its storage."""
+        """Cancel and await the owned background task before closing its storage.
+
+        Queued and in-flight (including backing-off) entries are dropped; one
+        line records how many, so a shutdown that loses lazy work is visible.
+        """
         if self._task is not None:
             task, self._task = self._task, None
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
+        dropped = self.queue.qsize() + (1 if self._in_flight is not None else 0)
+        self._in_flight = None
+        logger.info("Lazy summary writer stopped; %d pending entries dropped", dropped)
         if self._sqlite_store is not None:
             self._sqlite_store.close()
             self._sqlite_store = None
@@ -1702,6 +1728,7 @@ class LazyChunkWriter(ChunkWriter):
     async def _worker(self) -> None:
         while True:
             item = await self.queue.get()
+            self._in_flight = item
             try:
                 if isinstance(item, _QueuedSummary):
                     delay = item.not_before - time.monotonic()
@@ -1712,6 +1739,8 @@ class LazyChunkWriter(ChunkWriter):
                 logger.error("Error summarizing chunk (%s)", type(exc).__name__)
             finally:
                 self.queue.task_done()
+            # Not reached on cancellation, so stop() still counts the entry.
+            self._in_flight = None
 
     async def _summarize_queued(self, item: Any) -> Optional[str]:
         """Summarize one queued entry against the generation it was found in (#145).

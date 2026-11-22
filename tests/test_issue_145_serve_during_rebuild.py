@@ -565,7 +565,10 @@ def _install_fake_writer(monkeypatch, on_process=None):
                 on_process()
             cancelled = bool(cancel_check and cancel_check())
             return SummaryGenerationResult(
-                chunks_attempted=1, summaries_written=1, cancelled=cancelled
+                chunks_attempted=1,
+                summaries_written=1,
+                summaries_committed=1,
+                cancelled=cancelled,
             )
 
     monkeypatch.setattr(summarization, "ComprehensiveChunkWriter", FakeWriter)
@@ -794,6 +797,7 @@ def test_post_query_recheck_catches_source_changes_during_the_query(tmp_path, mo
 
 
 import threading  # noqa: E402
+import time  # noqa: E402
 
 from mcp_server.indexing.summarization import (  # noqa: E402
     FileBatchSummarizer,
@@ -870,14 +874,18 @@ def _summary_rows(db_path: Path) -> int:
         return conn.execute("SELECT COUNT(*) FROM chunk_summaries").fetchone()[0]
 
 
-def _seed_chunk(db_path: Path) -> tuple[int, str]:
+def _seed_chunk(
+    db_path: Path, filename: str = "alpha.py", chunk_id: str = "chunk-alpha"
+) -> tuple[int, str]:
     """Store one chunk through the store API, which stamps the chunk scheme."""
     from mcp_server.storage.sqlite_store import SQLiteStore
 
     store = SQLiteStore(str(db_path))
     try:
         with store._get_connection() as conn:
-            file_id = conn.execute("SELECT id FROM files WHERE path LIKE '%alpha.py'").fetchone()[0]
+            file_id = conn.execute(
+                "SELECT id FROM files WHERE path LIKE ?", (f"%{filename}",)
+            ).fetchone()[0]
         store.store_chunk(
             file_id=file_id,
             content="def alpha_token():",
@@ -885,7 +893,7 @@ def _seed_chunk(db_path: Path) -> tuple[int, str]:
             content_end=18,
             line_start=1,
             line_end=2,
-            chunk_id="chunk-alpha",
+            chunk_id=chunk_id,
             node_id="n",
             treesitter_file_id="t",
             language="python",
@@ -893,7 +901,7 @@ def _seed_chunk(db_path: Path) -> tuple[int, str]:
     finally:
         store.close()
     ReadinessClassifier.clear_index_inspection_cache()
-    return file_id, "chunk-alpha"
+    return file_id, chunk_id
 
 
 @pytest.mark.parametrize("how", ["none", "fence_flag", "rebuild_lock", "busy_lock"])
@@ -1308,3 +1316,169 @@ def test_task_write_summaries_refusal_matches_the_advertised_schema(monkeypatch,
     assert payload["summary_chunks_attempted"] == 2
     assert payload["summary_missing_chunks"] == 2
     _assert_matches_schema("write_summaries", payload)
+
+
+# ---------------------------------------------------------------------------
+# Refusals report only what this request itself committed
+# ---------------------------------------------------------------------------
+
+
+def test_refusal_after_another_writer_stored_this_requests_summaries(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from mcp_server.indexing.summarization import ComprehensiveChunkWriter
+    from mcp_server.storage.sqlite_store import SQLiteStore
+
+    seed = {**SEED, "beta.py": "def beta_token():\n    return 2\n"}
+    path, repo_id = build_temp_repo(tmp_path, "committed", seed_files=seed)
+    with boot_test_server(tmp_path, [path]) as server:
+        published = Path(server.registry.get(repo_id).index_path)
+        _seed_chunk(published)
+        _seed_chunk(published, filename="beta.py", chunk_id="chunk-beta")
+        busy = _RebuildStarter(server, repo_id, path, "busy_lock")
+        calls: list = []
+
+        async def provider(self, *args, **kwargs):
+            chunks = next(
+                value
+                for value in list(args) + list(kwargs.values())
+                if isinstance(value, list) and value and isinstance(value[0], dict)
+            )
+            calls.append([chunk["chunk_id"] for chunk in chunks])
+            if len(calls) == 1:
+                # Another writer stores this call's summaries while the
+                # provider call is in flight.
+                other = SQLiteStore(str(published))
+                try:
+                    for chunk in chunks:
+                        other.store_chunk_summary(
+                            chunk_hash=chunk["chunk_id"],
+                            file_id=chunk["file_id"],
+                            chunk_start=1,
+                            chunk_end=2,
+                            summary_text="Synthetic summary.",
+                            llm_model="other-writer",
+                            is_authoritative=True,
+                            profile_id=self.summarization_config.get("profile_id"),
+                            prompt_fingerprint=self._prompt_fingerprint(),
+                        )
+                finally:
+                    other.close()
+            else:
+                busy.start()
+            return [
+                SimpleNamespace(chunk_id=chunk["chunk_id"], summary="Synthetic summary.")
+                for chunk in chunks
+            ]
+
+        monkeypatch.setattr(FileBatchSummarizer, "_call_batch_api", provider)
+        monkeypatch.setattr(FileBatchSummarizer, "_call_profile_batch_api", provider)
+        monkeypatch.setattr(
+            FileBatchSummarizer, "_get_model_name", lambda self, **kwargs: "fake-model"
+        )
+        monkeypatch.setattr(ComprehensiveChunkWriter, "can_summarize", lambda self: True)
+        try:
+            response = _run_tool(
+                "handle_write_summaries",
+                arguments={"repository": str(path)},
+                dispatcher=server.dispatcher,
+                repo_resolver=server.repo_resolver,
+                lazy_summarizer=_FakeSummarizer(),
+            )
+        finally:
+            busy.stop()
+
+        assert len(calls) == 2, calls
+        assert response["code"] == "writer_busy", response
+        # The first file's summaries were completed by the other writer, not
+        # stored by this request, so nothing was mutated by it.
+        assert response["mutation_performed"] is False
+        assert response["summaries_committed"] == 0
+        assert response["chunks_summarized"] == 0
+        assert "note" not in response
+        assert _summary_rows(published) == 1  # only the other writer's row
+        _assert_matches_schema("write_summaries", response)
+
+
+def test_task_refusal_counts_only_committed_summaries(monkeypatch):
+    from types import SimpleNamespace
+
+    from mcp.types import TaskMetadata
+
+    from mcp_server.cli import task_write_summaries
+    from mcp_server.indexing.summarization import SummaryGenerationResult
+    from mcp_server.storage.mcp_task_registry import MCPTaskRegistry
+
+    passes = [
+        # Pass 1 completed a summary another writer had stored meanwhile.
+        SummaryGenerationResult(
+            chunks_attempted=1, summaries_written=1, summaries_committed=0, remaining_chunks=1
+        ),
+        # Pass 2 hit a busy writer.
+        SummaryGenerationResult(
+            chunks_attempted=1, summaries_written=0, remaining_chunks=1, write_busy=True
+        ),
+    ]
+
+    class Writer:
+        def __init__(self, **kwargs):
+            pass
+
+        async def process_scope(self, **kwargs):
+            return passes.pop(0)
+
+    monkeypatch.setattr(task_write_summaries, "ComprehensiveChunkWriter", Writer)
+    monkeypatch.setattr(
+        task_write_summaries.Settings,
+        "from_environment",
+        staticmethod(
+            lambda: SimpleNamespace(
+                get_semantic_default_profile=lambda: "oss_high",
+                get_profile_summarization_config=lambda _profile: {},
+            )
+        ),
+    )
+
+    async def run():
+        registry = MCPTaskRegistry()
+        state = await registry.create_task(TaskMetadata())
+        return await task_write_summaries.run_write_summaries_task(
+            task=_FakeTask(state.task_id),
+            registry=registry,
+            active_store=SimpleNamespace(db_path="/synthetic/index.db"),
+            current_session=None,
+            client_name=None,
+            limit_arg=10,
+            model_used="fake-model",
+            write_blocked=lambda: False,
+        )
+
+    payload = asyncio.run(run()).structured_content
+    assert passes == []
+    assert payload["code"] == "writer_busy"
+    assert payload["mutation_performed"] is False
+    assert payload["summaries_committed"] == 0
+    assert payload["chunks_summarized"] == 0
+    _assert_matches_schema("write_summaries", payload)
+
+
+def test_lazy_writer_shutdown_logs_dropped_entries(tmp_path, caplog):
+    from mcp_server.indexing.summarization import _QueuedSummary
+
+    writer = LazyChunkWriter(db_path=str(tmp_path / "unused.db"), qdrant_client=None)
+
+    async def run():
+        writer.start()
+        # One entry backing off in the worker, two still queued.
+        writer.queue.put_nowait(
+            _QueuedSummary(chunk={}, fence=None, attempts=1, not_before=time.monotonic() + 60)
+        )
+        await asyncio.sleep(0.05)
+        writer.enqueue({"chunk_hash": "a"})
+        writer.enqueue({"chunk_hash": "b"})
+        with caplog.at_level("INFO", logger="mcp_server.indexing.summarization"):
+            await writer.stop()
+
+    asyncio.run(run())
+    assert "3 pending entries dropped" in caplog.text
+    assert "chunk_hash" not in caplog.text  # counts only, no content

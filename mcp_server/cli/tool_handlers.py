@@ -1668,8 +1668,10 @@ async def handle_write_summaries(
         write_fence=write_fence,
     )
     summary_result = await writer.process_scope(limit=limit_arg, cancel_check=write_blocked)
+    committed = int(getattr(summary_result, "summaries_committed", 0) or 0)
     partial = dict(
-        chunks_summarized=summary_result.summaries_written,
+        committed=committed,
+        chunks_summarized=committed,
         limit=limit_arg,
         model_used=model_used,
         summary_chunks_attempted=summary_result.chunks_attempted,
@@ -1863,6 +1865,8 @@ async def handle_summarize_sample(
 
     file_results = []
     total_chunks = 0
+    # Rows this request itself stored, for refusal envelopes (#145).
+    total_committed = 0
 
     for file_id, file_path, language in file_rows:
         if persist_flag and _write_blocked(repo_resolver, ctx):
@@ -1871,7 +1875,8 @@ async def handle_summarize_sample(
                 "summarize_sample",
                 _classify_ctx(repo_resolver, scope_arg),
                 files=file_results,
-                total_chunks=total_chunks,
+                total_chunks=total_committed,
+                committed=total_committed,
             )
         try:
             with open(file_path, encoding="utf-8", errors="replace") as _fh:
@@ -1953,12 +1958,15 @@ async def handle_summarize_sample(
             )
 
         total_chunks += summary_result.summaries_written
+        committed = int(getattr(summary_result, "summaries_committed", 0) or 0)
+        total_committed += committed
         file_results.append(
             {
                 "file_path": file_path,
                 "chunk_count": len(summaries),
                 "chunks_attempted": summary_result.chunks_attempted,
                 "summaries_written": summary_result.summaries_written,
+                "summaries_committed": committed,
                 "authoritative_chunks": summary_result.authoritative_chunks,
                 "missing_chunk_ids": list(summary_result.missing_chunk_ids),
                 "remaining_chunks": summary_result.remaining_chunks,
@@ -1982,7 +1990,8 @@ async def handle_summarize_sample(
                 "summarize_sample",
                 _classify_ctx(repo_resolver, scope_arg),
                 files=file_results,
-                total_chunks=total_chunks,
+                total_chunks=total_committed,
+                committed=total_committed,
             )
 
     return [
