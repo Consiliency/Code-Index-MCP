@@ -170,9 +170,13 @@ def _resolve_ctx(
     repo_resolver: RepoResolver,
     path_arg: Optional[str],
 ) -> Optional[RepoContext]:
-    """Resolve a RepoContext from path_arg or MCP_WORKSPACE_ROOT fallback."""
+    """Resolve a RepoContext from path_arg or MCP_WORKSPACE_ROOT fallback.
+
+    Mutating callers gate on ``readiness.ready`` before calling this; query
+    callers also accept a published generation served during a rebuild (#145).
+    """
     readiness = _classify_ctx(repo_resolver, path_arg)
-    if readiness is not None and not readiness.ready:
+    if readiness is not None and not readiness.queryable:
         return None
 
     if path_arg:
@@ -369,7 +373,7 @@ async def handle_symbol_lookup(
                 }
             )
 
-    if readiness is not None and not readiness.ready:
+    if readiness is not None and not readiness.queryable:
         return _index_unavailable_response(readiness, "symbol_lookup", symbol=symbol)
 
     ctx = _resolve_ctx(repo_resolver, repository)
@@ -429,6 +433,9 @@ async def handle_symbol_lookup(
             response_data["_usage_hint"] = (
                 f"To view definition: Read(file_path='{translated_path}', offset={offset}, limit=20)"
             )
+        if readiness is not None and readiness.serving_stale:
+            response_data["readiness"] = readiness.to_dict()
+            response_data["note"] = _stale_note(readiness.to_dict())
         return [types.TextContent(type="text", text=_ensure_response(response_data))]
     else:
         response_data = {
@@ -438,6 +445,8 @@ async def handle_symbol_lookup(
         }
         if readiness is not None:
             response_data["readiness"] = readiness.to_dict()
+            if readiness.serving_stale:
+                response_data["note"] = _stale_note(readiness.to_dict())
             if readiness.coverage_degraded:
                 # The symbol may live in a language this generation left out
                 # because its grammar was unavailable (#117).
@@ -449,6 +458,16 @@ async def handle_symbol_lookup(
                 response_data["index_issues"] = validation_result["issues"]
                 response_data["suggestion"] = "Index may be stale. Run 'reindex' tool."
         return [types.TextContent(type="text", text=_ensure_response(response_data))]
+
+
+def _stale_note(readiness: dict) -> str:
+    """Explain results served from an older published generation (#145)."""
+    indexed = str(readiness.get("last_indexed_commit") or "unknown")[:12]
+    target = str((readiness.get("rebuild") or {}).get("target_commit") or "a newer commit")[:12]
+    return (
+        f"Results reflect the published index at commit {indexed}; a rebuild for "
+        f"{target} is in progress (readiness stale_commit)."
+    )
 
 
 def _coverage_note(coverage: dict) -> str:
@@ -573,6 +592,13 @@ async def handle_search_code(
     history_repos = list(result.history_repos)
     include_source_metadata = result.include_source_metadata
     readiness = result.readiness
+    # Served from the published generation while a live rebuild indexes a
+    # newer commit: label it with the stale readiness (#145).
+    stale_readiness = (
+        readiness
+        if isinstance(readiness, dict) and readiness.get("state") == "stale_commit"
+        else None
+    )
     coverage = getattr(result, "coverage", None)
     if not (isinstance(coverage, dict) and coverage.get("state") == "degraded"):
         coverage = None
@@ -725,12 +751,19 @@ async def handle_search_code(
                 "indexing_in_progress": True,
                 "note": "Initial index is still building — results may be incomplete",
             }
-        elif coverage is not None:
-            # Like indexing-in-progress, degraded coverage switches the bare
-            # list to the envelope so the caller sees what is missing (#117).
+        elif coverage is not None or stale_readiness is not None:
+            # Like indexing-in-progress, degraded coverage or stale results
+            # switch the bare list to the envelope so the caller sees what is
+            # missing or how old the results are (#117, #145).
             search_response = {"results": results_data, "query": query}
         else:
             search_response = results_data
+        if stale_readiness is not None and isinstance(search_response, dict):
+            search_response["readiness"] = stale_readiness
+            note = _stale_note(stale_readiness)
+            search_response["note"] = (
+                f"{search_response['note']}; {note}" if search_response.get("note") else note
+            )
         if coverage is not None and isinstance(search_response, dict):
             search_response["coverage"] = coverage
             note = _coverage_note(coverage)
@@ -770,9 +803,14 @@ async def handle_search_code(
             )
         if _indexing_active:
             response_data["indexing_in_progress"] = True
+        if stale_readiness is not None:
+            response_data["note"] = _stale_note(stale_readiness)
         if coverage is not None:
             response_data["coverage"] = coverage
-            response_data["note"] = _coverage_note(coverage)
+            note = _coverage_note(coverage)
+            response_data["note"] = (
+                f"{response_data['note']}; {note}" if response_data.get("note") else note
+            )
         return [types.TextContent(type="text", text=_ensure_response(response_data))]
 
 

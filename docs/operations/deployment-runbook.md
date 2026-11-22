@@ -40,6 +40,10 @@ workspace.
 
 Status surfaces are not query results. Query tools still return
 `index_unavailable` with `safe_fallback: "native_search"` for non-ready cases.
+The one exception is a staged rebuild whose owner is alive: queries keep
+serving the published generation, labelled `stale_commit` with a `rebuild`
+object while a newer commit is indexed; see the readiness notes in
+[`../SUPPORT_MATRIX.md`](../SUPPORT_MATRIX.md) (#145).
 Because multi-repo and STDIO remain beta, the current MRREADY verdict is
 `controlled rollout only`.
 

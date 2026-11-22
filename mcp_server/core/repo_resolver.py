@@ -80,9 +80,14 @@ class RepoResolver:
         return self._context_from_readiness(readiness)
 
     def resolve_ready(self, selector: str | Path) -> Optional[RepoContext]:
-        """Resolve only when this operation's own classification is ready."""
+        """Resolve only when this operation's own classification is queryable.
+
+        That is ``ready``, or ``stale_commit`` while a live rebuild indexes a
+        newer commit and the published generation keeps serving (#145).
+        Mutations still hold the writer lock, so no live rebuild can run then.
+        """
         readiness = self.classify(selector)
-        if not readiness.ready:
+        if not readiness.queryable:
             return None
         ctx = self._context_from_readiness(readiness)
         return ctx if ctx is not None and self.is_current(ctx) else None
@@ -100,7 +105,7 @@ class RepoResolver:
                 != self._store_registry.binding(ctx.registry_entry)
             ):
                 return False
-            return ReadinessClassifier.classify_registered(info).ready
+            return ReadinessClassifier.classify_registered(info).queryable
         except Exception:
             return False
 
@@ -112,7 +117,12 @@ class RepoResolver:
             if not self.is_current(ctx):
                 raise RuntimeError("Repository generation changed before mutation")
             current = self.resolve_ready(ctx.workspace_root)
-            if current is None or current.generation_key != ctx.generation_key:
+            if (
+                current is None
+                or current.generation_key != ctx.generation_key
+                # Mutations need a ready index, not one served stale (#145).
+                or not self.classify(ctx.workspace_root).ready
+            ):
                 raise RuntimeError("Repository became unavailable before mutation")
             if self._index_manager is None:
                 raise RuntimeError("Staged repository mutation owner is unavailable")

@@ -113,9 +113,15 @@ def build_health_row(
     )
     rollout_status = _classify_rollout_status(readiness, artifact_health, staleness)
     rollout_remediation = _rollout_remediation(rollout_status, readiness)
-    query_status = "ready" if readiness.ready else "index_unavailable"
+    # While a live rebuild indexes a newer commit, query tools serve the
+    # published generation and label results stale_commit (#145).
+    query_status = (
+        "ready"
+        if readiness.ready
+        else ("serving_stale" if readiness.serving_stale else "index_unavailable")
+    )
     base_features = features or {
-        "lexical": {"status": "available" if readiness.ready else "unavailable"},
+        "lexical": {"status": "available" if readiness.queryable else "unavailable"},
         "semantic": {"status": "unavailable", "reason": "runtime_status_unavailable"},
         "graph": {"status": "unavailable", "reason": "runtime_status_unavailable"},
         "plugins": {"status": "unavailable", "reason": "runtime_status_unavailable"},
@@ -171,11 +177,20 @@ def build_health_row(
         "query_remediation": (
             None
             if readiness.ready
-            else 'Use native search or follow the readiness remediation; query tools stay fail-closed with safe_fallback: "native_search".'
+            else (
+                (
+                    "Results come from the published index at last_indexed_commit until the "
+                    "in-progress rebuild publishes; re-check readiness for current results."
+                )
+                if readiness.serving_stale
+                else 'Use native search or follow the readiness remediation; query tools stay fail-closed with safe_fallback: "native_search".'
+            )
         ),
         "features": base_features,
         # Language coverage of the published generation (#117): additive, the
         # readiness state above stays ``ready`` while coverage is degraded.
         "coverage": readiness.coverage,
         "coverage_status": (readiness.coverage or {}).get("state"),
+        # A live staged rebuild (#145): additive, null when none runs.
+        "rebuild": readiness.rebuild,
     }

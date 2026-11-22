@@ -21,6 +21,34 @@ readiness is `ready`. Lexical repository readiness does not imply semantic
 readiness: `semantic: true` queries additionally require summaries, vector
 linkage, and profile-compatible semantic metadata.
 
+During a staged rebuild or incremental update (Consiliency/Code-Index-MCP#145)
+the published generation is never modified, so queries keep serving it while
+the build's owner is alive. The owner is recorded next to the repository's
+`writer.lock` (`.mcp-index/rebuild-owner.json`: pid, process start time, host,
+registration and published generation); it counts as alive only while that
+process still exists with the same start time on this host and holds the
+writer lock. Readiness then classifies the published generation and adds a
+`rebuild` object, `{"in_progress": true, "target_commit": "...",
+"started_at": "..."}` (`null` when no live build runs; also on `get_status`
+repository rows):
+
+| Situation during a staged build | Readiness before | Readiness now | `search_code` / `symbol_lookup` |
+|---|---|---|---|
+| Live owner, rebuild of the published commit (forced or repair) | `missing_provenance` | `ready` + `rebuild` | Served from the published generation, unchanged response shape |
+| Live owner, indexing a newer commit | `missing_provenance` | `stale_commit` + `rebuild` | Served from the published generation; the response carries `readiness` (`state: "stale_commit"`, `last_indexed_commit`, `current_commit`, `rebuild`) and a `note`, and `search_code` returns its envelope instead of the bare list |
+| Owner dead (crash mid-build) or unprovable (no record, other host, lock not held) | `missing_provenance` | `missing_provenance` | `index_unavailable`, `safe_fallback: "native_search"` until recovery rebuilds |
+| Build failed (`partial_index_failure`) | `missing_provenance` | `missing_provenance` | `index_unavailable` |
+
+`stale_commit` without a live rebuild, and every other non-ready state, stay
+fail-closed as before. `get_status` reports `query_status: "serving_stale"`
+and lexical `available` while results come from the older published
+generation. The HTTP gateway endpoints, whose bodies are bare result lists,
+serve during a same-commit rebuild but keep refusing `stale_commit`. A query
+whose generation is published mid-flight finishes on its open connection to
+the old file (retention keeps that file) and is then refused by the generation
+recheck, so the caller retries against the new generation. Mutating tools
+(`reindex`, `write_summaries`, `summarize_sample`) still require `ready`.
+
 Runtime facts are grounded in `mcp_server/plugins/language_registry.py`,
 `mcp_server/plugins/plugin_factory.py`, `mcp_server/plugins/plugin_set_registry.py`,
 `mcp_server/plugins/sandboxed_plugin.py`, `mcp_server/cli/tool_handlers.py`,

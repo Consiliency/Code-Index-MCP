@@ -1,0 +1,368 @@
+"""Queries keep serving the published generation during a staged rebuild (#145).
+
+Owner decision: while a staged build runs and its owner is alive, readiness
+classifies against the published generation (``ready`` for a same-commit
+rebuild, ``stale_commit`` while a newer commit is indexed) with an additive
+``rebuild`` object, and ``search_code``/``symbol_lookup`` serve the published
+generation. A dead owner keeps today's fail-closed ``missing_provenance``.
+"""
+
+from __future__ import annotations
+
+import importlib
+import json
+import os
+import socket
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+from mcp_server.core.repo_resolver import run_repository_mutation
+from mcp_server.health.repository_readiness import ReadinessClassifier, RepositoryReadinessState
+from tests.fixtures.multi_repo import boot_test_server, build_temp_repo, git, git_head
+
+# ``mcp_server.indexing`` re-exports the ``lock_registry`` singleton under the
+# module's own name, so import the module explicitly.
+locks = importlib.import_module("mcp_server.indexing.lock_registry")
+
+SEED = {
+    "alpha.py": "def alpha_token():\n    return 1\n\n\nclass AlphaSymbol:\n    pass\n",
+}
+
+
+def _owner_file(path: Path) -> Path:
+    return path / ".mcp-index" / "rebuild-owner.json"
+
+
+def _dead_pid() -> int:
+    child = subprocess.Popen([sys.executable, "-c", "pass"])
+    child.wait()
+    return child.pid
+
+
+def _search(server, path: Path, query: str) -> dict | list:
+    return server.call_tool("search_code", {"query": query, "repository": str(path)})
+
+
+def _symbol(server, path: Path, symbol: str) -> dict:
+    return server.call_tool("symbol_lookup", {"symbol": symbol, "repository": str(path)})
+
+
+def _result_files(response) -> list[str]:
+    results = response["results"] if isinstance(response, dict) else response
+    return [Path(item["file"]).name for item in results]
+
+
+# ---------------------------------------------------------------------------
+# Owner record and liveness
+# ---------------------------------------------------------------------------
+
+
+def test_live_owner_requires_matching_identity_and_a_held_writer_lock(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    owner = locks.record_rebuild_owner(
+        repo, registration_id="reg", published_generation="gen", target_commit="c" * 40
+    )
+    assert owner is not None and owner["pid"] == os.getpid()
+    assert owner["host"] == socket.gethostname()
+    identity = {"registration_id": "reg", "published_generation": "gen"}
+
+    # The pid is alive, but nobody holds the writer lock: not a live build.
+    assert locks.live_rebuild_owner(repo, **identity) is None
+    with locks.lock_registry.acquire("repo", repo_path=repo):
+        assert locks.writer_lock_held(repo)
+        live = locks.live_rebuild_owner(repo, **identity)
+        assert live is not None and live["target_commit"] == "c" * 40
+        # A record for another registration or generation is not this build.
+        assert (
+            locks.live_rebuild_owner(repo, registration_id="other", published_generation="gen")
+            is None
+        )
+        assert (
+            locks.live_rebuild_owner(repo, registration_id="reg", published_generation="old")
+            is None
+        )
+    assert not locks.writer_lock_held(repo)
+
+    # Someone else's token never clears the record; ours does.
+    locks.clear_rebuild_owner(repo, "not-the-token")
+    assert _owner_file(repo).exists()
+    locks.clear_rebuild_owner(repo, owner["token"])
+    assert not _owner_file(repo).exists()
+
+
+@pytest.mark.parametrize("tamper", ["dead_pid", "reused_pid", "other_host", "unreadable"])
+def test_owner_that_is_not_provably_alive_is_dead(tmp_path, tamper):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    locks.record_rebuild_owner(
+        repo, registration_id="reg", published_generation="gen", target_commit="c" * 40
+    )
+    record = json.loads(_owner_file(repo).read_text())
+    if tamper == "dead_pid":
+        record["pid"] = _dead_pid()
+    elif tamper == "reused_pid":
+        record["process_start"] = "1"
+    elif tamper == "other_host":
+        record["host"] = record["host"] + "-elsewhere"
+    if tamper == "unreadable":
+        _owner_file(repo).write_text("{not json")
+    else:
+        _owner_file(repo).write_text(json.dumps(record))
+    with locks.lock_registry.acquire("repo", repo_path=repo):
+        assert (
+            locks.live_rebuild_owner(repo, registration_id="reg", published_generation="gen")
+            is None
+        )
+
+
+# ---------------------------------------------------------------------------
+# Same-commit rebuild with a live owner
+# ---------------------------------------------------------------------------
+
+
+def test_same_commit_rebuild_stays_ready_and_serves_the_published_generation(tmp_path):
+    path, repo_id = build_temp_repo(tmp_path, "same", seed_files=SEED)
+    with boot_test_server(tmp_path, [path]) as server:
+        resolver = server.repo_resolver
+        ctx = resolver.resolve_ready(path)
+        published = server.registry.get(repo_id)
+        head = git_head(path)
+        observed: dict = {}
+
+        def operation(stage):
+            registry_entry = server.registry.get(repo_id)
+            assert registry_entry.staleness_reason == "index_publication_pending"
+            readiness = resolver.classify(path)
+            observed["readiness"] = readiness
+            # Readers resolve the published file, never the stage.
+            reader = resolver.resolve_ready(path)
+            assert reader is not None
+            assert Path(reader.sqlite_store.db_path) == Path(published.index_path)
+            assert Path(stage.sqlite_store.db_path) != Path(published.index_path)
+            assert resolver.is_current(ctx)
+            observed["search"] = _search(server, path, "alpha_token")
+            observed["symbol"] = _symbol(server, path, "AlphaSymbol")
+            observed["status"] = server.call_tool("get_status", {})
+            return {"failed_files": 0}
+
+        run_repository_mutation(resolver, ctx, operation)
+
+        readiness = observed["readiness"]
+        assert readiness.state == RepositoryReadinessState.READY
+        assert readiness.rebuild["in_progress"] is True
+        assert readiness.rebuild["target_commit"] == head
+        assert readiness.rebuild["started_at"]
+        assert readiness.to_dict()["rebuild"] == readiness.rebuild
+        assert "alpha.py" in _result_files(observed["search"])
+        assert observed["symbol"]["symbol"] == "AlphaSymbol"
+        assert "error" not in observed["symbol"]
+
+        # Publication cleared the owner and the rebuild marker.
+        assert not _owner_file(path).exists()
+        after = resolver.classify(path)
+        assert after.ready and after.rebuild is None
+        assert server.registry.get(repo_id).index_generation != published.index_generation
+
+
+# ---------------------------------------------------------------------------
+# Newer-commit rebuild with a live owner
+# ---------------------------------------------------------------------------
+
+
+def test_newer_commit_rebuild_reports_stale_and_serves_with_stale_metadata(tmp_path, monkeypatch):
+    path, repo_id = build_temp_repo(tmp_path, "newer", seed_files=SEED)
+    with boot_test_server(tmp_path, [path]) as server:
+        resolver = server.repo_resolver
+        manager = resolver._index_manager
+        indexed = git_head(path)
+        (path / "beta.py").write_text("def beta_token():\n    return 2\n")
+        git(path, "add", "beta.py")
+        git(path, "commit", "-m", "add beta")
+        target = git_head(path)
+        observed: dict = {}
+        original = manager._rebuild_checkpoint
+
+        def checkpoint(stage):
+            if stage == "before_publish" and "readiness" not in observed:
+                observed["readiness"] = resolver.classify(path)
+                observed["search"] = _search(server, path, "alpha_token")
+                observed["symbol"] = _symbol(server, path, "AlphaSymbol")
+                observed["missing"] = _symbol(server, path, "NoSuchSymbol")
+            return original(stage)
+
+        monkeypatch.setattr(manager, "_rebuild_checkpoint", checkpoint)
+        result = manager.sync_repository_index(repo_id)
+        assert result.action in {"incremental_update", "full_index"}, result
+
+        readiness = observed["readiness"]
+        assert readiness.state == RepositoryReadinessState.STALE_COMMIT
+        assert readiness.serving_stale and readiness.queryable
+        assert readiness.last_indexed_commit == indexed
+        assert readiness.current_commit == target
+        assert readiness.rebuild["target_commit"] == target
+
+        search = observed["search"]
+        assert isinstance(search, dict), search
+        assert "alpha.py" in _result_files(search)
+        assert "beta.py" not in _result_files(search)
+        assert search["readiness"]["state"] == "stale_commit"
+        assert search["readiness"]["last_indexed_commit"] == indexed
+        assert search["readiness"]["current_commit"] == target
+        assert search["readiness"]["rebuild"]["in_progress"] is True
+        assert "stale_commit" in search["note"]
+
+        symbol = observed["symbol"]
+        assert symbol["symbol"] == "AlphaSymbol"
+        assert symbol["readiness"]["state"] == "stale_commit"
+        assert observed["missing"]["result"] == "not_found"
+        assert observed["missing"]["readiness"]["state"] == "stale_commit"
+
+        assert not _owner_file(path).exists()
+        after = resolver.classify(path)
+        assert after.ready and after.rebuild is None
+        assert after.last_indexed_commit == target
+
+
+def test_stale_commit_without_a_rebuild_stays_fail_closed(tmp_path):
+    path, repo_id = build_temp_repo(tmp_path, "plainstale", seed_files=SEED)
+    with boot_test_server(tmp_path, [path]) as server:
+        (path / "beta.py").write_text("x = 1\n")
+        git(path, "add", "beta.py")
+        git(path, "commit", "-m", "advance")
+        readiness = server.repo_resolver.classify(path)
+        assert readiness.state == RepositoryReadinessState.STALE_COMMIT
+        assert readiness.rebuild is None and not readiness.queryable
+        assert _search(server, path, "alpha_token")["code"] == "index_unavailable"
+        assert _symbol(server, path, "AlphaSymbol")["code"] == "index_unavailable"
+
+
+# ---------------------------------------------------------------------------
+# Dead owner
+# ---------------------------------------------------------------------------
+
+
+def test_dead_owner_keeps_missing_provenance_and_fails_closed(tmp_path):
+    path, repo_id = build_temp_repo(tmp_path, "dead", seed_files=SEED)
+    with boot_test_server(tmp_path, [path]) as server:
+        info = server.registry.get(repo_id)
+        server.registry.begin_generation_mutation(
+            repo_id,
+            expected_registration_id=info.registration_id,
+            expected_generation=info.index_generation,
+        )
+        # A crashed build: the record names it, but its process is gone and
+        # the kernel released its writer lock.
+        locks.record_rebuild_owner(
+            path,
+            registration_id=info.registration_id,
+            published_generation=info.index_generation,
+            target_commit=git_head(path),
+        )
+        record = json.loads(_owner_file(path).read_text())
+        record["pid"] = _dead_pid()
+        _owner_file(path).write_text(json.dumps(record))
+
+        readiness = server.repo_resolver.classify(path)
+        assert readiness.state == RepositoryReadinessState.MISSING_PROVENANCE
+        assert readiness.rebuild is None and not readiness.queryable
+        assert server.repo_resolver.resolve_ready(path) is None
+        assert _search(server, path, "alpha_token")["code"] == "index_unavailable"
+        assert _symbol(server, path, "AlphaSymbol")["code"] == "index_unavailable"
+
+        # Even with the writer lock held by a live process, a dead recorded
+        # owner is not this build.
+        with locks.lock_registry.acquire(repo_id, repo_path=path):
+            again = ReadinessClassifier.classify_registered(server.registry.get(repo_id))
+            assert again.state == RepositoryReadinessState.MISSING_PROVENANCE
+
+        # And a pending generation with no owner record at all stays fenced.
+        _owner_file(path).unlink()
+        assert (
+            server.repo_resolver.classify(path).state == RepositoryReadinessState.MISSING_PROVENANCE
+        )
+
+
+# ---------------------------------------------------------------------------
+# Failure and abort clear the owner
+# ---------------------------------------------------------------------------
+
+
+class _Abort(BaseException):
+    """Stands in for KeyboardInterrupt/SystemExit escaping the build."""
+
+
+@pytest.mark.parametrize("outcome", ["error", "exception", "abort"])
+def test_failed_or_aborted_build_clears_the_owner_and_stays_fail_closed(tmp_path, outcome):
+    path, repo_id = build_temp_repo(tmp_path, f"fail-{outcome}", seed_files=SEED)
+    with boot_test_server(tmp_path, [path]) as server:
+        resolver = server.repo_resolver
+        ctx = resolver.resolve_ready(path)
+        seen: dict = {}
+
+        def operation(stage):
+            seen["owner"] = _owner_file(path).exists()
+            seen["ready"] = resolver.classify(path).ready
+            if outcome == "exception":
+                raise RuntimeError("injected")
+            if outcome == "abort":
+                raise _Abort()
+            return {"failed_files": 1}
+
+        expected = _Abort if outcome == "abort" else (RuntimeError, ValueError)
+        with pytest.raises(expected):
+            run_repository_mutation(resolver, ctx, operation)
+
+        assert seen == {"owner": True, "ready": True}
+        assert not _owner_file(path).exists()
+        after = resolver.classify(path)
+        assert after.state == RepositoryReadinessState.MISSING_PROVENANCE
+        assert after.rebuild is None
+        assert _search(server, path, "alpha_token")["code"] == "index_unavailable"
+
+
+# ---------------------------------------------------------------------------
+# Publish swap during a query
+# ---------------------------------------------------------------------------
+
+
+def test_publish_swap_mid_query_finishes_on_the_old_file_then_fails_closed(tmp_path, monkeypatch):
+    path, repo_id = build_temp_repo(tmp_path, "swap", seed_files=SEED)
+    with boot_test_server(tmp_path, [path]) as server:
+        resolver = server.repo_resolver
+        manager = resolver._index_manager
+        before = server.registry.get(repo_id)
+        old_file = Path(before.index_path)
+        original_search = server.dispatcher.search
+        observed: dict = {}
+
+        def search(ctx, query, **kwargs):
+            assert Path(ctx.sqlite_store.db_path) == old_file
+            with ctx.sqlite_store._get_connection() as connection:
+                observed["before"] = connection.execute("SELECT COUNT(*) FROM files").fetchone()[0]
+                # The rebuild publishes a new generation while this reader
+                # still holds its connection to the old file.
+                observed["rebuild"] = manager.rebuild_repository_index(repo_id)
+                observed["after"] = connection.execute("SELECT COUNT(*) FROM files").fetchone()[0]
+            observed["old_file_kept"] = old_file.exists()
+            return original_search(ctx, query, **kwargs)
+
+        monkeypatch.setattr(server.dispatcher, "search", search)
+        response = _search(server, path, "alpha_token")
+
+        assert observed["rebuild"].action == "full_index", observed["rebuild"]
+        assert observed["before"] == observed["after"] > 0
+        # Retention keeps the superseded generation (live + at least one previous).
+        assert observed["old_file_kept"]
+        assert old_file.exists()
+        assert server.registry.get(repo_id).index_path != before.index_path
+        # The generation recheck refuses results that straddled the swap.
+        assert response["code"] == "index_unavailable"
+        assert response["safe_fallback"] == "native_search"
+
+        monkeypatch.setattr(server.dispatcher, "search", original_search)
+        retry = _search(server, path, "alpha_token")
+        assert "alpha.py" in _result_files(retry)

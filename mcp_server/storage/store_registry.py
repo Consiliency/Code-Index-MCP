@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Dict
 
 from mcp_server.core.path_resolver import PathResolver
+from mcp_server.indexing.lock_registry import live_rebuild_owner
 from mcp_server.storage.connection_pool import ConnectionPool
 from mcp_server.storage.repository_registry import RepositoryRegistry
 from mcp_server.storage.sqlite_store import SQLiteStore
@@ -75,8 +76,21 @@ class StoreRegistry:
         info = self._registry.get(repo_id)
         return (
             info is not None
-            and not info.staleness_reason
+            and (not info.staleness_reason or self._serving_during_rebuild(info))
             and store.registry_binding == self.binding(info)
+        )
+
+    @staticmethod
+    def _serving_during_rebuild(info) -> bool:
+        """The published generation stays current while a live owner rebuilds it (#145)."""
+        return (
+            info.staleness_reason == "index_publication_pending"
+            and live_rebuild_owner(
+                Path(info.path),
+                registration_id=getattr(info, "registration_id", None),
+                published_generation=getattr(info, "index_generation", None),
+            )
+            is not None
         )
 
     def get(self, repo_id: str) -> SQLiteStore:

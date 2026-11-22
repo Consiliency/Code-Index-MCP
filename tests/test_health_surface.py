@@ -36,6 +36,7 @@ EXPECTED_KEYS = {
     # Additive language coverage of the published generation (#117).
     "coverage",
     "coverage_status",
+    "rebuild",
 }
 
 

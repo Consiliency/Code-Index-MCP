@@ -666,6 +666,12 @@ MRREADY freezes the rollout-facing interpretation of those commands:
   `ready`, MCP search returns `index_unavailable` with
   `safe_fallback: "native_search"` instead of treating a status row as a query
   success.
+- While a staged rebuild runs and its owner process is alive, queries keep
+  serving the published generation: readiness stays `ready` for a same-commit
+  rebuild, or reports `stale_commit` with an additive `rebuild` object while a
+  newer commit is indexed, and those responses carry that readiness. A crashed
+  build stays `missing_provenance` and fail-closed (see
+  [`docs/SUPPORT_MATRIX.md`](docs/SUPPORT_MATRIX.md)).
 - The current multi-repo verdict remains `controlled rollout only` while the
   multi-repo and STDIO surfaces are still beta.
 

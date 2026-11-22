@@ -162,8 +162,11 @@ def test_serialized_response_keys(tmp_path):
         "index_path",
         "remediation",
         "coverage",
+        "rebuild",
     }
     assert readiness.to_dict()["state"] == "ready"
+    # No staged build in progress (#145).
+    assert readiness.to_dict()["rebuild"] is None
     assert readiness.to_dict()["code"] is None
     # No degradation marker: complete coverage (#117).
     assert readiness.to_dict()["coverage"] == {"state": "complete"}

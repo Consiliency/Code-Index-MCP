@@ -235,7 +235,9 @@ def execute_search_service(
         if repo_resolver is not None
         else None
     )
-    if readiness is not None and not readiness.ready:
+    # ``queryable`` also admits stale_commit while a live rebuild indexes a
+    # newer commit; the result then carries that stale readiness (#145).
+    if readiness is not None and not readiness.queryable:
         unavailable: IndexUnavailable | None = _index_unavailable(readiness)
         return _unavailable_search(options, unavailable)
 
@@ -430,7 +432,7 @@ class IndexItClient:
             str(repository) if repository is not None else None,
             workspace_root=self.workspace_root,
         )
-        if readiness is not None and not readiness.ready:
+        if readiness is not None and not readiness.queryable:
             return ClientSymbolResult(
                 symbol=symbol,
                 found=False,
