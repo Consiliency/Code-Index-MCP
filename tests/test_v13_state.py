@@ -196,7 +196,9 @@ def test_git_refresh_does_not_clear_publication_fence(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("outcome", ["clean", "error", "cancelled", "exception", "unregister"])
-def test_scoped_mutation_fences_reads_and_publishes_only_clean_outcomes(tmp_path, outcome):
+def test_scoped_mutation_serves_published_reads_and_publishes_only_clean_outcomes(
+    tmp_path, outcome
+):
     from mcp_server.core.repo_resolver import run_repository_mutation
     from tests.fixtures.multi_repo import boot_test_server, build_temp_repo
 
@@ -209,8 +211,10 @@ def test_scoped_mutation_fences_reads_and_publishes_only_clean_outcomes(tmp_path
         def mutate(current):
             assert current.staging
             assert current.sqlite_store.db_path != ctx.sqlite_store.db_path
-            assert not resolver.is_current(ctx)
-            assert not resolver.classify(path).ready
+            # The live owner keeps the published generation serving (#145).
+            assert resolver.is_current(ctx)
+            during = resolver.classify(path)
+            assert during.ready and during.rebuild["in_progress"] is True
             assert server.registry.get(repo_id).staleness_reason == "index_publication_pending"
             with current.sqlite_store._get_connection() as conn:
                 conn.execute("UPDATE files SET language = 'synthetic'")

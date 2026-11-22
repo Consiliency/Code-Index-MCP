@@ -21,6 +21,55 @@ readiness is `ready`. Lexical repository readiness does not imply semantic
 readiness: `semantic: true` queries additionally require summaries, vector
 linkage, and profile-compatible semantic metadata.
 
+During a staged rebuild or incremental update (Consiliency/Code-Index-MCP#145)
+the published generation is never modified, so queries keep serving it while
+the build's owner is alive. The owner is recorded next to the repository's
+`writer.lock` (`.mcp-index/rebuild-owner.json`: pid, process start time, host,
+registration and published generation); it counts as alive only while that
+process still exists with the same start time on this host and holds the
+writer lock. A start time that cannot be read (Linux `/proc`, otherwise
+psutil) means the owner is not provably alive. While the live build targets
+the checkout as it is now (HEAD equals the build's `target_commit` and the
+tracked tree is clean), readiness classifies the published generation and adds
+a `rebuild` object, `{"in_progress": true, "target_commit": "...",
+"started_at": "..."}` (`null` otherwise; also on `get_status` repository
+rows):
+
+| Situation during a staged build | Readiness before | Readiness now | `search_code` / `symbol_lookup` |
+|---|---|---|---|
+| Live owner, rebuild of the published commit (forced or repair) | `missing_provenance` | `ready` + `rebuild` | Served from the published generation, unchanged response shape |
+| Live owner, indexing a newer commit | `missing_provenance` | `stale_commit` + `rebuild` | Served from the published generation; the response carries `readiness` (`state: "stale_commit"`, `last_indexed_commit`, `current_commit`, `rebuild`) and a `note`, and `search_code` returns its envelope instead of the bare list |
+| Owner dead (crash mid-build) or unprovable (no record, other host, lock not held, no readable start time) | `missing_provenance` | `missing_provenance` | `index_unavailable`, `safe_fallback: "native_search"` until recovery rebuilds |
+| Live owner, but HEAD moved away from the build's target or tracked files are edited | `missing_provenance` | `missing_provenance` | `index_unavailable` |
+| Build failed (`partial_index_failure`) | `missing_provenance` | `missing_provenance` | `index_unavailable` |
+
+`stale_commit` without a live rebuild, and every other non-ready state, stay
+fail-closed as before. `get_status` reports `query_status: "serving_stale"`
+and lexical `available` while results come from the older published
+generation. The HTTP gateway endpoints, whose bodies are bare result lists,
+serve during a same-commit rebuild but keep refusing `stale_commit`. A query
+whose generation is published mid-flight finishes on its open connection to
+the old file (retention keeps that file) and is then refused by the generation
+recheck, so the caller retries against the new generation. Mutating tools
+(`reindex`, `write_summaries`, `summarize_sample`) still require `ready`, and
+while `rebuild` is set the summary writers (`write_summaries`, including task
+mode, and `summarize_sample` with `persist: true`) return `code:
+"rebuild_in_progress"` instead of writing into the generation about to be
+replaced (retry after it publishes). Every summary write is also fenced at the
+write itself, after the provider call: the writer takes the repository writer
+lock without waiting and stores nothing for that batch unless it gets the lock
+and the generation is unchanged. If a staged rebuild owns the generation (a
+live owner holds the lock, or the entry is fenced or replaced) the caller gets
+`rebuild_in_progress`; if another writer (a sync, or `mcp-index repository
+summarize`) merely holds the lock, the caller gets a retryable `code:
+"writer_busy"`. Both carry partial counts, and committed work is always kept.
+Lazy summary entries from `search_code` carry the generation they were found
+in: a rebuild drops them (before the provider call or at the write), while a
+busy writer requeues them with backoff, at most five times; no new entries are
+enqueued during a rebuild. Each served query observes `git status` once for admission and once
+more, fresh, after the query; a HEAD move or newly dirty tree during the query
+returns `index_unavailable` so the caller retries.
+
 Runtime facts are grounded in `mcp_server/plugins/language_registry.py`,
 `mcp_server/plugins/plugin_factory.py`, `mcp_server/plugins/plugin_set_registry.py`,
 `mcp_server/plugins/sandboxed_plugin.py`, `mcp_server/cli/tool_handlers.py`,

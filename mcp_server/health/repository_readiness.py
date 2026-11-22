@@ -8,12 +8,15 @@ import sqlite3
 import subprocess
 import threading
 from collections import OrderedDict
-from contextlib import closing
+import contextvars
+from contextlib import closing, contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Any, Optional
 
+from mcp_server.indexing.lock_registry import live_rebuild_owner
 from mcp_server.storage.repo_identity import compute_repo_id
 from mcp_server.storage.sqlite_store import evaluate_chunk_scheme, read_grammar_degradation
 from mcp_server.utils.subprocess_env import get_full_env
@@ -70,10 +73,36 @@ class RepositoryReadiness:
     #: their grammars were unavailable. Additive: ``state`` stays ``ready``.
     #: None when no index could be inspected.
     coverage: Optional[dict[str, Any]] = None
+    #: A staged rebuild whose owner is alive (Consiliency/Code-Index-MCP#145):
+    #: ``{"in_progress": True, "target_commit": ..., "started_at": ...}``. The
+    #: state above then describes the published generation, which keeps
+    #: serving queries until the build publishes. None when no live build runs.
+    rebuild: Optional[dict[str, Any]] = None
 
     @property
     def ready(self) -> bool:
         return self.state == RepositoryReadinessState.READY
+
+    @property
+    def serving_stale(self) -> bool:
+        """True while a live rebuild indexes a newer commit than the published one.
+
+        Query tools then serve the published generation and label the results
+        ``stale_commit``; every other non-ready state stays fail-closed (#145).
+        """
+        return bool(
+            self.state == RepositoryReadinessState.STALE_COMMIT
+            and self.rebuild
+            and self.current_commit
+            and self.last_indexed_commit
+            and self.current_commit != self.last_indexed_commit
+            and self.rebuild.get("target_commit") == self.current_commit
+        )
+
+    @property
+    def queryable(self) -> bool:
+        """True when indexed query tools may serve the published generation."""
+        return self.ready or self.serving_stale
 
     @property
     def code(self) -> Optional[str]:
@@ -99,7 +128,18 @@ class RepositoryReadiness:
             "index_path": self.index_path,
             "remediation": self.remediation,
             "coverage": self.coverage,
+            "rebuild": self.rebuild,
         }
+
+
+def readiness_queryable(readiness: Any) -> bool:
+    """``readiness.queryable``, falling back to ``ready`` for duck-typed readiness objects."""
+    return bool(getattr(readiness, "queryable", getattr(readiness, "ready", False)))
+
+
+def readiness_serving_stale(readiness: Any) -> bool:
+    """``readiness.serving_stale``, False for duck-typed readiness objects."""
+    return bool(getattr(readiness, "serving_stale", False))
 
 
 @dataclass(frozen=True)
@@ -394,6 +434,31 @@ class ReadinessClassifier:
         state = RepositoryReadinessState.READY
         remediation = None
         coverage = None
+        rebuild = None
+        if staleness_reason == "index_publication_pending":
+            # The published generation is untouched until the publish swap, so
+            # it may keep serving while the build's owner is alive (#145) and
+            # that build targets the checkout as it is now: HEAD is the build's
+            # commit and the tracked tree is clean. A dead owner, a HEAD that
+            # moved away from the target, or tracked edits leave the
+            # fail-closed missing_provenance below.
+            owner = live_rebuild_owner(
+                registered_path,
+                registration_id=getattr(repo_info, "registration_id", None),
+                published_generation=getattr(repo_info, "index_generation", None),
+            )
+            if (
+                owner is not None
+                and current_commit
+                and owner.get("target_commit") == current_commit
+                and tracked_tree_clean
+            ):
+                staleness_reason = None
+                rebuild = {
+                    "in_progress": True,
+                    "target_commit": owner.get("target_commit"),
+                    "started_at": owner.get("started_at"),
+                }
 
         if live_git_required and (current_branch is None or current_commit is None):
             state = RepositoryReadinessState.UNREGISTERED_REPOSITORY
@@ -474,6 +539,7 @@ class ReadinessClassifier:
             index_path=str(index_path) if index_path else None,
             remediation=remediation,
             coverage=coverage,
+            rebuild=rebuild,
         )
 
     @classmethod
@@ -794,7 +860,66 @@ def _find_git_root(start: Path) -> Optional[Path]:
         current = current.parent
 
 
+#: Per-request git observations (Consiliency/Code-Index-MCP#145). A query
+#: classifies readiness several times on its way through admission and context
+#: creation; inside ``readiness_snapshot()`` each checkout's ``git status`` runs
+#: once and is reused, and ``fresh_readiness()`` observes it again for the one
+#: recheck after the query.
+_GIT_STATE_SNAPSHOT: ContextVar[Optional[dict[str, tuple[Optional[str], Optional[str], bool]]]] = (
+    ContextVar("mcp_readiness_git_snapshot", default=None)
+)
+
+
+@contextmanager
+def readiness_snapshot():
+    """Reuse one git observation per checkout for the rest of this request.
+
+    Re-entering inside an active snapshot reuses it. Copy the context
+    (``contextvars.copy_context().run``) to carry it into an executor thread.
+    """
+    if _GIT_STATE_SNAPSHOT.get() is not None:
+        yield
+        return
+    token = _GIT_STATE_SNAPSHOT.set({})
+    try:
+        yield
+    finally:
+        _GIT_STATE_SNAPSHOT.reset(token)
+
+
+@contextmanager
+def fresh_readiness():
+    """Observe git again, bypassing any active request snapshot."""
+    token = _GIT_STATE_SNAPSHOT.set(None)
+    try:
+        yield
+    finally:
+        _GIT_STATE_SNAPSHOT.reset(token)
+
+
+def readiness_snapshot_context() -> contextvars.Context:
+    """Return a copied context holding a new request snapshot.
+
+    For request handlers that hop to an executor thread: run each step with
+    ``context.run(...)`` so every classification shares one observation.
+    """
+    context = contextvars.copy_context()
+    context.run(_GIT_STATE_SNAPSHOT.set, {})
+    return context
+
+
 def _git_state(path: Path) -> tuple[Optional[str], Optional[str], bool]:
+    """Return HEAD, branch and tracked state, reusing the request snapshot if any."""
+    snapshot = _GIT_STATE_SNAPSHOT.get()
+    if snapshot is None:
+        return _observe_git_state(path)
+    key = str(path)
+    if key not in snapshot:
+        snapshot[key] = _observe_git_state(path)
+    return snapshot[key]
+
+
+def _observe_git_state(path: Path) -> tuple[Optional[str], Optional[str], bool]:
     """Read fresh HEAD, branch and tracked state without refreshing Git's index."""
     try:
         result = subprocess.run(

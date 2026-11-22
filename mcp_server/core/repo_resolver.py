@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import logging
+from contextlib import contextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, Optional, TypeVar
+from typing import TYPE_CHECKING, Any, Callable, ContextManager, Iterator, Optional, TypeVar
 
 from mcp_server.core.repo_context import RepoContext
 from mcp_server.health.repository_readiness import (
@@ -12,7 +13,7 @@ from mcp_server.health.repository_readiness import (
     RepositoryReadiness,
     RepositoryReadinessState,
 )
-from mcp_server.indexing.lock_registry import lock_registry
+from mcp_server.indexing.lock_registry import WriteGate, live_rebuild_owner, lock_registry
 from mcp_server.storage.repository_registry import RepositoryRegistry
 from mcp_server.storage.store_registry import StoreRegistry
 
@@ -80,9 +81,14 @@ class RepoResolver:
         return self._context_from_readiness(readiness)
 
     def resolve_ready(self, selector: str | Path) -> Optional[RepoContext]:
-        """Resolve only when this operation's own classification is ready."""
+        """Resolve only when this operation's own classification is queryable.
+
+        That is ``ready``, or ``stale_commit`` while a live rebuild indexes a
+        newer commit and the published generation keeps serving (#145).
+        Mutations still hold the writer lock, so no live rebuild can run then.
+        """
         readiness = self.classify(selector)
-        if not readiness.ready:
+        if not readiness.queryable:
             return None
         ctx = self._context_from_readiness(readiness)
         return ctx if ctx is not None and self.is_current(ctx) else None
@@ -100,9 +106,88 @@ class RepoResolver:
                 != self._store_registry.binding(ctx.registry_entry)
             ):
                 return False
-            return ReadinessClassifier.classify_registered(info).ready
+            return ReadinessClassifier.classify_registered(info).queryable
         except Exception:
             return False
+
+    def accepts_writes(self, ctx: Optional[RepoContext]) -> bool:
+        """True while ``ctx`` may persist into its published generation (#145).
+
+        A staged build fences the registry entry before it snapshots the live
+        file, so any write after that could vanish when it publishes. Reads keep
+        being served during a live rebuild, but persistent writers (summaries)
+        check this before they start and between batches. Registry and file
+        identity only; no git.
+        """
+        if ctx is None:
+            return False
+        return self._accepts_writes_for(ctx.repo_id, ctx.registry_entry)
+
+    def _accepts_writes_for(self, repo_id: str, expected: Any) -> bool:
+        try:
+            info = self._registry.get(repo_id)
+            return (
+                info is not None
+                and not info.staleness_reason
+                and self._store_registry.binding(info) == self._store_registry.binding(expected)
+            )
+        except Exception:
+            return False
+
+    def write_fence(self, ctx: RepoContext) -> Callable[[], ContextManager[bool]]:
+        """Return a write fence bound to ctx's registration and published generation."""
+        return self.generation_write_fence(ctx.repo_id, ctx.registry_entry, ctx.workspace_root)
+
+    def generation_write_fence(
+        self, repo_id: str, expected: Any, repo_path: Path
+    ) -> Callable[[], ContextManager[bool]]:
+        """Return a fence that persistent writers enter around each write (#145).
+
+        Entering it takes the repository writer lock without waiting, so no
+        staged build can begin until the write commits. It yields a
+        ``WriteGate`` (falsy unless ``ALLOWED``):
+
+        - ``FENCED`` when a staged rebuild owns the generation (a live owner
+          holds the lock, or the registry entry is fenced) or the
+          registration or generation changed: the work is obsolete.
+        - ``BUSY`` when another writer holds the lock but the generation is
+          unchanged and no rebuild runs: the write is retryable.
+        """
+
+        @contextmanager
+        def fence() -> Iterator[WriteGate]:
+            held = lock_registry.acquire(repo_id, repo_path=repo_path, timeout=0)
+            try:
+                held.__enter__()
+            except TimeoutError:
+                yield self._contended_gate(repo_id, expected, repo_path)
+                return
+            try:
+                yield (
+                    WriteGate.ALLOWED
+                    if self._accepts_writes_for(repo_id, expected)
+                    else WriteGate.FENCED
+                )
+            finally:
+                held.__exit__(None, None, None)
+
+        return fence
+
+    def _contended_gate(self, repo_id: str, expected: Any, repo_path: Path) -> WriteGate:
+        """Classify a held writer lock: a rebuild (or changed generation) vs. a busy writer."""
+        if not self._accepts_writes_for(repo_id, expected):
+            return WriteGate.FENCED
+        if (
+            live_rebuild_owner(
+                Path(repo_path),
+                registration_id=getattr(expected, "registration_id", None),
+                published_generation=getattr(expected, "index_generation", None),
+            )
+            is not None
+        ):
+            # The build holds the lock and recorded itself before fencing.
+            return WriteGate.FENCED
+        return WriteGate.BUSY
 
     def mutate(
         self, ctx: RepoContext, operation: Callable[[RepoContext], _MutationResult]
@@ -112,7 +197,12 @@ class RepoResolver:
             if not self.is_current(ctx):
                 raise RuntimeError("Repository generation changed before mutation")
             current = self.resolve_ready(ctx.workspace_root)
-            if current is None or current.generation_key != ctx.generation_key:
+            if (
+                current is None
+                or current.generation_key != ctx.generation_key
+                # Mutations need a ready index, not one served stale (#145).
+                or not self.classify(ctx.workspace_root).ready
+            ):
                 raise RuntimeError("Repository became unavailable before mutation")
             if self._index_manager is None:
                 raise RuntimeError("Staged repository mutation owner is unavailable")

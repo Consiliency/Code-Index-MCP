@@ -52,7 +52,7 @@ from ..health.repository_readiness import (
     published_grammar_degradation,
 )
 from ..indexing.change_detector import ChangeDetector
-from ..indexing.lock_registry import lock_registry
+from ..indexing.lock_registry import clear_rebuild_owner, lock_registry, record_rebuild_owner
 from ..plugins.language_registry import get_language_by_extension
 from ..utils import grammar_cache
 from ..utils.memory_release import release_rebuild_memory
@@ -1448,8 +1448,19 @@ class GitAwareIndexManager:
         full_call_started = False
         full_call_completed = False
         mutation_admitted = False
+        build_owner = None
 
         try:
+            # Recorded before the fence goes up, so readers keep serving the
+            # published generation for the whole build while this owner is
+            # alive; cleared in ``finally`` (#145). If it cannot be written,
+            # readers stay fail-closed exactly as before.
+            build_owner = record_rebuild_owner(
+                repo_path,
+                registration_id=repo_info.registration_id,
+                published_generation=repo_info.index_generation,
+                target_commit=current_commit,
+            )
             self.registry.begin_generation_mutation(
                 repo_id,
                 expected_registration_id=repo_info.registration_id,
@@ -1722,10 +1733,15 @@ class GitAwareIndexManager:
                 raise StagedRebuildError("Staged index has no durable rows")
 
             self._rebuild_checkpoint("before_replacement")
-            self._release_runtime_handles(repo_id, repo_info, stage_ctx)
+            quarantine = readiness.state in _QUARANTINE_REBUILD_STATES
+            # A served (ready or stale) live generation keeps its handles until
+            # the publish swap, so queries admitted during the build finish on
+            # it; a quarantined one is released before its bytes move (#145).
+            self._release_runtime_handles(repo_id, repo_info, stage_ctx, live=quarantine)
             stage_store = None
+            previous_owner = replace(repo_info)
             quarantine_path = None
-            if readiness.state in _QUARANTINE_REBUILD_STATES:
+            if quarantine:
                 quarantine_path = self._quarantine_active_index(active_path, readiness.state)
             self._fsync_generation(generation_path)
             self._rebuild_checkpoint("after_replacement")
@@ -1759,6 +1775,8 @@ class GitAwareIndexManager:
             repo_info.last_indexed_branch = current_branch
             repo_info.staleness_reason = None
             ReadinessClassifier.clear_index_inspection_cache()
+            if not quarantine:
+                self._release_superseded_live_handles(repo_id, previous_owner)
             self._prune_superseded_generations(
                 generation_dir,
                 live_generation=generation,
@@ -1863,6 +1881,8 @@ class GitAwareIndexManager:
                     stage_store.close()
             if stage_dir is not None:
                 shutil.rmtree(stage_dir, ignore_errors=True)
+            if build_owner is not None:
+                clear_rebuild_owner(repo_path, build_owner["token"])
             if mutation_admitted:
                 release_rebuild_memory(repo_id)
 
@@ -3350,21 +3370,41 @@ class GitAwareIndexManager:
         self._cleanup_runtime_snapshot(snapshot)
         return None
 
+    def _release_superseded_live_handles(self, repo_id: str, previous_owner: Any) -> None:
+        """Release the handles of the generation a publish just superseded.
+
+        Runs after ``publish_generation``: a query still holding the old store
+        finishes on its open connection and is then refused by its generation
+        recheck. Never raises, because the publication already happened (#145).
+        """
+        try:
+            if self.store_registry is not None:
+                self.store_registry.close(repo_id, expected_owner=previous_owner)
+            if self.dispatcher is not None and hasattr(self.dispatcher, "evict_repository_state"):
+                self.dispatcher.evict_repository_state(
+                    repo_id, previous_owner.path, expected_owner=previous_owner
+                )
+        except Exception as exc:
+            logger.warning("Superseded generation handles remain open: %s", type(exc).__name__)
+
     def _release_runtime_handles(
         self,
         repo_id: str,
         repo_info: Any,
         ctx: Optional[RepoContext],
+        *,
+        live: bool = True,
     ) -> None:
-        if self.store_registry is not None:
+        if live and self.store_registry is not None:
             self.store_registry.close(repo_id, expected_owner=repo_info)
         sqlite_store = getattr(ctx, "sqlite_store", None) if ctx is not None else None
         if sqlite_store is not None:
             sqlite_store.close()
         if self.dispatcher is not None and hasattr(self.dispatcher, "evict_repository_state"):
-            self.dispatcher.evict_repository_state(
-                repo_id, repo_info.path, expected_owner=repo_info
-            )
+            if live:
+                self.dispatcher.evict_repository_state(
+                    repo_id, repo_info.path, expected_owner=repo_info
+                )
             if ctx is not None and ctx.staging:
                 self.dispatcher.evict_repository_state(
                     repo_id, repo_info.path, expected_owner=ctx.registry_entry
