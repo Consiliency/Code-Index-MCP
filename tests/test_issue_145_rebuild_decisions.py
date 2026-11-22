@@ -404,6 +404,56 @@ def test_sweep_drift_from_an_older_commit_is_not_applied_after_head_moves(
     assert holder["sweeper"].sweep_once() == []
 
 
+def test_sweep_of_an_unindexed_head_commit_runs_the_incremental_sync(
+    runtime, monkeypatch, caplog  # noqa: F811
+):
+    """A committed change the sweep finds at HEAD is synced, not refused (#163).
+
+    The sweep lists HEAD B while the published generation is still labelled
+    A. That drift is not stale: nothing has indexed B yet. The ordinary
+    incremental sync must publish B from the A..B change set, without a full
+    rebuild and without applying the sweep's path list to the A generation.
+    """
+    repo, registry, repo_id, _store, manager = runtime
+    for index in range(6):
+        (repo / f"stable{index}.py").write_text(f"stable_value_{index} = {index}\n")
+    (repo / "changed.py").write_text("changed_old = 1\n")
+    commit_a = _commit_all(repo, "A")
+    assert manager.rebuild_repository_index(repo_id).action == "full_index"
+    generation_before = registry.get(repo_id).index_generation
+
+    (repo / "changed.py").write_text("changed_new = 2\n")
+    commit_b = _commit_all(repo, "B edits changed.py")
+    assert registry.get(repo_id).last_indexed_commit == commit_a
+
+    synced_paths = []
+    real_incremental = manager._incremental_index_update
+
+    def spy(repo_id_arg, ctx, changes, *args, **kwargs):
+        synced_paths.extend(changes.added + changes.modified + changes.deleted)
+        return real_incremental(repo_id_arg, ctx, changes, *args, **kwargs)
+
+    monkeypatch.setattr(manager, "_incremental_index_update", spy)
+    _no_full_index(manager, monkeypatch)
+    store = manager._resolve_ctx(repo_id).sqlite_store
+    sweeper, marked = _sweeper_for(manager, registry, repo_id, store)
+
+    with caplog.at_level(logging.INFO):
+        assert sweeper.sweep_once() == [repo_id]
+
+    info = registry.get(repo_id)
+    assert info.last_indexed_commit == commit_b
+    assert info.index_generation != generation_before
+    assert synced_paths == ["changed.py"]
+    assert marked == [repo_id]
+    assert manager._resolve_ctx(repo_id).sqlite_store.search_code_fts("changed_new")
+    messages = [record.getMessage() for record in caplog.records]
+    assert not any("Not applying sweep drift" in m for m in messages)
+    assert any("running an ordinary sync" in m for m in messages)
+    # The published generation agrees with B: the next sweep is quiet.
+    assert sweeper.sweep_once() == []
+
+
 def test_memory_release_is_best_effort(monkeypatch):
     assert isinstance(release_rebuild_memory("repo"), dict)
     monkeypatch.setenv("MCP_INDEX_MALLOC_TRIM", "false")

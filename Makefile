@@ -357,6 +357,7 @@ agent-gate-local: agent-fast-local
 		tests/test_ref_poller_edges.py \
 		tests/test_rename_atomicity.py \
 		tests/test_artifact_download.py \
+		tests/test_v13_data_reconciliation.py \
 		-q --no-cov
 
 agent-full-local: agent-gate-local coverage release-smoke-container
